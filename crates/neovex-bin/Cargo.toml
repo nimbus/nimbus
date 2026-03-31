@@ -1,0 +1,18 @@
+[package]
+name = "neovex-bin"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "neovex"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+neovex = { path = "../neovex" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

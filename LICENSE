@@ -1,0 +1,236 @@
+Neovex Community License 1.0
+
+Copyright (c) 2026 the Neovex contributors and other copyright holders
+
+This License governs use of the Neovex source code, documentation, and other
+materials distributed in this repository (the "Licensed Work"). By using,
+copying, modifying, distributing, deploying, or making the Licensed Work
+available, you agree to this License.
+
+1. Definitions
+
+"Affiliate" means an entity that controls, is controlled by, or is under common
+control with another entity. "Control" means ownership of more than fifty
+percent (50%) of voting interests or the power to direct management.
+
+"Annual Revenue" means the gross revenue of an Organization and its Affiliates
+for the most recent completed fiscal year or, if a completed fiscal year is not
+available, the trailing twelve (12) months.
+
+"Commercial License" means a separate written agreement with the Licensor that
+grants rights beyond this License.
+
+"Competing Offering" means a product or service offered to third parties where
+the Licensed Work, or a substantially similar backend, database, or developer
+platform service, is a primary or material part of the value offered.
+
+"Educational Institution" means a school, college, university, public research
+institution, or similar accredited educational or academic body.
+
+"Enterprise Threshold" means that, during a calendar month, both of the
+following are true for an Organization and its Affiliates:
+
+1. Annual Revenue exceeds USD $10,000,000.
+2. Monthly Active Users exceed 500.
+
+"Free Use" means use authorized by Section 3 of this License without payment.
+
+"Hosted Service" means a hosted, managed, software-as-a-service, platform, API,
+or cloud offering made available to third parties.
+
+"Licensor" means each copyright holder licensing the Licensed Work under this
+License.
+
+"Monthly Active User" or "MAU" means a unique natural person, internal or
+external, who in a calendar month accesses, authenticates with, or causes
+material application activity backed by the Licensed Work, whether directly or
+through an application, service, device, or integration operated by or for the
+benefit of an Organization. Purely automated internal service accounts, bots,
+and background jobs that are not acting on behalf of a unique natural person do
+not count as separate Monthly Active Users.
+
+"Nonprofit Organization" means an entity organized and operated primarily for
+charitable, educational, religious, scientific, or similar public-benefit
+purposes and not primarily for private commercial gain.
+
+"Organization" means a legal entity and its Affiliates.
+
+"Permitted Use" means Free Use or Trial Use that complies with this License.
+
+"Trial Use" means the limited use permitted during the Trial Period described in
+Section 4.
+
+"Trial Period" means the one-time ninety (90) day period that starts when an
+Organization first exceeds the Enterprise Threshold.
+
+2. License Grant
+
+Subject to this License, each Licensor grants you a worldwide, non-exclusive,
+non-transferable license to:
+
+1. use, run, self-host, reproduce, and display the Licensed Work;
+2. modify the Licensed Work and create derivative works of it;
+3. distribute the Licensed Work and derivative works in source or object form;
+4. authorize employees, contractors, and service providers acting on your
+   behalf to exercise the above rights for your benefit.
+
+These rights are granted only for Permitted Use or as otherwise expressly
+granted in a Commercial License.
+
+3. Free Use
+
+You may exercise the rights granted in Section 2 as Free Use if:
+
+1. you are an individual acting on your own behalf;
+2. you are a Nonprofit Organization;
+3. you are an Educational Institution; or
+4. you are an Organization that has not exceeded the Enterprise Threshold.
+
+Free Use includes internal development, testing, staging, production use,
+self-hosting, and internal modifications, subject to this License.
+
+4. Trial Use After the Enterprise Threshold
+
+If an Organization first exceeds the Enterprise Threshold, that Organization
+receives a one-time Trial Period of ninety (90) days.
+
+During the Trial Period, the Organization may continue to use, self-host, test,
+evaluate, and internally deploy the Licensed Work, subject to this License.
+
+When the Trial Period ends, continued use by that Organization requires a
+Commercial License unless and until the Organization no longer exceeds the
+Enterprise Threshold. The Trial Period does not reset if the Organization later
+drops below the Enterprise Threshold and then exceeds it again.
+
+5. Uses That Require a Commercial License
+
+Without a Commercial License, you may not:
+
+1. continue using the Licensed Work after the Trial Period if your Organization
+   exceeds the Enterprise Threshold;
+2. use the Licensed Work to operate, offer, or enable a Hosted Service that is
+   a Competing Offering;
+3. embed, white-label, OEM, sublicense, or otherwise provide the Licensed Work
+   as a material part of a Competing Offering;
+4. represent that your fork, service, or product is endorsed by or affiliated
+   with Neovex or the Licensor;
+5. obtain rights reserved by Section 10 on trademarks and branding.
+
+For clarity, using the Licensed Work to power your own application, website, or
+internal system is allowed if your use otherwise complies with this License. The
+restriction in this Section applies to offering Neovex itself, or a materially
+similar managed backend/database/platform service, to third parties.
+
+6. Redistribution Conditions
+
+If you distribute the Licensed Work or a derivative work, you must:
+
+1. provide a copy of this License to recipients;
+2. preserve copyright, attribution, license, and notice files;
+3. identify material modifications in a reasonable manner;
+4. not grant recipients rights broader than those granted by this License;
+5. not use the Neovex name, logos, or other marks except as allowed by Section
+   10 and `TRADEMARKS.md`.
+
+This License does not require you to publish your modifications, but any
+distributed copy remains subject to this License unless the Licensor gives you a
+Commercial License or another written exception.
+
+7. Measurement, Good-Faith Counting, and Records
+
+If your rights under this License depend on Annual Revenue or Monthly Active
+Users, you must determine eligibility in good faith using commercially
+reasonable methods.
+
+When exact Monthly Active User counts are unavailable, you may estimate them
+using authenticated identities, user or tenant identifiers, request activity,
+device or browser identifiers, or similar operational telemetry that reasonably
+approximates unique natural-person usage.
+
+You must keep records reasonably sufficient to support your good-faith Annual
+Revenue and Monthly Active User determinations for at least twelve (12) months
+after each relevant period.
+
+8. Patent License
+
+Subject to this License, each Licensor grants you a worldwide, royalty-free,
+non-exclusive patent license under patent claims that the Licensor can license
+and that are necessarily infringed by that Licensor's contribution to the
+Licensed Work, solely to make, use, sell, offer for sale, import, and otherwise
+exercise rights in the Licensed Work for Permitted Use.
+
+If you or your Organization bring a patent claim alleging that the Licensed
+Work, or any contribution to it, infringes a patent, then the patent licenses
+granted to you under this License end immediately as of the filing date of that
+claim.
+
+9. Restrictions and No Circumvention
+
+You may not:
+
+1. remove or obscure license notices, attribution notices, or proprietary
+   notices from the Licensed Work;
+2. misstate or conceal Annual Revenue, Monthly Active Users, or other facts
+   relevant to your eligibility under this License;
+3. bypass or disable technical controls intended to enforce licensing,
+   attribution, or usage restrictions;
+4. use the Licensed Work in violation of applicable law.
+
+10. Trademarks
+
+This License does not grant any right to use the trade names, trademarks, service
+marks, logos, or branding of Neovex or the Licensor, except for reasonable
+nominative use to describe the Licensed Work or as expressly allowed in
+`TRADEMARKS.md`.
+
+11. Feedback and Contributions
+
+Feedback is voluntary. If you provide feedback about the Licensed Work, you
+grant the Licensor a perpetual, irrevocable, worldwide, royalty-free right to
+use that feedback for any purpose without obligation to you.
+
+Code and documentation contributions are governed by `CONTRIBUTING.md` and the
+applicable contributor license agreement, if any.
+
+12. Termination
+
+Your rights under this License terminate automatically if you materially breach
+this License.
+
+If the breach is curable and you fully cure it within thirty (30) days after you
+become aware of it or receive notice of it, whichever comes first, your rights
+under this License are reinstated as of the cure date. This cure right does not
+apply to repeated material breaches or to operating a prohibited Competing
+Offering without a Commercial License.
+
+Sections 5 through 15 survive termination.
+
+13. No Warranty
+
+THE LICENSED WORK IS PROVIDED "AS IS" AND "AS AVAILABLE." TO THE MAXIMUM EXTENT
+PERMITTED BY LAW, THE LICENSOR DISCLAIMS ALL WARRANTIES, WHETHER EXPRESS,
+IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, AND QUIET ENJOYMENT.
+
+14. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, NO LICENSOR WILL BE LIABLE TO YOU FOR
+ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE
+DAMAGES, OR FOR ANY LOST PROFITS, LOST REVENUE, LOST DATA, BUSINESS
+INTERRUPTION, OR COST OF SUBSTITUTE GOODS OR SERVICES, ARISING OUT OF OR
+RELATED TO THIS LICENSE OR THE LICENSED WORK, EVEN IF ADVISED OF THE
+POSSIBILITY OF THOSE DAMAGES.
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE TOTAL LIABILITY OF ALL LICENSORS
+ARISING OUT OF OR RELATED TO THIS LICENSE OR THE LICENSED WORK WILL NOT EXCEED
+ONE HUNDRED UNITED STATES DOLLARS (USD $100).
+
+15. General
+
+If you have a Commercial License, that agreement controls to the extent it
+conflicts with this License.
+
+If any provision of this License is unenforceable, the remaining provisions will
+remain in effect to the maximum extent permitted by law.
+
+No Licensor waives any right under this License by failing to enforce it.

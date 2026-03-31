@@ -1,0 +1,14 @@
+[package]
+name = "neovex"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+neovex-runtime = { path = "../neovex-runtime" }
+neovex-core = { path = "../neovex-core" }
+neovex-engine = { path = "../neovex-engine" }
+neovex-server = { path = "../neovex-server" }
+neovex-storage = { path = "../neovex-storage" }
