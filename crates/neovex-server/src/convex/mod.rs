@@ -1380,7 +1380,8 @@ mod tests {
         let cancellation = HostCallCancellation::default();
         cancellation.cancel();
 
-        let result = bridge.dispatch_host_call_cancellable(
+        let result = neovex_runtime::HostBridge::call_cancellable(
+            &bridge,
             HostCallRequest {
                 operation: "convex.ctx.db.query.start".to_string(),
                 payload: json!({
@@ -1391,6 +1392,16 @@ mod tests {
         );
 
         assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
+        let metrics = bridge.registry.runtime_metrics_snapshot();
+        assert_eq!(metrics.precanceled_host_ops, 1);
+        assert_eq!(
+            metrics
+                .host_operations
+                .get("convex.ctx.db.query.start")
+                .expect("query start metrics should be present")
+                .canceled_before_start,
+            1
+        );
     }
 
     #[tokio::test]
@@ -1420,10 +1431,17 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
-        assert_eq!(
-            bridge.registry.runtime_metrics_snapshot().canceled_host_ops,
-            1
-        );
+        let metrics = bridge.registry.runtime_metrics_snapshot();
+        assert_eq!(metrics.canceled_host_ops, 1);
+        assert_eq!(metrics.precanceled_host_ops, 1);
+        assert_eq!(metrics.in_flight_canceled_host_ops, 0);
+        let db_get_metrics = metrics
+            .host_operations
+            .get("convex.ctx.db.get")
+            .copied()
+            .expect("db.get host op metrics should be present");
+        assert_eq!(db_get_metrics.started, 0);
+        assert_eq!(db_get_metrics.canceled_before_start, 1);
     }
 
     #[test]
@@ -1496,7 +1514,8 @@ mod tests {
     fn runtime_cancellable_unknown_operation_is_rejected() {
         let (_tempdir, _service, _tenant_id, bridge) = runtime_bridge_fixture();
 
-        let result = bridge.dispatch_host_call_cancellable(
+        let result = neovex_runtime::HostBridge::call_cancellable(
+            &bridge,
             HostCallRequest {
                 operation: "convex.ctx.unknown".to_string(),
                 payload: json!({}),
@@ -1510,5 +1529,12 @@ mod tests {
             }
             other => panic!("unexpected unsupported-op result: {other:?}"),
         }
+        let metrics = bridge.registry.runtime_metrics_snapshot();
+        let unknown_metrics = metrics
+            .host_operations
+            .get("convex.ctx.unknown")
+            .expect("unknown op metrics should be present");
+        assert_eq!(unknown_metrics.started, 1);
+        assert_eq!(unknown_metrics.failed, 1);
     }
 }

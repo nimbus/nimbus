@@ -74,7 +74,7 @@ impl RuntimeExecutor {
                             .as_ref()
                             .is_some_and(HostCallCancellation::is_cancelled)
                         {
-                            policy.metrics().record_canceled_invocation();
+                            policy.metrics().record_queued_canceled_invocation();
                             let _ = job.result_tx.send(Err(NeovexRuntimeError::Cancelled));
                             continue;
                         }
@@ -173,7 +173,7 @@ impl RuntimeExecutor {
             .await
             .inspect_err(|error| match error {
                 NeovexRuntimeError::ExecutionTimeout(_) => metrics.record_timeout(),
-                NeovexRuntimeError::Cancelled => metrics.record_canceled_invocation(),
+                NeovexRuntimeError::Cancelled => metrics.record_in_flight_canceled_invocation(),
                 _ => {}
             })
             .inspect(|_| {
@@ -239,7 +239,10 @@ impl RuntimeExecutor {
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
         {
-            self.inner.policy.metrics().record_canceled_invocation();
+            self.inner
+                .policy
+                .metrics()
+                .record_queued_canceled_invocation();
             return Err(NeovexRuntimeError::Cancelled);
         }
 
