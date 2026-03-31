@@ -615,10 +615,15 @@ the core executor, not a blocker for Workstreams 1 through 3.
 The runtime already exposes useful counters, but a later observability pass can
 make the async bridge materially easier to operate and debug.
 
+Initial instrumentation now includes:
+
+- separate queued-vs-in-flight cancellation counters for runtime invocations
+- separate pre-start-vs-in-flight cancellation counters for host ops
+- per-host-operation started / succeeded / failed / canceled counts in runtime
+  diagnostics
+
 Candidate follow-on work:
 
-- separate counters for queued-canceled vs in-flight-canceled invocations
-- per-op-type bridge metrics
 - per-tenant queue wait and execution distributions
 - tracing spans for host-op enqueue/start/finish/cancel transitions
 - clearer timeout vs disconnect vs explicit-cancel attribution

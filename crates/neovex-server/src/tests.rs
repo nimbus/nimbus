@@ -119,12 +119,12 @@ async fn open_json_post_stream(
 async fn wait_for_runtime_metrics(
     registry: &ConvexRegistry,
     description: &str,
-    predicate: impl Fn(neovex_runtime::RuntimeMetricsSnapshot) -> bool,
+    predicate: impl Fn(&neovex_runtime::RuntimeMetricsSnapshot) -> bool,
 ) -> neovex_runtime::RuntimeMetricsSnapshot {
     let started_at = tokio::time::Instant::now();
     loop {
         let metrics = registry.runtime_metrics_snapshot();
-        if predicate(metrics) {
+        if predicate(&metrics) {
             return metrics;
         }
         assert!(
@@ -402,6 +402,11 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["limits"]["max_nested_runtime_invocations"], json!(64));
     assert_eq!(body["metrics"]["worker_dispatched_invocations"], json!(0));
     assert_eq!(body["metrics"]["nested_local_dispatches"], json!(0));
+    assert_eq!(body["metrics"]["queued_canceled_invocations"], json!(0));
+    assert_eq!(body["metrics"]["in_flight_canceled_invocations"], json!(0));
+    assert_eq!(body["metrics"]["precanceled_host_ops"], json!(0));
+    assert_eq!(body["metrics"]["in_flight_canceled_host_ops"], json!(0));
+    assert_eq!(body["metrics"]["host_operations"], json!({}));
     assert_eq!(
         body["metrics"]["fallback_cross_isolate_dispatches"],
         json!(0)
@@ -1082,6 +1087,14 @@ export {};
         json!(0)
     );
     assert_eq!(
+        metrics_body["metrics"]["host_operations"]["convex.ctx.runtime.enter_nested_call"]["started"],
+        json!(1)
+    );
+    assert_eq!(
+        metrics_body["metrics"]["host_operations"]["convex.ctx.runtime.enter_nested_call"]["succeeded"],
+        json!(1)
+    );
+    assert_eq!(
         metrics_body["metrics"]["worker_dispatched_invocations"],
         json!(1)
     );
@@ -1089,6 +1102,14 @@ export {};
     assert_eq!(metrics.nested_local_dispatches, 1);
     assert_eq!(metrics.fallback_cross_isolate_dispatches, 0);
     assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(
+        metrics
+            .host_operations
+            .get("convex.ctx.runtime.enter_nested_call")
+            .expect("nested runtime host op metrics should be present")
+            .succeeded,
+        1
+    );
 }
 
 #[tokio::test]
@@ -2581,6 +2602,8 @@ export {};
     .await;
     assert_eq!(metrics.worker_dispatched_invocations, 1);
     assert_eq!(metrics.canceled_invocations, 1);
+    assert_eq!(metrics.queued_canceled_invocations, 0);
+    assert_eq!(metrics.in_flight_canceled_invocations, 1);
 }
 
 #[tokio::test]
@@ -2707,6 +2730,8 @@ export {};
     )
     .await;
     assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(metrics.queued_canceled_invocations, 1);
+    assert_eq!(metrics.in_flight_canceled_invocations, 1);
 
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
     let documents = service
