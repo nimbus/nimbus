@@ -13,11 +13,10 @@ unsound = "all"
 yanked = "deny"
 
 [licenses]
-# Lint level for crates not explicitly allowed
-unlicensed = "deny"
+version = 2
 # Confidence threshold for license detection
 confidence-threshold = 0.8
-# List of accepted licenses
+# All licenses are denied unless explicitly in the allow list
 allow = [
   "MIT",
   "Apache-2.0",
