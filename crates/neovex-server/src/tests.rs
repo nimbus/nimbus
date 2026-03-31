@@ -7,6 +7,7 @@ use std::time::SystemTime;
 
 use axum::{Json, Router, extract::State, routing::get};
 use base64::Engine;
+use neovex_core::{TableName, TenantId};
 use neovex_engine::{Service, run_scheduler};
 use neovex_runtime::{RuntimeBundle, RuntimeLimits};
 use neovex_test_support::{HttpApiFixture, ServerFixture, ServiceFixture, WebSocketFixture};
@@ -15,7 +16,8 @@ use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair};
 use serde_json::json;
 use tempfile::tempdir;
-use tokio::net::TcpListener;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio::time::{Duration, timeout};
 
@@ -87,6 +89,50 @@ fn convex_registry_with_routes_and_bundle_and_auth(
         ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
     std::mem::forget(tempdir);
     registry
+}
+
+async fn open_json_post_stream(
+    server: &ServerFixture,
+    path: &str,
+    body: &serde_json::Value,
+) -> TcpStream {
+    let addr = server
+        .http_url("")
+        .trim_start_matches("http://")
+        .to_string();
+    let body = serde_json::to_string(body).expect("request body should serialize");
+    let mut stream = TcpStream::connect(&addr)
+        .await
+        .expect("raw HTTP client should connect");
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("raw HTTP request should write");
+    stream.flush().await.expect("raw HTTP request should flush");
+    stream
+}
+
+async fn wait_for_runtime_metrics(
+    registry: &ConvexRegistry,
+    description: &str,
+    predicate: impl Fn(neovex_runtime::RuntimeMetricsSnapshot) -> bool,
+) -> neovex_runtime::RuntimeMetricsSnapshot {
+    let started_at = tokio::time::Instant::now();
+    loop {
+        let metrics = registry.runtime_metrics_snapshot();
+        if predicate(metrics) {
+            return metrics;
+        }
+        assert!(
+            started_at.elapsed() < Duration::from_secs(3),
+            "timed out waiting for {description}; last runtime metrics: {metrics:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 #[test]
@@ -2446,6 +2492,237 @@ export {};
         .await
         .expect("runtime timeout response should parse");
     assert_eq!(body["error"], json!("operation canceled"));
+}
+
+#[tokio::test]
+async fn dropped_runtime_http_request_cancels_runtime_invocation() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "messages:spin",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async () => { while (true) {} }"
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+const definitions = new Map([
+  ["messages:spin", {
+    name: "messages:spin",
+    kind: "query",
+    visibility: "public",
+    plan: null,
+    runtime_handler: "async () => { while (true) {} }",
+  }],
+]);
+
+globalThis.__neovexInvoke = async function(request) {
+  const definition = definitions.get(request.function_name);
+  if (!definition) {
+    return {
+      status: "error",
+      error: { kind: "internal", message: `missing definition for ${request.function_name}` },
+    };
+  }
+
+  const handler = new Function(
+    "ctx",
+    "args",
+    "request",
+    `return (${definition.runtime_handler})(ctx, args, request);`,
+  );
+
+  try {
+    const value = await handler(
+      globalThis.__neovexCreateContext(),
+      request.args ?? {},
+      request,
+    );
+    return { status: "ok", value };
+  } catch (error) {
+    if (error && typeof error === "object" && "neovexHostError" in error) {
+      return { status: "error", error: error.neovexHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#,
+        ),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(build_router_with_convex(
+        fixture.service(),
+        registry.clone(),
+    ))
+    .await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let request = open_json_post_stream(
+        &server,
+        "/convex/demo/query",
+        &json!({ "name": "messages:spin", "args": {} }),
+    )
+    .await;
+    wait_for_runtime_metrics(&registry, "runtime invocation to start", |metrics| {
+        metrics.active_isolates >= 1 && metrics.worker_dispatched_invocations >= 1
+    })
+    .await;
+
+    drop(request);
+
+    let metrics = wait_for_runtime_metrics(
+        &registry,
+        "dropped runtime request cancellation",
+        |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 1,
+    )
+    .await;
+    assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(metrics.canceled_invocations, 1);
+}
+
+#[tokio::test]
+async fn dropped_queued_runtime_request_never_starts_mutation() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "messages:block",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async () => { while (true) {} }"
+            },
+            {
+                "name": "messages:insertQueued",
+                "kind": "mutation",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+const definitions = new Map([
+  ["messages:block", {
+    name: "messages:block",
+    kind: "query",
+    visibility: "public",
+    plan: null,
+    runtime_handler: "async () => { while (true) {} }",
+  }],
+  ["messages:insertQueued", {
+    name: "messages:insertQueued",
+    kind: "mutation",
+    visibility: "public",
+    plan: null,
+    runtime_handler: "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })",
+  }],
+]);
+
+globalThis.__neovexInvoke = async function(request) {
+  const definition = definitions.get(request.function_name);
+  if (!definition) {
+    return {
+      status: "error",
+      error: { kind: "internal", message: `missing definition for ${request.function_name}` },
+    };
+  }
+
+  const handler = new Function(
+    "ctx",
+    "args",
+    "request",
+    `return (${definition.runtime_handler})(ctx, args, request);`,
+  );
+
+  try {
+    const value = await handler(
+      globalThis.__neovexCreateContext(),
+      request.args ?? {},
+      request,
+    );
+    return { status: "ok", value };
+  } catch (error) {
+    if (error && typeof error === "object" && "neovexHostError" in error) {
+      return { status: "error", error: error.neovexHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#,
+        ),
+    )
+    .with_runtime_limits(RuntimeLimits {
+        max_concurrent_isolates: 1,
+        ..RuntimeLimits::default()
+    });
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let server =
+        ServerFixture::start(build_router_with_convex(service.clone(), registry.clone())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let blocker = open_json_post_stream(
+        &server,
+        "/convex/demo/query",
+        &json!({ "name": "messages:block", "args": {} }),
+    )
+    .await;
+    wait_for_runtime_metrics(&registry, "blocking runtime query to start", |metrics| {
+        metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1
+    })
+    .await;
+
+    let queued_mutation = open_json_post_stream(
+        &server,
+        "/convex/demo/mutation",
+        &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        registry
+            .runtime_metrics_snapshot()
+            .worker_dispatched_invocations,
+        1
+    );
+
+    drop(queued_mutation);
+    drop(blocker);
+
+    let metrics = wait_for_runtime_metrics(
+        &registry,
+        "queued runtime mutation cancellation",
+        |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
+    )
+    .await;
+    assert_eq!(metrics.worker_dispatched_invocations, 1);
+
+    let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
+    let documents = service
+        .list_documents(
+            &tenant_id,
+            &TableName::new("messages").expect("table name should be valid"),
+        )
+        .expect("listing queued mutation table should succeed");
+    assert!(documents.is_empty(), "queued mutation should never start");
 }
 
 #[tokio::test]

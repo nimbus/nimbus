@@ -64,7 +64,6 @@ impl ConvexRegistry {
 
         let runtime_policy = Arc::new(RuntimePolicy::default());
         let runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy.clone()));
-        let runtime_host_executor = Arc::new(RuntimeHostExecutor::new(runtime_policy.clone()));
         Ok(Self {
             functions,
             http_routes,
@@ -72,15 +71,13 @@ impl ConvexRegistry {
             auth_verifier,
             runtime_policy,
             runtime_executor,
-            runtime_host_executor,
         })
     }
 
     pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
         let policy = Arc::new(RuntimePolicy::new(limits));
         self.runtime_policy = policy.clone();
-        self.runtime_executor = Arc::new(RuntimeExecutor::new(policy.clone()));
-        self.runtime_host_executor = Arc::new(RuntimeHostExecutor::new(policy));
+        self.runtime_executor = Arc::new(RuntimeExecutor::new(policy));
         self
     }
 
@@ -110,10 +107,6 @@ impl ConvexRegistry {
 
     pub(super) fn runtime_executor(&self) -> Arc<RuntimeExecutor> {
         self.runtime_executor.clone()
-    }
-
-    pub(super) fn runtime_host_executor(&self) -> Arc<RuntimeHostExecutor> {
-        self.runtime_host_executor.clone()
     }
 
     pub fn runtime_metrics_snapshot(&self) -> neovex_runtime::RuntimeMetricsSnapshot {

@@ -20,7 +20,7 @@ use neovex_engine::SubscriptionUpdate;
 use neovex_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
     InvocationKind, InvocationRequest, NeovexRuntime, NeovexRuntimeError, RuntimeBundle,
-    RuntimeExecutor, RuntimeHostExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy,
+    RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -41,14 +41,13 @@ use self::runtime_reads::{
 
 use self::dispatch::{
     ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent,
-    dispatch_convex_mutation, execute_convex_action, execute_named_action_request,
-    execute_named_mutation_request, execute_named_paginated_query_request,
-    execute_named_query_request, execute_query_result, invoke_named_convex_function_async,
+    check_host_cancellation, dispatch_convex_mutation_async, execute_convex_action_async,
+    execute_query_result_async, invoke_named_convex_function_async_cancellable,
 };
 use self::http_actions::dispatch_http_route;
 use self::subscriptions::handle_convex_socket_for_tenant;
 use crate::protocol::{ScheduleResponse, ServerMessage};
-use crate::state::{AppError, AppState, record_authenticated_usage, run_blocking};
+use crate::state::{AppError, AppState, RequestCancellationGuard, record_authenticated_usage};
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum ConvexQueryRequest {
@@ -271,14 +270,12 @@ pub struct ConvexRegistry {
     auth_verifier: Arc<auth::ConvexAuthVerifier>,
     runtime_policy: Arc<RuntimePolicy>,
     runtime_executor: Arc<RuntimeExecutor>,
-    runtime_host_executor: Arc<RuntimeHostExecutor>,
 }
 
 impl Default for ConvexRegistry {
     fn default() -> Self {
         let runtime_policy = Arc::new(RuntimePolicy::default());
         let runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy.clone()));
-        let runtime_host_executor = Arc::new(RuntimeHostExecutor::new(runtime_policy.clone()));
         Self {
             functions: HashMap::new(),
             http_routes: Vec::new(),
@@ -286,7 +283,6 @@ impl Default for ConvexRegistry {
             auth_verifier: Arc::new(auth::ConvexAuthVerifier::empty()),
             runtime_policy,
             runtime_executor,
-            runtime_host_executor,
         }
     }
 }
@@ -611,7 +607,6 @@ enum ConvexRuntimeEncodedError {
 struct ConvexRuntimeBridge {
     service: Arc<neovex_engine::Service>,
     registry: Arc<ConvexRegistry>,
-    host_executor: Arc<RuntimeHostExecutor>,
     tenant_id: TenantId,
     session_id: String,
     max_nested_runtime_invocations: usize,
@@ -661,7 +656,8 @@ pub(crate) async fn query(
     record_authenticated_usage(&state, auth.as_ref()).await;
     let data = match request {
         ConvexQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
-            invoke_named_convex_function_async(
+            let request_cancellation = RequestCancellationGuard::new();
+            invoke_named_convex_function_async_cancellable(
                 &service,
                 &registry,
                 &tenant_id,
@@ -673,19 +669,29 @@ pub(crate) async fn query(
                     cursor: None,
                     auth: auth.clone(),
                 },
+                request_cancellation.token(),
             )
             .await?
         }
         ConvexQueryRequest::Named(request) => {
-            run_blocking(move || {
-                execute_named_query_request(&service, &registry, &tenant_id, request)
-            })
+            let query = registry.resolve_query(&request.name, &request.args)?;
+            let request_cancellation = RequestCancellationGuard::new();
+            execute_query_result_async(
+                &service,
+                &tenant_id,
+                query,
+                Some(request_cancellation.token()),
+            )
             .await?
         }
         ConvexQueryRequest::Raw { query } => {
-            run_blocking(move || {
-                execute_query_result(&service, &tenant_id, ConvexExecutableQuery::Query(query))
-            })
+            let request_cancellation = RequestCancellationGuard::new();
+            execute_query_result_async(
+                &service,
+                &tenant_id,
+                ConvexExecutableQuery::Query(query),
+                Some(request_cancellation.token()),
+            )
             .await?
         }
     };
@@ -709,7 +715,8 @@ pub(crate) async fn paginated_query(
     record_authenticated_usage(&state, auth.as_ref()).await;
     let page = match request {
         ConvexPaginatedQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
-            let value = invoke_named_convex_function_async(
+            let request_cancellation = RequestCancellationGuard::new();
+            let value = invoke_named_convex_function_async_cancellable(
                 &service,
                 &registry,
                 &tenant_id,
@@ -721,19 +728,43 @@ pub(crate) async fn paginated_query(
                     cursor: request.cursor,
                     auth: auth.clone(),
                 },
+                request_cancellation.token(),
             )
             .await?;
             serde_json::from_value(value)
                 .map_err(|error| AppError::from(Error::Serialization(error.to_string())))?
         }
         ConvexPaginatedQueryRequest::Named(request) => {
-            run_blocking(move || {
-                execute_named_paginated_query_request(&service, &registry, &tenant_id, request)
-            })
-            .await?
+            let query = registry.resolve_paginated_query(
+                &request.name,
+                &request.args,
+                request.page_size,
+                request.cursor,
+            )?;
+            let request_cancellation = RequestCancellationGuard::new();
+            let cancellation = request_cancellation.token();
+            let cancellation_check = cancellation.clone();
+            service
+                .paginate_documents_async_cancellable(
+                    tenant_id.clone(),
+                    query,
+                    cancellation.cancelled(),
+                    move || check_host_cancellation(&cancellation_check),
+                )
+                .await?
         }
         ConvexPaginatedQueryRequest::Raw { query } => {
-            run_blocking(move || service.paginate_documents(&tenant_id, &query)).await?
+            let request_cancellation = RequestCancellationGuard::new();
+            let cancellation = request_cancellation.token();
+            let cancellation_check = cancellation.clone();
+            service
+                .paginate_documents_async_cancellable(
+                    tenant_id.clone(),
+                    query,
+                    cancellation.cancelled(),
+                    move || check_host_cancellation(&cancellation_check),
+                )
+                .await?
         }
     };
     Ok(Json(page))
@@ -756,7 +787,8 @@ pub(crate) async fn mutation(
     record_authenticated_usage(&state, auth.as_ref()).await;
     let value = match request {
         ConvexMutationRequest::Named(request) if registry.runtime_bundle().is_some() => {
-            invoke_named_convex_function_async(
+            let request_cancellation = RequestCancellationGuard::new();
+            invoke_named_convex_function_async_cancellable(
                 &service,
                 &registry,
                 &tenant_id,
@@ -768,24 +800,22 @@ pub(crate) async fn mutation(
                     cursor: None,
                     auth: auth.clone(),
                 },
+                request_cancellation.token(),
             )
             .await?
         }
         ConvexMutationRequest::Named(request) => {
-            run_blocking(move || {
-                execute_named_mutation_request(&service, &registry, &tenant_id, request)
-            })
-            .await?
+            let mutation = registry.resolve_mutation(&request.name, &request.args)?;
+            dispatch_convex_mutation_async(&service, &registry, &tenant_id, mutation, None).await?
         }
         ConvexMutationRequest::Raw { mutation } => {
-            run_blocking(move || {
-                dispatch_convex_mutation(
-                    &service,
-                    &registry,
-                    &tenant_id,
-                    ConvexExecutableMutation::Mutation(mutation),
-                )
-            })
+            dispatch_convex_mutation_async(
+                &service,
+                &registry,
+                &tenant_id,
+                ConvexExecutableMutation::Mutation(mutation),
+                None,
+            )
             .await?
         }
     };
@@ -809,7 +839,8 @@ pub(crate) async fn action(
     record_authenticated_usage(&state, auth.as_ref()).await;
     let value = match request {
         ConvexActionRequest::Named(request) if registry.runtime_bundle().is_some() => {
-            invoke_named_convex_function_async(
+            let request_cancellation = RequestCancellationGuard::new();
+            invoke_named_convex_function_async_cancellable(
                 &service,
                 &registry,
                 &tenant_id,
@@ -821,24 +852,22 @@ pub(crate) async fn action(
                     cursor: None,
                     auth: auth.clone(),
                 },
+                request_cancellation.token(),
             )
             .await?
         }
         ConvexActionRequest::Named(request) => {
-            run_blocking(move || {
-                execute_named_action_request(&service, &registry, &tenant_id, request)
-            })
-            .await?
+            let action = registry.resolve_action(&request.name, &request.args)?;
+            execute_convex_action_async(&service, &registry, &tenant_id, action, None).await?
         }
         ConvexActionRequest::Raw { action } => {
-            run_blocking(move || {
-                execute_convex_action(
-                    &service,
-                    &registry,
-                    &tenant_id,
-                    ConvexExecutableAction::Action(action),
-                )
-            })
+            execute_convex_action_async(
+                &service,
+                &registry,
+                &tenant_id,
+                ConvexExecutableAction::Action(action),
+                None,
+            )
             .await?
         }
     };
@@ -924,7 +953,7 @@ pub(crate) async fn schedule_after(
         },
     };
 
-    let job_id = run_blocking(move || service.schedule_mutation(&tenant_id, request)).await?;
+    let job_id = service.schedule_mutation_async(tenant_id, request).await?;
     Ok((
         StatusCode::CREATED,
         Json(ScheduleResponse {
@@ -964,7 +993,7 @@ pub(crate) async fn schedule_at(
         mutation,
     };
 
-    let job_id = run_blocking(move || service.schedule_mutation(&tenant_id, request)).await?;
+    let job_id = service.schedule_mutation_async(tenant_id, request).await?;
     Ok((
         StatusCode::CREATED,
         Json(ScheduleResponse {
@@ -988,7 +1017,9 @@ pub(crate) async fn cancel_scheduled_job(
         .expect("convex scheduled job cancel route requires Convex support state");
     let auth = registry.verify_authorization_header(&headers).await?;
     record_authenticated_usage(&state, auth.as_ref()).await;
-    run_blocking(move || service.cancel_scheduled_job(&tenant_id, &job_id)).await?;
+    service
+        .cancel_scheduled_job_async(tenant_id, job_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1002,7 +1033,7 @@ pub(crate) async fn ws(
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
     let tenant_check = tenant_id.clone();
-    run_blocking(move || service.ensure_tenant_exists(&tenant_check)).await?;
+    service.ensure_tenant_exists_async(tenant_check).await?;
     let registry = state
         .convex_registry
         .clone()
@@ -1347,6 +1378,39 @@ mod tests {
         );
 
         assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn runtime_async_db_get_precancel_records_canceled_host_op_metric() {
+        let (_tempdir, service, tenant_id, bridge) = runtime_bridge_fixture();
+        let document_id = service
+            .insert_document(
+                &tenant_id,
+                TableName::new("messages").expect("table should build"),
+                serde_json::Map::from_iter([("body".to_string(), json!("hello"))]),
+            )
+            .expect("document insert should succeed");
+        let cancellation = HostCallCancellation::default();
+        cancellation.cancel();
+
+        let result = bridge
+            .call_async(
+                HostCallRequest {
+                    operation: "convex.ctx.db.get".to_string(),
+                    payload: json!({
+                        "table": "messages",
+                        "id": document_id.to_string(),
+                    }),
+                },
+                cancellation,
+            )
+            .await;
+
+        assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
+        assert_eq!(
+            bridge.registry.runtime_metrics_snapshot().canceled_host_ops,
+            1
+        );
     }
 
     #[test]

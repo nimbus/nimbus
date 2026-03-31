@@ -8,8 +8,10 @@ use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
 use tempfile::tempdir;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 use tokio::time::{Duration, timeout};
 
 use crate::evaluator::{
@@ -80,6 +82,71 @@ async fn spawn_scheduler(
         crate::scheduler::run_scheduler_with_interval(service, shutdown_rx, interval).await;
     });
     (shutdown_tx, handle)
+}
+
+struct BlockingCancellationProbe {
+    entered: Notify,
+    cancel: Notify,
+    cancelled: AtomicBool,
+    first_check: AtomicBool,
+    release_gate: (Mutex<bool>, Condvar),
+}
+
+impl BlockingCancellationProbe {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: Notify::new(),
+            cancel: Notify::new(),
+            cancelled: AtomicBool::new(false),
+            first_check: AtomicBool::new(true),
+            release_gate: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    async fn wait_for_first_check(&self) {
+        self.entered.notified().await;
+    }
+
+    fn trigger_cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.cancel.notify_one();
+    }
+
+    fn release(&self) {
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking cancellation probe should acquire release lock");
+        *released = true;
+        cvar.notify_all();
+    }
+
+    async fn cancel_wait(self: Arc<Self>) {
+        self.cancel.notified().await;
+    }
+
+    fn check(self: Arc<Self>) -> impl Fn() -> neovex_core::Result<()> + Send + 'static {
+        move || {
+            if self.first_check.swap(false, Ordering::SeqCst) {
+                self.entered.notify_one();
+                let (lock, cvar) = &self.release_gate;
+                let mut released = lock
+                    .lock()
+                    .expect("blocking cancellation probe should acquire release lock");
+                while !*released {
+                    released = cvar
+                        .wait(released)
+                        .expect("blocking cancellation probe should wait for release");
+                }
+            }
+
+            if self.cancelled.load(Ordering::SeqCst) {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
 
 #[test]
@@ -1524,6 +1591,56 @@ async fn query_documents_cancellable_stops_during_index_scan() {
 }
 
 #[tokio::test]
+async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work_unwinds() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    for rank in 0..32 {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let probe = BlockingCancellationProbe::new();
+    let handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let probe_for_wait = probe.clone();
+        let probe_for_check = probe.clone();
+        async move {
+            service
+                .query_documents_async_cancellable(
+                    tenant_id,
+                    query_for("tasks"),
+                    probe_for_wait.cancel_wait(),
+                    probe_for_check.check(),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), probe.wait_for_first_check())
+        .await
+        .expect("query should reach cooperative cancellation check");
+    probe.trigger_cancel();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async query should resolve promptly after cancellation")
+        .expect("query task should join successfully")
+        .expect_err("query should cancel");
+    assert!(matches!(error, Error::Cancelled));
+
+    probe.release();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[tokio::test]
 async fn paginated_query_uses_index_for_range_filter() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -1598,6 +1715,60 @@ async fn paginated_query_uses_index_for_range_filter() {
     assert_eq!(second_page.data.len(), 2);
     assert_eq!(second_page.data[0]["rank"], json!(7));
     assert_eq!(second_page.data[1]["rank"], json!(8));
+}
+
+#[tokio::test]
+async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_work_unwinds() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    for rank in 0..32 {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let probe = BlockingCancellationProbe::new();
+    let handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let probe_for_wait = probe.clone();
+        let probe_for_check = probe.clone();
+        async move {
+            service
+                .paginate_documents_async_cancellable(
+                    tenant_id,
+                    PaginatedQuery {
+                        query: query_for("tasks"),
+                        page_size: 8,
+                        after: None,
+                    },
+                    probe_for_wait.cancel_wait(),
+                    probe_for_check.check(),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), probe.wait_for_first_check())
+        .await
+        .expect("paginated query should reach cooperative cancellation check");
+    probe.trigger_cancel();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async paginated query should resolve promptly after cancellation")
+        .expect("paginated query task should join successfully")
+        .expect_err("paginated query should cancel");
+    assert!(matches!(error, Error::Cancelled));
+
+    probe.release();
+    tokio::time::sleep(Duration::from_millis(25)).await;
 }
 
 #[tokio::test]

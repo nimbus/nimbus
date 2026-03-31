@@ -1,3 +1,6 @@
+use std::future::{Future, pending};
+use std::sync::Arc;
+
 use std::cmp::Ordering;
 
 use neovex_core::{
@@ -23,6 +26,39 @@ impl Service {
         runtime.store.scan_table(table)
     }
 
+    /// Lists documents in a logical table asynchronously.
+    pub async fn list_documents_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+    ) -> Result<Vec<Document>> {
+        self.list_documents_async_cancellable(tenant_id, table, pending(), || Ok(()))
+            .await
+    }
+
+    /// Lists documents in a logical table asynchronously with cooperative cancellation.
+    pub async fn list_documents_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Vec<Document>>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.call_blocking_cancellable(cancel_wait, move |service| {
+            let runtime = service.get_existing_tenant(&tenant_id)?;
+            let _operation = runtime.enter_operation(&tenant_id)?;
+            let mut check_cancel = || check_cancel();
+            runtime
+                .store
+                .scan_table_cancellable(&table, &mut check_cancel)
+        })
+        .await
+    }
+
     /// Fetches a single document in a logical table.
     pub fn get_document(
         &self,
@@ -38,9 +74,49 @@ impl Service {
             .ok_or(Error::DocumentNotFound(document_id))
     }
 
+    /// Fetches a single document in a logical table asynchronously.
+    pub async fn get_document_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+    ) -> Result<Document> {
+        self.call_blocking(move |service| service.get_document(&tenant_id, &table, document_id))
+            .await
+    }
+
     /// Evaluates a query for a tenant.
     pub fn query_documents(&self, tenant_id: &TenantId, query: &Query) -> Result<Vec<Document>> {
         self.query_documents_cancellable(tenant_id, query, &mut || Ok(()))
+    }
+
+    /// Evaluates a query for a tenant asynchronously.
+    pub async fn query_documents_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: Query,
+    ) -> Result<Vec<Document>> {
+        self.query_documents_async_cancellable(tenant_id, query, pending(), || Ok(()))
+            .await
+    }
+
+    /// Evaluates a query for a tenant asynchronously with cooperative cancellation.
+    pub async fn query_documents_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: Query,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Vec<Document>>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.call_blocking_cancellable(cancel_wait, move |service| {
+            let mut check_cancel = || check_cancel();
+            service.query_documents_cancellable(&tenant_id, &query, &mut check_cancel)
+        })
+        .await
     }
 
     /// Evaluates a query for a tenant while checking for cancellation between rows.
@@ -58,6 +134,35 @@ impl Service {
     /// Evaluates a paginated query for a tenant.
     pub fn paginate_documents(&self, tenant_id: &TenantId, query: &PaginatedQuery) -> Result<Page> {
         self.paginate_documents_cancellable(tenant_id, query, &mut || Ok(()))
+    }
+
+    /// Evaluates a paginated query for a tenant asynchronously.
+    pub async fn paginate_documents_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: PaginatedQuery,
+    ) -> Result<Page> {
+        self.paginate_documents_async_cancellable(tenant_id, query, pending(), || Ok(()))
+            .await
+    }
+
+    /// Evaluates a paginated query for a tenant asynchronously with cooperative cancellation.
+    pub async fn paginate_documents_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: PaginatedQuery,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Page>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.call_blocking_cancellable(cancel_wait, move |service| {
+            let mut check_cancel = || check_cancel();
+            service.paginate_documents_cancellable(&tenant_id, &query, &mut check_cancel)
+        })
+        .await
     }
 
     /// Evaluates a paginated query for a tenant while checking for cancellation between rows.
@@ -88,11 +193,30 @@ impl Service {
         runtime.store.read_commit_log_from(from)
     }
 
+    /// Reads commit log entries asynchronously.
+    pub async fn read_commit_log_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        after: SequenceNumber,
+    ) -> Result<Vec<CommitEntry>> {
+        self.call_blocking(move |service| service.read_commit_log(&tenant_id, after))
+            .await
+    }
+
     /// Returns the latest committed sequence number for a tenant.
     pub fn latest_sequence(&self, tenant_id: &TenantId) -> Result<SequenceNumber> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime.store.latest_sequence()
+    }
+
+    /// Returns the latest committed sequence number for a tenant asynchronously.
+    pub async fn latest_sequence_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<SequenceNumber> {
+        self.call_blocking(move |service| service.latest_sequence(&tenant_id))
+            .await
     }
 }
 

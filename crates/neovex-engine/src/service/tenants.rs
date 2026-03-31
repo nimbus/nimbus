@@ -27,6 +27,12 @@ impl Service {
         Ok(())
     }
 
+    /// Creates a tenant explicitly asynchronously.
+    pub async fn create_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
+        self.call_blocking(move |service| service.create_tenant(tenant_id))
+            .await
+    }
+
     /// Lists all tenant ids on disk.
     pub fn list_tenants(&self) -> Result<Vec<TenantId>> {
         let mut tenants = Vec::new();
@@ -45,6 +51,12 @@ impl Service {
         }
         tenants.sort();
         Ok(tenants)
+    }
+
+    /// Lists all tenant ids on disk asynchronously.
+    pub async fn list_tenants_async(self: &Arc<Self>) -> Result<Vec<TenantId>> {
+        self.call_blocking(move |service| service.list_tenants())
+            .await
     }
 
     /// Deletes a tenant database and evicts it from memory.
@@ -69,11 +81,23 @@ impl Service {
         Ok(())
     }
 
+    /// Deletes a tenant database and evicts it from memory asynchronously.
+    pub async fn delete_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
+        self.call_blocking(move |service| service.delete_tenant(&tenant_id))
+            .await
+    }
+
     /// Verifies that a tenant exists.
     pub fn ensure_tenant_exists(&self, tenant_id: &TenantId) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         Ok(())
+    }
+
+    /// Verifies that a tenant exists asynchronously.
+    pub async fn ensure_tenant_exists_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
+        self.call_blocking(move |service| service.ensure_tenant_exists(&tenant_id))
+            .await
     }
 
     pub(super) fn get_existing_tenant(&self, tenant_id: &TenantId) -> Result<Arc<TenantRuntime>> {

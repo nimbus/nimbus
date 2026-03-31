@@ -2,6 +2,9 @@
 name = "neovex-bin"
 version = "0.1.0"
 edition = "2024"
+description = "Self-hosted JavaScript backend runtime with V8"
+repository = "https://github.com/agentstation/neovex"
+license-file = "../../LICENSE"
 
 [lints]
 workspace = true

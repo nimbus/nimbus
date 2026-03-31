@@ -20,11 +20,8 @@ pub(crate) async fn run_scheduler_with_interval(
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let service = service.clone();
-                match tokio::task::spawn_blocking(move || tick(service.as_ref())).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => tracing::error!(error = %error, "scheduler tick failed"),
-                    Err(error) => tracing::error!(error = %error, "scheduler task failed"),
+                if let Err(error) = tick_async(&service).await {
+                    tracing::error!(error = %error, "scheduler tick failed");
                 }
             }
             changed = shutdown.changed() => {
@@ -37,10 +34,11 @@ pub(crate) async fn run_scheduler_with_interval(
     }
 }
 
-pub(crate) fn tick(service: &Service) -> Result<()> {
-    tick_at(service, Timestamp::now())
+pub(crate) async fn tick_async(service: &Arc<Service>) -> Result<()> {
+    tick_at_async(service, Timestamp::now()).await
 }
 
+#[cfg(test)]
 pub(crate) fn tick_at(service: &Service, now: Timestamp) -> Result<()> {
     for tenant_id in service.loaded_tenant_ids() {
         if let Err(error) = process_tenant(service, &tenant_id, now) {
@@ -50,12 +48,33 @@ pub(crate) fn tick_at(service: &Service, now: Timestamp) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn tick_at_async(service: &Arc<Service>, now: Timestamp) -> Result<()> {
+    for tenant_id in service.loaded_tenant_ids() {
+        if let Err(error) = process_tenant_async(service, &tenant_id, now).await {
+            tracing::warn!(tenant = %tenant_id, error = %error, "scheduler failed for tenant");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn process_tenant(service: &Service, tenant_id: &TenantId, now: Timestamp) -> Result<()> {
     process_due_jobs(service, tenant_id, now)?;
     process_cron_jobs(service, tenant_id, now)?;
     Ok(())
 }
 
+async fn process_tenant_async(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    now: Timestamp,
+) -> Result<()> {
+    process_due_jobs_async(service, tenant_id, now).await?;
+    process_cron_jobs_async(service, tenant_id, now).await?;
+    Ok(())
+}
+
+#[cfg(test)]
 fn process_due_jobs(service: &Service, tenant_id: &TenantId, now: Timestamp) -> Result<()> {
     let due_jobs = service.claim_due_jobs(tenant_id, now)?;
     for job in due_jobs {
@@ -101,6 +120,61 @@ fn process_due_jobs(service: &Service, tenant_id: &TenantId, now: Timestamp) -> 
     Ok(())
 }
 
+async fn process_due_jobs_async(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    now: Timestamp,
+) -> Result<()> {
+    let due_jobs = service.claim_due_jobs_async(tenant_id.clone(), now).await?;
+    for job in due_jobs {
+        let execution_id = format!("scheduled:{}", job.id);
+        let result = service
+            .execute_scheduled_mutation_async(tenant_id.clone(), execution_id, job.mutation.clone())
+            .await;
+        match &result {
+            Ok(true) => {
+                tracing::debug!(tenant = %tenant_id, job_id = %job.id, "scheduled job completed");
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    tenant = %tenant_id,
+                    job_id = %job.id,
+                    "scheduled job replay deduplicated"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    tenant = %tenant_id,
+                    job_id = %job.id,
+                    error = %error,
+                    "scheduled job failed"
+                );
+            }
+        }
+
+        let execution_result = ScheduledJobResult {
+            id: job.id,
+            run_at: job.run_at,
+            finished_at: Timestamp::now(),
+            mutation: job.mutation,
+            outcome: if result.is_ok() {
+                ScheduledJobOutcome::Completed
+            } else {
+                ScheduledJobOutcome::Failed
+            },
+            error: result.as_ref().err().map(ToString::to_string),
+        };
+        service
+            .record_scheduled_job_result_async(tenant_id.clone(), execution_result)
+            .await?;
+        service
+            .complete_scheduled_job_async(tenant_id.clone(), job.id)
+            .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn process_cron_jobs(service: &Service, tenant_id: &TenantId, now: Timestamp) -> Result<()> {
     let cron_jobs = service.load_cron_jobs(tenant_id)?;
     for mut cron in cron_jobs {
@@ -126,6 +200,40 @@ fn process_cron_jobs(service: &Service, tenant_id: &TenantId, now: Timestamp) ->
     Ok(())
 }
 
+async fn process_cron_jobs_async(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    now: Timestamp,
+) -> Result<()> {
+    let cron_jobs = service.load_cron_jobs_async(tenant_id.clone()).await?;
+    for mut cron in cron_jobs {
+        if !cron.enabled || cron.next_run.0 > now.0 {
+            continue;
+        }
+
+        if let Err(error) =
+            dispatch_mutation_async(service, tenant_id.clone(), cron.mutation.clone()).await
+        {
+            tracing::warn!(
+                tenant = %tenant_id,
+                cron = %cron.name,
+                error = %error,
+                "cron job failed"
+            );
+        } else {
+            tracing::debug!(tenant = %tenant_id, cron = %cron.name, "cron job completed");
+        }
+
+        cron.last_run = Some(now);
+        cron.next_run = cron.schedule.next_after(now);
+        service
+            .update_cron_job_async(tenant_id.clone(), cron)
+            .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn dispatch_mutation(service: &Service, tenant_id: &TenantId, mutation: Mutation) -> Result<()> {
     match mutation {
         Mutation::Insert { table, fields } => service
@@ -135,5 +243,23 @@ fn dispatch_mutation(service: &Service, tenant_id: &TenantId, mutation: Mutation
             .update_document(tenant_id, table, id, patch)
             .map(|_| ()),
         Mutation::Delete { table, id } => service.delete_document(tenant_id, table, id),
+    }
+}
+
+async fn dispatch_mutation_async(
+    service: &Arc<Service>,
+    tenant_id: TenantId,
+    mutation: Mutation,
+) -> Result<()> {
+    match mutation {
+        Mutation::Insert { table, fields } => service
+            .insert_document_async(tenant_id, table, fields)
+            .await
+            .map(|_| ()),
+        Mutation::Update { table, id, patch } => service
+            .update_document_async(tenant_id, table, id, patch)
+            .await
+            .map(|_| ()),
+        Mutation::Delete { table, id } => service.delete_document_async(tenant_id, table, id).await,
     }
 }
