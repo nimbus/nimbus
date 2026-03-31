@@ -621,11 +621,11 @@ Initial instrumentation now includes:
 - separate pre-start-vs-in-flight cancellation counters for host ops
 - per-host-operation started / succeeded / failed / canceled counts in runtime
   diagnostics
+- tracing spans for async host-op enqueue / start / finish / cancel transitions
 
 Candidate follow-on work:
 
 - per-tenant queue wait and execution distributions
-- tracing spans for host-op enqueue/start/finish/cancel transitions
 - clearer timeout vs disconnect vs explicit-cancel attribution
 - correlation between server request ids and runtime invocation ids
 

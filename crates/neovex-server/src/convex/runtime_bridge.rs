@@ -952,7 +952,89 @@ fn record_host_operation_result(
     }
 }
 
+#[derive(Clone)]
+struct AsyncHostCallTrace {
+    span: tracing::Span,
+    enqueued_at: std::time::Instant,
+}
+
+impl AsyncHostCallTrace {
+    fn new(bridge: &ConvexRuntimeBridge, operation: &str) -> Self {
+        static NEXT_ASYNC_HOST_CALL_ID: AtomicU64 = AtomicU64::new(1);
+
+        let span = tracing::debug_span!(
+            "convex_runtime_async_host_call",
+            tenant = %bridge.tenant_id,
+            session_id = %bridge.session_id,
+            operation,
+            host_call_id = NEXT_ASYNC_HOST_CALL_ID.fetch_add(1, Ordering::Relaxed),
+        );
+        let trace = Self {
+            span,
+            enqueued_at: std::time::Instant::now(),
+        };
+        tracing::debug!(
+            parent: &trace.span,
+            "convex runtime async host call enqueued"
+        );
+        trace
+    }
+
+    fn record_canceled_before_start(&self) {
+        tracing::debug!(
+            parent: &self.span,
+            queue_wait_ms = self.enqueued_at.elapsed().as_secs_f64() * 1000.0,
+            "convex runtime async host call canceled before start"
+        );
+    }
+
+    fn record_started(&self) -> std::time::Instant {
+        let started_at = std::time::Instant::now();
+        tracing::debug!(
+            parent: &self.span,
+            queue_wait_ms = started_at.duration_since(self.enqueued_at).as_secs_f64() * 1000.0,
+            "convex runtime async host call started"
+        );
+        started_at
+    }
+
+    fn record_finished(
+        &self,
+        started_at: std::time::Instant,
+        result: &std::result::Result<Value, NeovexRuntimeError>,
+    ) {
+        let execution_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+        match result {
+            Ok(_) => tracing::debug!(
+                parent: &self.span,
+                execution_ms,
+                "convex runtime async host call finished"
+            ),
+            Err(NeovexRuntimeError::Cancelled) => tracing::debug!(
+                parent: &self.span,
+                execution_ms,
+                "convex runtime async host call canceled in flight"
+            ),
+            Err(error) => tracing::debug!(
+                parent: &self.span,
+                execution_ms,
+                error = %error,
+                "convex runtime async host call failed"
+            ),
+        }
+    }
+
+    fn record_join_failure(&self, error: &tokio::task::JoinError) {
+        tracing::debug!(
+            parent: &self.span,
+            error = %error,
+            "convex runtime async host call failed before completion"
+        );
+    }
+}
+
 async fn execute_async_blocking_host_call<F>(
+    trace: AsyncHostCallTrace,
     metrics: Arc<neovex_runtime::RuntimeMetrics>,
     operation: String,
     cancellation: HostCallCancellation,
@@ -965,14 +1047,30 @@ where
 {
     if cancellation.is_cancelled() {
         metrics.record_host_operation_canceled_before_start(&operation);
+        trace.record_canceled_before_start();
         return Err(NeovexRuntimeError::Cancelled);
     }
 
-    metrics.record_host_operation_started(&operation);
-    let handle = tokio::task::spawn_blocking(move || task(cancellation));
-    let result = handle.await.map_err(|error| {
-        NeovexRuntimeError::Contract(format!("runtime host bridge task failed: {error}"))
-    })?;
+    let metrics_for_task = metrics.clone();
+    let operation_for_task = operation.clone();
+    let trace_for_task = trace.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        let started_at = trace_for_task.record_started();
+        metrics_for_task.record_host_operation_started(&operation_for_task);
+        let result = task(cancellation);
+        (started_at, result)
+    });
+    let (started_at, result) = match handle.await {
+        Ok(output) => output,
+        Err(error) => {
+            trace.record_join_failure(&error);
+            metrics.record_host_operation_failed(&operation);
+            return Err(NeovexRuntimeError::Contract(format!(
+                "runtime host bridge task failed: {error}"
+            )));
+        }
+    };
+    trace.record_finished(started_at, &result);
     record_host_operation_result(&metrics, &operation, &result);
     result
 }
@@ -1010,9 +1108,11 @@ impl HostBridge for ConvexRuntimeBridge {
         cancellation: HostCallCancellation,
     ) -> HostBridgeFuture {
         let bridge = self.clone();
+        let trace = AsyncHostCallTrace::new(&bridge, &request.operation);
         let metrics = bridge.registry.runtime_policy().metrics();
         let operation = request.operation.clone();
         Box::pin(execute_async_blocking_host_call(
+            trace,
             metrics,
             operation,
             cancellation,
@@ -1614,6 +1714,10 @@ mod tests {
         cancellation.cancel();
 
         let result = execute_async_blocking_host_call(
+            AsyncHostCallTrace {
+                span: tracing::Span::none(),
+                enqueued_at: std::time::Instant::now(),
+            },
             policy.metrics(),
             "convex.ctx.db.get".to_string(),
             cancellation,
@@ -1650,6 +1754,10 @@ mod tests {
             let cancellation = cancellation.clone();
             async move {
                 execute_async_blocking_host_call(
+                    AsyncHostCallTrace {
+                        span: tracing::Span::none(),
+                        enqueued_at: std::time::Instant::now(),
+                    },
                     metrics,
                     "convex.ctx.db.get".to_string(),
                     cancellation,
@@ -1705,6 +1813,10 @@ mod tests {
             let cancellation = cancellation.clone();
             async move {
                 execute_async_blocking_host_call(
+                    AsyncHostCallTrace {
+                        span: tracing::Span::none(),
+                        enqueued_at: std::time::Instant::now(),
+                    },
                     metrics,
                     "convex.ctx.db.insert".to_string(),
                     cancellation,
