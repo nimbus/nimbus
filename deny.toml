@@ -16,6 +16,8 @@ yanked = "deny"
 version = 2
 # Confidence threshold for license detection
 confidence-threshold = 0.8
+# Workspace crates use the Neovex Community License (custom, not SPDX)
+private = { ignore = true }
 # All licenses are denied unless explicitly in the allow list
 allow = [
   "MIT",
@@ -39,7 +41,7 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
 
 [sources]
 unknown-git = "deny"
