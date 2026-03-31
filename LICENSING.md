@@ -20,7 +20,7 @@ Free use includes:
 - internal use
 - self-hosting
 - production use
-- internal modifications and internal forks
+- internal modifications (including maintaining private forks)
 
 ## When an enterprise license is required
 
