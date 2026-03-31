@@ -1,0 +1,18 @@
+{
+  "name": "convex-http",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "convex codegen --app .",
+    "dev": "npm run codegen && vite",
+    "build": "npm run codegen && vite build",
+    "test": "npm run codegen && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "convex": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1"
+  }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "neovex-test-support"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+neovex-core = { path = "../neovex-core" }
+futures.workspace = true
+http.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true

@@ -1,0 +1,43 @@
+[workspace]
+members = [
+    "crates/neovex",
+    "crates/neovex-bin",
+    "crates/neovex-runtime",
+    "crates/neovex-core",
+    "crates/neovex-engine",
+    "crates/neovex-server",
+    "crates/neovex-storage",
+    "crates/neovex-test-support",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unused = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
+[workspace.dependencies]
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+deno_core = "0.395"
+deno_error = "0.7"
+futures = "0.3"
+http = "1"
+redb = "2"
+reqwest = { version = "0.12", features = ["json"] }
+ring = "0.17"
+rmp-serde = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+tower-http = { version = "0.6", features = ["fs"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+time = "0.3"
+ulid = { version = "1", features = ["serde"] }

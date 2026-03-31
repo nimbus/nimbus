@@ -1,0 +1,22 @@
+{
+  "name": "neovex-workspace",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "workspaces": [
+    "packages/convex",
+    "packages/neovex",
+    "packages/codegen",
+    "demos/convex/html",
+    "demos/convex/http"
+  ],
+  "scripts": {
+    "convex:codegen": "convex codegen --app demos/convex/html",
+    "convex:build": "npm run build --workspaces --if-present",
+    "convex:test": "npm run test --workspaces --if-present",
+    "convex:server:html": "cargo run -p neovex-bin -- --port 8080 --convex-app-dir ./demos/convex/html",
+    "convex:server:http": "cargo run -p neovex-bin -- --port 8080 --convex-app-dir ./demos/convex/http",
+    "convex:demo:html": "npm run dev --workspace convex-html",
+    "convex:demo:http": "npm run dev --workspace convex-http"
+  }
+}
