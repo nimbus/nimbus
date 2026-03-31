@@ -355,18 +355,6 @@ pub(super) fn execute_named_mutation_request_direct(
     dispatch_convex_mutation(service, registry, tenant_id, mutation)
 }
 
-pub(super) fn execute_named_mutation_request_direct_cancellable(
-    service: &neovex_engine::Service,
-    registry: &ConvexRegistry,
-    tenant_id: &TenantId,
-    name: &str,
-    args: &Value,
-    cancellation: &HostCallCancellation,
-) -> Result<Value, Error> {
-    let mutation = registry.resolve_mutation(name, args)?;
-    dispatch_convex_mutation_cancellable(service, registry, tenant_id, mutation, cancellation)
-}
-
 #[cfg(test)]
 pub(super) fn execute_named_action_request_direct(
     service: &neovex_engine::Service,
@@ -377,18 +365,6 @@ pub(super) fn execute_named_action_request_direct(
 ) -> Result<Value, Error> {
     let action = registry.resolve_action(name, args)?;
     execute_convex_action(service, registry, tenant_id, action)
-}
-
-pub(super) fn execute_named_action_request_direct_cancellable(
-    service: &neovex_engine::Service,
-    registry: &ConvexRegistry,
-    tenant_id: &TenantId,
-    name: &str,
-    args: &Value,
-    cancellation: &HostCallCancellation,
-) -> Result<Value, Error> {
-    let action = registry.resolve_action(name, args)?;
-    execute_convex_action_cancellable(service, registry, tenant_id, action, cancellation)
 }
 
 pub(super) fn runtime_error_to_core(error: NeovexRuntimeError) -> Error {

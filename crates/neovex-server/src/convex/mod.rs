@@ -401,12 +401,6 @@ enum ConvexClientMessage {
     },
 }
 
-#[derive(Debug, Deserialize)]
-struct ConvexRuntimeInvokePayload {
-    request: InvocationRequest,
-    definition: ConvexFunctionDefinition,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 struct ConvexRuntimeHttpRouteInvokePayload {
     request: InvocationRequest,
@@ -1380,6 +1374,25 @@ mod tests {
         assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
     }
 
+    #[test]
+    fn runtime_cancellable_query_builder_start_short_circuits_before_dispatch() {
+        let (_tempdir, _service, _tenant_id, bridge) = runtime_bridge_fixture();
+        let cancellation = HostCallCancellation::default();
+        cancellation.cancel();
+
+        let result = bridge.dispatch_host_call_cancellable(
+            HostCallRequest {
+                operation: "convex.ctx.db.query.start".to_string(),
+                payload: json!({
+                    "table": "messages",
+                }),
+            },
+            &cancellation,
+        );
+
+        assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
+    }
+
     #[tokio::test]
     async fn runtime_async_db_get_precancel_records_canceled_host_op_metric() {
         let (_tempdir, service, tenant_id, bridge) = runtime_bridge_fixture();
@@ -1477,5 +1490,25 @@ mod tests {
             )
             .expect("document query should succeed");
         assert!(documents.is_empty());
+    }
+
+    #[test]
+    fn runtime_cancellable_unknown_operation_is_rejected() {
+        let (_tempdir, _service, _tenant_id, bridge) = runtime_bridge_fixture();
+
+        let result = bridge.dispatch_host_call_cancellable(
+            HostCallRequest {
+                operation: "convex.ctx.unknown".to_string(),
+                payload: json!({}),
+            },
+            &HostCallCancellation::default(),
+        );
+
+        match result {
+            Err(NeovexRuntimeError::Contract(message)) => {
+                assert!(message.contains("unsupported convex runtime operation"));
+            }
+            other => panic!("unexpected unsupported-op result: {other:?}"),
+        }
     }
 }

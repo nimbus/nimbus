@@ -1,12 +1,11 @@
 use super::dispatch::{
     check_host_cancellation, dispatch_convex_mutation_cancellable, dispatch_mutation,
     encode_runtime_core_result, ensure_runtime_host_not_cancelled,
-    execute_convex_action_cancellable, execute_named_action_request_direct_cancellable,
-    execute_named_mutation_request_direct_cancellable, execute_query_result_cancellable,
-    execute_schedule_command, runtime_error_to_core,
+    execute_convex_action_cancellable, execute_query_result_cancellable, execute_schedule_command,
+    runtime_error_to_core,
 };
 use super::http_actions::prepare_http_action_response_cancellable;
-use super::registry::{validate_runtime_definition, validate_runtime_http_route};
+use super::registry::validate_runtime_http_route;
 use super::subscriptions::{
     is_scalar_filter_value, should_replace_lower_bound, should_replace_upper_bound,
 };
@@ -999,7 +998,22 @@ impl ConvexRuntimeBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
         match request.operation.as_str() {
-            "convex.invoke" => self.invoke_cancellable(request.payload, cancellation),
+            "convex.ctx.db.query.start" => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_query_start(request.payload)
+            }
+            "convex.ctx.db.query.with_index" => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_query_with_index(request.payload)
+            }
+            "convex.ctx.db.query.filter" => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_query_filter(request.payload)
+            }
+            "convex.ctx.db.query.order" => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_query_order(request.payload)
+            }
             "convex.http_route" => {
                 self.invoke_http_route_cancellable(request.payload, cancellation)
             }
@@ -1058,10 +1072,13 @@ impl ConvexRuntimeBridge {
             "convex.ctx.scheduler.cancel" => {
                 self.invoke_ctx_scheduler_cancel_cancellable(request.payload, cancellation)
             }
-            other => self.dispatch_host_call(HostCallRequest {
-                operation: other.to_string(),
-                payload: request.payload,
-            }),
+            "convex.ctx.runtime.enter_nested_call" => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_runtime_enter_nested_call(request.payload)
+            }
+            other => Err(NeovexRuntimeError::Contract(format!(
+                "unsupported convex runtime operation: {other}"
+            ))),
         }
     }
 
@@ -1070,7 +1087,6 @@ impl ConvexRuntimeBridge {
         request: HostCallRequest,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
         match request.operation.as_str() {
-            "convex.invoke" => self.invoke(request.payload),
             "convex.http_route" => self.invoke_http_route(request.payload),
             "convex.ctx.query" => self.invoke_ctx_query(request.payload),
             "convex.ctx.paginated_query" => self.invoke_ctx_paginated_query(request.payload),
@@ -1103,113 +1119,6 @@ impl ConvexRuntimeBridge {
             other => Err(NeovexRuntimeError::Contract(format!(
                 "unsupported convex runtime operation: {other}"
             ))),
-        }
-    }
-
-    pub(super) fn invoke(&self, payload: Value) -> std::result::Result<Value, NeovexRuntimeError> {
-        let cancellation = HostCallCancellation::default();
-        self.invoke_cancellable(payload, &cancellation)
-    }
-
-    pub(super) fn invoke_cancellable(
-        &self,
-        payload: Value,
-        cancellation: &HostCallCancellation,
-    ) -> std::result::Result<Value, NeovexRuntimeError> {
-        let payload: ConvexRuntimeInvokePayload = serde_json::from_value(payload)?;
-        validate_runtime_definition(&payload.request, &payload.definition)?;
-
-        match payload.request.kind {
-            InvocationKind::Query => {
-                let query = self.registry.resolve_query_for_visibility(
-                    &payload.request.function_name,
-                    &payload.request.args,
-                    payload.definition.visibility,
-                );
-                match query {
-                    Ok(query) => {
-                        self.record_executable_query_read(&query);
-                        ensure_runtime_host_not_cancelled(cancellation)?;
-                        let mut check_cancel = || check_host_cancellation(cancellation);
-                        let result = execute_query_result_cancellable(
-                            &self.service,
-                            &self.tenant_id,
-                            query.clone(),
-                            &mut check_cancel,
-                        )
-                        .inspect(|value| self.record_query_result_value(&query, value));
-                        encode_runtime_core_result(result)
-                    }
-                    Err(error) => encode_runtime_core_result(Err(error)),
-                }
-            }
-            InvocationKind::PaginatedQuery => {
-                let response = payload.request.page_size.ok_or_else(|| {
-                    NeovexRuntimeError::Contract(
-                        "paginated runtime invocation missing page_size".to_string(),
-                    )
-                })?;
-                let query = self.registry.resolve_paginated_query_for_visibility(
-                    &payload.request.function_name,
-                    &payload.request.args,
-                    response,
-                    payload.request.cursor.clone(),
-                    payload.definition.visibility,
-                );
-                match query {
-                    Ok(query) => {
-                        ensure_runtime_host_not_cancelled(cancellation)?;
-                        let mut check_cancel = || check_host_cancellation(cancellation);
-                        let result = self
-                            .service
-                            .paginate_documents_cancellable(
-                                &self.tenant_id,
-                                &query,
-                                &mut check_cancel,
-                            )
-                            .and_then(|page| {
-                                self.record_paginated_window_read(
-                                    &query.query,
-                                    query.page_size,
-                                    query.after.as_ref(),
-                                    &page,
-                                );
-                                let value = serde_json::to_value(page)
-                                    .map_err(|error| Error::Serialization(error.to_string()))?;
-                                self.record_result_documents(&query.query.table, &value);
-                                Ok(value)
-                            });
-                        encode_runtime_core_result(result)
-                    }
-                    Err(error) => encode_runtime_core_result(Err(error)),
-                }
-            }
-            InvocationKind::Mutation => {
-                let response = execute_named_mutation_request_direct_cancellable(
-                    &self.service,
-                    &self.registry,
-                    &self.tenant_id,
-                    &payload.request.function_name,
-                    &payload.request.args,
-                    cancellation,
-                )
-                .map(ConvexRuntimeResponseEnvelope::ok)
-                .unwrap_or_else(ConvexRuntimeResponseEnvelope::from_core_error);
-                serde_json::to_value(response).map_err(NeovexRuntimeError::from)
-            }
-            InvocationKind::Action => {
-                let response = execute_named_action_request_direct_cancellable(
-                    &self.service,
-                    &self.registry,
-                    &self.tenant_id,
-                    &payload.request.function_name,
-                    &payload.request.args,
-                    cancellation,
-                )
-                .map(ConvexRuntimeResponseEnvelope::ok)
-                .unwrap_or_else(ConvexRuntimeResponseEnvelope::from_core_error);
-                serde_json::to_value(response).map_err(NeovexRuntimeError::from)
-            }
         }
     }
 

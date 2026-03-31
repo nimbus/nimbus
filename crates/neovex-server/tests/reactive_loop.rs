@@ -331,26 +331,31 @@ async fn convex_named_subscription_uses_runtime_bundle_when_available() {
         ]),
         Some(
             r#"
-const definitions = new Map([
-  ["tasks:all", { name: "tasks:all", kind: "query", plan: null }],
-  ["tasks:create", { name: "tasks:create", kind: "mutation", plan: null }],
-]);
-
-globalThis.__neovexInvoke = function(request) {
-  const response = globalThis.__neovexRawHostCall("convex.invoke", {
+globalThis.__neovexInvoke = async function(request) {
+  const ctx = globalThis.__neovexCreateContext({
     request,
-    definition: definitions.get(request.function_name),
+    sessionId: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        runtime: true,
-        value: response.value,
-      },
-    };
+  switch (request.function_name) {
+    case "tasks:all":
+      return {
+        status: "ok",
+        value: {
+          runtime: true,
+          value: await ctx.db.query("tasks").collect(),
+        },
+      };
+    case "tasks:create":
+      return {
+        status: "ok",
+        value: {
+          runtime: true,
+          value: await ctx.db.insert("tasks", { title: request.args.title }),
+        },
+      };
+    default:
+      throw new Error(`unexpected function: ${request.function_name}`);
   }
-  return response;
 };
 
 export {};
@@ -496,24 +501,22 @@ const definitions = new Map([
   }],
 ]);
 
-globalThis.__neovexInvoke = function(request) {
+globalThis.__neovexInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
-  const response = globalThis.__neovexRawHostCall("convex.ctx.paginated_query", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_paginated_query", {
     query: definition.plan,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
+    session_id: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        data: response.value.data.map((item) => ({ ...item, runtime: true })),
-        next_cursor: response.value.next_cursor,
-        has_more: response.value.has_more,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      data: value.data.map((item) => ({ ...item, runtime: true })),
+      next_cursor: value.next_cursor,
+      has_more: value.has_more,
+    },
+  };
 };
 
 export {};
@@ -600,23 +603,20 @@ globalThis.__neovexInvoke = async function(request) {
   const builder = normalizedAuthor
     ? ctx.db.query("messages").filter((q) => q.eq(q.field("author"), normalizedAuthor))
     : ctx.db.query("messages");
-  const response = globalThis.__neovexRawHostCall("convex.ctx.db.query.paginate", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
     session_id: `${request.kind}:${request.function_name}`,
     builder_id: builder.__builderId,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        data: response.value.data.map((item) => ({ ...item, runtime: true })),
-        next_cursor: response.value.next_cursor,
-        has_more: response.value.has_more,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      data: value.data.map((item) => ({ ...item, runtime: true })),
+      next_cursor: value.next_cursor,
+      has_more: value.has_more,
+    },
+  };
 };
 
 export {};
@@ -737,23 +737,20 @@ globalThis.__neovexInvoke = async function(request) {
     .query("messages")
     .filter((q) => q.gte(q.field("priority"), 0))
     .order("desc");
-  const response = globalThis.__neovexRawHostCall("convex.ctx.db.query.paginate", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
     session_id: `${request.kind}:${request.function_name}`,
     builder_id: builder.__builderId,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        data: response.value.data.map((item) => ({ ...item, runtime: true })),
-        next_cursor: response.value.next_cursor,
-        has_more: response.value.has_more,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      data: value.data.map((item) => ({ ...item, runtime: true })),
+      next_cursor: value.next_cursor,
+      has_more: value.has_more,
+    },
+  };
 };
 
 export {};
@@ -880,23 +877,20 @@ globalThis.__neovexInvoke = async function(request) {
   const builder = matchingProfiles.length >= 2
     ? ctx.db.query("tasks").filter((q) => q.eq(q.field("status"), "open"))
     : ctx.db.query("tasks").filter((q) => q.eq(q.field("status"), "done"));
-  const response = globalThis.__neovexRawHostCall("convex.ctx.db.query.paginate", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
     session_id: `${request.kind}:${request.function_name}`,
     builder_id: builder.__builderId,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        data: response.value.data.map((item) => ({ ...item, runtime: true })),
-        next_cursor: response.value.next_cursor,
-        has_more: response.value.has_more,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      data: value.data.map((item) => ({ ...item, runtime: true })),
+      next_cursor: value.next_cursor,
+      has_more: value.has_more,
+    },
+  };
 };
 
 export {};

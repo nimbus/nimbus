@@ -712,25 +712,21 @@ async fn convex_named_query_uses_runtime_bundle_when_available() {
         json!([]),
         Some(
             r#"
-const definitions = new Map([
-  ["messages:byAuthor", { name: "messages:byAuthor", kind: "query", plan: null }],
-]);
-
-globalThis.__neovexInvoke = function(request) {
-  const response = globalThis.__neovexRawHostCall("convex.invoke", {
+globalThis.__neovexInvoke = async function(request) {
+  const ctx = globalThis.__neovexCreateContext({
     request,
-    definition: definitions.get(request.function_name),
+    sessionId: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        runtime: true,
-        value: response.value,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      runtime: true,
+      value: await ctx.db
+        .query("messages")
+        .filter((q) => q.eq(q.field("author"), request.args.author))
+        .collect(),
+    },
+  };
 };
 
 export {};
@@ -826,21 +822,19 @@ function resolveTemplate(template, args) {
   return resolved;
 }
 
-globalThis.__neovexInvoke = function(request) {
+globalThis.__neovexInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
-  const response = globalThis.__neovexRawHostCall("convex.ctx.query", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query", {
     query: resolveTemplate(definition.plan, request.args ?? {}),
+    session_id: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        ctx: true,
-        value: response.value,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      ctx: true,
+      value,
+    },
+  };
 };
 
 export {};
@@ -1149,21 +1143,19 @@ function resolveTemplate(template, args) {
   return resolved;
 }
 
-globalThis.__neovexInvoke = function(request) {
+globalThis.__neovexInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
-  const response = globalThis.__neovexRawHostCall("convex.ctx.mutation", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_mutation", {
     mutation: resolveTemplate(definition.plan, request.args ?? {}),
+    session_id: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        ctx: true,
-        value: response.value,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      ctx: true,
+      value,
+    },
+  };
 };
 
 export {};
@@ -1424,21 +1416,19 @@ const definitions = new Map([
   }],
 ]);
 
-globalThis.__neovexInvoke = function(request) {
+globalThis.__neovexInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
-  const response = globalThis.__neovexRawHostCall("convex.ctx.action", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_action", {
     action: definition.plan,
+    session_id: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        ctx: true,
-        value: response.value,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      ctx: true,
+      value,
+    },
+  };
 };
 
 export {};
@@ -2250,13 +2240,16 @@ globalThis.__neovexInvoke = async function(request) {
   const builder = normalizedAuthor
     ? ctx.db.query("messages").filter((q) => q.eq(q.field("author"), normalizedAuthor))
     : ctx.db.query("messages");
-  const response = globalThis.__neovexRawHostCall("convex.ctx.db.query.paginate", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
     session_id: `${request.kind}:${request.function_name}`,
     builder_id: builder.__builderId,
     page_size: request.page_size,
     cursor: request.cursor ?? null,
   });
-  return response;
+  return {
+    status: "ok",
+    value,
+  };
 };
 
 export {};
@@ -3212,24 +3205,21 @@ const routesByName = new Map([
   }],
 ]);
 
-globalThis.__neovexInvoke = function(request) {
-  const response = globalThis.__neovexRawHostCall("convex.http_route", {
+globalThis.__neovexInvoke = async function(request) {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_http_route", {
     request,
     route: routesByName.get(request.function_name),
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        ...response.value,
-        body: {
-          runtime: true,
-          value: response.value.body,
-        },
+  return {
+    status: "ok",
+    value: {
+      ...value,
+      body: {
+        runtime: true,
+        value: value.body,
       },
-    };
-  }
-  return response;
+    },
+  };
 };
 
 export {};
@@ -4279,21 +4269,19 @@ function resolveTemplate(template, args) {
   return resolved;
 }
 
-globalThis.__neovexInvoke = function(request) {
+globalThis.__neovexInvoke = async function(request) {
   const definition = definitions.get(request.function_name);
-  const response = globalThis.__neovexRawHostCall("convex.ctx.mutation", {
+  const value = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_mutation", {
     mutation: resolveTemplate(definition.plan, request.args ?? {}),
+    session_id: `${request.kind}:${request.function_name}`,
   });
-  if (response.status === "ok") {
-    return {
-      status: "ok",
-      value: {
-        ctx: true,
-        value: response.value,
-      },
-    };
-  }
-  return response;
+  return {
+    status: "ok",
+    value: {
+      ctx: true,
+      value,
+    },
+  };
 };
 
 export {};
