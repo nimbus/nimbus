@@ -1,0 +1,13 @@
+# Local development configuration
+# These settings optimize local build iteration speed.
+
+# Use lld linker on Linux for faster linking (install: apt install lld)
+# Uncomment if you have lld installed:
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+#
+# [target.aarch64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Use local overrides file for personal settings
+# Create .cargo/config.local.toml for machine-specific config

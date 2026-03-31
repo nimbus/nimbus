@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use neovex_core::{Error, Result};
+use neovex_core::Error;
 use neovex_engine::Service;
-use neovex_runtime::InvocationAuth;
+use neovex_runtime::{HostCallCancellation, InvocationAuth};
 use serde_json::json;
 use tracing::warn;
 
@@ -97,16 +97,25 @@ impl std::fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
-/// Runs blocking engine/storage work on Tokio's blocking pool.
-pub(crate) async fn run_blocking<T, F>(task: F) -> std::result::Result<T, AppError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T> + Send + 'static,
-{
-    tokio::task::spawn_blocking(task)
-        .await
-        .map_err(|error| AppError::Core(Error::Internal(format!("blocking task failed: {error}"))))?
-        .map_err(AppError::from)
+#[derive(Debug, Default)]
+pub(crate) struct RequestCancellationGuard {
+    token: HostCallCancellation,
+}
+
+impl RequestCancellationGuard {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn token(&self) -> HostCallCancellation {
+        self.token.clone()
+    }
+}
+
+impl Drop for RequestCancellationGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+    }
 }
 
 pub(crate) async fn record_authenticated_usage(
@@ -121,11 +130,9 @@ pub(crate) async fn record_authenticated_usage(
     };
 
     let service = state.service.clone();
-    if let Err(error) = run_blocking(move || {
-        service.record_monthly_active_user(&token_identifier)?;
-        Ok(())
-    })
-    .await
+    if let Err(error) = service
+        .record_monthly_active_user_async(token_identifier)
+        .await
     {
         warn!(
             error = %error,

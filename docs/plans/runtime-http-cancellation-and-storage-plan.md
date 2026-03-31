@@ -14,6 +14,19 @@ This document is intentionally split into:
 2. a follow-on parity pass for direct non-runtime HTTP reads
 3. the full storage/service rewrite required for true preemption
 
+## Cross-Cutting Constraints
+
+- request authentication and `InvocationAuth` propagation stay unchanged across
+  Workstreams 1 and 2
+- cancellation stops execution; it does not alter auth verification or usage
+  accounting semantics
+- when a canceled request still produces an HTTP response, keep the existing
+  `Error::Cancelled` mapping / request-timeout-style behavior already used by
+  the server today
+- if the client has already disconnected, the connection may close before any
+  response is observed; the important invariant is teardown and execution
+  cancellation, not forcing a response onto a dead socket
+
 ---
 
 ## Current Verified State
@@ -292,6 +305,9 @@ Important nuance:
   while the blocking task exits cooperatively on its next cancellation poll
 - this is acceptable only for read paths that already have cooperative scan
   checkpoints
+- when the handler is still able to return an HTTP response, cancellation should
+  continue to surface through the existing `Error::Cancelled` path rather than a
+  new status mapping
 
 The direct query/paginated code paths should be updated to use:
 
@@ -387,6 +403,7 @@ Recommended shape:
   - scheduler state transitions
   - schema/index rebuild mutations
   - commit / rollback
+  - drop without commit implies rollback / abort
 - `UsageStorage`
   - monthly active user recording and reporting
 
@@ -440,6 +457,8 @@ Write APIs:
 - must not report `Cancelled` after the commit point has passed
 - should return success once durability is guaranteed, even if later response
   shaping is interrupted
+- dropping or abandoning an uncommitted transaction must roll it back without
+  exposing partial durable state
 
 #### 4. Add an explicit async transaction model
 
@@ -450,9 +469,14 @@ should replace that with an explicit async transaction boundary.
 Requirements:
 
 - atomic document + index + commit-log updates remain intact
-- scheduler/job state transitions remain atomic
+- scheduler/job state transitions remain atomic wherever the rewritten API says
+  they are atomic
+- scheduler claim / cancel / result / completion semantics are explicitly
+  documented by the new transaction boundary rather than left implicit in
+  service-layer call ordering
 - schema/index rebuild operations become async and bounded
 - the service layer no longer owns raw storage transaction plumbing
+- dropping a transaction without `commit()` rolls it back implicitly
 
 #### 5. Move the engine service layer to async
 
@@ -483,6 +507,7 @@ The rewrite should define:
 Only after the service/storage rewrite is in place should we remove:
 
 - server `run_blocking(...)` usage for engine/storage work
+- the temporary Workstream 2 `run_blocking_cancellable(...)` helper
 - runtime host executor usage as a wrapper around synchronous storage closures
 
 At that point the runtime bridge can dispatch real async storage futures rather
@@ -506,13 +531,6 @@ Selection criteria:
 - operational complexity and deployment footprint
 - implementation risk for scheduler/cron/schema rebuild behavior
 - observability and debugging ergonomics under contention/cancellation
-
-Auth note:
-
-- request authentication and `InvocationAuth` propagation should stay unchanged
-  across Workstreams 1 and 2
-- cancellation should stop execution, not alter auth verification or usage
-  accounting semantics
 
 ### Tests
 

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use neovex_core::{
     CreateCronRequest, CronJob, Error, JobId, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobResult, TenantId, Timestamp,
@@ -26,6 +28,16 @@ impl Service {
         Ok(job.id)
     }
 
+    /// Schedules a mutation to execute in the future asynchronously.
+    pub async fn schedule_mutation_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        request: ScheduleRequest,
+    ) -> Result<JobId> {
+        self.call_blocking(move |service| service.schedule_mutation(&tenant_id, request))
+            .await
+    }
+
     /// Claims all due scheduled jobs for execution.
     pub fn claim_due_jobs(
         &self,
@@ -37,11 +49,31 @@ impl Service {
         runtime.store.claim_due_jobs(now)
     }
 
+    /// Claims all due scheduled jobs for execution asynchronously.
+    pub async fn claim_due_jobs_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        now: Timestamp,
+    ) -> Result<Vec<ScheduledJob>> {
+        self.call_blocking(move |service| service.claim_due_jobs(&tenant_id, now))
+            .await
+    }
+
     /// Marks a claimed scheduled job as complete.
     pub fn complete_scheduled_job(&self, tenant_id: &TenantId, job_id: &JobId) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime.store.complete_scheduled_job(job_id)
+    }
+
+    /// Marks a claimed scheduled job as complete asynchronously.
+    pub async fn complete_scheduled_job_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.complete_scheduled_job(&tenant_id, &job_id))
+            .await
     }
 
     /// Cancels a pending scheduled job before it begins executing.
@@ -54,6 +86,16 @@ impl Service {
         Err(Error::ScheduledJobNotFound(*job_id))
     }
 
+    /// Cancels a pending scheduled job before it begins executing asynchronously.
+    pub async fn cancel_scheduled_job_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.cancel_scheduled_job(&tenant_id, &job_id))
+            .await
+    }
+
     /// Persists the final result for an executed scheduled job.
     pub(crate) fn record_scheduled_job_result(
         &self,
@@ -63,6 +105,16 @@ impl Service {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime.store.record_scheduled_job_result(result)
+    }
+
+    /// Persists the final result for an executed scheduled job asynchronously.
+    pub(crate) async fn record_scheduled_job_result_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        result: ScheduledJobResult,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.record_scheduled_job_result(&tenant_id, &result))
+            .await
     }
 
     /// Loads the final result for an executed scheduled job.
@@ -79,11 +131,30 @@ impl Service {
             .ok_or(Error::ScheduledJobNotFound(*job_id))
     }
 
+    /// Loads the final result for an executed scheduled job asynchronously.
+    pub async fn get_scheduled_job_result_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> Result<ScheduledJobResult> {
+        self.call_blocking(move |service| service.get_scheduled_job_result(&tenant_id, &job_id))
+            .await
+    }
+
     /// Lists all pending scheduled jobs for a tenant.
     pub fn list_scheduled_jobs(&self, tenant_id: &TenantId) -> Result<Vec<ScheduledJob>> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime.store.list_scheduled_jobs()
+    }
+
+    /// Lists all pending scheduled jobs for a tenant asynchronously.
+    pub async fn list_scheduled_jobs_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<Vec<ScheduledJob>> {
+        self.call_blocking(move |service| service.list_scheduled_jobs(&tenant_id))
+            .await
     }
 
     /// Creates a new cron job definition.
@@ -112,11 +183,30 @@ impl Service {
         runtime.store.save_cron_job(&cron)
     }
 
+    /// Creates a new cron job definition asynchronously.
+    pub async fn create_cron_job_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        request: CreateCronRequest,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.create_cron_job(&tenant_id, request))
+            .await
+    }
+
     /// Loads cron jobs for a tenant.
     pub fn load_cron_jobs(&self, tenant_id: &TenantId) -> Result<Vec<CronJob>> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime.store.load_cron_jobs()
+    }
+
+    /// Loads cron jobs for a tenant asynchronously.
+    pub async fn load_cron_jobs_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<Vec<CronJob>> {
+        self.call_blocking(move |service| service.load_cron_jobs(&tenant_id))
+            .await
     }
 
     /// Persists an updated cron job definition.
@@ -126,9 +216,28 @@ impl Service {
         runtime.store.save_cron_job(cron)
     }
 
+    /// Persists an updated cron job definition asynchronously.
+    pub async fn update_cron_job_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        cron: CronJob,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.update_cron_job(&tenant_id, &cron))
+            .await
+    }
+
     /// Lists cron jobs for a tenant.
     pub fn list_cron_jobs(&self, tenant_id: &TenantId) -> Result<Vec<CronJob>> {
         self.load_cron_jobs(tenant_id)
+    }
+
+    /// Lists cron jobs for a tenant asynchronously.
+    pub async fn list_cron_jobs_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<Vec<CronJob>> {
+        self.call_blocking(move |service| service.list_cron_jobs(&tenant_id))
+            .await
     }
 
     /// Deletes a cron job definition if present.
@@ -136,6 +245,16 @@ impl Service {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime.store.delete_cron_job(name)
+    }
+
+    /// Deletes a cron job definition if present asynchronously.
+    pub async fn delete_cron_job_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        name: String,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.delete_cron_job(&tenant_id, &name))
+            .await
     }
 
     /// Returns the IDs for all tenants currently loaded in memory.

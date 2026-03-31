@@ -1,7 +1,11 @@
+#![cfg_attr(test, allow(dead_code))]
+
 use super::dispatch::{
-    check_host_cancellation, execute_convex_action_cancellable, invoke_named_convex_function_async,
+    check_host_cancellation, execute_convex_action_async, execute_convex_action_cancellable,
+    invoke_named_convex_function_async_cancellable,
 };
 use super::*;
+use crate::state::RequestCancellationGuard;
 
 pub(super) async fn dispatch_http_route(
     state: Arc<AppState>,
@@ -43,6 +47,7 @@ pub(super) async fn dispatch_http_route(
     );
     let service = state.service.clone();
     if registry.runtime_bundle().is_some() && route.name.is_some() {
+        let request_cancellation = RequestCancellationGuard::new();
         let (runtime_identity, verified_identity) = match request_auth {
             Some(auth) => (auth.identity, auth.verified_identity),
             None => (None, None),
@@ -52,7 +57,7 @@ pub(super) async fn dispatch_http_route(
             verified_identity,
             throw_on_missing_identity: true,
         });
-        let response = invoke_named_convex_function_async(
+        let response = invoke_named_convex_function_async_cancellable(
             &service,
             &registry,
             &tenant_id,
@@ -68,6 +73,7 @@ pub(super) async fn dispatch_http_route(
                 cursor: None,
                 auth: runtime_auth,
             },
+            request_cancellation.token(),
         )
         .await?;
         let response: ConvexHttpResponseParts = serde_json::from_value(response)
@@ -75,17 +81,15 @@ pub(super) async fn dispatch_http_route(
         return build_http_response_parts(response).map_err(AppError::from);
     }
 
-    let registry_for_worker = registry.clone();
-    run_blocking(move || {
-        execute_http_action(
-            &service,
-            &registry_for_worker,
-            &tenant_id,
-            &route.plan,
-            &request_context,
-        )
-    })
+    execute_http_action_async(
+        &service,
+        &registry,
+        &tenant_id,
+        &route.plan,
+        &request_context,
+    )
     .await
+    .map_err(AppError::from)
 }
 
 fn build_http_request_context(
@@ -132,6 +136,7 @@ fn build_http_request_context(
     }
 }
 
+#[cfg(test)]
 fn execute_http_action(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
@@ -143,6 +148,19 @@ fn execute_http_action(
     build_http_response_parts(response)
 }
 
+async fn execute_http_action_async(
+    service: &Arc<neovex_engine::Service>,
+    registry: &Arc<ConvexRegistry>,
+    tenant_id: &TenantId,
+    plan: &ConvexHttpActionPlan,
+    request: &ConvexHttpRequestContext,
+) -> Result<Response, Error> {
+    let response =
+        prepare_http_action_response_async(service, registry, tenant_id, plan, request).await?;
+    build_http_response_parts(response)
+}
+
+#[cfg(test)]
 pub(super) fn prepare_http_action_response(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
@@ -158,7 +176,7 @@ pub(super) fn prepare_http_action_response(
                     "convex http route resolved to invalid operation: {error}"
                 ))
             })?;
-        Some(execute_convex_action(
+        Some(super::dispatch::execute_convex_action(
             service, registry, tenant_id, operation,
         )?)
     } else {
@@ -211,6 +229,48 @@ pub(super) fn prepare_http_action_response_cancellable(
             operation,
             cancellation,
         )?)
+    } else {
+        None
+    };
+
+    let body = resolve_http_template(&plan.response.body, request, operation_result.as_ref())?;
+    let status = plan
+        .response
+        .status
+        .as_ref()
+        .map(|status| resolve_http_template(status, request, operation_result.as_ref()))
+        .transpose()?;
+    let headers = plan
+        .response
+        .headers
+        .as_ref()
+        .map(|headers| resolve_http_template(headers, request, operation_result.as_ref()))
+        .transpose()?;
+
+    Ok(ConvexHttpResponseParts {
+        kind: plan.response.kind,
+        body,
+        status,
+        headers,
+    })
+}
+
+pub(super) async fn prepare_http_action_response_async(
+    service: &Arc<neovex_engine::Service>,
+    registry: &Arc<ConvexRegistry>,
+    tenant_id: &TenantId,
+    plan: &ConvexHttpActionPlan,
+    request: &ConvexHttpRequestContext,
+) -> Result<ConvexHttpResponseParts, Error> {
+    let operation_result = if let Some(operation_template) = plan.operation.as_ref() {
+        let resolved = resolve_http_template(operation_template, request, None)?;
+        let operation: ConvexExecutableAction =
+            serde_json::from_value(resolved).map_err(|error| {
+                Error::InvalidInput(format!(
+                    "convex http route resolved to invalid operation: {error}"
+                ))
+            })?;
+        Some(execute_convex_action_async(service, registry, tenant_id, operation, None).await?)
     } else {
         None
     };

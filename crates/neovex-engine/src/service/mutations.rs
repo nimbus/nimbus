@@ -23,6 +23,17 @@ impl Service {
             .ok_or_else(|| Error::Internal("insert should return a document id".to_string()))
     }
 
+    /// Inserts a document asynchronously and fan-outs any resulting subscription updates.
+    pub async fn insert_document_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        fields: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<DocumentId> {
+        self.call_blocking(move |service| service.insert_document(&tenant_id, table, fields))
+            .await
+    }
+
     /// Updates a document and fan-outs any resulting subscription updates.
     pub fn update_document(
         &self,
@@ -42,6 +53,20 @@ impl Service {
         .ok_or_else(|| Error::Internal("update should return a document id".to_string()))
     }
 
+    /// Updates a document asynchronously and fan-outs any resulting subscription updates.
+    pub async fn update_document_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        patch: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<DocumentId> {
+        self.call_blocking(move |service| {
+            service.update_document(&tenant_id, table, document_id, patch)
+        })
+        .await
+    }
+
     /// Deletes a document and fan-outs any resulting subscription updates.
     pub fn delete_document(
         &self,
@@ -57,6 +82,17 @@ impl Service {
             },
         )?;
         Ok(())
+    }
+
+    /// Deletes a document asynchronously and fan-outs any resulting subscription updates.
+    pub async fn delete_document_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+    ) -> Result<()> {
+        self.call_blocking(move |service| service.delete_document(&tenant_id, table, document_id))
+            .await
     }
 
     fn process_commit(
@@ -316,5 +352,17 @@ impl Service {
                 }
             }
         }
+    }
+
+    pub(crate) async fn execute_scheduled_mutation_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        execution_id: String,
+        mutation: Mutation,
+    ) -> Result<bool> {
+        self.call_blocking(move |service| {
+            service.execute_scheduled_mutation(&tenant_id, &execution_id, mutation)
+        })
+        .await
     }
 }

@@ -50,15 +50,23 @@ impl HostCallCancellation {
 pub trait HostBridge: Send + Sync + 'static {
     fn call(&self, request: HostCallRequest) -> Result<Value>;
 
+    fn call_cancellable(
+        &self,
+        request: HostCallRequest,
+        cancellation: &HostCallCancellation,
+    ) -> Result<Value> {
+        if cancellation.is_cancelled() {
+            return Err(NeovexRuntimeError::Cancelled);
+        }
+        self.call(request)
+    }
+
     fn call_async(
         &self,
         request: HostCallRequest,
         cancellation: HostCallCancellation,
     ) -> HostBridgeFuture {
-        if cancellation.is_cancelled() {
-            return Box::pin(async { Err(NeovexRuntimeError::Cancelled) });
-        }
-        let result = self.call(request);
+        let result = self.call_cancellable(request, &cancellation);
         Box::pin(async move { result })
     }
 }

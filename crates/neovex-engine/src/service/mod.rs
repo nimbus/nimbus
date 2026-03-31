@@ -7,6 +7,7 @@ mod tenants;
 mod usage;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -34,6 +35,38 @@ impl Service {
             tenants: RwLock::new(HashMap::new()),
             usage_store,
         })
+    }
+
+    pub(crate) async fn call_blocking<T, F>(self: &Arc<Self>, task: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(Arc<Self>) -> Result<T> + Send + 'static,
+    {
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || task(service))
+            .await
+            .map_err(|error| Error::Internal(format!("blocking task failed: {error}")))?
+    }
+
+    pub(crate) async fn call_blocking_cancellable<T, Fut, F>(
+        self: &Arc<Self>,
+        cancel_wait: Fut,
+        task: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = ()> + Send,
+        F: FnOnce(Arc<Self>) -> Result<T> + Send + 'static,
+    {
+        let service = self.clone();
+        let handle = tokio::task::spawn_blocking(move || task(service));
+        tokio::pin!(cancel_wait);
+
+        tokio::select! {
+            _ = &mut cancel_wait => Err(Error::Cancelled),
+            result = handle => result
+                .map_err(|error| Error::Internal(format!("blocking task failed: {error}")))?,
+        }
     }
 }
 

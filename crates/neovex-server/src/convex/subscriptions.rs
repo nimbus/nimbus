@@ -355,22 +355,20 @@ async fn subscribe_runtime_base_queries(
         let request_id = format!("convex-runtime-internal-{index}");
         let subscribe_service = service.clone();
         let subscribe_tenant_id = tenant_id.clone();
-        match run_blocking(move || {
-            subscribe_service.subscribe(&subscribe_tenant_id, query, request_id, bridge_tx)
-        })
-        .await
+        match subscribe_service
+            .subscribe_async(subscribe_tenant_id, query, request_id, bridge_tx)
+            .await
         {
             Ok(subscription_id) => underlying.push((subscription_id, bridge_rx)),
             Err(error) => {
                 for (subscription_id, _) in underlying {
                     let cleanup_service = service.clone();
                     let cleanup_tenant_id = tenant_id.clone();
-                    let _ = run_blocking(move || {
-                        cleanup_service.unsubscribe(&cleanup_tenant_id, subscription_id)
-                    })
-                    .await;
+                    let _ = cleanup_service
+                        .unsubscribe_async(cleanup_tenant_id, subscription_id)
+                        .await;
                 }
-                return Err(error);
+                return Err(error.into());
             }
         }
     }
@@ -576,10 +574,9 @@ pub(super) async fn handle_convex_socket_for_tenant(
                     let service = state.service.clone();
                     let tenant_id = tenant_id.clone();
                     let sender = subscription_tx.clone();
-                    match run_blocking(move || {
-                        service.subscribe(&tenant_id, query, request_id_for_worker, sender)
-                    })
-                    .await
+                    match service
+                        .subscribe_async(tenant_id, query, request_id_for_worker, sender)
+                        .await
                     {
                         Ok(subscription_id) => {
                             active_subscriptions.insert(subscription_id, vec![subscription_id]);
@@ -700,10 +697,9 @@ pub(super) async fn handle_convex_socket_for_tenant(
                     let service = state.service.clone();
                     let tenant_id = tenant_id.clone();
                     let sender = subscription_tx.clone();
-                    match run_blocking(move || {
-                        service.subscribe(&tenant_id, base_query, request_id_for_worker, sender)
-                    })
-                    .await
+                    match service
+                        .subscribe_async(tenant_id, base_query, request_id_for_worker, sender)
+                        .await
                     {
                         Ok(subscription_id) => {
                             active_subscriptions.insert(subscription_id, vec![subscription_id]);
@@ -729,10 +725,9 @@ pub(super) async fn handle_convex_socket_for_tenant(
                         for underlying_subscription_id in underlying_ids {
                             let service = state.service.clone();
                             let tenant_id = tenant_id.clone();
-                            if let Err(error) = run_blocking(move || {
-                                service.unsubscribe(&tenant_id, underlying_subscription_id)
-                            })
-                            .await
+                            if let Err(error) = service
+                                .unsubscribe_async(tenant_id, underlying_subscription_id)
+                                .await
                             {
                                 let _ = outbound_tx.send(ServerMessage::Error {
                                     request_id: None,
@@ -759,9 +754,9 @@ pub(super) async fn handle_convex_socket_for_tenant(
         for underlying_subscription_id in underlying_ids {
             let service = state.service.clone();
             let tenant_id = tenant_id.clone();
-            let _ =
-                run_blocking(move || service.unsubscribe(&tenant_id, underlying_subscription_id))
-                    .await;
+            let _ = service
+                .unsubscribe_async(tenant_id, underlying_subscription_id)
+                .await;
         }
     }
     runtime_cancellation.cancel();

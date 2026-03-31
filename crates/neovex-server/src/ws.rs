@@ -11,7 +11,7 @@ use neovex_engine::SubscriptionUpdate;
 use tokio::sync::mpsc;
 
 use crate::protocol::{ClientMessage, ServerMessage};
-use crate::state::{AppError, AppState, run_blocking};
+use crate::state::{AppError, AppState};
 
 const TENANT_HEADER: &str = "X-Tenant-Id";
 
@@ -25,7 +25,7 @@ pub(crate) async fn ws_handler(
     let tenant_id = extract_tenant_id(&headers, params.get("tenant_id").cloned())?;
     let service = state.service.clone();
     let tenant_check = tenant_id.clone();
-    run_blocking(move || service.ensure_tenant_exists(&tenant_check)).await?;
+    service.ensure_tenant_exists_async(tenant_check).await?;
 
     Ok(ws.on_upgrade(move |socket| handle_socket_for_tenant(socket, state, tenant_id)))
 }
@@ -102,10 +102,9 @@ pub(crate) async fn handle_socket_for_tenant(
                     let service = state.service.clone();
                     let tenant_id = tenant_id.clone();
                     let sender = subscription_tx.clone();
-                    match run_blocking(move || {
-                        service.subscribe(&tenant_id, query, request_id_for_worker, sender)
-                    })
-                    .await
+                    match service
+                        .subscribe_async(tenant_id, query, request_id_for_worker, sender)
+                        .await
                     {
                         Ok(subscription_id) => {
                             active_subscriptions.insert(subscription_id);
@@ -122,8 +121,7 @@ pub(crate) async fn handle_socket_for_tenant(
                     active_subscriptions.remove(&subscription_id);
                     let service = state.service.clone();
                     let tenant_id = tenant_id.clone();
-                    if let Err(error) =
-                        run_blocking(move || service.unsubscribe(&tenant_id, subscription_id)).await
+                    if let Err(error) = service.unsubscribe_async(tenant_id, subscription_id).await
                     {
                         let _ = outbound_tx.send(ServerMessage::Error {
                             request_id: None,
@@ -146,7 +144,7 @@ pub(crate) async fn handle_socket_for_tenant(
     for subscription_id in active_subscriptions {
         let service = state.service.clone();
         let tenant_id = tenant_id.clone();
-        let _ = run_blocking(move || service.unsubscribe(&tenant_id, subscription_id)).await;
+        let _ = service.unsubscribe_async(tenant_id, subscription_id).await;
     }
     drop(subscription_tx);
     drop(outbound_tx);

@@ -96,7 +96,6 @@ impl ConvexRuntimeBridge {
             .max_nested_runtime_invocations;
         Self {
             service,
-            host_executor: registry.runtime_host_executor(),
             registry,
             tenant_id,
             session_id: format!(
@@ -940,9 +939,42 @@ impl ConvexRuntimeQueryBuilderState {
     }
 }
 
+async fn execute_async_blocking_host_call<F>(
+    metrics: Arc<neovex_runtime::RuntimeMetrics>,
+    cancellation: HostCallCancellation,
+    task: F,
+) -> std::result::Result<Value, NeovexRuntimeError>
+where
+    F: FnOnce(HostCallCancellation) -> std::result::Result<Value, NeovexRuntimeError>
+        + Send
+        + 'static,
+{
+    if cancellation.is_cancelled() {
+        metrics.record_canceled_host_op();
+        return Err(NeovexRuntimeError::Cancelled);
+    }
+
+    let handle = tokio::task::spawn_blocking(move || task(cancellation));
+    let result = handle.await.map_err(|error| {
+        NeovexRuntimeError::Contract(format!("runtime host bridge task failed: {error}"))
+    })?;
+    if matches!(result, Err(NeovexRuntimeError::Cancelled)) {
+        metrics.record_canceled_host_op();
+    }
+    result
+}
+
 impl HostBridge for ConvexRuntimeBridge {
     fn call(&self, request: HostCallRequest) -> std::result::Result<Value, NeovexRuntimeError> {
         self.dispatch_host_call(request)
+    }
+
+    fn call_cancellable(
+        &self,
+        request: HostCallRequest,
+        cancellation: &HostCallCancellation,
+    ) -> std::result::Result<Value, NeovexRuntimeError> {
+        self.dispatch_host_call_cancellable(request, cancellation)
     }
 
     fn call_async(
@@ -951,14 +983,12 @@ impl HostBridge for ConvexRuntimeBridge {
         cancellation: HostCallCancellation,
     ) -> HostBridgeFuture {
         let bridge = self.clone();
-        let host_executor = bridge.host_executor.clone();
-        Box::pin(async move {
-            host_executor
-                .submit(cancellation.clone(), move || {
-                    bridge.dispatch_host_call_cancellable(request, &cancellation)
-                })
-                .await
-        })
+        let metrics = bridge.registry.runtime_policy().metrics();
+        Box::pin(execute_async_blocking_host_call(
+            metrics,
+            cancellation,
+            move |cancellation| bridge.dispatch_host_call_cancellable(request, &cancellation),
+        ))
     }
 }
 
@@ -1611,5 +1641,123 @@ impl ConvexRuntimeBridge {
         let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
             .map_err(|error| Error::Serialization(error.to_string()))?;
         envelope.into_core_result()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    use neovex_runtime::{RuntimeLimits, RuntimePolicy};
+    use serde_json::json;
+    use tokio::sync::Notify;
+    use tokio::time::{Duration, timeout};
+
+    use super::execute_async_blocking_host_call;
+    use super::*;
+
+    #[tokio::test]
+    async fn async_blocking_host_call_records_precancel_metric() {
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::default()));
+        let cancellation = HostCallCancellation::default();
+        cancellation.cancel();
+
+        let result =
+            execute_async_blocking_host_call(policy.metrics(), cancellation, |_cancellation| {
+                Ok(json!("unexpected"))
+            })
+            .await;
+
+        assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
+        assert_eq!(policy.metrics_snapshot().canceled_host_ops, 1);
+    }
+
+    #[tokio::test]
+    async fn async_blocking_host_call_records_cooperative_read_cancellation() {
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::default()));
+        let cancellation = HostCallCancellation::default();
+        let started = Arc::new(Notify::new());
+
+        let task = tokio::spawn({
+            let started = started.clone();
+            let metrics = policy.metrics();
+            let cancellation = cancellation.clone();
+            async move {
+                execute_async_blocking_host_call(metrics, cancellation, move |cancellation| {
+                    started.notify_one();
+                    while !cancellation.is_cancelled() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(NeovexRuntimeError::Cancelled)
+                })
+                .await
+            }
+        });
+
+        timeout(Duration::from_secs(1), started.notified())
+            .await
+            .expect("blocking host call should start");
+        cancellation.cancel();
+
+        let result = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("canceled host call should resolve promptly")
+            .expect("blocking host call task should join");
+        assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
+        assert_eq!(policy.metrics_snapshot().canceled_host_ops, 1);
+    }
+
+    #[tokio::test]
+    async fn async_blocking_host_call_waits_for_write_completion_after_cancellation() {
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::default()));
+        let cancellation = HostCallCancellation::default();
+        let started = Arc::new(Notify::new());
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let task = tokio::spawn({
+            let started = started.clone();
+            let release = release.clone();
+            let metrics = policy.metrics();
+            let cancellation = cancellation.clone();
+            async move {
+                execute_async_blocking_host_call(metrics, cancellation, move |_cancellation| {
+                    started.notify_one();
+                    let (lock, cvar) = &*release;
+                    let mut released = lock
+                        .lock()
+                        .expect("write completion lock should not be poisoned");
+                    while !*released {
+                        released = cvar
+                            .wait(released)
+                            .expect("write completion wait should not be poisoned");
+                    }
+                    Ok(json!("committed"))
+                })
+                .await
+            }
+        });
+
+        timeout(Duration::from_secs(1), started.notified())
+            .await
+            .expect("blocking write should start");
+        cancellation.cancel();
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        {
+            let (lock, cvar) = &*release;
+            let mut released = lock
+                .lock()
+                .expect("write completion lock should not be poisoned");
+            *released = true;
+            cvar.notify_all();
+        }
+
+        let result = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("write host call should finish after release")
+            .expect("write host call task should join")
+            .expect("write host call should complete successfully");
+        assert_eq!(result, json!("committed"));
+        assert_eq!(policy.metrics_snapshot().canceled_host_ops, 0);
     }
 }

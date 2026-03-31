@@ -15,7 +15,7 @@ use crate::protocol::{
     ScheduledJobResultResponse, ScheduledJobsResponse, TenantListResponse, TenantResponse,
     UpdateDocumentRequest,
 };
-use crate::state::{AppError, AppState, run_blocking};
+use crate::state::{AppError, AppState, RequestCancellationGuard};
 
 /// Health endpoint.
 pub(crate) async fn health() -> Json<HealthResponse> {
@@ -27,7 +27,7 @@ pub(crate) async fn license_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<crate::license::LicenseSnapshot>, AppError> {
     let service = state.service.clone();
-    let usage = run_blocking(move || service.current_monthly_active_users()).await?;
+    let usage = service.current_monthly_active_users_async().await?;
     Ok(Json(state.license_state.snapshot_with_usage(Some(usage))))
 }
 
@@ -67,11 +67,8 @@ pub(crate) async fn create_tenant(
 ) -> Result<(StatusCode, Json<TenantResponse>), AppError> {
     let tenant_id = TenantId::new(request.id)?;
     let service = state.service.clone();
-    let id = run_blocking(move || {
-        service.create_tenant(tenant_id.clone())?;
-        Ok(tenant_id.to_string())
-    })
-    .await?;
+    service.create_tenant_async(tenant_id.clone()).await?;
+    let id = tenant_id.to_string();
     Ok((StatusCode::CREATED, Json(TenantResponse { id })))
 }
 
@@ -80,7 +77,7 @@ pub(crate) async fn list_tenants(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<TenantListResponse>, AppError> {
     let service = state.service.clone();
-    let tenants = run_blocking(move || service.list_tenants()).await?;
+    let tenants = service.list_tenants_async().await?;
     Ok(Json(TenantListResponse {
         tenants: tenants
             .into_iter()
@@ -96,7 +93,7 @@ pub(crate) async fn delete_tenant(
 ) -> Result<StatusCode, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    run_blocking(move || service.delete_tenant(&tenant_id)).await?;
+    service.delete_tenant_async(tenant_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -108,7 +105,7 @@ pub(crate) async fn schedule_mutation(
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let job_id = run_blocking(move || service.schedule_mutation(&tenant_id, request)).await?;
+    let job_id = service.schedule_mutation_async(tenant_id, request).await?;
     Ok((
         StatusCode::CREATED,
         Json(ScheduleResponse {
@@ -124,7 +121,7 @@ pub(crate) async fn list_scheduled_jobs(
 ) -> Result<Json<ScheduledJobsResponse>, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let jobs = run_blocking(move || service.list_scheduled_jobs(&tenant_id)).await?;
+    let jobs = service.list_scheduled_jobs_async(tenant_id).await?;
     Ok(Json(ScheduledJobsResponse { jobs }))
 }
 
@@ -136,8 +133,9 @@ pub(crate) async fn get_scheduled_job_result(
     let tenant_id = TenantId::new(tenant_id)?;
     let job_id = parse_document_id(&job_id)?;
     let service = state.service.clone();
-    let result =
-        run_blocking(move || service.get_scheduled_job_result(&tenant_id, &job_id)).await?;
+    let result = service
+        .get_scheduled_job_result_async(tenant_id, job_id)
+        .await?;
     Ok(Json(ScheduledJobResultResponse { result }))
 }
 
@@ -149,7 +147,9 @@ pub(crate) async fn cancel_scheduled_job(
     let tenant_id = TenantId::new(tenant_id)?;
     let job_id = parse_document_id(&job_id)?;
     let service = state.service.clone();
-    run_blocking(move || service.cancel_scheduled_job(&tenant_id, &job_id)).await?;
+    service
+        .cancel_scheduled_job_async(tenant_id, job_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -161,7 +161,7 @@ pub(crate) async fn create_cron_job(
 ) -> Result<StatusCode, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    run_blocking(move || service.create_cron_job(&tenant_id, request)).await?;
+    service.create_cron_job_async(tenant_id, request).await?;
     Ok(StatusCode::CREATED)
 }
 
@@ -172,7 +172,7 @@ pub(crate) async fn list_cron_jobs(
 ) -> Result<Json<CronJobsResponse>, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let crons = run_blocking(move || service.list_cron_jobs(&tenant_id)).await?;
+    let crons = service.list_cron_jobs_async(tenant_id).await?;
     Ok(Json(CronJobsResponse { crons }))
 }
 
@@ -183,7 +183,7 @@ pub(crate) async fn delete_cron_job(
 ) -> Result<StatusCode, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    run_blocking(move || service.delete_cron_job(&tenant_id, &name)).await?;
+    service.delete_cron_job_async(tenant_id, name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -202,7 +202,9 @@ pub(crate) async fn set_table_schema(
     }
 
     let service = state.service.clone();
-    run_blocking(move || service.set_table_schema(&tenant_id, table_schema)).await?;
+    service
+        .set_table_schema_async(tenant_id, table_schema)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -213,7 +215,7 @@ pub(crate) async fn get_schema(
 ) -> Result<Json<Schema>, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let schema = run_blocking(move || service.get_schema(&tenant_id)).await?;
+    let schema = service.get_schema_async(tenant_id).await?;
     Ok(Json(schema))
 }
 
@@ -225,7 +227,7 @@ pub(crate) async fn get_table_schema(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
-    let table_schema = run_blocking(move || service.get_table_schema(&tenant_id, &table)).await?;
+    let table_schema = service.get_table_schema_async(tenant_id, table).await?;
     Ok(Json(table_schema))
 }
 
@@ -237,7 +239,7 @@ pub(crate) async fn delete_table_schema(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
-    run_blocking(move || service.delete_table_schema(&tenant_id, &table)).await?;
+    service.delete_table_schema_async(tenant_id, table).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -250,8 +252,9 @@ pub(crate) async fn insert_document(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(request.table)?;
     let service = state.service.clone();
-    let document_id =
-        run_blocking(move || service.insert_document(&tenant_id, table, request.fields)).await?;
+    let document_id = service
+        .insert_document_async(tenant_id, table, request.fields)
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -271,10 +274,9 @@ pub(crate) async fn update_document(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
-    let document_id = run_blocking(move || {
-        service.update_document(&tenant_id, table, document_id, request.patch)
-    })
-    .await?;
+    let document_id = service
+        .update_document_async(tenant_id, table, document_id, request.patch)
+        .await?;
 
     Ok(Json(DocumentResponse {
         id: document_id.to_string(),
@@ -290,7 +292,9 @@ pub(crate) async fn delete_document(
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
-    run_blocking(move || service.delete_document(&tenant_id, table, document_id)).await?;
+    service
+        .delete_document_async(tenant_id, table, document_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -302,7 +306,7 @@ pub(crate) async fn list_documents(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
-    let documents = run_blocking(move || service.list_documents(&tenant_id, &table)).await?;
+    let documents = service.list_documents_async(tenant_id, table).await?;
     Ok(Json(DataResponse {
         data: documents
             .into_iter()
@@ -320,8 +324,9 @@ pub(crate) async fn get_document(
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
-    let document =
-        run_blocking(move || service.get_document(&tenant_id, &table, document_id)).await?;
+    let document = service
+        .get_document_async(tenant_id, table, document_id)
+        .await?;
     Ok(Json(DocumentDataResponse {
         document: document.to_json(),
     }))
@@ -335,7 +340,18 @@ pub(crate) async fn query_documents(
 ) -> Result<Json<DataResponse>, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let documents = run_blocking(move || service.query_documents(&tenant_id, &query)).await?;
+    let guard = RequestCancellationGuard::new();
+    let cancellation = guard.token();
+    let cancellation_check = cancellation.clone();
+    let documents = service
+        .query_documents_async_cancellable(tenant_id, query, cancellation.cancelled(), move || {
+            if cancellation_check.is_cancelled() {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
+        })
+        .await?;
     Ok(Json(DataResponse {
         data: documents
             .into_iter()
@@ -352,7 +368,23 @@ pub(crate) async fn query_documents_paginated(
 ) -> Result<Json<Page>, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let page = run_blocking(move || service.paginate_documents(&tenant_id, &query)).await?;
+    let guard = RequestCancellationGuard::new();
+    let cancellation = guard.token();
+    let cancellation_check = cancellation.clone();
+    let page = service
+        .paginate_documents_async_cancellable(
+            tenant_id,
+            query,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .await?;
     Ok(Json(page))
 }
 
@@ -365,12 +397,10 @@ pub(crate) async fn read_commit_log(
     let tenant_id = TenantId::new(tenant_id)?;
     let after = SequenceNumber(request.after.unwrap_or(0));
     let service = state.service.clone();
-    let (commits, latest_sequence) = run_blocking(move || {
-        let commits = service.read_commit_log(&tenant_id, after)?;
-        let latest_sequence = service.latest_sequence(&tenant_id)?;
-        Ok((commits, latest_sequence))
-    })
-    .await?;
+    let commits = service
+        .read_commit_log_async(tenant_id.clone(), after)
+        .await?;
+    let latest_sequence = service.latest_sequence_async(tenant_id).await?;
 
     Ok(Json(CommitLogResponse {
         commits,
