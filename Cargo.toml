@@ -11,6 +11,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+publish = false
+
 [workspace.lints.rust]
 unused = "deny"
 
