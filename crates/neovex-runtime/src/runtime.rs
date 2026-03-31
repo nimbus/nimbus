@@ -465,7 +465,6 @@ struct RuntimeAsyncQueryPaginatePayload {
 extension!(
     neovex_runtime_ext,
     ops = [
-        op_neovex_host_call,
         op_neovex_ctx_query_start,
         op_neovex_ctx_query_with_index,
         op_neovex_ctx_query_filter,
@@ -495,13 +494,6 @@ extension!(
 );
 const BOOTSTRAP_SOURCE: &str = r#"
 const __neovexCoreOps = Deno.core.ops;
-globalThis.__neovexRawHostCall = function(operation, payload) {
-  return JSON.parse(__neovexCoreOps.op_neovex_host_call({
-    operation,
-    payload,
-  }));
-};
-
 globalThis.__neovexSyncHostValue = function(opName, payload) {
   const operation = __neovexCoreOps[opName];
   if (typeof operation !== "function") {
@@ -531,8 +523,6 @@ function __neovexFormatHostError(error) {
     return String(error);
   }
 }
-
-globalThis.__neovexHostValue = globalThis.__neovexSyncHostValue;
 
 globalThis.__neovexAsyncHostValue = async function(opName, payload) {
   const operation = __neovexCoreOps[opName];
@@ -886,28 +876,11 @@ globalThis.__neovexCreateContext = function(options = {}) {
   };
 };
 
-Object.freeze(globalThis.__neovexRawHostCall);
 Object.freeze(globalThis.__neovexSyncHostValue);
-Object.freeze(globalThis.__neovexHostValue);
 Object.freeze(globalThis.__neovexAsyncHostValue);
 Object.freeze(globalThis.__neovexCreateContext);
 delete globalThis.Deno;
 "#;
-
-#[op2]
-#[string]
-fn op_neovex_host_call(
-    state: &mut OpState,
-    #[serde] request: HostCallRequest,
-) -> std::result::Result<String, JsErrorBox> {
-    let host_state = state.borrow::<RuntimeHostState>().clone();
-    let cancellation_signal = state.borrow::<RuntimeCancellationState>().signal.clone();
-    host_state
-        .bridge
-        .call_cancellable(request, &cancellation_signal)
-        .and_then(|value| serde_json::to_string(&value).map_err(NeovexRuntimeError::from))
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
-}
 
 #[op2]
 #[serde]
@@ -1568,7 +1541,7 @@ fn compute_sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Condvar, Mutex};
+    use std::sync::{Arc, Mutex};
 
     use tempfile::tempdir;
 
@@ -1604,37 +1577,6 @@ mod tests {
                 "status": "ok",
                 "value": Value::Null,
             }))
-        }
-    }
-
-    struct CancelAwareSyncHost {
-        started: Arc<(Mutex<bool>, Condvar)>,
-    }
-
-    impl HostBridge for CancelAwareSyncHost {
-        fn call(&self, _request: HostCallRequest) -> Result<Value> {
-            Err(NeovexRuntimeError::Contract(
-                "sync raw host calls should carry the runtime cancellation signal".to_string(),
-            ))
-        }
-
-        fn call_cancellable(
-            &self,
-            request: HostCallRequest,
-            cancellation: &HostCallCancellation,
-        ) -> Result<Value> {
-            assert_eq!(request.operation, "convex.invoke");
-            let (started, notify_started) = &*self.started;
-            let mut guard = started
-                .lock()
-                .expect("sync host start lock should not be poisoned");
-            *guard = true;
-            notify_started.notify_one();
-            drop(guard);
-            while !cancellation.is_cancelled() {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            Err(NeovexRuntimeError::Cancelled)
         }
     }
 
@@ -1728,12 +1670,12 @@ mod tests {
         std::fs::write(
             &bundle_path,
             r#"
-globalThis.__neovexInvoke = function (request) {
-  const host = globalThis.__neovexRawHostCall("echo", {
-    kind: request.kind,
-    function_name: request.function_name,
-    args: request.args,
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
   });
+  const host = await ctx.db.get("messages", "doc-1");
   return {
     ok: true,
     host,
@@ -1767,11 +1709,11 @@ export {};
             serde_json::json!({
                 "ok": true,
                 "host": {
-                    "operation": "echo",
+                    "operation": "convex.ctx.db.get",
                     "payload": {
-                        "kind": "query",
-                        "function_name": "messages:list",
-                        "args": { "author": "Ada" },
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:list",
                     }
                 }
             })
@@ -1785,11 +1727,11 @@ export {};
         assert_eq!(
             calls,
             vec![HostCallRequest {
-                operation: "echo".to_string(),
+                operation: "convex.ctx.db.get".to_string(),
                 payload: serde_json::json!({
-                    "kind": "query",
-                    "function_name": "messages:list",
-                    "args": { "author": "Ada" },
+                    "table": "messages",
+                    "id": "doc-1",
+                    "session_id": "query:messages:list",
                 }),
             }]
         );
@@ -1831,10 +1773,11 @@ export {};
             &bundle_path,
             r#"
 globalThis.__neovexInvoke = async function (request) {
-  const value = globalThis.__neovexRawHostCall("echo", {
-    kind: request.kind,
-    function_name: request.function_name,
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
   });
+  const value = await ctx.db.get("messages", "doc-1");
   return {
     ok: true,
     awaited: await Promise.resolve({
@@ -1871,12 +1814,57 @@ export {};
             serde_json::json!({
                 "ok": true,
                 "awaited": {
-                    "operation": "echo",
+                    "operation": "convex.ctx.db.get",
                     "payload": {
-                        "kind": "query",
-                        "function_name": "messages:list",
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:list",
                     }
                 }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_does_not_expose_legacy_host_globals() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = function () {
+  return {
+    rawHostCall: typeof globalThis.__neovexRawHostCall,
+    hostValue: typeof globalThis.__neovexHostValue,
+  };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let result = runtime
+            .invoke_bundle(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                },
+            )
+            .await
+            .expect("bundle should observe runtime globals");
+
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "rawHostCall": "undefined",
+                "hostValue": "undefined",
             })
         );
     }
@@ -2013,90 +2001,6 @@ export {};
             .await
             .expect_err("external cancellation should stop the runtime invocation");
 
-        assert!(matches!(error, NeovexRuntimeError::Cancelled));
-    }
-
-    #[test]
-    fn runtime_raw_host_calls_propagate_request_cancellation() {
-        let tempdir = tempdir().expect("tempdir should build");
-        let bundle_path = tempdir.path().join("bundle.mjs");
-        std::fs::write(
-            &bundle_path,
-            r#"
-globalThis.__neovexInvoke = function () {
-  return globalThis.__neovexRawHostCall("convex.invoke", {
-    request: {
-      kind: "query",
-      function_name: "messages:list",
-      args: {},
-      page_size: null,
-      cursor: null,
-      auth: null,
-    },
-    definition: {
-      name: "messages:list",
-      kind: "query",
-      visibility: "public",
-      plan: null,
-      runtime_handler: null,
-    },
-  });
-};
-
-export {};
-"#,
-        )
-        .expect("bundle should write");
-
-        let started = Arc::new((Mutex::new(false), Condvar::new()));
-        let runtime = NeovexRuntime::with_limits(
-            Arc::new(CancelAwareSyncHost {
-                started: started.clone(),
-            }),
-            RuntimeLimits {
-                execution_timeout: std::time::Duration::from_secs(5),
-                ..RuntimeLimits::default()
-            },
-        );
-        let cancellation = HostCallCancellation::default();
-        let bundle = RuntimeBundle::new(&bundle_path);
-        let request = InvocationRequest {
-            kind: InvocationKind::Query,
-            function_name: "messages:outer".to_string(),
-            args: Value::Null,
-            page_size: None,
-            cursor: None,
-            auth: None,
-        };
-        let runtime_thread = {
-            let runtime = runtime.clone();
-            let bundle = bundle.clone();
-            let request = request.clone();
-            let cancellation = cancellation.clone();
-            std::thread::spawn(move || {
-                runtime.invoke_bundle_blocking_with_cancellation(
-                    &bundle,
-                    &request,
-                    Some(cancellation),
-                )
-            })
-        };
-
-        let (started_lock, started_notify) = &*started;
-        let mut started_guard = started_lock
-            .lock()
-            .expect("sync host start lock should not be poisoned");
-        while !*started_guard {
-            started_guard = started_notify
-                .wait(started_guard)
-                .expect("sync host start wait should not be poisoned");
-        }
-        cancellation.cancel();
-
-        let error = runtime_thread
-            .join()
-            .expect("runtime thread should join successfully")
-            .expect_err("raw host call should observe cancellation");
         assert!(matches!(error, NeovexRuntimeError::Cancelled));
     }
 

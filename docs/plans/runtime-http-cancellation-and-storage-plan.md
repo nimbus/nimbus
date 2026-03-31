@@ -627,21 +627,20 @@ Candidate follow-on work:
 This is the natural place to carry forward the old spec's "deeper async bridge
 instrumentation" item.
 
-### 4. Eventual Reduction Or Removal Of The Legacy Raw Host-Call Path
+### 4. Typed-Op Hardening After Raw Host-Call Removal
 
-The normal generated/runtime path should continue moving away from the generic
-raw host-call surface.
+The legacy generic raw host-call surface has been removed. Normal
+generated/runtime flows now execute through typed runtime ops and local
+same-isolate dispatch only.
 
 Candidate follow-on work:
 
-- restrict the raw host op to migration/bootstrap/debug-only use if still
-  needed
-- add tests proving normal generated/runtime flows never depend on it
-- remove dead raw-host plumbing once no supported path requires it
-- tighten runtime contracts around typed ops only
+- keep generated bundles and fixtures pinned to typed ops only
+- avoid reintroducing generic catch-all host-call surfaces in new runtime APIs
+- continue tightening runtime contracts around explicit typed operations
 
-This should be treated as cleanup and hardening after Workstreams 1 through 3,
-not as a prerequisite.
+This is now cleanup and hardening after the raw host-call removal rather than a
+separate migration track.
 
 ### 5. Explicit Non-Goals For The Core Runtime Rewrite
 

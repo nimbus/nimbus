@@ -475,35 +475,6 @@ fn load_runtime_bundle(bundle_path: &Path) -> Result<RuntimeBundle, Error> {
     })
 }
 
-pub(super) fn validate_runtime_definition(
-    request: &InvocationRequest,
-    definition: &ConvexFunctionDefinition,
-) -> std::result::Result<(), NeovexRuntimeError> {
-    if request.function_name != definition.name {
-        return Err(NeovexRuntimeError::Contract(format!(
-            "runtime bundle definition mismatch: request was {}, bundle provided {}",
-            request.function_name, definition.name
-        )));
-    }
-
-    let expected_kind = match request.kind {
-        InvocationKind::Query => ConvexFunctionKind::Query,
-        InvocationKind::PaginatedQuery => ConvexFunctionKind::PaginatedQuery,
-        InvocationKind::Mutation => ConvexFunctionKind::Mutation,
-        InvocationKind::Action => ConvexFunctionKind::Action,
-    };
-    if definition.kind != expected_kind {
-        return Err(NeovexRuntimeError::Contract(format!(
-            "runtime bundle definition {} had kind {}, expected {}",
-            definition.name,
-            definition.kind.as_str(),
-            expected_kind.as_str()
-        )));
-    }
-
-    Ok(())
-}
-
 pub(super) fn validate_runtime_http_route(
     request: &InvocationRequest,
     route: &ConvexHttpRouteDefinition,
