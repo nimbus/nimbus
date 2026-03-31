@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        # Don't block PRs on coverage — informational only for pre-launch
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, condensed_files, condensed_footer"
+  behavior: default
+  require_changes: true

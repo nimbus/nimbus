@@ -5,12 +5,10 @@
 all-features = true
 
 [advisories]
-# Lint level for crates with known security vulnerabilities
-vulnerability = "deny"
 # Lint level for crates that have been marked as unmaintained
-unmaintained = "warn"
+unmaintained = "workspace"
 # Lint level for crates with unsound API
-unsound = "deny"
+unsound = "all"
 # Lint level for crates that have been yanked
 yanked = "deny"
 
