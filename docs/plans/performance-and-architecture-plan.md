@@ -1,7 +1,5 @@
 # Performance And Architecture Master Plan
 
-Verified against clean repo state at `7fa907d` on 2026-04-01.
-
 This is the canonical execution roadmap for the next architecture and
 performance cycle. It replaces the old split-plan setup as the single source of
 truth for implementation sequencing, agent execution, and verification.
@@ -69,6 +67,229 @@ Every roadmap item below is written so an agent can:
 
 4. When a roadmap item changes architecture-level behavior, update
    `ARCHITECTURE.md` in the same PR.
+
+---
+
+## Codex Execution Protocol
+
+This section turns the roadmap into a durable control plane for Codex-style
+agent execution across long runs, handoffs, and context compactions.
+
+For autonomous implementation, the source of truth is:
+
+1. the current git worktree
+2. this roadmap's status ledger and execution log
+3. the referenced architecture docs
+
+The source of truth is not the prior chat transcript.
+
+### Status model
+
+- `todo`: not started; eligible when hard dependencies are `done` and any gate
+  note is satisfied
+- `in_progress`: actively being implemented; for a single autonomous Codex run,
+  keep exactly one roadmap item in this state at a time
+- `blocked`: cannot proceed until the recorded blocker is resolved
+- `done`: acceptance criteria are met and the required verification has been
+  recorded in the execution log
+- `deferred`: intentionally parked behind a product, platform, or operator gate
+  and not eligible for autonomous pickup yet
+
+### Recovery loop for every new session or post-compaction resume
+
+1. Reread `Canonical Plan Rules`, this section, `Roadmap Status Ledger`,
+   `Execution Log`, `Dependency Graph`, and `Recommended Delivery Order`.
+   Inspect the current git worktree state too.
+
+2. If any roadmap item is already `in_progress`, resume that item first.
+   Do not start a new `todo` item while any older item remains
+   `in_progress`.
+
+3. If the git worktree is dirty, reconcile it before choosing new scope.
+   Identify which roadmap item owns the current changes, then update that
+   item's status, `Implementation checkpoint`, and `Execution Log` if the
+   roadmap is stale relative to the code.
+
+4. If there is no active `in_progress` item after reconciliation, pick the
+   first eligible item in `Recommended Delivery Order` whose status is `todo`,
+   whose hard dependencies are `done`, and whose gate note is already
+   satisfied in this document.
+   When one delivery-order row lists multiple items, a single autonomous Codex
+   run should process them in lexical item order unless this roadmap later
+   records a different explicit batch plan.
+
+5. Read the full section for that item and only the immediately relevant code,
+   tests, and architecture references needed to implement it correctly.
+
+6. Mark the item `in_progress` before or at the same time as the first
+   implementation patch for that item.
+
+7. Implement exactly one roadmap item by default.
+   Only batch multiple items when this roadmap explicitly groups them as a safe
+   batch and the work can still satisfy every listed acceptance criterion
+   without creating partial semantics.
+
+8. Run the targeted verification for the touched crates and then the repo-level
+   checks required by `Execution And Verification Contract`.
+
+9. Update `Roadmap Status Ledger`, `Implementation checkpoint` if needed, and
+   `Execution Log` in the same change set as the code.
+
+10. Continue to the next eligible item.
+    If blocked, record the blocker in this document before stopping.
+
+### Dirty-worktree reconciliation rules
+
+- A dirty worktree outranks remembered intent.
+  If code and roadmap disagree, reconcile the roadmap to the actual partial
+  implementation before picking a new item.
+- If changed files clearly belong to one roadmap item, resume that item and
+  keep it `in_progress` until it is either `done` or explicitly `blocked`.
+- If changed files span multiple roadmap items unexpectedly, stop, record the
+  conflict in `Execution Log`, and add or update `Implementation checkpoint`
+  notes before continuing.
+- Do not treat unstaged or uncommitted changes as disposable scratch state.
+  They are part of the durable execution state until reconciled.
+
+### Compaction and handoff safety rules
+
+- Do not wait for an explicit compaction warning to checkpoint progress.
+  The roadmap must be durable even if compaction or interruption happens
+  without advance notice.
+- Before ending a work burst, handing off, or leaving an item partially
+  implemented, write back the current status, partial progress, and remaining
+  steps to this roadmap.
+- If the worktree materially diverges from the last recorded roadmap state,
+  update the roadmap before doing more speculative work.
+- Prefer small, frequent write-backs over large undocumented stretches of work.
+
+### Non-deviation rules
+
+- Do not skip an existing `in_progress` item to start a later `todo` item.
+- Do not pick a new roadmap item from the queue while the worktree is dirty and
+  not yet reconciled to an owning roadmap item.
+- Do not skip ahead to a later eligible item while an earlier eligible item is
+  still `todo`, unless this roadmap explicitly marks the later item as safe to
+  parallelize.
+- Do not reinterpret an item's goal on the fly. If implementation reveals a
+  better approach, amend the roadmap item or add a scoped note before changing
+  the intended behavior.
+- Do not mark an item `done` until the listed acceptance criteria are met and
+  the executed verification commands are written down in `Execution Log`.
+- Do not rely on remembered progress from earlier chat turns. Reconstruct state
+  from this file and the worktree every time.
+- If one roadmap item turns out to require multiple sessions or PRs, keep the
+  item `in_progress` and add a short `Implementation checkpoint` subsection
+  directly under that item rather than creating a competing plan document.
+
+### Required write-back after each work session
+
+- update the item's status in `Roadmap Status Ledger`
+- append a row to `Execution Log` with the date, item id, outcome, verification
+  run, and any remaining follow-up
+- if the session changes architecture-level behavior, update `ARCHITECTURE.md`
+  in the same PR
+- if the session leaves an item partially complete, record the remaining
+  sub-steps under that item's `Implementation checkpoint` subsection
+- if compaction, interruption, or handoff seems likely, checkpoint before
+  stopping rather than after
+
+### Recommended autonomous prompt
+
+Use this exact loop for long-running Codex execution:
+
+```text
+Use docs/plans/performance-and-architecture-plan.md as the control plane.
+Reread the Codex Execution Protocol, Roadmap Status Ledger, Execution Log,
+Dependency Graph, Recommended Delivery Order, and current git worktree state.
+If any item is in_progress, resume it first. Reconcile dirty worktree changes
+to the owning roadmap item before picking new scope. Implement exactly one
+roadmap item, run the required verification, update the ledger, checkpoint,
+and execution log, and then continue. If blocked, record the blocker in the
+roadmap before stopping. Do not rely on chat history as progress state.
+```
+
+---
+
+## Roadmap Status Ledger
+
+Update this ledger in every PR or work session that materially advances,
+blocks, or completes a roadmap item.
+
+Hard dependencies only are listed here. Soft "benefits from" relationships stay
+in the item text and dependency graph.
+
+### Active sequence
+
+These items are eligible for autonomous execution when their listed hard
+dependencies are `done`.
+
+| Item | Status | Hard dependencies | Gate or unblock note |
+| --- | --- | --- | --- |
+| 1A | todo | none | first eligible |
+| 1B | todo | none | first eligible |
+| 1C | todo | none | first eligible |
+| 1D | todo | none | second delivery batch |
+| 1E | todo | none | second delivery batch |
+| 1F | todo | none | second delivery batch |
+| 1G | todo | none | second delivery batch |
+| 2A | todo | 1A | start after 1A is done |
+| 7A | todo | 2A | start after 2A is done |
+| 3A | todo | none | next core query-model item after 7A in delivery order |
+| 3B | todo | none | next core query-model item after 3A in delivery order |
+| 3C | todo | none | benefits from 3A and 3B, but no hard gate |
+| 3D | todo | 3A, 3B | dependency model work starts after 3A and 3B |
+| 3E | todo | 3B | authorization move starts after 3B |
+| 4D | todo | none | should land before 6A, 8A, and 9A |
+| 3F | todo | 3D, 3E | OCC starts after dependency model and auth work |
+| 5A | todo | none | async rewrite start |
+| 5B | todo | 5A | write-path transaction model |
+| 5C | todo | 5A, 5B | remove blocking wrappers after async read/write migration |
+| 6A | todo | 5A, 5B, 5C | durable journal begins after Phase 5 |
+| 6B | todo | 6A | promote journal after 6A |
+| 8A | todo | 6B | external journal streaming after authoritative journal |
+| 8B | todo | 8A | embedded replica path after streaming path |
+| 9A | todo | 4D, 6B | shadow materializer after simulation seams and authoritative journal |
+| 9B | todo | 9A | robustness testing after shadow materializer |
+
+### Conditional and gated items
+
+These items stay out of the autonomous queue until their gate note is updated
+and their status is explicitly changed away from `deferred` or `blocked`.
+
+| Item | Status | Hard dependencies | Gate or unblock note |
+| --- | --- | --- | --- |
+| 4A | deferred | none | promote only if request-concern duplication is still causing active handler pain |
+| 4B | deferred | none | promote only if socket lifecycle ownership remains an active maintenance problem |
+| 4C | deferred | none | promote only if external metrics export becomes a concrete requirement |
+| 7B | blocked | none | requires deploy identity and signing/auth design to exist first |
+| 10A | deferred | 3F, 6B | promote only if snapshot or historical reads become a product requirement |
+| 11A | deferred | 3B, 3E | promote only if the Neovex-native generated API becomes a product priority |
+| 11B | deferred | 11A | promote only if a typed WASM plugin ABI becomes a product priority |
+
+### Status transition rules
+
+- `todo` -> `in_progress` when an agent starts active implementation
+- `in_progress` -> `done` only after acceptance criteria and verification are
+  satisfied
+- `todo` or `in_progress` -> `blocked` when work cannot continue without a
+  resolved external dependency or plan amendment
+- `deferred` -> `todo` only by an explicit roadmap edit that records why the
+  gate is now open
+- `done` items stay `done`; if follow-up work appears, add a new roadmap item
+  or checkpoint note instead of silently reopening completed scope
+
+---
+
+## Execution Log
+
+Append new rows at the top of this table. Keep entries short and factual so a
+future Codex run can reconstruct progress without chat history.
+
+| Date | Item | Outcome | Summary | Verification | Follow-up |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | meta | refined | Tightened the Codex protocol so resumed runs must reconcile dirty worktrees, resume `in_progress` items first, and checkpoint roadmap state before likely compaction, interruption, or handoff. | document review | keep using the roadmap as the durable progress log during implementation |
+| 2026-04-01 | meta | documented | Added Codex execution protocol, status ledger, status transitions, and execution log so the roadmap can survive autonomous compactions and handoffs. | document review | start updating this log when code work begins |
 
 ---
 
