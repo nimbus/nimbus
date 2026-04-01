@@ -407,6 +407,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["metrics"]["precanceled_host_ops"], json!(0));
     assert_eq!(body["metrics"]["in_flight_canceled_host_ops"], json!(0));
     assert_eq!(body["metrics"]["host_operations"], json!({}));
+    assert_eq!(body["metrics"]["tenants"], json!({}));
     assert_eq!(
         body["metrics"]["fallback_cross_isolate_dispatches"],
         json!(0)
@@ -1098,6 +1099,22 @@ export {};
         metrics_body["metrics"]["worker_dispatched_invocations"],
         json!(1)
     );
+    assert_eq!(
+        metrics_body["metrics"]["tenants"]["demo"]["started_invocations"],
+        json!(1)
+    );
+    assert_eq!(
+        metrics_body["metrics"]["tenants"]["demo"]["completed_invocations"],
+        json!(1)
+    );
+    assert_eq!(
+        metrics_body["metrics"]["tenants"]["demo"]["queue_wait_distribution"]["samples"],
+        json!(1)
+    );
+    assert_eq!(
+        metrics_body["metrics"]["tenants"]["demo"]["execution_distribution"]["samples"],
+        json!(1)
+    );
     let metrics = registry.runtime_metrics_snapshot();
     assert_eq!(metrics.nested_local_dispatches, 1);
     assert_eq!(metrics.fallback_cross_isolate_dispatches, 0);
@@ -1108,6 +1125,15 @@ export {};
             .get("convex.ctx.runtime.enter_nested_call")
             .expect("nested runtime host op metrics should be present")
             .succeeded,
+        1
+    );
+    assert_eq!(
+        metrics
+            .tenants
+            .get("demo")
+            .expect("tenant runtime metrics should be present")
+            .execution_distribution
+            .samples,
         1
     );
 }
@@ -2604,6 +2630,14 @@ export {};
     assert_eq!(metrics.canceled_invocations, 1);
     assert_eq!(metrics.queued_canceled_invocations, 0);
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
+    let tenant_metrics = metrics
+        .tenants
+        .get("demo")
+        .expect("tenant runtime metrics should be present");
+    assert_eq!(tenant_metrics.started_invocations, 1);
+    assert_eq!(tenant_metrics.completed_invocations, 1);
+    assert_eq!(tenant_metrics.queued_canceled_invocations, 0);
+    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
 }
 
 #[tokio::test]
@@ -2732,6 +2766,14 @@ export {};
     assert_eq!(metrics.worker_dispatched_invocations, 1);
     assert_eq!(metrics.queued_canceled_invocations, 1);
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
+    let tenant_metrics = metrics
+        .tenants
+        .get("demo")
+        .expect("tenant runtime metrics should be present");
+    assert_eq!(tenant_metrics.started_invocations, 1);
+    assert_eq!(tenant_metrics.completed_invocations, 1);
+    assert_eq!(tenant_metrics.queued_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
 
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
     let documents = service

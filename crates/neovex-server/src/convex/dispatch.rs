@@ -191,7 +191,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
             runtime,
             bundle,
             request.clone(),
-            RuntimeInvocationContext::top_level(&request),
+            RuntimeInvocationContext::top_level_for_tenant(&request, tenant_id.to_string()),
             Some(cancellation),
         )
         .map_err(runtime_error_to_core)?;
@@ -240,7 +240,7 @@ pub(super) async fn invoke_named_convex_function_with_trace_async_cancellable(
             runtime,
             bundle,
             request.clone(),
-            RuntimeInvocationContext::top_level(&request),
+            RuntimeInvocationContext::top_level_for_tenant(&request, tenant_id.to_string()),
             Some(cancellation),
         )
         .await
