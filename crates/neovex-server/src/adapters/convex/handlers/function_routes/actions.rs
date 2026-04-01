@@ -37,7 +37,15 @@ pub(crate) async fn action(
         }
         ConvexActionRequest::Named(request) => {
             let action = registry.resolve_action(&request.name, &request.args)?;
-            execute_convex_action_async(&service, &registry, &tenant_id, action, None).await?
+            execute_convex_action_async(
+                &service,
+                &registry,
+                &tenant_id,
+                action,
+                auth.as_ref(),
+                None,
+            )
+            .await?
         }
         ConvexActionRequest::Raw { action } => {
             execute_convex_action_async(
@@ -45,6 +53,7 @@ pub(crate) async fn action(
                 &registry,
                 &tenant_id,
                 ConvexExecutableAction::Action(action),
+                auth.as_ref(),
                 None,
             )
             .await?

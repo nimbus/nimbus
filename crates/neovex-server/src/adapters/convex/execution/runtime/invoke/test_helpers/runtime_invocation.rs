@@ -55,6 +55,8 @@ fn invoke_named_convex_function_with_trace_cancellable(
             service.clone(),
             registry.clone(),
             tenant_id.clone(),
+            request.auth.clone(),
+            normalize_principal_context(request.auth.as_ref()),
             None,
         )),
         bundle,

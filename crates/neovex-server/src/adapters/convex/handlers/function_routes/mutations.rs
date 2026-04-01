@@ -37,7 +37,15 @@ pub(crate) async fn mutation(
         }
         ConvexMutationRequest::Named(request) => {
             let mutation = registry.resolve_mutation(&request.name, &request.args)?;
-            dispatch_convex_mutation_async(&service, &registry, &tenant_id, mutation, None).await?
+            dispatch_convex_mutation_async(
+                &service,
+                &registry,
+                &tenant_id,
+                mutation,
+                auth.as_ref(),
+                None,
+            )
+            .await?
         }
         ConvexMutationRequest::Raw { mutation } => {
             dispatch_convex_mutation_async(
@@ -45,6 +53,7 @@ pub(crate) async fn mutation(
                 &registry,
                 &tenant_id,
                 ConvexExecutableMutation::Mutation(mutation),
+                auth.as_ref(),
                 None,
             )
             .await?

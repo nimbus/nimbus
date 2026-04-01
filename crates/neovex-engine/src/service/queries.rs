@@ -4,15 +4,17 @@ use std::sync::Arc;
 use std::cmp::Ordering;
 
 use neovex_core::{
-    CommitEntry, Document, DocumentId, Error, Filter, FilterOp, Page, PaginatedQuery, Query,
-    Result, SequenceNumber, TableName, TenantId,
+    AccessAction, AccessRule, CommitEntry, Document, DocumentId, Error, Filter, FilterOp, Page,
+    PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TableName, TableSchema,
+    TenantId, policy_revision_id,
 };
 use neovex_storage::index::encode_index_value;
 use serde_json::Value;
 
 use crate::evaluator::{
-    evaluate_paginated_cancellable, evaluate_paginated_with_docs_cancellable,
-    evaluate_query_cancellable, evaluate_query_with_docs_cancellable,
+    evaluate_paginated_with_docs_cancellable_and_predicate,
+    evaluate_query_with_docs_cancellable_and_predicate, evaluate_query_cancellable_with_predicate,
+    evaluate_paginated_cancellable_with_predicate,
 };
 use crate::tenant::TenantRuntime;
 
@@ -21,9 +23,27 @@ use super::Service;
 impl Service {
     /// Lists documents in a logical table.
     pub fn list_documents(&self, tenant_id: &TenantId, table: &TableName) -> Result<Vec<Document>> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let _operation = runtime.enter_operation(tenant_id)?;
-        runtime.store.scan_table(table)
+        self.list_documents_with_principal(tenant_id, table, &PrincipalContext::anonymous())
+    }
+
+    /// Lists documents in a logical table for the provided principal.
+    pub fn list_documents_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        principal: &PrincipalContext,
+    ) -> Result<Vec<Document>> {
+        self.query_documents_with_principal_cancellable(
+            tenant_id,
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            principal,
+            &mut || Ok(()),
+        )
     }
 
     /// Lists documents in a logical table asynchronously.
@@ -32,8 +52,21 @@ impl Service {
         tenant_id: TenantId,
         table: TableName,
     ) -> Result<Vec<Document>> {
-        self.list_documents_async_cancellable(tenant_id, table, pending(), || Ok(()))
+        self.list_documents_async_with_principal(tenant_id, table, PrincipalContext::anonymous())
             .await
+    }
+
+    /// Lists documents in a logical table asynchronously for the provided principal.
+    pub async fn list_documents_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        principal: PrincipalContext,
+    ) -> Result<Vec<Document>> {
+        self.call_blocking(move |service| {
+            service.list_documents_with_principal(&tenant_id, &table, &principal)
+        })
+        .await
     }
 
     /// Lists documents in a logical table asynchronously with cooperative cancellation.
@@ -48,13 +81,42 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        self.list_documents_async_cancellable_with_principal(
+            tenant_id,
+            table,
+            PrincipalContext::anonymous(),
+            cancel_wait,
+            check_cancel,
+        )
+        .await
+    }
+
+    /// Lists documents asynchronously for a principal with cooperative cancellation.
+    pub async fn list_documents_async_cancellable_with_principal<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Vec<Document>>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         self.call_blocking_cancellable(cancel_wait, move |service| {
-            let runtime = service.get_existing_tenant(&tenant_id)?;
-            let _operation = runtime.enter_operation(&tenant_id)?;
             let mut check_cancel = || check_cancel();
-            runtime
-                .store
-                .scan_table_cancellable(&table, &mut check_cancel)
+            service.query_documents_with_principal_cancellable(
+                &tenant_id,
+                &Query {
+                    table,
+                    filters: Vec::new(),
+                    order: None,
+                    limit: None,
+                },
+                &principal,
+                &mut check_cancel,
+            )
         })
         .await
     }
@@ -66,9 +128,34 @@ impl Service {
         table: &TableName,
         document_id: DocumentId,
     ) -> Result<Document> {
+        self.get_document_with_principal(
+            tenant_id,
+            table,
+            document_id,
+            &PrincipalContext::anonymous(),
+        )
+    }
+
+    /// Fetches a single document in a logical table for the provided principal.
+    pub fn get_document_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        document_id: DocumentId,
+        principal: &PrincipalContext,
+    ) -> Result<Document> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
+        let schema = runtime.schema();
+        let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
+        if authorization.impossible {
+            return Err(Error::DocumentNotFound(document_id));
+        }
+
         if let Some(document) = runtime.get_cached_document(table, document_id) {
+            if !authorization.allows_document(principal, &document)? {
+                return Err(Error::DocumentNotFound(document_id));
+            }
             return Ok(document);
         }
 
@@ -76,6 +163,9 @@ impl Service {
             .store
             .get(table, &document_id)?
             .ok_or(Error::DocumentNotFound(document_id))?;
+        if !authorization.allows_document(principal, &document)? {
+            return Err(Error::DocumentNotFound(document_id));
+        }
         runtime.cache_document(&document);
         Ok(document)
     }
@@ -91,9 +181,38 @@ impl Service {
             .await
     }
 
+    /// Fetches a single document asynchronously for the provided principal.
+    pub async fn get_document_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        principal: PrincipalContext,
+    ) -> Result<Document> {
+        self.call_blocking(move |service| {
+            service.get_document_with_principal(&tenant_id, &table, document_id, &principal)
+        })
+        .await
+    }
+
     /// Evaluates a query for a tenant.
     pub fn query_documents(&self, tenant_id: &TenantId, query: &Query) -> Result<Vec<Document>> {
-        self.query_documents_cancellable(tenant_id, query, &mut || Ok(()))
+        self.query_documents_with_principal_cancellable(
+            tenant_id,
+            query,
+            &PrincipalContext::anonymous(),
+            &mut || Ok(()),
+        )
+    }
+
+    /// Evaluates a query for a tenant and principal.
+    pub fn query_documents_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        query: &Query,
+        principal: &PrincipalContext,
+    ) -> Result<Vec<Document>> {
+        self.query_documents_with_principal_cancellable(tenant_id, query, principal, &mut || Ok(()))
     }
 
     /// Evaluates a query for a tenant asynchronously.
@@ -104,6 +223,23 @@ impl Service {
     ) -> Result<Vec<Document>> {
         self.query_documents_async_cancellable(tenant_id, query, pending(), || Ok(()))
             .await
+    }
+
+    /// Evaluates a query asynchronously for a specific principal.
+    pub async fn query_documents_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: Query,
+        principal: PrincipalContext,
+    ) -> Result<Vec<Document>> {
+        self.query_documents_async_cancellable_with_principal(
+            tenant_id,
+            query,
+            principal,
+            pending(),
+            || Ok(()),
+        )
+        .await
     }
 
     /// Evaluates a query for a tenant asynchronously with cooperative cancellation.
@@ -125,6 +261,31 @@ impl Service {
         .await
     }
 
+    /// Evaluates a query asynchronously for a principal with cooperative cancellation.
+    pub async fn query_documents_async_cancellable_with_principal<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: Query,
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Vec<Document>>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.call_blocking_cancellable(cancel_wait, move |service| {
+            let mut check_cancel = || check_cancel();
+            service.query_documents_with_principal_cancellable(
+                &tenant_id,
+                &query,
+                &principal,
+                &mut check_cancel,
+            )
+        })
+        .await
+    }
+
     /// Evaluates a query for a tenant while checking for cancellation between rows.
     pub fn query_documents_cancellable(
         &self,
@@ -132,14 +293,50 @@ impl Service {
         query: &Query,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
+        self.query_documents_with_principal_cancellable(
+            tenant_id,
+            query,
+            &PrincipalContext::anonymous(),
+            check_cancel,
+        )
+    }
+
+    /// Evaluates a query for a tenant and principal while checking for cancellation between rows.
+    pub fn query_documents_with_principal_cancellable(
+        &self,
+        tenant_id: &TenantId,
+        query: &Query,
+        principal: &PrincipalContext,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        evaluate_with_index_cancellable(&runtime, query, check_cancel)
+        evaluate_with_index_cancellable_for_principal(&runtime, query, principal, check_cancel)
     }
 
     /// Evaluates a paginated query for a tenant.
     pub fn paginate_documents(&self, tenant_id: &TenantId, query: &PaginatedQuery) -> Result<Page> {
-        self.paginate_documents_cancellable(tenant_id, query, &mut || Ok(()))
+        self.paginate_documents_with_principal_cancellable(
+            tenant_id,
+            query,
+            &PrincipalContext::anonymous(),
+            &mut || Ok(()),
+        )
+    }
+
+    /// Evaluates a paginated query for a tenant and principal.
+    pub fn paginate_documents_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        query: &PaginatedQuery,
+        principal: &PrincipalContext,
+    ) -> Result<Page> {
+        self.paginate_documents_with_principal_cancellable(
+            tenant_id,
+            query,
+            principal,
+            &mut || Ok(()),
+        )
     }
 
     /// Evaluates a paginated query for a tenant asynchronously.
@@ -150,6 +347,23 @@ impl Service {
     ) -> Result<Page> {
         self.paginate_documents_async_cancellable(tenant_id, query, pending(), || Ok(()))
             .await
+    }
+
+    /// Evaluates a paginated query asynchronously for a principal.
+    pub async fn paginate_documents_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: PaginatedQuery,
+        principal: PrincipalContext,
+    ) -> Result<Page> {
+        self.paginate_documents_async_cancellable_with_principal(
+            tenant_id,
+            query,
+            principal,
+            pending(),
+            || Ok(()),
+        )
+        .await
     }
 
     /// Evaluates a paginated query for a tenant asynchronously with cooperative cancellation.
@@ -171,6 +385,31 @@ impl Service {
         .await
     }
 
+    /// Evaluates a paginated query asynchronously for a principal with cooperative cancellation.
+    pub async fn paginate_documents_async_cancellable_with_principal<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: PaginatedQuery,
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Page>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.call_blocking_cancellable(cancel_wait, move |service| {
+            let mut check_cancel = || check_cancel();
+            service.paginate_documents_with_principal_cancellable(
+                &tenant_id,
+                &query,
+                &principal,
+                &mut check_cancel,
+            )
+        })
+        .await
+    }
+
     /// Evaluates a paginated query for a tenant while checking for cancellation between rows.
     pub fn paginate_documents_cancellable(
         &self,
@@ -178,15 +417,69 @@ impl Service {
         query: &PaginatedQuery,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Page> {
+        self.paginate_documents_with_principal_cancellable(
+            tenant_id,
+            query,
+            &PrincipalContext::anonymous(),
+            check_cancel,
+        )
+    }
+
+    /// Evaluates a paginated query for a tenant and principal while checking cancellation.
+    pub fn paginate_documents_with_principal_cancellable(
+        &self,
+        tenant_id: &TenantId,
+        query: &PaginatedQuery,
+        principal: &PrincipalContext,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Page> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        let plan = plan_query(&query.query, runtime.schema().get_table(&query.query.table))?;
-        if let Some(index_docs) =
-            load_query_plan_documents_cancellable(&runtime, &query.query, &plan, check_cancel)?
-        {
-            evaluate_paginated_with_docs_cancellable(index_docs, query, check_cancel)
+        let schema = runtime.schema();
+        let table_schema = schema.get_table(&query.query.table);
+        let authorization = ReadAuthorization::for_table(table_schema, principal)?;
+        if authorization.impossible {
+            return Ok(Page {
+                data: Vec::new(),
+                next_cursor: None,
+                has_more: false,
+            });
+        }
+
+        let planned_query = authorization.merge_query(&query.query);
+        let planned_paginated = PaginatedQuery {
+            query: planned_query.clone(),
+            page_size: query.page_size,
+            after: query.after.clone(),
+        };
+        let plan = plan_query(&planned_paginated.query, table_schema)?;
+        let mut include_document = |document: &Document| {
+            authorization.allows_document(principal, document)
+        };
+        if let Some(index_docs) = load_query_plan_documents_cancellable(
+            &runtime,
+            &planned_paginated.query,
+            &plan,
+            check_cancel,
+        )? {
+            let residual_paginated = PaginatedQuery {
+                query: plan.residual_query(&planned_paginated.query),
+                page_size: planned_paginated.page_size,
+                after: planned_paginated.after.clone(),
+            };
+            evaluate_paginated_with_docs_cancellable_and_predicate(
+                index_docs,
+                &residual_paginated,
+                check_cancel,
+                &mut include_document,
+            )
         } else {
-            evaluate_paginated_cancellable(&runtime.store, query, check_cancel)
+            evaluate_paginated_cancellable_with_predicate(
+                &runtime.store,
+                &planned_paginated,
+                check_cancel,
+                &mut include_document,
+            )
         }
     }
 
@@ -239,26 +532,97 @@ impl Service {
     }
 }
 
-pub(super) fn evaluate_with_index(runtime: &TenantRuntime, query: &Query) -> Result<Vec<Document>> {
-    evaluate_with_index_cancellable(runtime, query, &mut || Ok(()))
-}
-
-pub(super) fn evaluate_with_index_cancellable(
+pub(super) fn evaluate_with_index_cancellable_for_principal(
     runtime: &TenantRuntime,
     query: &Query,
+    principal: &PrincipalContext,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
-    let plan = plan_query(query, runtime.schema().get_table(&query.table))?;
+    let schema = runtime.schema();
+    let table_schema = schema.get_table(&query.table);
+    let authorization = ReadAuthorization::for_table(table_schema, principal)?;
+    if authorization.impossible {
+        return Ok(Vec::new());
+    }
+
+    let planned_query = authorization.merge_query(query);
+    let plan = plan_query(&planned_query, table_schema)?;
+    let mut include_document =
+        |document: &Document| authorization.allows_document(principal, document);
     let documents = if let Some(documents) =
-        load_query_plan_documents_cancellable(runtime, query, &plan, check_cancel)?
+        load_query_plan_documents_cancellable(runtime, &planned_query, &plan, check_cancel)?
     {
-        let residual_query = plan.residual_query(query);
-        evaluate_query_with_docs_cancellable(documents, &residual_query, check_cancel)?
+        let residual_query = plan.residual_query(&planned_query);
+        evaluate_query_with_docs_cancellable_and_predicate(
+            documents,
+            &residual_query,
+            check_cancel,
+            &mut include_document,
+        )?
     } else {
-        evaluate_query_cancellable(&runtime.store, query, check_cancel)?
+        evaluate_query_cancellable_with_predicate(
+            &runtime.store,
+            &planned_query,
+            check_cancel,
+            &mut include_document,
+        )?
     };
     runtime.cache_documents(&documents);
     Ok(documents)
+}
+
+pub(super) fn table_policy_revision(table_schema: Option<&TableSchema>) -> Result<String> {
+    match table_schema {
+        Some(table_schema) => table_schema.access_policy_revision(),
+        None => policy_revision_id(None),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ReadAuthorization {
+    rule: Option<AccessRule>,
+    planner_filters: Vec<Filter>,
+    impossible: bool,
+}
+
+impl ReadAuthorization {
+    fn for_table(table_schema: Option<&TableSchema>, principal: &PrincipalContext) -> Result<Self> {
+        let rule = table_schema
+            .and_then(|table_schema| table_schema.access_policy.as_ref())
+            .map(|policy| policy.rule_for(AccessAction::Read).clone())
+            .filter(|rule| !rule.is_unrestricted());
+        let Some(rule) = rule else {
+            return Ok(Self {
+                rule: None,
+                planner_filters: Vec::new(),
+                impossible: false,
+            });
+        };
+
+        let compiled = rule.compile_read_filters(principal)?;
+        Ok(Self {
+            rule: Some(rule),
+            planner_filters: compiled.planner_filters,
+            impossible: compiled.impossible,
+        })
+    }
+
+    fn merge_query(&self, query: &Query) -> Query {
+        if self.planner_filters.is_empty() {
+            return query.clone();
+        }
+
+        let mut merged = query.clone();
+        merged.filters.extend(self.planner_filters.clone());
+        merged
+    }
+
+    fn allows_document(&self, principal: &PrincipalContext, document: &Document) -> Result<bool> {
+        match &self.rule {
+            Some(rule) => rule.allows(principal, Some(document), None),
+            None => Ok(true),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -581,6 +945,7 @@ mod tests {
                     field: (*field).to_string(),
                 })
                 .collect(),
+            access_policy: None,
         }
     }
 

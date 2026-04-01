@@ -24,16 +24,18 @@ async fn handle_text_message(
 ) {
     match serde_json::from_str::<ConvexClientMessage>(text) {
         Ok(ConvexClientMessage::Authenticate { token }) => {
-            handle_authenticate(ctx, current_auth, token).await;
+            handle_authenticate(ctx, current_auth, active_subscriptions, token).await;
         }
         Ok(ConvexClientMessage::ClearAuth) => {
+            reset_active_subscriptions_for_auth_change(ctx, active_subscriptions).await;
             *current_auth = None;
             let _ = ctx.outbound_tx.send(ServerMessage::Authenticated {
                 is_authenticated: false,
             });
         }
         Ok(ConvexClientMessage::Subscribe { request_id, query }) => {
-            handle_plain_subscription(ctx, active_subscriptions, request_id, query).await;
+            handle_plain_subscription(ctx, current_auth, active_subscriptions, request_id, query)
+                .await;
         }
         Ok(ConvexClientMessage::SubscribeNamed {
             request_id,
@@ -71,10 +73,12 @@ async fn handle_text_message(
 async fn handle_authenticate(
     ctx: &SocketSessionCtx<'_>,
     current_auth: &mut Option<InvocationAuth>,
+    active_subscriptions: &mut ActiveSubscriptions,
     token: String,
 ) {
     match ctx.convex_registry.verify_socket_token(&token).await {
         Ok(auth) => {
+            reset_active_subscriptions_for_auth_change(ctx, active_subscriptions).await;
             *current_auth = Some(auth);
             crate::state::record_authenticated_usage(ctx.state, current_auth.as_ref()).await;
             let _ = ctx.outbound_tx.send(ServerMessage::Authenticated {
@@ -91,6 +95,7 @@ async fn handle_authenticate(
 
 async fn handle_plain_subscription(
     ctx: &SocketSessionCtx<'_>,
+    current_auth: &Option<InvocationAuth>,
     active_subscriptions: &mut ActiveSubscriptions,
     request_id: String,
     query: Query,
@@ -104,8 +109,15 @@ async fn handle_plain_subscription(
     let service = ctx.state.service.clone();
     let tenant_id = ctx.tenant_id.clone();
     let sender = ctx.subscription_tx.clone();
+    let principal = normalize_principal_context(current_auth.as_ref());
     match service
-        .subscribe_async(tenant_id, query, request_id_for_worker, sender)
+        .subscribe_async_with_principal(
+            tenant_id,
+            query,
+            principal,
+            request_id_for_worker,
+            sender,
+        )
         .await
     {
         Ok(registration) => {
@@ -129,6 +141,30 @@ async fn handle_plain_subscription(
             });
         }
     }
+}
+
+async fn reset_active_subscriptions_for_auth_change(
+    ctx: &SocketSessionCtx<'_>,
+    active_subscriptions: &mut ActiveSubscriptions,
+) {
+    if active_subscriptions.is_empty() {
+        return;
+    }
+
+    let to_unsubscribe = std::mem::take(active_subscriptions);
+    forwarding::unsubscribe_active_subscriptions(
+        &ctx.state.service,
+        ctx.tenant_id,
+        to_unsubscribe,
+        ctx.outbound_tx,
+        false,
+        ctx.transforms,
+    )
+    .await;
+    let _ = ctx.outbound_tx.send(ServerMessage::Error {
+        request_id: None,
+        message: "authentication context changed; resubscribe active subscriptions".to_string(),
+    });
 }
 
 async fn handle_unsubscribe(

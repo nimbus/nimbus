@@ -91,7 +91,7 @@ impl TenantStore {
         id: &DocumentId,
         patch: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<CommitEntry> {
-        self.update_validated(table, id, patch, |_| Ok(()))
+        self.update_validated(table, id, patch, |_, _| Ok(()))
     }
 
     /// Updates a document by applying a partial patch after validating the merged result.
@@ -103,7 +103,7 @@ impl TenantStore {
         validate: F,
     ) -> Result<CommitEntry>
     where
-        F: FnOnce(&Document) -> Result<()>,
+        F: FnOnce(&Document, &Document) -> Result<()>,
     {
         self.update_validated_once(table, id, patch, None, validate)?
             .ok_or_else(|| Error::Internal("non-deduplicated update should commit".to_string()))
@@ -119,7 +119,7 @@ impl TenantStore {
         validate: F,
     ) -> Result<Option<CommitEntry>>
     where
-        F: FnOnce(&Document) -> Result<()>,
+        F: FnOnce(&Document, &Document) -> Result<()>,
     {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         if !begin_scheduled_execution(&write_txn, execution_id)? {
@@ -128,7 +128,7 @@ impl TenantStore {
         {
             let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
             let key = document_key(table, id);
-            let mut document = {
+            let existing_document = {
                 let existing = documents
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
@@ -136,10 +136,11 @@ impl TenantStore {
                 Document::from_msgpack(existing.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?
             };
+            let mut document = existing_document.clone();
             for (field, value) in patch {
                 document.fields.insert(field.clone(), value.clone());
             }
-            validate(&document)?;
+            validate(&existing_document, &document)?;
             let payload = document
                 .to_msgpack()
                 .map_err(|error| Error::Serialization(error.to_string()))?;
@@ -162,7 +163,7 @@ impl TenantStore {
 
     /// Deletes a document if present and records a commit entry.
     pub fn delete(&self, table: &TableName, id: &DocumentId) -> Result<CommitEntry> {
-        self.delete_once(table, id, None)?
+        self.delete_validated_once(table, id, None, |_| Ok(()))?
             .map(|commit| commit.0)
             .ok_or_else(|| Error::Internal("non-deduplicated delete should commit".to_string()))
     }
@@ -174,7 +175,7 @@ impl TenantStore {
         id: &DocumentId,
         execution_id: Option<&str>,
     ) -> Result<Option<(CommitEntry, Document)>> {
-        self.delete_once_returning_document(table, id, execution_id)
+        self.delete_validated_once(table, id, execution_id, |_| Ok(()))
     }
 
     /// Deletes a document if present and returns both the commit and removed snapshot.
@@ -183,17 +184,34 @@ impl TenantStore {
         table: &TableName,
         id: &DocumentId,
     ) -> Result<(CommitEntry, Document)> {
-        self.delete_once_returning_document(table, id, None)?
+        self.delete_validated_returning_document(table, id, |_| Ok(()))
+    }
+
+    /// Deletes a document atomically after validating the removed snapshot.
+    pub fn delete_validated_returning_document<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        validate: F,
+    ) -> Result<(CommitEntry, Document)>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
+        self.delete_validated_once(table, id, None, validate)?
             .ok_or_else(|| Error::Internal("non-deduplicated delete should commit".to_string()))
     }
 
     /// Deletes a document once and returns the removed snapshot for the provided scheduled execution id.
-    pub fn delete_once_returning_document(
+    pub fn delete_validated_once<F>(
         &self,
         table: &TableName,
         id: &DocumentId,
         execution_id: Option<&str>,
-    ) -> Result<Option<(CommitEntry, Document)>> {
+        validate: F,
+    ) -> Result<Option<(CommitEntry, Document)>>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         if !begin_scheduled_execution(&write_txn, execution_id)? {
             return Ok(None);
@@ -206,6 +224,7 @@ impl TenantStore {
             Document::from_msgpack(removed.value())
                 .map_err(|error| Error::Serialization(error.to_string()))?
         };
+        validate(&removed_document)?;
 
         let commit = append_commit(
             &write_txn,

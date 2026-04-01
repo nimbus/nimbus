@@ -1,4 +1,4 @@
-use super::mutations::{dispatch_convex_mutation_async, dispatch_mutation_async};
+use super::mutations::{dispatch_convex_mutation_async, dispatch_mutation_async_with_auth};
 use super::queries::{
     execute_query_result_async, paginate_documents_async_with_optional_cancellation,
 };
@@ -10,6 +10,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     action: ConvexExecutableAction,
+    auth: Option<&InvocationAuth>,
     cancellation: Option<HostCallCancellation>,
 ) -> Result<Value, Error> {
     match action {
@@ -18,6 +19,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
                 service,
                 tenant_id,
                 ConvexExecutableQuery::Query(query),
+                auth,
                 cancellation,
             )
             .await
@@ -27,6 +29,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
                 service,
                 tenant_id,
                 query,
+                auth,
                 cancellation,
             )
             .await?;
@@ -36,7 +39,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
             if let Some(cancellation) = cancellation.as_ref() {
                 check_host_cancellation(cancellation)?;
             }
-            dispatch_mutation_async(service, tenant_id, mutation).await
+            dispatch_mutation_async_with_auth(service, tenant_id, mutation, auth).await
         }
         ConvexExecutableAction::Scheduled(command) => {
             execute_schedule_command_async(service, registry, tenant_id, command, cancellation)
@@ -48,6 +51,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
                 registry,
                 tenant_id,
                 command,
+                auth,
                 cancellation,
             ))
             .await
@@ -60,6 +64,7 @@ async fn execute_function_call_async(
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     command: ConvexFunctionCallCommand,
+    auth: Option<&InvocationAuth>,
     cancellation: Option<HostCallCancellation>,
 ) -> Result<Value, Error> {
     match command {
@@ -73,7 +78,7 @@ async fn execute_function_call_async(
                 &args,
                 visibility.unwrap_or(ConvexFunctionVisibility::Public),
             )?;
-            execute_query_result_async(service, tenant_id, query, cancellation).await
+            execute_query_result_async(service, tenant_id, query, auth, cancellation).await
         }
         ConvexFunctionCallCommand::Mutation {
             name,
@@ -85,8 +90,15 @@ async fn execute_function_call_async(
                 &args,
                 visibility.unwrap_or(ConvexFunctionVisibility::Public),
             )?;
-            dispatch_convex_mutation_async(service, registry, tenant_id, mutation, cancellation)
-                .await
+            dispatch_convex_mutation_async(
+                service,
+                registry,
+                tenant_id,
+                mutation,
+                auth,
+                cancellation,
+            )
+            .await
         }
         ConvexFunctionCallCommand::Action {
             name,
@@ -103,6 +115,7 @@ async fn execute_function_call_async(
                 registry,
                 tenant_id,
                 action,
+                auth,
                 cancellation,
             ))
             .await

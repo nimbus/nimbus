@@ -239,7 +239,7 @@ dependencies are `done`.
 | 3B | done | none | completed 2026-04-01 |
 | 3C | done | none | completed 2026-04-01 |
 | 3D | done | 3A, 3B | completed 2026-04-01 |
-| 3E | in_progress | 3B | active 2026-04-01 |
+| 3E | in_progress | 3B | checkpointed 2026-04-01; compile-clean auth plumbing landed, targeted verification still pending |
 | 4D | todo | none | simulation seam groundwork should land before 6A, 8A, and 9A |
 | 3F | todo | 3D, 3E | OCC starts after dependency model and auth work |
 | 5A | todo | none | async rewrite start |
@@ -288,6 +288,7 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | 3E | checkpointed | Added declarative principal and access-policy types in `neovex-core`, threaded normalized principals through engine query, mutation, subscription, and Convex runtime paths, stored principal snapshots plus policy revisions on subscriptions, and made policy or auth-context changes invalidate cached or live views conservatively. | `cargo check --workspace` | Add targeted engine and server auth tests, rerun roadmap-required verification, and then mark 3E done |
 | 2026-04-01 | 3D | done | Introduced a shared `DependencySet` model plus commit-intersection helper in `neovex-core`, moved engine subscriptions onto that normalized dependency vocabulary, translated runtime `RuntimeReadSet` values into the same shared form for re-evaluation skip checks, and added core, engine, and runtime tests for shared dependency matching and coarse engine fallback behavior. | `cargo test -p neovex-core`; `cargo test -p neovex-engine`; `cargo test -p neovex-server runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavior`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3E is now in progress |
 | 2026-04-01 | 3C | done | Added a tenant-local document cache to `TenantRuntime`, invalidated cache entries before subscription re-evaluation on every committed mutation, populated cached documents from `get_document(...)`, indexed lookups, and evaluated query results, and added deterministic hit or miss coverage for repeated gets, mutation invalidation, and subscription refreshes. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3D is now in progress |
 | 2026-04-01 | 3B | done | Extracted pure query planning into a private `QueryPlan` plus `plan_query(...)` helper in `service/queries.rs`, kept storage access in service-layer execution helpers, preserved paginated query shape while using residual filters for non-paginated exact-index scans, and added direct planner tests for full-scan, exact-index, range-index, and residual-filter behavior. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3C is now in progress |
@@ -1507,10 +1508,25 @@ part of the query path instead of a route-specific convention.
 #### Implementation checkpoint
 
 - Started 2026-04-01 after completing 3D.
-- Next step: inspect the current schema types, Convex auth normalization, and
-  engine query plus mutation entrypoints to introduce declarative policy types
-  in `neovex-core` and thread principal context through engine-owned
-  authorization checks instead of route-specific middleware.
+- Compile-clean checkpoint recorded 2026-04-01 before targeted verification.
+- Added `PrincipalContext`, principal snapshots, declarative table access
+  policies, and policy-revision hashing in `neovex-core`, then threaded those
+  types through schema validation and error handling.
+- Engine reads now compile policy into planner-aware filters plus residual
+  predicates, `get` hides unauthorized rows as not-found, mutation authorization
+  is checked atomically around storage writes, and subscriptions now store both
+  the principal snapshot and the active policy revision.
+- Convex auth remains the boundary authenticator, but runtime host calls,
+  direct query or mutation helpers, HTTP actions, and socket subscriptions now
+  normalize `InvocationAuth` into engine-owned principal context before data
+  access.
+- Policy revision changes now clear the tenant document cache and terminate
+  stale subscriptions, and websocket auth changes conservatively tear down
+  active subscriptions so old claims snapshots cannot continue receiving data.
+- Next step: add the targeted engine and server tests for read filtering, write
+  denial, runtime-host non-bypass, and subscription teardown on policy or
+  principal changes; then run the required verification suite and mark 3E
+  `done`.
 
 ---
 

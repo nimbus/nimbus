@@ -17,12 +17,19 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        self.record_document_read(&payload.table, &payload.id);
         let response = match self
             .service
-            .get_document(&self.tenant_id, &payload.table, payload.id)
+            .get_document_with_principal(
+                &self.tenant_id,
+                &payload.table,
+                payload.id,
+                &self.principal,
+            )
         {
-            Ok(document) => ConvexRuntimeResponseEnvelope::ok(document.to_json()),
+            Ok(document) => {
+                self.record_document_read(&payload.table, &payload.id);
+                ConvexRuntimeResponseEnvelope::ok(document.to_json())
+            }
             Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
             Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
         };
@@ -45,14 +52,15 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbInsertPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = dispatch_mutation(
-            &self.service,
-            &self.tenant_id,
-            Mutation::Insert {
-                table: payload.table,
-                fields: payload.fields,
-            },
-        );
+        let response = self
+            .service
+            .insert_document_with_principal(
+                &self.tenant_id,
+                payload.table,
+                payload.fields,
+                &self.principal,
+            )
+            .map(|id| Value::String(id.to_string()));
         encode_runtime_core_result(response)
     }
 
@@ -72,15 +80,16 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbPatchPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = dispatch_mutation(
-            &self.service,
-            &self.tenant_id,
-            Mutation::Update {
-                table: payload.table,
-                id: payload.id,
-                patch: payload.patch,
-            },
-        );
+        let response = self
+            .service
+            .update_document_with_principal(
+                &self.tenant_id,
+                payload.table,
+                payload.id,
+                payload.patch,
+                &self.principal,
+            )
+            .map(|id| Value::String(id.to_string()));
         encode_runtime_core_result(response)
     }
 
@@ -100,14 +109,15 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbDeletePayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = dispatch_mutation(
-            &self.service,
-            &self.tenant_id,
-            Mutation::Delete {
-                table: payload.table,
-                id: payload.id,
-            },
-        );
+        let response = self
+            .service
+            .delete_document_with_principal(
+                &self.tenant_id,
+                payload.table,
+                payload.id,
+                &self.principal,
+            )
+            .map(|_| Value::Null);
         encode_runtime_core_result(response)
     }
 }

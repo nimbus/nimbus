@@ -201,7 +201,7 @@ impl TenantStore {
         patch: &serde_json::Map<String, Value>,
         indexes: &[IndexDefinition],
     ) -> Result<CommitEntry> {
-        self.update_with_indexes_validated(table, id, patch, indexes, |_| Ok(()))
+        self.update_with_indexes_validated(table, id, patch, indexes, |_, _| Ok(()))
     }
 
     /// Updates a document and maintains indexes atomically after validating the merged result.
@@ -214,7 +214,7 @@ impl TenantStore {
         validate: F,
     ) -> Result<CommitEntry>
     where
-        F: FnOnce(&Document) -> Result<()>,
+        F: FnOnce(&Document, &Document) -> Result<()>,
     {
         self.update_with_indexes_validated_once(table, id, patch, indexes, None, validate)?
             .ok_or_else(|| {
@@ -235,7 +235,7 @@ impl TenantStore {
         validate: F,
     ) -> Result<Option<CommitEntry>>
     where
-        F: FnOnce(&Document) -> Result<()>,
+        F: FnOnce(&Document, &Document) -> Result<()>,
     {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         if !begin_scheduled_execution(&write_txn, execution_id)? {
@@ -254,7 +254,7 @@ impl TenantStore {
             for (field, value) in patch {
                 new_document.fields.insert(field.clone(), value.clone());
             }
-            validate(&new_document)?;
+            validate(&old_document, &new_document)?;
 
             let payload = new_document
                 .to_msgpack()
@@ -317,7 +317,7 @@ impl TenantStore {
         id: &DocumentId,
         indexes: &[IndexDefinition],
     ) -> Result<CommitEntry> {
-        self.delete_with_indexes_once(table, id, indexes, None)?
+        self.delete_with_indexes_validated_once(table, id, indexes, None, |_| Ok(()))?
             .map(|commit| commit.0)
             .ok_or_else(|| {
                 neovex_core::Error::Internal(
@@ -334,7 +334,7 @@ impl TenantStore {
         indexes: &[IndexDefinition],
         execution_id: Option<&str>,
     ) -> Result<Option<(CommitEntry, Document)>> {
-        self.delete_with_indexes_once_returning_document(table, id, indexes, execution_id)
+        self.delete_with_indexes_validated_once(table, id, indexes, execution_id, |_| Ok(()))
     }
 
     /// Deletes a document and removes index entries atomically, returning the removed snapshot.
@@ -344,7 +344,21 @@ impl TenantStore {
         id: &DocumentId,
         indexes: &[IndexDefinition],
     ) -> Result<(CommitEntry, Document)> {
-        self.delete_with_indexes_once_returning_document(table, id, indexes, None)?
+        self.delete_with_indexes_validated_returning_document(table, id, indexes, |_| Ok(()))
+    }
+
+    /// Deletes a document and removes index entries atomically after validating the removed snapshot.
+    pub fn delete_with_indexes_validated_returning_document<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        indexes: &[IndexDefinition],
+        validate: F,
+    ) -> Result<(CommitEntry, Document)>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
+        self.delete_with_indexes_validated_once(table, id, indexes, None, validate)?
             .ok_or_else(|| {
                 neovex_core::Error::Internal(
                     "non-deduplicated indexed delete should commit".to_string(),
@@ -353,13 +367,17 @@ impl TenantStore {
     }
 
     /// Deletes a document and removes index entries once for the provided scheduled execution id, returning the removed snapshot.
-    pub fn delete_with_indexes_once_returning_document(
+    pub fn delete_with_indexes_validated_once<F>(
         &self,
         table: &TableName,
         id: &DocumentId,
         indexes: &[IndexDefinition],
         execution_id: Option<&str>,
-    ) -> Result<Option<(CommitEntry, Document)>> {
+        validate: F,
+    ) -> Result<Option<(CommitEntry, Document)>>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         if !begin_scheduled_execution(&write_txn, execution_id)? {
             return Ok(None);
@@ -372,6 +390,7 @@ impl TenantStore {
             Document::from_msgpack(removed.value())
                 .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
         };
+        validate(&old_document)?;
 
         {
             let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;

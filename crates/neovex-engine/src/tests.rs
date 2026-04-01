@@ -63,6 +63,7 @@ fn users_schema() -> TableSchema {
             },
         ],
         indexes: Vec::new(),
+        access_policy: None,
     }
 }
 
@@ -1546,6 +1547,7 @@ async fn query_uses_index_for_equality_filter() {
             name: "by_status".to_string(),
             field: "status".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1592,6 +1594,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
             name: "by_status".to_string(),
             field: "status".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1670,6 +1673,7 @@ async fn setting_schema_backfills_indexes_for_existing_documents() {
             name: "by_status".to_string(),
             field: "status".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1705,6 +1709,7 @@ async fn query_uses_index_for_range_filter() {
             name: "by_rank".to_string(),
             field: "rank".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1762,6 +1767,7 @@ async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
             name: "by_status".to_string(),
             field: "status".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1819,6 +1825,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
             name: "by_status".to_string(),
             field: "status".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1897,6 +1904,7 @@ async fn query_uses_index_for_bounded_range_filter() {
             name: "by_rank".to_string(),
             field: "rank".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -1950,6 +1958,7 @@ async fn query_documents_cancellable_stops_during_index_scan() {
             name: "by_rank".to_string(),
             field: "rank".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)
@@ -2058,6 +2067,7 @@ async fn paginated_query_uses_index_for_range_filter() {
             name: "by_rank".to_string(),
             field: "rank".to_string(),
         }],
+        access_policy: None,
     };
     service
         .set_table_schema(&tenant_id, schema)

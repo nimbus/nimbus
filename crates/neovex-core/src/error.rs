@@ -23,6 +23,9 @@ pub enum Error {
     #[error("resource exhausted: {0}")]
     ResourceExhausted(String),
 
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

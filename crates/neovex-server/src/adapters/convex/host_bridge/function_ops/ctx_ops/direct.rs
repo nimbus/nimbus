@@ -20,10 +20,11 @@ impl ConvexHostBridge {
         let query = payload.query;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let mut check_cancel = || check_host_cancellation(cancellation);
-        let response = execute_query_result_cancellable(
+        let response = execute_query_result_cancellable_with_auth(
             &self.service,
             &self.tenant_id,
             query.clone(),
+            self.auth.as_ref(),
             &mut check_cancel,
         )
         .inspect(|value| self.record_query_result_value(&query, value));
@@ -53,13 +54,14 @@ impl ConvexHostBridge {
         let mut check_cancel = || check_host_cancellation(cancellation);
         let response = self
             .service
-            .paginate_documents_cancellable(
+            .paginate_documents_with_principal_cancellable(
                 &self.tenant_id,
                 &PaginatedQuery {
                     query: query.clone(),
                     page_size,
                     after: after.clone(),
                 },
+                &self.principal,
                 &mut check_cancel,
             )
             .and_then(|page| {
@@ -88,11 +90,12 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeMutationPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = dispatch_convex_mutation_cancellable(
+        let response = dispatch_convex_mutation_cancellable_with_auth(
             &self.service,
             &self.registry,
             &self.tenant_id,
             payload.mutation,
+            self.auth.as_ref(),
             cancellation,
         );
         encode_runtime_core_result(response)
@@ -114,11 +117,12 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = execute_convex_action_cancellable(
+        let response = execute_convex_action_cancellable_with_auth(
             &self.service,
             &self.registry,
             &self.tenant_id,
             payload.action,
+            self.auth.as_ref(),
             cancellation,
         );
         encode_runtime_core_result(response)

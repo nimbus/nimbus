@@ -52,6 +52,7 @@ pub(super) fn execute_function_call_cancellable(
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     command: ConvexFunctionCallCommand,
+    auth: Option<&InvocationAuth>,
     cancellation: &HostCallCancellation,
 ) -> Result<Value, Error> {
     match command {
@@ -66,7 +67,13 @@ pub(super) fn execute_function_call_cancellable(
                 visibility.unwrap_or(ConvexFunctionVisibility::Public),
             )?;
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(service, tenant_id, query, &mut check_cancel)
+            execute_query_result_cancellable_with_auth(
+                service,
+                tenant_id,
+                query,
+                auth,
+                &mut check_cancel,
+            )
         }
         ConvexFunctionCallCommand::Mutation {
             name,
@@ -78,11 +85,12 @@ pub(super) fn execute_function_call_cancellable(
                 &args,
                 visibility.unwrap_or(ConvexFunctionVisibility::Public),
             )?;
-            dispatch_convex_mutation_cancellable(
+            dispatch_convex_mutation_cancellable_with_auth(
                 service,
                 registry,
                 tenant_id,
                 mutation,
+                auth,
                 cancellation,
             )
         }
@@ -96,11 +104,12 @@ pub(super) fn execute_function_call_cancellable(
                 &args,
                 visibility.unwrap_or(ConvexFunctionVisibility::Public),
             )?;
-            super::top_level::execute_convex_action_cancellable(
+            super::top_level::execute_convex_action_cancellable_with_auth(
                 service,
                 registry,
                 tenant_id,
                 action,
+                auth,
                 cancellation,
             )
         }

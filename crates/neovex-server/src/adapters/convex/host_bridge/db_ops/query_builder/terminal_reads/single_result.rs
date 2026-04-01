@@ -24,10 +24,11 @@ impl ConvexHostBridge {
                 self.record_builder_read(&builder, &query);
             }
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(
+            execute_query_result_cancellable_with_auth(
                 &self.service,
                 &self.tenant_id,
                 ConvexExecutableQuery::Query(query),
+                self.auth.as_ref(),
                 &mut check_cancel,
             )
             .and_then(|value| {
@@ -62,10 +63,11 @@ impl ConvexHostBridge {
                 self.record_builder_read(&builder, &query);
             }
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(
+            execute_query_result_cancellable_with_auth(
                 &self.service,
                 &self.tenant_id,
                 ConvexExecutableQuery::Read(ConvexReadCommand::First { query }),
+                self.auth.as_ref(),
                 &mut check_cancel,
             )
             .and_then(|value| {
@@ -100,10 +102,11 @@ impl ConvexHostBridge {
                 self.record_builder_read(&builder, &query);
             }
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(
+            execute_query_result_cancellable_with_auth(
                 &self.service,
                 &self.tenant_id,
                 ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }),
+                self.auth.as_ref(),
                 &mut check_cancel,
             )
             .and_then(|value| {

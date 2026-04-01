@@ -6,6 +6,8 @@ pub(in crate::adapters::convex) struct ConvexHostBridge {
     pub(in crate::adapters::convex) service: Arc<neovex_engine::Service>,
     pub(in crate::adapters::convex) registry: Arc<ConvexRegistry>,
     pub(in crate::adapters::convex) tenant_id: TenantId,
+    pub(in crate::adapters::convex) auth: Option<InvocationAuth>,
+    pub(in crate::adapters::convex) principal: neovex_core::PrincipalContext,
     pub(in crate::adapters::convex) state: Arc<RuntimeHostState>,
     pub(in crate::adapters::convex) query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
 }
@@ -15,6 +17,8 @@ impl ConvexHostBridge {
         service: Arc<neovex_engine::Service>,
         registry: Arc<ConvexRegistry>,
         tenant_id: TenantId,
+        auth: Option<InvocationAuth>,
+        principal: neovex_core::PrincipalContext,
         server_request_id: Option<String>,
     ) -> Self {
         let max_nested_runtime_invocations = registry
@@ -25,6 +29,8 @@ impl ConvexHostBridge {
             service,
             registry,
             tenant_id,
+            auth,
+            principal,
             state: Arc::new(RuntimeHostState::new(
                 "convex-runtime-session",
                 server_request_id,

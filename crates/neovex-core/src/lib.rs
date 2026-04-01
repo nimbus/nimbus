@@ -1,5 +1,6 @@
 //! Core types for Neovex.
 
+pub mod auth;
 pub mod dependency;
 pub mod document;
 pub mod error;
@@ -9,6 +10,11 @@ pub mod scheduled;
 pub mod schema;
 pub mod types;
 
+pub use auth::{
+    AccessAction, AccessOperator, AccessPredicate, AccessRule, AccessValue, CompiledReadRule,
+    PrincipalClaimSource, PrincipalContext, PrincipalSnapshot, TableAccessPolicy,
+    policy_revision_id,
+};
 pub use dependency::{
     DependencySet, IndexRangeDependency, PaginatedWindowDependency, PredicateDependency,
     commit_intersects_dependency_set,

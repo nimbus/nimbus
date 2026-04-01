@@ -75,6 +75,13 @@ impl TenantDocumentCache {
         }
     }
 
+    fn clear(&self) {
+        self.documents
+            .write()
+            .expect("document cache lock should not be poisoned")
+            .clear();
+    }
+
     #[cfg(test)]
     fn stats(&self) -> DocumentCacheStats {
         DocumentCacheStats {
@@ -165,6 +172,10 @@ impl TenantRuntime {
 
     pub(crate) fn invalidate_document_cache_for_commit(&self, commit: &CommitEntry) {
         self.document_cache.invalidate_commit(commit);
+    }
+
+    pub(crate) fn clear_document_cache(&self) {
+        self.document_cache.clear();
     }
 
     #[cfg(test)]
