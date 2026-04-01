@@ -7,9 +7,7 @@ use redb::{ReadableTable, TableError};
 use serde_json::Value;
 
 use crate::keys::prefix_end;
-use crate::store::{
-    DOCUMENTS, INDEXES, TenantStore, append_commit, begin_scheduled_execution, map_redb_error,
-};
+use crate::store::{DOCUMENTS, INDEXES, TenantStore, begin_scheduled_execution, map_redb_error};
 
 const EMPTY_INDEX_VALUE: &[u8] = &[];
 
@@ -190,8 +188,8 @@ impl TenantStore {
             }
         }
 
-        let commit = append_commit(&write_txn, vec![write])?;
-        write_txn.commit().map_err(map_redb_error)?;
+        let commit = self.append_commit_entry(&write_txn, vec![write])?;
+        self.commit_write_txn(write_txn)?;
         Ok(Some(commit))
     }
 
@@ -300,7 +298,7 @@ impl TenantStore {
             }
         }
 
-        let commit = append_commit(
+        let commit = self.append_commit_entry(
             &write_txn,
             vec![WriteOp {
                 table: table.clone(),
@@ -310,7 +308,7 @@ impl TenantStore {
                 current: Some(new_document),
             }],
         )?;
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(Some(commit))
     }
 
@@ -407,7 +405,7 @@ impl TenantStore {
             }
         }
 
-        let commit = append_commit(
+        let commit = self.append_commit_entry(
             &write_txn,
             vec![WriteOp {
                 table: table.clone(),
@@ -417,7 +415,7 @@ impl TenantStore {
                 current: None,
             }],
         )?;
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(Some((commit, old_document)))
     }
 
@@ -606,7 +604,7 @@ impl TenantStore {
                 index_table.remove(key.as_slice()).map_err(map_redb_error)?;
             }
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -637,7 +635,7 @@ impl TenantStore {
                 }
             }
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 }

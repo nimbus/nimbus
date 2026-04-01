@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
+use super::Service;
 use neovex_core::{
     CreateCronRequest, CronJob, Error, JobId, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobResult, TenantId, Timestamp,
 };
-use neovex_storage::TenantStore;
-
-use super::Service;
 
 impl Service {
     /// Schedules a mutation to execute in the future.
@@ -17,7 +15,7 @@ impl Service {
     ) -> Result<JobId> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        let now = Timestamp::now();
+        let now = self.now();
         let job = ScheduledJob {
             id: JobId::new(),
             run_at: Timestamp(now.0.saturating_add(request.run_after_ms)),
@@ -170,7 +168,7 @@ impl Service {
             )));
         }
 
-        let now = Timestamp::now();
+        let now = self.now();
         let next_run = request.schedule.next_after(now);
         let cron = CronJob {
             name: request.name,
@@ -307,7 +305,7 @@ impl Service {
     pub fn load_tenants_with_scheduled_work(&self) -> Result<()> {
         let entries = std::fs::read_dir(&self.data_dir)
             .map_err(|error| Error::Internal(error.to_string()))?;
-        let now = Timestamp::now();
+        let now = self.now();
 
         for entry in entries {
             let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
@@ -323,7 +321,7 @@ impl Service {
                 ))
             })?;
             let tenant_id = TenantId::new(stem.to_string_lossy().to_string())?;
-            let store = TenantStore::open(&path)?;
+            let store = self.open_tenant_store(&path)?;
             let has_scheduled_work = store.has_scheduled_work()?;
             drop(store);
             if !has_scheduled_work {

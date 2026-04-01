@@ -4,7 +4,7 @@ use neovex_core::{
     PaginatedQuery, PrincipalClaimSource, PrincipalContext, Query, ScheduleRequest,
     ScheduledJobOutcome, TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
-use neovex_test_support::ServiceFixture;
+use neovex_test_support::{DeterministicHarness, ServiceFixture};
 use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -2365,6 +2365,51 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
 
     let _ = shutdown_tx.send(true);
     scheduler_handle.await.expect("scheduler should shut down");
+}
+
+#[test]
+fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
+    let harness = DeterministicHarness::new(Timestamp(1_000), []);
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Service::new_with_simulation(
+        data_dir.path(),
+        harness.clock.clone(),
+        harness.faults.clone(),
+    )
+    .expect("service should create");
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should be created");
+
+    service
+        .schedule_mutation(
+            &tenant_id,
+            ScheduleRequest {
+                run_after_ms: 500,
+                mutation: insert_task_mutation("clocked task"),
+            },
+        )
+        .expect("schedule should succeed");
+
+    crate::scheduler::tick_at(&service, Timestamp(1_000)).expect("initial tick should succeed");
+    assert!(
+        service
+            .query_documents(&tenant_id, &query_for("tasks"))
+            .expect("query should succeed")
+            .is_empty()
+    );
+
+    let advanced = harness.clock.advance_ms(500);
+    crate::scheduler::tick_at(&service, advanced).expect("advanced tick should succeed");
+    let documents = service
+        .query_documents(&tenant_id, &query_for("tasks"))
+        .expect("query should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(
+        documents[0].get_field("title"),
+        Some(&json!("clocked task"))
+    );
 }
 
 #[tokio::test]

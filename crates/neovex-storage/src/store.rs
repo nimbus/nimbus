@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use neovex_core::{
     CommitEntry, Document, DocumentId, Error, IndexDefinition, JobId, Result, ScheduledJob,
@@ -11,6 +12,7 @@ use crate::commit_log::{deserialize_commit, serialize_commit};
 use crate::index::{encode_index_value, index_key};
 use crate::keys::{document_key, prefix_end, table_prefix};
 use crate::scheduler::{cancel_scheduled_job_in_write_txn, insert_scheduled_job_in_write_txn};
+use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 
 pub(crate) const DOCUMENTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("documents");
 pub(crate) const INDEXES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("indexes");
@@ -32,6 +34,8 @@ const EMPTY_TABLE_VALUE: &[u8] = &[];
 /// Concrete redb-backed tenant store.
 pub struct TenantStore {
     pub(crate) db: Database,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) fault_injector: Arc<dyn FaultInjector>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,16 +68,41 @@ pub struct TenantReadSnapshot {
 impl TenantStore {
     /// Opens or creates a tenant store on disk.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_simulation(path, Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+    }
+
+    /// Opens or creates a tenant store on disk with deterministic simulation seams.
+    pub fn open_with_simulation(
+        path: impl AsRef<Path>,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
         let db = Database::create(path).map_err(map_redb_error)?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            clock,
+            fault_injector,
+        })
     }
 
     /// Creates an in-memory tenant store for tests.
     pub fn create_in_memory() -> Result<Self> {
+        Self::create_in_memory_with_simulation(Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+    }
+
+    /// Creates an in-memory tenant store with deterministic simulation seams.
+    pub fn create_in_memory_with_simulation(
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
         let db = Database::builder()
             .create_with_backend(InMemoryBackend::new())
             .map_err(map_redb_error)?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            clock,
+            fault_injector,
+        })
     }
 
     pub fn read_snapshot(&self) -> Result<TenantReadSnapshot> {
@@ -116,8 +145,8 @@ impl TenantStore {
                 .insert(key.as_slice(), payload.as_slice())
                 .map_err(map_redb_error)?;
         }
-        let commit = append_commit(&write_txn, vec![write])?;
-        write_txn.commit().map_err(map_redb_error)?;
+        let commit = self.append_commit_entry(&write_txn, vec![write])?;
+        self.commit_write_txn(write_txn)?;
         Ok(Some(commit))
     }
 
@@ -187,7 +216,7 @@ impl TenantStore {
             (existing_document, document)
         };
 
-        let commit = append_commit(
+        let commit = self.append_commit_entry(
             &write_txn,
             vec![WriteOp {
                 table: table.clone(),
@@ -197,7 +226,7 @@ impl TenantStore {
                 current: Some(document),
             }],
         )?;
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(Some(commit))
     }
 
@@ -266,7 +295,7 @@ impl TenantStore {
         };
         validate(&removed_document)?;
 
-        let commit = append_commit(
+        let commit = self.append_commit_entry(
             &write_txn,
             vec![WriteOp {
                 table: table.clone(),
@@ -276,7 +305,7 @@ impl TenantStore {
                 current: None,
             }],
         )?;
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(Some((commit, removed_document)))
     }
 
@@ -335,6 +364,25 @@ impl TenantStore {
     /// Returns the latest committed sequence number.
     pub fn latest_sequence(&self) -> Result<SequenceNumber> {
         self.read_snapshot()?.latest_sequence()
+    }
+
+    pub(crate) fn now(&self) -> Timestamp {
+        self.clock.now()
+    }
+
+    pub(crate) fn append_commit_entry(
+        &self,
+        write_txn: &redb::WriteTransaction,
+        writes: Vec<WriteOp>,
+    ) -> Result<CommitEntry> {
+        append_commit(write_txn, self.now(), writes)
+    }
+
+    pub(crate) fn commit_write_txn(&self, write_txn: redb::WriteTransaction) -> Result<()> {
+        self.fault_injector
+            .check(FaultPoint::StorageCommitBeforeVisibility)?;
+        write_txn.commit().map_err(map_redb_error)?;
+        Ok(())
     }
 
     pub fn apply_resolved_write_batch(&self, writes: &[ResolvedWrite]) -> Result<CommitEntry> {
@@ -527,9 +575,9 @@ impl TenantStore {
         let commit = if commit_writes.is_empty() {
             None
         } else {
-            Some(append_commit(&write_txn, commit_writes)?)
+            Some(self.append_commit_entry(&write_txn, commit_writes)?)
         };
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(commit)
     }
 }
@@ -625,12 +673,13 @@ impl TenantReadSnapshot {
 
 pub(crate) fn append_commit(
     write_txn: &redb::WriteTransaction,
+    timestamp: Timestamp,
     writes: Vec<WriteOp>,
 ) -> Result<CommitEntry> {
     let sequence = next_sequence(write_txn)?;
     let entry = CommitEntry {
         sequence: SequenceNumber(sequence),
-        timestamp: Timestamp::now(),
+        timestamp,
         writes,
     };
 
