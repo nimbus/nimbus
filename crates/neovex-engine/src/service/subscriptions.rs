@@ -44,15 +44,13 @@ impl Service {
         let schema = runtime.schema();
         let principal_snapshot = principal.snapshot()?;
         let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
-        let registration = runtime
-            .subscriptions
-            .register(
-                query.clone(),
-                principal.clone(),
-                principal_snapshot,
-                policy_revision,
-                sender.clone(),
-            );
+        let registration = runtime.subscriptions.register(
+            query.clone(),
+            principal.clone(),
+            principal_snapshot,
+            policy_revision,
+            sender.clone(),
+        );
         let subscription_id = registration.id();
         let mut check_cancel = || Ok(());
         match evaluate_with_index_cancellable_for_principal(

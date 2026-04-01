@@ -174,9 +174,9 @@ file links (links go stale; symbol search does not).
 **`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
 - `service/mod.rs` — `Service` struct: `data_dir` + `RwLock<HashMap<TenantId, Arc<TenantRuntime>>>` + `Arc<UsageStore>`. Lazy-loads tenants from disk on first access.
-- `service/mutations.rs` — `apply_mutation`: schema validation, index-aware storage write, commit log append, subscription fan-out. This is the core write path.
-- `service/queries.rs` — `evaluate_with_index`: tries index Eq scan, then range scan, then falls back to table scan. Used by queries, pagination, and subscription re-evaluation.
-- `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path.
+- `service/mutations.rs` — `apply_mutation`: schema validation, declarative access-policy enforcement, index-aware storage write, commit log append, subscription fan-out. This is the core write path.
+- `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Used by queries, pagination, and subscription re-evaluation.
+- `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
 - `service/scheduler.rs` — Schedule/cron CRUD. `load_tenants_with_scheduled_work` eagerly loads tenants on startup.
 - `service/tenants.rs` — Tenant CRUD and lifecycle management.
@@ -568,18 +568,17 @@ enterprise tiers are loaded from a JSON license file. The
 entitlements, warnings, and MAU usage.
 
 **Auth.** Authentication and authorization are separate architecture concerns.
-Today the Convex adapter layer supports OIDC and custom JWT providers via
+The Convex adapter layer supports OIDC and custom JWT providers via
 `convex/auth/`. JWT validation uses `ring` for signature verification with JWKS
 key fetching and clock-skew tolerance, and validated identities are passed to
 runtime handlers as `InvocationAuth`. Neovex-native routes still do not
-prescribe one built-in transport authentication mechanism. That is not the same
-as leaving authorization in the adapter layer. The roadmap's explicit `3E`
-phase moves authorization into the engine and planner as declarative
-schema-level policy so reads, writes, subscriptions, and runtime host calls
-share one enforcement model. In other words: adapters authenticate and
-normalize principals; the engine authorizes data access. A live subscription or
-cache entry must not continue to serve data across a policy revision or
-principal-context change without revalidation or teardown.
+prescribe one built-in transport authentication mechanism. Authorization now
+lives in the engine and planner as declarative schema-level policy so reads,
+writes, subscriptions, and runtime host calls share one enforcement model. In
+other words: adapters authenticate and normalize principals; the engine
+authorizes data access. Live subscriptions capture both a principal snapshot
+and a policy revision, and a policy or principal-context change must trigger
+revalidation or teardown before more data is delivered.
 
 **Testing.** Unit tests live in each crate's `tests.rs`. Integration tests
 (HTTP + WebSocket end-to-end) live in `neovex-server/tests/reactive_loop.rs`.

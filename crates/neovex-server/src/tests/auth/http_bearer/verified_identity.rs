@@ -2,6 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn convex_runtime_query_exposes_neovex_verified_identity_extension() {
+    let _guard = auth_test_guard().await;
     let issuer = "https://issuer.example.com";
     let application_id = "neovex-test";
     let (token, jwks_data_url) = issue_es256_test_token(

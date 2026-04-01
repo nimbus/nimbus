@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use neovex_core::{
-    AccessAction, AccessRule, CommitEntry, Document, DocumentId, Error, Mutation,
-    PrincipalContext, Result, Schema, TableName, TableSchema, TenantId,
+    AccessAction, AccessRule, CommitEntry, Document, DocumentId, Error, Mutation, PrincipalContext,
+    Result, Schema, TableName, TableSchema, TenantId,
 };
 use neovex_storage::TenantStore;
 use tracing::warn;
@@ -10,10 +10,7 @@ use tracing::warn;
 use crate::subscriptions::SubscriptionUpdate;
 use crate::tenant::TenantRuntime;
 
-use super::{
-    Service, documents_to_json,
-    queries::evaluate_with_index_cancellable_for_principal,
-};
+use super::{Service, documents_to_json, queries::evaluate_with_index_cancellable_for_principal};
 
 #[derive(Clone, Copy)]
 enum MutationExecutionMode<'a> {
@@ -24,6 +21,13 @@ enum MutationExecutionMode<'a> {
 enum MutationExecutionResult {
     Immediate(Option<DocumentId>),
     Scheduled(bool),
+}
+
+struct UpdateMutationRequest<'a> {
+    table: TableName,
+    id: DocumentId,
+    patch: serde_json::Map<String, serde_json::Value>,
+    principal: &'a PrincipalContext,
 }
 
 impl Service {
@@ -50,8 +54,12 @@ impl Service {
         fields: serde_json::Map<String, serde_json::Value>,
         principal: &PrincipalContext,
     ) -> Result<DocumentId> {
-        self.apply_mutation_with_principal(tenant_id, Mutation::Insert { table, fields }, principal)?
-            .ok_or_else(|| Error::Internal("insert should return a document id".to_string()))
+        self.apply_mutation_with_principal(
+            tenant_id,
+            Mutation::Insert { table, fields },
+            principal,
+        )?
+        .ok_or_else(|| Error::Internal("insert should return a document id".to_string()))
     }
 
     /// Inserts a document asynchronously and fan-outs any resulting subscription updates.
@@ -351,9 +359,17 @@ impl Service {
             Mutation::Insert { table, fields } => {
                 self.apply_insert_like(runtime.clone(), &schema, mode, table, fields, principal)
             }
-            Mutation::Update { table, id, patch } => {
-                self.apply_update_like(runtime.clone(), &schema, mode, table, id, patch, principal)
-            }
+            Mutation::Update { table, id, patch } => self.apply_update_like(
+                runtime.clone(),
+                &schema,
+                mode,
+                UpdateMutationRequest {
+                    table,
+                    id,
+                    patch,
+                    principal,
+                },
+            ),
             Mutation::Delete { table, id } => {
                 self.apply_delete_like(runtime.clone(), &schema, mode, table, id, principal)
             }
@@ -465,11 +481,14 @@ impl Service {
         runtime: Arc<TenantRuntime>,
         schema: &Schema,
         mode: MutationExecutionMode<'_>,
-        table: TableName,
-        id: DocumentId,
-        patch: serde_json::Map<String, serde_json::Value>,
-        principal: &PrincipalContext,
+        request: UpdateMutationRequest<'_>,
     ) -> Result<MutationExecutionResult> {
+        let UpdateMutationRequest {
+            table,
+            id,
+            patch,
+            principal,
+        } = request;
         match schema.get_table(&table).cloned() {
             Some(table_schema) if table_schema.indexes.is_empty() => match mode {
                 MutationExecutionMode::Immediate => {

@@ -5,7 +5,7 @@ use neovex_runtime::{HostCallCancellation, InvocationRequest};
 use serde_json::Value;
 
 use crate::adapters::convex::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope};
-use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet};
+use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet, normalize_principal_context};
 use crate::runtime::invocations::{
     RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
     invoke_runtime_bundle_blocking_with_host_state,

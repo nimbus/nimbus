@@ -21,7 +21,8 @@ pub(super) async fn execute_http_action_async(
     auth: Option<&InvocationAuth>,
 ) -> Result<Response, Error> {
     let response =
-        prepare_http_action_response_async(service, registry, tenant_id, plan, request, auth).await?;
+        prepare_http_action_response_async(service, registry, tenant_id, plan, request, auth)
+            .await?;
     response::build_http_response_parts(response)
 }
 
@@ -76,12 +77,10 @@ pub(super) async fn prepare_http_action_response_async(
 ) -> Result<ConvexHttpResponseParts, Error> {
     let operation = resolve_http_action_operation(plan, request)?;
     let operation_result = match operation {
-        Some(operation) => {
-            Some(
-                execute_convex_action_async(service, registry, tenant_id, operation, auth, None)
-                    .await?,
-            )
-        }
+        Some(operation) => Some(
+            execute_convex_action_async(service, registry, tenant_id, operation, auth, None)
+                .await?,
+        ),
         None => None,
     };
     finalize_http_action_response(plan, request, operation_result.as_ref())

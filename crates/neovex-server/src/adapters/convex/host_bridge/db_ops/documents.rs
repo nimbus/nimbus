@@ -17,15 +17,12 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = match self
-            .service
-            .get_document_with_principal(
-                &self.tenant_id,
-                &payload.table,
-                payload.id,
-                &self.principal,
-            )
-        {
+        let response = match self.service.get_document_with_principal(
+            &self.tenant_id,
+            &payload.table,
+            payload.id,
+            &self.principal,
+        ) {
             Ok(document) => {
                 self.record_document_read(&payload.table, &payload.id);
                 ConvexRuntimeResponseEnvelope::ok(document.to_json())

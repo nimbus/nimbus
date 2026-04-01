@@ -12,11 +12,7 @@ pub(in crate::adapters::convex) fn normalize_principal_context(
 
     PrincipalContext {
         authenticated: auth.identity.is_some() || auth.verified_identity.is_some(),
-        claims: auth
-            .identity
-            .as_ref()
-            .map(claims_map)
-            .unwrap_or_default(),
+        claims: auth.identity.as_ref().map(claims_map).unwrap_or_default(),
         verified_claims: auth
             .verified_identity
             .as_ref()
@@ -34,4 +30,3 @@ where
         _ => Map::new(),
     }
 }
-

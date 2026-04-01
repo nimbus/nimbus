@@ -2,6 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn convex_runtime_query_exposes_authenticated_identity_from_bearer_token() {
+    let _guard = auth_test_guard().await;
     let issuer = "https://issuer.example.com";
     let application_id = "neovex-test";
     let (token, jwks_data_url) = issue_es256_test_token(
@@ -107,6 +108,7 @@ async fn convex_runtime_query_exposes_authenticated_identity_from_bearer_token()
 
 #[tokio::test]
 async fn convex_runtime_query_accepts_custom_jwt_issuer_without_scheme() {
+    let _guard = auth_test_guard().await;
     let provider_issuer = "https://issuer.example.com";
     let token_issuer = "issuer.example.com";
     let application_id = "neovex-test";

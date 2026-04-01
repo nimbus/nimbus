@@ -20,13 +20,11 @@ pub(super) use runtime::{
 };
 #[cfg(test)]
 pub(super) use sync_ops::execute_convex_action;
+#[cfg(test)]
+pub(super) use sync_ops::execute_convex_action_cancellable;
 pub(super) use sync_ops::{
     dispatch_convex_mutation_cancellable_with_auth, encode_runtime_core_result,
     execute_convex_action_cancellable_with_auth, execute_query_result_cancellable_with_auth,
     execute_schedule_command,
-};
-#[cfg(test)]
-pub(super) use sync_ops::{
-    dispatch_mutation, execute_convex_action_cancellable, execute_query_result_cancellable,
 };
 pub(super) use types::{ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent};

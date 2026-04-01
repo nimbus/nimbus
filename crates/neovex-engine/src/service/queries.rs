@@ -12,9 +12,9 @@ use neovex_storage::index::encode_index_value;
 use serde_json::Value;
 
 use crate::evaluator::{
-    evaluate_paginated_with_docs_cancellable_and_predicate,
-    evaluate_query_with_docs_cancellable_and_predicate, evaluate_query_cancellable_with_predicate,
     evaluate_paginated_cancellable_with_predicate,
+    evaluate_paginated_with_docs_cancellable_and_predicate,
+    evaluate_query_cancellable_with_predicate, evaluate_query_with_docs_cancellable_and_predicate,
 };
 use crate::tenant::TenantRuntime;
 
@@ -331,12 +331,9 @@ impl Service {
         query: &PaginatedQuery,
         principal: &PrincipalContext,
     ) -> Result<Page> {
-        self.paginate_documents_with_principal_cancellable(
-            tenant_id,
-            query,
-            principal,
-            &mut || Ok(()),
-        )
+        self.paginate_documents_with_principal_cancellable(tenant_id, query, principal, &mut || {
+            Ok(())
+        })
     }
 
     /// Evaluates a paginated query for a tenant asynchronously.
@@ -453,9 +450,8 @@ impl Service {
             after: query.after.clone(),
         };
         let plan = plan_query(&planned_paginated.query, table_schema)?;
-        let mut include_document = |document: &Document| {
-            authorization.allows_document(principal, document)
-        };
+        let mut include_document =
+            |document: &Document| authorization.allows_document(principal, document);
         if let Some(index_docs) = load_query_plan_documents_cancellable(
             &runtime,
             &planned_paginated.query,
