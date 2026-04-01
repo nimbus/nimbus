@@ -23,17 +23,8 @@ impl TenantStore {
 
     /// Inserts a scheduled job into the pending queue.
     pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
-        let payload = serialize_job(job)?;
-        let key = scheduled_job_key(job.run_at, &job.id);
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        {
-            let mut table = write_txn
-                .open_table(SCHEDULED_JOBS)
-                .map_err(map_redb_error)?;
-            table
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
+        insert_scheduled_job_in_write_txn(&write_txn, job)?;
         write_txn.commit().map_err(map_redb_error)?;
         Ok(())
     }
@@ -106,39 +97,9 @@ impl TenantStore {
     /// Cancels a pending scheduled job if it has not started running yet.
     pub fn cancel_scheduled_job(&self, job_id: &JobId) -> Result<bool> {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        let pending_key = {
-            let table = match write_txn.open_table(SCHEDULED_JOBS) {
-                Ok(table) => table,
-                Err(TableError::TableDoesNotExist(_)) => return Ok(false),
-                Err(error) => return Err(map_redb_error(error)),
-            };
-
-            let mut pending_key = None;
-            for entry in table.iter().map_err(map_redb_error)? {
-                let (key, _) = entry.map_err(map_redb_error)?;
-                if scheduled_key_matches_job_id(key.value(), job_id) {
-                    pending_key = Some(key.value().to_vec());
-                    break;
-                }
-            }
-            pending_key
-        };
-
-        let Some(pending_key) = pending_key else {
-            return Ok(false);
-        };
-
-        {
-            let mut table = write_txn
-                .open_table(SCHEDULED_JOBS)
-                .map_err(map_redb_error)?;
-            table
-                .remove(pending_key.as_slice())
-                .map_err(map_redb_error)?;
-        }
-
+        let removed = cancel_scheduled_job_in_write_txn(&write_txn, job_id)?;
         write_txn.commit().map_err(map_redb_error)?;
-        Ok(true)
+        Ok(removed)
     }
 
     /// Persists the final result for an executed scheduled job.
@@ -301,6 +262,56 @@ impl TenantStore {
         write_txn.commit().map_err(map_redb_error)?;
         Ok(())
     }
+}
+
+pub(crate) fn insert_scheduled_job_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+    job: &ScheduledJob,
+) -> Result<()> {
+    let payload = serialize_job(job)?;
+    let key = scheduled_job_key(job.run_at, &job.id);
+    let mut table = write_txn
+        .open_table(SCHEDULED_JOBS)
+        .map_err(map_redb_error)?;
+    table
+        .insert(key.as_slice(), payload.as_slice())
+        .map_err(map_redb_error)?;
+    Ok(())
+}
+
+pub(crate) fn cancel_scheduled_job_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+    job_id: &JobId,
+) -> Result<bool> {
+    let pending_key = {
+        let table = match write_txn.open_table(SCHEDULED_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(false),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let mut pending_key = None;
+        for entry in table.iter().map_err(map_redb_error)? {
+            let (key, _) = entry.map_err(map_redb_error)?;
+            if scheduled_key_matches_job_id(key.value(), job_id) {
+                pending_key = Some(key.value().to_vec());
+                break;
+            }
+        }
+        pending_key
+    };
+
+    let Some(pending_key) = pending_key else {
+        return Ok(false);
+    };
+
+    let mut table = write_txn
+        .open_table(SCHEDULED_JOBS)
+        .map_err(map_redb_error)?;
+    table
+        .remove(pending_key.as_slice())
+        .map_err(map_redb_error)?;
+    Ok(true)
 }
 
 fn scheduled_job_key(run_at: Timestamp, id: &JobId) -> Vec<u8> {

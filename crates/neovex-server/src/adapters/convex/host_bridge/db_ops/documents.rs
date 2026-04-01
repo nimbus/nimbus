@@ -17,11 +17,20 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = match self.service.get_document_with_principal(
-            &self.tenant_id,
-            &payload.table,
-            payload.id,
-            &self.principal,
+        let response = match self.mutation_execution_unit().map_or_else(
+            || {
+                self.service.get_document_with_principal(
+                    &self.tenant_id,
+                    &payload.table,
+                    payload.id,
+                    &self.principal,
+                )
+            },
+            |execution_unit| {
+                execution_unit
+                    .get_document(&payload.table, payload.id)
+                    .and_then(|document| document.ok_or(Error::DocumentNotFound(payload.id)))
+            },
         ) {
             Ok(document) => {
                 self.record_document_read(&payload.table, &payload.id);
@@ -49,15 +58,19 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbInsertPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = self
-            .service
-            .insert_document_with_principal(
+        let table = payload.table;
+        let fields = payload.fields;
+        let response = if let Some(execution_unit) = self.mutation_execution_unit() {
+            execution_unit.insert_document(table, fields)
+        } else {
+            self.service.insert_document_with_principal(
                 &self.tenant_id,
-                payload.table,
-                payload.fields,
+                table,
+                fields,
                 &self.principal,
             )
-            .map(|id| Value::String(id.to_string()));
+        }
+        .map(|id| Value::String(id.to_string()));
         encode_runtime_core_result(response)
     }
 
@@ -77,16 +90,21 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbPatchPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = self
-            .service
-            .update_document_with_principal(
+        let table = payload.table;
+        let id = payload.id;
+        let patch = payload.patch;
+        let response = if let Some(execution_unit) = self.mutation_execution_unit() {
+            execution_unit.update_document(table, id, patch)
+        } else {
+            self.service.update_document_with_principal(
                 &self.tenant_id,
-                payload.table,
-                payload.id,
-                payload.patch,
+                table,
+                id,
+                patch,
                 &self.principal,
             )
-            .map(|id| Value::String(id.to_string()));
+        }
+        .map(|id| Value::String(id.to_string()));
         encode_runtime_core_result(response)
     }
 
@@ -106,15 +124,15 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbDeletePayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = self
-            .service
-            .delete_document_with_principal(
-                &self.tenant_id,
-                payload.table,
-                payload.id,
-                &self.principal,
-            )
-            .map(|_| Value::Null);
+        let table = payload.table;
+        let id = payload.id;
+        let response = if let Some(execution_unit) = self.mutation_execution_unit() {
+            execution_unit.delete_document(table, id)
+        } else {
+            self.service
+                .delete_document_with_principal(&self.tenant_id, table, id, &self.principal)
+        }
+        .map(|_| Value::Null);
         encode_runtime_core_result(response)
     }
 }

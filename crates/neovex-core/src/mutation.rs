@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+use crate::Document;
 use crate::types::{DocumentId, SequenceNumber, TableName, Timestamp};
 
 /// A mutation request.
@@ -33,15 +34,19 @@ pub enum WriteOpType {
 }
 
 /// A write recorded in the commit log.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WriteOp {
     pub table: TableName,
     pub op_type: WriteOpType,
     pub doc_id: DocumentId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<Document>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<Document>,
 }
 
 /// A committed mutation batch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommitEntry {
     pub sequence: SequenceNumber,
     pub timestamp: Timestamp,

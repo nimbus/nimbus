@@ -247,15 +247,22 @@ architecture discussion.
    code path for scheduled or runtime-originated mutations. Schema validation
    and subscription fan-out are guaranteed.
 
-5. **The evaluator is pure.** `evaluate_query` and `evaluate_paginated` take
+5. **Runtime multi-step mutations use an explicit execution unit with
+   serializable OCC validation.** Runtime `ctx.db.*`, `ctx.scheduler.*`, and
+   direct `ctx.runQuery` or `ctx.runMutation` calls inside a mutation execute
+   against a stable read snapshot, stage their writes locally, and commit once
+   after validating shared dependency metadata against commits that landed
+   after the snapshot.
+
+6. **The evaluator is pure.** `evaluate_query` and `evaluate_paginated` take
    data in, return data out. No I/O, no state, no side effects. The service
    layer handles schema lookup and index selection.
 
-6. **Schema is optional.** A table without a schema accepts any document.
+7. **Schema is optional.** A table without a schema accepts any document.
    Setting a schema only adds constraints — it never removes the ability to
    write to a previously schemaless table.
 
-7. **Tenant deletion blocks until in-flight operations complete.**
+8. **Tenant deletion blocks until in-flight operations complete.**
    `begin_delete()` acquires an exclusive lifecycle lock. `enter_operation()`
    acquires a shared lock. New operations after the `deleted` flag is set
    return `TenantNotFound`.
@@ -404,7 +411,9 @@ All paths apply residual filters, sort, and limit in memory after the scan.
 snapshots, ACID transactions, and a single-file database per tenant.
 Alternatives considered: SQLite (FFI boundary), RocksDB (FFI + complexity),
 sled (unmaintained). redb is the simplest correct choice for an embedded
-single-writer database.
+single-writer database. Neovex treats those redb snapshots as the storage
+primitive, then layers engine-level serializable OCC on top so read and write
+sets can also drive reactive invalidation.
 
 **Why a durable journal instead of a traditional storage WAL?** redb already
 provides crash-safe atomic commit, so Neovex does not need a page-level WAL to

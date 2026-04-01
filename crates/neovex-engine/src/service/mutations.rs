@@ -220,7 +220,7 @@ impl Service {
         .await
     }
 
-    fn process_commit(
+    pub(crate) fn process_commit(
         &self,
         runtime: Arc<TenantRuntime>,
         commit: &CommitEntry,
@@ -742,7 +742,7 @@ fn mutation_access_rule(
         .filter(|rule| !rule.is_unrestricted())
 }
 
-fn enforce_mutation_authorization(
+pub(crate) fn enforce_mutation_authorization(
     table_schema: Option<&TableSchema>,
     action: AccessAction,
     principal: &PrincipalContext,

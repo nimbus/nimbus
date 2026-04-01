@@ -575,14 +575,17 @@ pub(super) fn table_policy_revision(table_schema: Option<&TableSchema>) -> Resul
 }
 
 #[derive(Debug, Clone)]
-struct ReadAuthorization {
+pub(crate) struct ReadAuthorization {
     rule: Option<AccessRule>,
     planner_filters: Vec<Filter>,
-    impossible: bool,
+    pub(crate) impossible: bool,
 }
 
 impl ReadAuthorization {
-    fn for_table(table_schema: Option<&TableSchema>, principal: &PrincipalContext) -> Result<Self> {
+    pub(crate) fn for_table(
+        table_schema: Option<&TableSchema>,
+        principal: &PrincipalContext,
+    ) -> Result<Self> {
         let rule = table_schema
             .and_then(|table_schema| table_schema.access_policy.as_ref())
             .map(|policy| policy.rule_for(AccessAction::Read).clone())
@@ -603,7 +606,7 @@ impl ReadAuthorization {
         })
     }
 
-    fn merge_query(&self, query: &Query) -> Query {
+    pub(crate) fn merge_query(&self, query: &Query) -> Query {
         if self.planner_filters.is_empty() {
             return query.clone();
         }
@@ -613,7 +616,11 @@ impl ReadAuthorization {
         merged
     }
 
-    fn allows_document(&self, principal: &PrincipalContext, document: &Document) -> Result<bool> {
+    pub(crate) fn allows_document(
+        &self,
+        principal: &PrincipalContext,
+        document: &Document,
+    ) -> Result<bool> {
         match &self.rule {
             Some(rule) => rule.allows(principal, Some(document), None),
             None => Ok(true),

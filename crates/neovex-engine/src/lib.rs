@@ -11,7 +11,7 @@ pub use evaluator::{
 };
 pub use neovex_storage::MonthlyActiveUsersSnapshot;
 pub use scheduler::run_scheduler;
-pub use service::Service;
+pub use service::{MutationExecutionUnit, Service};
 pub use subscriptions::{SubscriptionCleanupHandle, SubscriptionRegistration, SubscriptionUpdate};
 
 #[cfg(test)]

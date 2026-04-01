@@ -8,7 +8,7 @@ pub mod schema_store;
 pub mod store;
 pub mod usage_store;
 
-pub use store::TenantStore;
+pub use store::{ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore};
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 
 #[cfg(test)]

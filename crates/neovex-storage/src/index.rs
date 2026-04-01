@@ -159,6 +159,8 @@ impl TenantStore {
             table: document.table.clone(),
             op_type: WriteOpType::Insert,
             doc_id: document.id,
+            previous: None,
+            current: Some(document.clone()),
         };
         let payload = document
             .to_msgpack()
@@ -304,6 +306,8 @@ impl TenantStore {
                 table: table.clone(),
                 op_type: WriteOpType::Update,
                 doc_id: *id,
+                previous: Some(old_document),
+                current: Some(new_document),
             }],
         )?;
         write_txn.commit().map_err(map_redb_error)?;
@@ -409,6 +413,8 @@ impl TenantStore {
                 table: table.clone(),
                 op_type: WriteOpType::Delete,
                 doc_id: *id,
+                previous: Some(old_document.clone()),
+                current: None,
             }],
         )?;
         write_txn.commit().map_err(map_redb_error)?;

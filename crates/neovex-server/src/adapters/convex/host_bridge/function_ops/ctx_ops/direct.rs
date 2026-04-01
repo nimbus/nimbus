@@ -1,6 +1,139 @@
 use super::*;
 
 impl ConvexHostBridge {
+    pub(in crate::adapters::convex) fn execute_query_with_execution_context_cancellable(
+        &self,
+        query: ConvexExecutableQuery,
+        auth: Option<&InvocationAuth>,
+        cancellation: &HostCallCancellation,
+    ) -> Result<Value, Error> {
+        if let Some(execution_unit) = self.mutation_execution_unit() {
+            let mut check_cancel = || check_host_cancellation(cancellation);
+            return match query {
+                ConvexExecutableQuery::Query(query) => execution_unit
+                    .query_documents_cancellable(&query, &mut check_cancel)
+                    .map(|documents| {
+                        Value::Array(
+                            documents
+                                .into_iter()
+                                .map(|document| document.to_json())
+                                .collect(),
+                        )
+                    }),
+                ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
+                    execution_unit.get_document(&table, id).map(|document| {
+                        document
+                            .map(|document| document.to_json())
+                            .unwrap_or(Value::Null)
+                    })
+                }
+                ConvexExecutableQuery::Read(ConvexReadCommand::First { query }) => {
+                    let mut documents =
+                        execution_unit.query_documents_cancellable(&query, &mut check_cancel)?;
+                    Ok(documents
+                        .drain(..)
+                        .next()
+                        .map(|document| document.to_json())
+                        .unwrap_or(Value::Null))
+                }
+                ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
+                    let mut documents =
+                        execution_unit.query_documents_cancellable(&query, &mut check_cancel)?;
+                    if documents.len() > 1 {
+                        return Err(Error::InvalidInput(
+                            "convex unique query matched multiple documents".to_string(),
+                        ));
+                    }
+                    Ok(documents
+                        .drain(..)
+                        .next()
+                        .map(|document| document.to_json())
+                        .unwrap_or(Value::Null))
+                }
+            };
+        }
+
+        let mut check_cancel = || check_host_cancellation(cancellation);
+        execute_query_result_cancellable_with_auth(
+            &self.service,
+            &self.tenant_id,
+            query,
+            auth,
+            &mut check_cancel,
+        )
+    }
+
+    pub(in crate::adapters::convex) fn paginate_query_with_execution_context_cancellable(
+        &self,
+        query: Query,
+        page_size: usize,
+        after: Option<Cursor>,
+        principal: &neovex_core::PrincipalContext,
+        cancellation: &HostCallCancellation,
+    ) -> Result<neovex_core::Page, Error> {
+        if let Some(execution_unit) = self.mutation_execution_unit() {
+            let mut check_cancel = || check_host_cancellation(cancellation);
+            return execution_unit.paginate_documents_cancellable(
+                &PaginatedQuery {
+                    query,
+                    page_size,
+                    after,
+                },
+                &mut check_cancel,
+            );
+        }
+
+        let mut check_cancel = || check_host_cancellation(cancellation);
+        self.service.paginate_documents_with_principal_cancellable(
+            &self.tenant_id,
+            &PaginatedQuery {
+                query,
+                page_size,
+                after,
+            },
+            principal,
+            &mut check_cancel,
+        )
+    }
+
+    pub(in crate::adapters::convex) fn dispatch_convex_mutation_with_execution_context_cancellable(
+        &self,
+        mutation: ConvexExecutableMutation,
+        auth: Option<&InvocationAuth>,
+        cancellation: &HostCallCancellation,
+    ) -> Result<Value, Error> {
+        if let Some(execution_unit) = self.mutation_execution_unit() {
+            return match mutation {
+                ConvexExecutableMutation::Mutation(mutation) => match mutation {
+                    Mutation::Insert { table, fields } => execution_unit
+                        .insert_document(table, fields)
+                        .map(|id| Value::String(id.to_string())),
+                    Mutation::Update { table, id, patch } => execution_unit
+                        .update_document(table, id, patch)
+                        .map(|id| Value::String(id.to_string())),
+                    Mutation::Delete { table, id } => execution_unit
+                        .delete_document(table, id)
+                        .map(|_| Value::Null),
+                },
+                ConvexExecutableMutation::Query(query) => {
+                    self.execute_query_with_execution_context_cancellable(query, auth, cancellation)
+                }
+                ConvexExecutableMutation::Scheduled(command) => {
+                    self.execute_schedule_command_with_execution_context(command)
+                }
+            };
+        }
+
+        dispatch_convex_mutation_cancellable_with_auth(
+            &self.service,
+            &self.registry,
+            &self.tenant_id,
+            mutation,
+            auth,
+            cancellation,
+        )
+    }
+
     pub(in crate::adapters::convex) fn invoke_ctx_query(
         &self,
         payload: Value,
@@ -19,15 +152,13 @@ impl ConvexHostBridge {
         self.record_executable_query_read(&payload.query);
         let query = payload.query;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let mut check_cancel = || check_host_cancellation(cancellation);
-        let response = execute_query_result_cancellable_with_auth(
-            &self.service,
-            &self.tenant_id,
-            query.clone(),
-            self.auth.as_ref(),
-            &mut check_cancel,
-        )
-        .inspect(|value| self.record_query_result_value(&query, value));
+        let response = self
+            .execute_query_with_execution_context_cancellable(
+                query.clone(),
+                self.auth.as_ref(),
+                cancellation,
+            )
+            .inspect(|value| self.record_query_result_value(&query, value));
         encode_runtime_core_result(response)
     }
 
@@ -51,18 +182,13 @@ impl ConvexHostBridge {
         let after = payload.cursor.map(Cursor);
         let page_size = payload.page_size;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let mut check_cancel = || check_host_cancellation(cancellation);
         let response = self
-            .service
-            .paginate_documents_with_principal_cancellable(
-                &self.tenant_id,
-                &PaginatedQuery {
-                    query: query.clone(),
-                    page_size,
-                    after: after.clone(),
-                },
+            .paginate_query_with_execution_context_cancellable(
+                query.clone(),
+                page_size,
+                after.clone(),
                 &self.principal,
-                &mut check_cancel,
+                cancellation,
             )
             .and_then(|page| {
                 self.record_paginated_window_read(&query, page_size, after.as_ref(), &page);
@@ -90,10 +216,7 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeMutationPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let response = dispatch_convex_mutation_cancellable_with_auth(
-            &self.service,
-            &self.registry,
-            &self.tenant_id,
+        let response = self.dispatch_convex_mutation_with_execution_context_cancellable(
             payload.mutation,
             self.auth.as_ref(),
             cancellation,
