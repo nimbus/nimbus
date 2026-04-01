@@ -73,6 +73,9 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
     assert_eq!(metrics.disconnect_canceled_invocations, 2);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
+    assert_eq!(metrics.isolate_pool_misses, 1);
+    assert_eq!(metrics.isolate_pool_hits, 0);
+    assert_eq!(metrics.isolate_pool_replacements, 1);
     let tenant_metrics = metrics
         .tenants
         .get("demo")

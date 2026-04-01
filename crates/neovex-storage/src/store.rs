@@ -249,6 +249,19 @@ impl TenantStore {
         table: &TableName,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
+        self.scan_table_matching_cancellable(table, check_cancel, |_document| Ok(true))
+    }
+
+    /// Scans all documents within a logical table, only collecting rows that match the predicate.
+    pub fn scan_table_matching_cancellable<F>(
+        &self,
+        table: &TableName,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+        mut include_document: F,
+    ) -> Result<Vec<Document>>
+    where
+        F: FnMut(&Document) -> Result<bool>,
+    {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
         let table_handle = match read_txn.open_table(DOCUMENTS) {
             Ok(table_handle) => table_handle,
@@ -266,10 +279,11 @@ impl TenantStore {
                 for item in iter {
                     check_cancel()?;
                     let (_, value) = item.map_err(map_redb_error)?;
-                    documents.push(
-                        Document::from_msgpack(value.value())
-                            .map_err(|error| Error::Serialization(error.to_string()))?,
-                    );
+                    let document = Document::from_msgpack(value.value())
+                        .map_err(|error| Error::Serialization(error.to_string()))?;
+                    if include_document(&document)? {
+                        documents.push(document);
+                    }
                 }
             }
             None => {
@@ -282,10 +296,11 @@ impl TenantStore {
                     if !key.value().starts_with(&start) {
                         break;
                     }
-                    documents.push(
-                        Document::from_msgpack(value.value())
-                            .map_err(|error| Error::Serialization(error.to_string()))?,
-                    );
+                    let document = Document::from_msgpack(value.value())
+                        .map_err(|error| Error::Serialization(error.to_string()))?;
+                    if include_document(&document)? {
+                        documents.push(document);
+                    }
                 }
             }
         }

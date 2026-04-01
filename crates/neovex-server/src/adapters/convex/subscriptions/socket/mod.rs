@@ -8,12 +8,41 @@ use super::types::{
 };
 use super::*;
 use crate::runtime::subscriptions::subscribe_runtime_base_queries;
+use neovex_engine::{SubscriptionCleanupHandle, SubscriptionRegistration};
 
 mod forwarding;
 mod messages;
 mod named_subscriptions;
 
-type ActiveSubscriptions = HashMap<u64, Vec<u64>>;
+#[derive(Debug)]
+struct ActiveSubscription {
+    cleanup_handles: Vec<SubscriptionCleanupHandle>,
+}
+
+impl ActiveSubscription {
+    fn from_registration(registration: SubscriptionRegistration) -> Self {
+        let (_, cleanup_handle) = registration.into_parts();
+        Self {
+            cleanup_handles: vec![cleanup_handle],
+        }
+    }
+
+    fn from_runtime_handle(
+        handle: crate::runtime::subscriptions::RuntimeSubscriptionHandle,
+    ) -> Self {
+        Self {
+            cleanup_handles: handle.cleanup_handles,
+        }
+    }
+
+    fn underlying_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.cleanup_handles
+            .iter()
+            .map(SubscriptionCleanupHandle::subscription_id)
+    }
+}
+
+type ActiveSubscriptions = HashMap<u64, ActiveSubscription>;
 
 pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
@@ -89,15 +118,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         }
     }
 
-    forwarding::unsubscribe_active_subscriptions(
-        &state.service,
-        &tenant_id,
-        active_subscriptions,
-        &outbound_tx,
-        false,
-        &transforms,
-    )
-    .await;
+    forwarding::drop_active_subscriptions(active_subscriptions, &transforms);
     runtime_cancellation.cancel_due_to_disconnect();
     drop(subscription_tx);
     drop(outbound_tx);

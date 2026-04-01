@@ -4,6 +4,9 @@ use neovex_runtime::{HostCallCancellation, NeovexRuntimeError};
 pub(crate) fn runtime_error_to_core(error: NeovexRuntimeError) -> Error {
     match error {
         NeovexRuntimeError::Cancelled | NeovexRuntimeError::ExecutionTimeout(_) => Error::Cancelled,
+        NeovexRuntimeError::TenantQueueLimitExceeded { .. } => {
+            Error::ResourceExhausted(error.to_string())
+        }
         other => Error::Internal(format!("convex runtime error: {other}")),
     }
 }

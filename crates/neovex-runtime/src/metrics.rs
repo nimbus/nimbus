@@ -8,17 +8,26 @@ use serde::Serialize;
 use crate::context::RuntimeInvocationContext;
 use crate::host::HostCallCancellationCause;
 
+// These atomics back diagnostics-only snapshots and counters. They do not
+// participate in runtime correctness or cancellation safety, so relaxed
+// ordering is sufficient and avoids paying global-ordering costs.
+const DIAGNOSTIC_COUNTER_ORDERING: Ordering = Ordering::Relaxed;
+
 #[derive(Debug, Default)]
 pub struct RuntimeMetrics {
     active_isolates: AtomicUsize,
     queued_invocations: AtomicUsize,
     worker_dispatched_invocations: AtomicU64,
+    isolate_pool_hits: AtomicU64,
+    isolate_pool_misses: AtomicU64,
+    isolate_pool_replacements: AtomicU64,
     started_invocations: AtomicU64,
     completed_invocations: AtomicU64,
     queue_wait_nanos_total: AtomicU64,
     execution_nanos_total: AtomicU64,
     timed_out_invocations: AtomicU64,
     canceled_invocations: AtomicU64,
+    rejected_invocations: AtomicU64,
     queued_canceled_invocations: AtomicU64,
     in_flight_canceled_invocations: AtomicU64,
     disconnect_canceled_invocations: AtomicU64,
@@ -38,12 +47,16 @@ pub struct RuntimeMetricsSnapshot {
     pub active_isolates: usize,
     pub queued_invocations: usize,
     pub worker_dispatched_invocations: u64,
+    pub isolate_pool_hits: u64,
+    pub isolate_pool_misses: u64,
+    pub isolate_pool_replacements: u64,
     pub started_invocations: u64,
     pub completed_invocations: u64,
     pub queue_wait_nanos_total: u64,
     pub execution_nanos_total: u64,
     pub timed_out_invocations: u64,
     pub canceled_invocations: u64,
+    pub rejected_invocations: u64,
     pub queued_canceled_invocations: u64,
     pub in_flight_canceled_invocations: u64,
     pub disconnect_canceled_invocations: u64,
@@ -83,6 +96,7 @@ pub struct RuntimeTenantMetricsSnapshot {
     pub active_isolates: usize,
     pub started_invocations: u64,
     pub completed_invocations: u64,
+    pub rejected_invocations: u64,
     pub queued_canceled_invocations: u64,
     pub in_flight_canceled_invocations: u64,
     pub disconnect_canceled_invocations: u64,
@@ -127,6 +141,7 @@ struct RuntimeTenantMetrics {
     active_isolates: usize,
     started_invocations: u64,
     completed_invocations: u64,
+    rejected_invocations: u64,
     queued_canceled_invocations: u64,
     in_flight_canceled_invocations: u64,
     disconnect_canceled_invocations: u64,
@@ -148,11 +163,13 @@ struct RuntimeRequestCorrelation {
 
 impl RuntimeMetrics {
     pub fn increment_queued_invocations(&self) {
-        self.queued_invocations.fetch_add(1, Ordering::SeqCst);
+        self.queued_invocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn decrement_queued_invocations(&self) {
-        self.queued_invocations.fetch_sub(1, Ordering::SeqCst);
+        self.queued_invocations
+            .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn increment_active_isolates(&self) {
@@ -160,8 +177,10 @@ impl RuntimeMetrics {
     }
 
     pub fn increment_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
-        self.active_isolates.fetch_add(1, Ordering::SeqCst);
-        self.started_invocations.fetch_add(1, Ordering::SeqCst);
+        self.active_isolates
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.started_invocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.update_tenant_metrics(tenant_label, |metrics| {
             metrics.active_isolates += 1;
             metrics.started_invocations += 1;
@@ -170,7 +189,22 @@ impl RuntimeMetrics {
 
     pub fn record_worker_dispatch(&self) {
         self.worker_dispatched_invocations
-            .fetch_add(1, Ordering::SeqCst);
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub fn record_isolate_pool_hit(&self) {
+        self.isolate_pool_hits
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub fn record_isolate_pool_miss(&self) {
+        self.isolate_pool_misses
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub fn record_isolate_pool_replacement(&self) {
+        self.isolate_pool_replacements
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn decrement_active_isolates(&self) {
@@ -178,8 +212,10 @@ impl RuntimeMetrics {
     }
 
     pub fn decrement_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
-        self.active_isolates.fetch_sub(1, Ordering::SeqCst);
-        self.completed_invocations.fetch_add(1, Ordering::SeqCst);
+        self.active_isolates
+            .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.completed_invocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.update_tenant_metrics(tenant_label, |metrics| {
             metrics.active_isolates = metrics.active_isolates.saturating_sub(1);
             metrics.completed_invocations += 1;
@@ -192,7 +228,7 @@ impl RuntimeMetrics {
 
     pub fn record_queue_wait_for_tenant(&self, tenant_label: Option<&str>, duration: Duration) {
         self.queue_wait_nanos_total
-            .fetch_add(duration_to_nanos(duration), Ordering::SeqCst);
+            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
         self.update_tenant_metrics(tenant_label, |metrics| {
             metrics.queue_wait_nanos_total += duration_to_nanos(duration);
             metrics.queue_wait_distribution.record(duration);
@@ -205,7 +241,7 @@ impl RuntimeMetrics {
 
     pub fn record_execution_for_tenant(&self, tenant_label: Option<&str>, duration: Duration) {
         self.execution_nanos_total
-            .fetch_add(duration_to_nanos(duration), Ordering::SeqCst);
+            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
         self.update_tenant_metrics(tenant_label, |metrics| {
             metrics.execution_nanos_total += duration_to_nanos(duration);
             metrics.execution_distribution.record(duration);
@@ -213,11 +249,21 @@ impl RuntimeMetrics {
     }
 
     pub fn record_timeout(&self) {
-        self.timed_out_invocations.fetch_add(1, Ordering::SeqCst);
+        self.timed_out_invocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn record_canceled_invocation(&self) {
-        self.canceled_invocations.fetch_add(1, Ordering::SeqCst);
+        self.canceled_invocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub fn record_rejected_invocation_for_tenant(&self, tenant_label: Option<&str>) {
+        self.rejected_invocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.update_tenant_metrics(tenant_label, |metrics| {
+            metrics.rejected_invocations += 1;
+        });
     }
 
     pub fn record_queued_canceled_invocation(&self) {
@@ -230,7 +276,7 @@ impl RuntimeMetrics {
         cause: Option<HostCallCancellationCause>,
     ) {
         self.queued_canceled_invocations
-            .fetch_add(1, Ordering::SeqCst);
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.record_canceled_invocation();
         self.record_canceled_invocation_cause(tenant_label, cause);
         self.update_tenant_metrics(tenant_label, |metrics| {
@@ -248,7 +294,7 @@ impl RuntimeMetrics {
         cause: Option<HostCallCancellationCause>,
     ) {
         self.in_flight_canceled_invocations
-            .fetch_add(1, Ordering::SeqCst);
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.record_canceled_invocation();
         self.record_canceled_invocation_cause(tenant_label, cause);
         self.update_tenant_metrics(tenant_label, |metrics| {
@@ -257,17 +303,19 @@ impl RuntimeMetrics {
     }
 
     pub fn record_canceled_host_op(&self) {
-        self.canceled_host_ops.fetch_add(1, Ordering::SeqCst);
+        self.canceled_host_ops
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn record_precanceled_host_op(&self) {
-        self.precanceled_host_ops.fetch_add(1, Ordering::SeqCst);
+        self.precanceled_host_ops
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.record_canceled_host_op();
     }
 
     pub fn record_in_flight_canceled_host_op(&self) {
         self.in_flight_canceled_host_ops
-            .fetch_add(1, Ordering::SeqCst);
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.record_canceled_host_op();
     }
 
@@ -298,12 +346,13 @@ impl RuntimeMetrics {
     }
 
     pub fn record_nested_local_dispatch(&self) {
-        self.nested_local_dispatches.fetch_add(1, Ordering::SeqCst);
+        self.nested_local_dispatches
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn record_fallback_cross_isolate_dispatch(&self) {
         self.fallback_cross_isolate_dispatches
-            .fetch_add(1, Ordering::SeqCst);
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn record_request_correlation(&self, context: &RuntimeInvocationContext) {
@@ -330,34 +379,48 @@ impl RuntimeMetrics {
 
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
         RuntimeMetricsSnapshot {
-            active_isolates: self.active_isolates.load(Ordering::SeqCst),
-            queued_invocations: self.queued_invocations.load(Ordering::SeqCst),
+            active_isolates: self.active_isolates.load(DIAGNOSTIC_COUNTER_ORDERING),
+            queued_invocations: self.queued_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
             worker_dispatched_invocations: self
                 .worker_dispatched_invocations
-                .load(Ordering::SeqCst),
-            started_invocations: self.started_invocations.load(Ordering::SeqCst),
-            completed_invocations: self.completed_invocations.load(Ordering::SeqCst),
-            queue_wait_nanos_total: self.queue_wait_nanos_total.load(Ordering::SeqCst),
-            execution_nanos_total: self.execution_nanos_total.load(Ordering::SeqCst),
-            timed_out_invocations: self.timed_out_invocations.load(Ordering::SeqCst),
-            canceled_invocations: self.canceled_invocations.load(Ordering::SeqCst),
-            queued_canceled_invocations: self.queued_canceled_invocations.load(Ordering::SeqCst),
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            isolate_pool_hits: self.isolate_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
+            isolate_pool_misses: self.isolate_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
+            isolate_pool_replacements: self
+                .isolate_pool_replacements
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            started_invocations: self.started_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
+            completed_invocations: self.completed_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
+            queue_wait_nanos_total: self
+                .queue_wait_nanos_total
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            execution_nanos_total: self.execution_nanos_total.load(DIAGNOSTIC_COUNTER_ORDERING),
+            timed_out_invocations: self.timed_out_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
+            canceled_invocations: self.canceled_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
+            rejected_invocations: self.rejected_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
+            queued_canceled_invocations: self
+                .queued_canceled_invocations
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
             in_flight_canceled_invocations: self
                 .in_flight_canceled_invocations
-                .load(Ordering::SeqCst),
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
             disconnect_canceled_invocations: self
                 .disconnect_canceled_invocations
-                .load(Ordering::SeqCst),
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
             explicit_canceled_invocations: self
                 .explicit_canceled_invocations
-                .load(Ordering::SeqCst),
-            canceled_host_ops: self.canceled_host_ops.load(Ordering::SeqCst),
-            precanceled_host_ops: self.precanceled_host_ops.load(Ordering::SeqCst),
-            in_flight_canceled_host_ops: self.in_flight_canceled_host_ops.load(Ordering::SeqCst),
-            nested_local_dispatches: self.nested_local_dispatches.load(Ordering::SeqCst),
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            canceled_host_ops: self.canceled_host_ops.load(DIAGNOSTIC_COUNTER_ORDERING),
+            precanceled_host_ops: self.precanceled_host_ops.load(DIAGNOSTIC_COUNTER_ORDERING),
+            in_flight_canceled_host_ops: self
+                .in_flight_canceled_host_ops
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            nested_local_dispatches: self
+                .nested_local_dispatches
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
             fallback_cross_isolate_dispatches: self
                 .fallback_cross_isolate_dispatches
-                .load(Ordering::SeqCst),
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
             host_operations: self
                 .host_operations
                 .lock()
@@ -388,6 +451,7 @@ impl RuntimeMetrics {
                             active_isolates: metrics.active_isolates,
                             started_invocations: metrics.started_invocations,
                             completed_invocations: metrics.completed_invocations,
+                            rejected_invocations: metrics.rejected_invocations,
                             queued_canceled_invocations: metrics.queued_canceled_invocations,
                             in_flight_canceled_invocations: metrics.in_flight_canceled_invocations,
                             disconnect_canceled_invocations: metrics
@@ -454,14 +518,14 @@ impl RuntimeMetrics {
         match cause {
             Some(HostCallCancellationCause::Disconnect) => {
                 self.disconnect_canceled_invocations
-                    .fetch_add(1, Ordering::SeqCst);
+                    .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
                 self.update_tenant_metrics(tenant_label, |metrics| {
                     metrics.disconnect_canceled_invocations += 1;
                 });
             }
             Some(HostCallCancellationCause::Explicit) => {
                 self.explicit_canceled_invocations
-                    .fetch_add(1, Ordering::SeqCst);
+                    .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
                 self.update_tenant_metrics(tenant_label, |metrics| {
                     metrics.explicit_canceled_invocations += 1;
                 });
@@ -546,6 +610,7 @@ mod tests {
                 active_isolates: 0,
                 started_invocations: 1,
                 completed_invocations: 1,
+                rejected_invocations: 0,
                 queued_canceled_invocations: 1,
                 in_flight_canceled_invocations: 1,
                 disconnect_canceled_invocations: 1,
@@ -581,12 +646,53 @@ mod tests {
         let metrics = RuntimeMetrics::default();
 
         metrics.increment_active_isolates();
+        metrics.increment_queued_invocations();
         metrics.record_queue_wait(Duration::from_millis(1));
         metrics.record_execution(Duration::from_millis(2));
+        metrics.record_worker_dispatch();
+        metrics.record_isolate_pool_miss();
+        metrics.record_isolate_pool_hit();
+        metrics.record_isolate_pool_replacement();
+        metrics.record_timeout();
+        metrics.record_rejected_invocation_for_tenant(None);
         metrics.record_queued_canceled_invocation();
+        metrics.record_precanceled_host_op();
+        metrics.record_in_flight_canceled_host_op();
+        metrics.record_nested_local_dispatch();
+        metrics.record_fallback_cross_isolate_dispatch();
+        metrics.decrement_queued_invocations();
         metrics.decrement_active_isolates();
 
-        assert!(metrics.snapshot().tenants.is_empty());
-        assert!(metrics.snapshot().recent_request_correlations.is_empty());
+        let snapshot = metrics.snapshot();
+        assert_eq!(
+            snapshot,
+            RuntimeMetricsSnapshot {
+                active_isolates: 0,
+                queued_invocations: 0,
+                worker_dispatched_invocations: 1,
+                isolate_pool_hits: 1,
+                isolate_pool_misses: 1,
+                isolate_pool_replacements: 1,
+                started_invocations: 1,
+                completed_invocations: 1,
+                queue_wait_nanos_total: 1_000_000,
+                execution_nanos_total: 2_000_000,
+                timed_out_invocations: 1,
+                canceled_invocations: 1,
+                rejected_invocations: 1,
+                queued_canceled_invocations: 1,
+                in_flight_canceled_invocations: 0,
+                disconnect_canceled_invocations: 0,
+                explicit_canceled_invocations: 0,
+                canceled_host_ops: 2,
+                precanceled_host_ops: 1,
+                in_flight_canceled_host_ops: 1,
+                nested_local_dispatches: 1,
+                fallback_cross_isolate_dispatches: 1,
+                host_operations: BTreeMap::new(),
+                tenants: BTreeMap::new(),
+                recent_request_correlations: Vec::new(),
+            }
+        );
     }
 }

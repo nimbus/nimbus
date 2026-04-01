@@ -20,6 +20,9 @@ pub enum Error {
     #[error("resource already exists: {0}")]
     AlreadyExists(String),
 
+    #[error("resource exhausted: {0}")]
+    ResourceExhausted(String),
+
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

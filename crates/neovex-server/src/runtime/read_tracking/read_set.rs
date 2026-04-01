@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use neovex_core::{Cursor, DocumentId, Filter, OrderBy, Query, TableName};
+use neovex_core::{
+    Cursor, DependencySet, DocumentId, Filter, IndexRangeDependency, OrderBy,
+    PaginatedWindowDependency, PredicateDependency, Query, TableName,
+};
 use serde_json::Value;
 
 use super::intersection::{decode_runtime_cursor_boundary, extract_runtime_cursor_boundary};
@@ -15,6 +18,47 @@ pub(crate) struct RuntimeReadSet {
 }
 
 impl RuntimeReadSet {
+    pub(crate) fn dependency_set(&self) -> DependencySet {
+        let mut dependencies = DependencySet::default();
+        for table in &self.tables {
+            dependencies.record_table(table);
+        }
+        for (table, document_id) in &self.documents {
+            dependencies.record_document(table, *document_id);
+        }
+        for read in &self.index_ranges {
+            dependencies.record_index_range(IndexRangeDependency {
+                table: read.table.clone(),
+                index_name: read.index_name.clone(),
+                field: read.field.clone(),
+                start: read.start.clone(),
+                end: read.end.clone(),
+                start_inclusive: read.start_inclusive,
+                end_inclusive: read.end_inclusive,
+            });
+        }
+        for read in &self.predicates {
+            dependencies.record_predicate(PredicateDependency {
+                table: read.table.clone(),
+                filters: read.filters.clone(),
+            });
+        }
+        for read in &self.paginated_windows {
+            dependencies.record_paginated_window(PaginatedWindowDependency {
+                table: read.table.clone(),
+                filters: read.filters.clone(),
+                order: read.order.clone(),
+                start_sort_value: read.start_sort_value.clone(),
+                start_doc_id: read.start_doc_id,
+                end_sort_value: read.end_sort_value.clone(),
+                end_doc_id: read.end_doc_id,
+                result_count: read.result_count,
+                page_size: read.page_size,
+            });
+        }
+        dependencies
+    }
+
     pub(crate) fn record_table(&mut self, table: &TableName) {
         self.tables.insert(table.clone());
     }

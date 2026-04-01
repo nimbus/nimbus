@@ -582,9 +582,10 @@ async fn service_insert_drives_subscription_updates() {
         limit: None,
     };
 
-    let subscription_id = service
+    let subscription = service
         .subscribe(&tenant_id, query, "req-1".to_string(), tx)
         .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
     let initial = rx.recv().await.expect("initial update should arrive");
     match initial {
         SubscriptionUpdate::Result {
@@ -647,9 +648,10 @@ async fn service_update_and_delete_drive_subscription_updates() {
         limit: None,
     };
 
-    let subscription_id = service
+    let subscription = service
         .subscribe(&tenant_id, query, "req-2".to_string(), tx)
         .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
     let initial = rx.recv().await.expect("initial update should arrive");
     match initial {
         SubscriptionUpdate::Result {
@@ -711,6 +713,168 @@ async fn service_update_and_delete_drive_subscription_updates() {
 }
 
 #[tokio::test]
+async fn repeated_get_document_calls_record_document_cache_hits() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Cached"))]),
+        )
+        .expect("insert should succeed");
+
+    let first = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("first get should succeed");
+    let second = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("second get should succeed");
+
+    assert_eq!(first.fields.get("title"), Some(&json!("Cached")));
+    assert_eq!(second.fields.get("title"), Some(&json!("Cached")));
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 1);
+    assert_eq!(stats.misses, 1);
+}
+
+#[tokio::test]
+async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+        )
+        .expect("insert should succeed");
+
+    let documents = service
+        .query_documents(&tenant_id, &query_for("tasks"))
+        .expect("query should succeed");
+    assert_eq!(documents.len(), 1);
+
+    let cached = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("cached get should succeed");
+    assert_eq!(cached.fields.get("title"), Some(&json!("Before")));
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 1);
+    assert_eq!(stats.misses, 0);
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+        )
+        .expect("update should succeed");
+
+    let refreshed = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("post-update get should succeed");
+    assert_eq!(refreshed.fields.get("title"), Some(&json!("After")));
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 1);
+    assert_eq!(stats.misses, 1);
+
+    let cached_again = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("second post-update get should succeed");
+    assert_eq!(cached_again.fields.get("title"), Some(&json!("After")));
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 2);
+    assert_eq!(stats.misses, 1);
+}
+
+#[tokio::test]
+async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+        )
+        .expect("insert should succeed");
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let _subscription = service
+        .subscribe(&tenant_id, query_for("tasks"), "cache-sub".to_string(), tx)
+        .expect("subscribe should succeed");
+
+    let initial = rx.recv().await.expect("initial update should arrive");
+    match initial {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("Before"));
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    let cached = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("cached get should succeed");
+    assert_eq!(cached.fields.get("title"), Some(&json!("Before")));
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 1);
+    assert_eq!(stats.misses, 0);
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+        )
+        .expect("update should succeed");
+
+    let update = rx.recv().await.expect("subscription update should arrive");
+    match update {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("After"));
+        }
+        other => panic!("unexpected subscription update: {other:?}"),
+    }
+
+    let refreshed = service
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("refreshed get should succeed");
+    assert_eq!(refreshed.fields.get("title"), Some(&json!("After")));
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 2);
+    assert_eq!(stats.misses, 0);
+}
+
+#[tokio::test]
 async fn service_only_notifies_subscriptions_for_affected_tables() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -731,10 +895,10 @@ async fn service_only_notifies_subscriptions_for_affected_tables() {
         limit: None,
     };
 
-    service
+    let _tasks_subscription = service
         .subscribe(&tenant_id, tasks_query, "tasks-1".to_string(), tasks_tx)
         .expect("tasks subscribe should succeed");
-    service
+    let _users_subscription = service
         .subscribe(&tenant_id, users_query, "users-1".to_string(), users_tx)
         .expect("users subscribe should succeed");
 
@@ -772,6 +936,247 @@ async fn service_only_notifies_subscriptions_for_affected_tables() {
 }
 
 #[tokio::test]
+async fn service_insert_only_notifies_filtered_subscriptions_for_matching_documents() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let (active_tx, mut active_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let active_query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("active"))],
+        order: None,
+        limit: None,
+    };
+    let done_query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("done"))],
+        order: None,
+        limit: None,
+    };
+
+    let _active_subscription = service
+        .subscribe(&tenant_id, active_query, "active-1".to_string(), active_tx)
+        .expect("active subscribe should succeed");
+    let _done_subscription = service
+        .subscribe(&tenant_id, done_query, "done-1".to_string(), done_tx)
+        .expect("done subscribe should succeed");
+
+    let _ = active_rx
+        .recv()
+        .await
+        .expect("active initial update should arrive");
+    let _ = done_rx
+        .recv()
+        .await
+        .expect("done initial update should arrive");
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Ship it")),
+                ("status".to_string(), json!("active")),
+            ]),
+        )
+        .expect("insert should succeed");
+
+    let active_update = active_rx.recv().await.expect("active update should arrive");
+    match active_update {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("Ship it"));
+        }
+        other => panic!("unexpected active subscription event: {other:?}"),
+    }
+
+    let done_update = timeout(Duration::from_millis(100), done_rx.recv()).await;
+    assert!(
+        done_update.is_err(),
+        "non-matching filtered subscription should not be invalidated"
+    );
+}
+
+#[tokio::test]
+async fn service_delete_only_notifies_filtered_subscriptions_for_matching_documents() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let active_document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Keep moving")),
+                ("status".to_string(), json!("active")),
+            ]),
+        )
+        .expect("active seed insert should succeed");
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Archive")),
+                ("status".to_string(), json!("done")),
+            ]),
+        )
+        .expect("done seed insert should succeed");
+
+    let (active_tx, mut active_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let active_query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("active"))],
+        order: None,
+        limit: None,
+    };
+    let done_query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("done"))],
+        order: None,
+        limit: None,
+    };
+
+    let _active_subscription = service
+        .subscribe(
+            &tenant_id,
+            active_query,
+            "active-delete".to_string(),
+            active_tx,
+        )
+        .expect("active subscribe should succeed");
+    let _done_subscription = service
+        .subscribe(&tenant_id, done_query, "done-delete".to_string(), done_tx)
+        .expect("done subscribe should succeed");
+
+    let _ = active_rx
+        .recv()
+        .await
+        .expect("active initial update should arrive");
+    let _ = done_rx
+        .recv()
+        .await
+        .expect("done initial update should arrive");
+
+    service
+        .delete_document(&tenant_id, tasks_table(), active_document_id)
+        .expect("delete should succeed");
+
+    let active_update = active_rx
+        .recv()
+        .await
+        .expect("active delete update should arrive");
+    match active_update {
+        SubscriptionUpdate::Result {
+            data,
+            deleted_documents,
+            ..
+        } => {
+            assert!(data.is_empty());
+            assert_eq!(deleted_documents.len(), 1);
+            assert_eq!(
+                deleted_documents[0].fields.get("status"),
+                Some(&json!("active"))
+            );
+        }
+        other => panic!("unexpected active delete subscription event: {other:?}"),
+    }
+
+    let done_update = timeout(Duration::from_millis(100), done_rx.recv()).await;
+    assert!(
+        done_update.is_err(),
+        "deleting a non-matching document should not invalidate the other filter"
+    );
+}
+
+#[tokio::test]
+async fn service_updates_remain_conservative_for_filtered_subscriptions() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let active_document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Before")),
+                ("status".to_string(), json!("active")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let (active_tx, mut active_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let active_query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("active"))],
+        order: None,
+        limit: None,
+    };
+    let done_query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("done"))],
+        order: None,
+        limit: None,
+    };
+
+    let _active_subscription = service
+        .subscribe(
+            &tenant_id,
+            active_query,
+            "active-update".to_string(),
+            active_tx,
+        )
+        .expect("active subscribe should succeed");
+    let _done_subscription = service
+        .subscribe(&tenant_id, done_query, "done-update".to_string(), done_tx)
+        .expect("done subscribe should succeed");
+
+    let _ = active_rx
+        .recv()
+        .await
+        .expect("active initial update should arrive");
+    let _ = done_rx
+        .recv()
+        .await
+        .expect("done initial update should arrive");
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            active_document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+        )
+        .expect("update should succeed");
+
+    let active_update = active_rx.recv().await.expect("active update should arrive");
+    match active_update {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("After"));
+        }
+        other => panic!("unexpected active update subscription event: {other:?}"),
+    }
+
+    let done_update = done_rx
+        .recv()
+        .await
+        .expect("done update should still arrive");
+    match done_update {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert!(data.is_empty());
+        }
+        other => panic!("unexpected done update subscription event: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluation_errors() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -796,7 +1201,7 @@ async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluatio
         limit: None,
     };
 
-    service
+    let _subscription = service
         .subscribe(&tenant_id, query, "req-3".to_string(), tx)
         .expect("subscribe should succeed");
     let _ = rx
@@ -857,9 +1262,10 @@ async fn service_delete_tenant_tears_down_active_subscriptions() {
         limit: None,
     };
 
-    let subscription_id = service
+    let subscription = service
         .subscribe(&tenant_id, query, "req-delete".to_string(), tx)
         .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
     let _ = rx.recv().await.expect("initial update should arrive");
 
     service
@@ -1002,9 +1408,10 @@ async fn service_unsubscribe_stops_notifications() {
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
     let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let subscription_id = service
+    let subscription = service
         .subscribe(&tenant_id, query_for("tasks"), "req-unsub".to_string(), tx)
         .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
     let _ = rx.recv().await.expect("initial update should arrive");
 
     service
@@ -1201,7 +1608,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let subscription_id = service
+    let subscription = service
         .subscribe(
             &tenant_id,
             Query {
@@ -1214,6 +1621,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
             tx,
         )
         .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
 
     let initial = rx.recv().await.expect("initial update should arrive");
     match initial {
@@ -1425,7 +1833,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         .expect("seed insert should succeed");
 
     let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    service
+    let _subscription = service
         .subscribe(
             &tenant_id,
             Query {
@@ -1466,17 +1874,11 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
             serde_json::Map::from_iter([("status".to_string(), json!("inactive"))]),
         )
         .expect("inactive insert should succeed");
-    let inactive_update = rx.recv().await.expect("inactive update should arrive");
-    match inactive_update {
-        SubscriptionUpdate::Result { data, .. } => {
-            assert_eq!(data.len(), 2);
-            assert!(
-                data.iter()
-                    .all(|document| document["status"] == json!("active"))
-            );
-        }
-        other => panic!("unexpected inactive update: {other:?}"),
-    }
+    let inactive_update = timeout(Duration::from_millis(100), rx.recv()).await;
+    assert!(
+        inactive_update.is_err(),
+        "non-matching indexed insert should not invalidate the subscription"
+    );
 }
 
 #[tokio::test]
@@ -1780,9 +2182,10 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
         spawn_scheduler(service.clone(), Duration::from_millis(25)).await;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let subscription_id = service
+    let subscription = service
         .subscribe(&tenant_id, query_for("tasks"), "sched-1".to_string(), tx)
         .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
     let initial = rx.recv().await.expect("initial update should arrive");
     match initial {
         SubscriptionUpdate::Result {
@@ -2071,6 +2474,66 @@ async fn recovered_scheduled_job_does_not_double_apply_after_replay() {
         .expect("job result should exist");
     assert_eq!(result.outcome, ScheduledJobOutcome::Completed);
     assert!(result.error.is_none());
+}
+
+#[tokio::test]
+async fn scheduler_wakes_promptly_when_earlier_work_arrives() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let (shutdown_tx, scheduler_handle) =
+        spawn_scheduler(service.clone(), Duration::from_secs(60 * 60)).await;
+
+    service
+        .schedule_mutation(
+            &tenant_id,
+            ScheduleRequest {
+                run_after_ms: 60_000,
+                mutation: insert_task_mutation("Later task"),
+            },
+        )
+        .expect("later schedule should succeed");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    service
+        .schedule_mutation(
+            &tenant_id,
+            ScheduleRequest {
+                run_after_ms: 0,
+                mutation: insert_task_mutation("Immediate task"),
+            },
+        )
+        .expect("immediate schedule should succeed");
+
+    let documents = timeout(Duration::from_secs(2), async {
+        loop {
+            let documents = service
+                .list_documents(&tenant_id, &tasks_table())
+                .expect("list should succeed");
+            if !documents.is_empty() {
+                return documents;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("scheduler should wake and execute immediate work");
+
+    assert_eq!(documents.len(), 1);
+    assert_eq!(
+        documents[0].fields.get("title"),
+        Some(&json!("Immediate task"))
+    );
+    assert_eq!(
+        service
+            .list_scheduled_jobs(&tenant_id)
+            .expect("list should succeed")
+            .len(),
+        1
+    );
+
+    let _ = shutdown_tx.send(true);
+    scheduler_handle.await.expect("scheduler should shut down");
 }
 
 #[test]
@@ -2374,6 +2837,137 @@ fn paginate_with_filters_and_ordering() {
         vec!["c", "a"]
     );
     assert!(!second_page.has_more);
+}
+
+#[test]
+fn fallback_query_filters_during_scan_for_selective_match() {
+    let store = neovex_storage::TenantStore::create_in_memory().expect("store should open");
+    for rank in 0..512 {
+        let status = if rank % 97 == 0 { "keep" } else { "skip" };
+        let document = neovex_core::Document::new(
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("rank".to_string(), json!(rank)),
+                ("status".to_string(), json!(status)),
+            ]),
+        );
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let query = Query {
+        table: tasks_table(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "rank".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let documents = evaluate_query(&store, &query).expect("fallback query should evaluate");
+    let ranks = documents
+        .into_iter()
+        .map(|document| {
+            document
+                .fields
+                .get("rank")
+                .and_then(serde_json::Value::as_i64)
+                .expect("rank should be present")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ranks, vec![0, 97, 194, 291, 388, 485]);
+}
+
+#[test]
+fn paginated_fallback_scan_preserves_cursor_and_ordering() {
+    let store = neovex_storage::TenantStore::create_in_memory().expect("store should open");
+    for rank in 0..12 {
+        let status = if rank % 2 == 0 { "todo" } else { "done" };
+        let document = neovex_core::Document::new(
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("rank".to_string(), json!(rank)),
+                ("status".to_string(), json!(status)),
+            ]),
+        );
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let paginated = PaginatedQuery {
+        query: Query {
+            table: tasks_table(),
+            filters: vec![filter("status", FilterOp::Eq, json!("todo"))],
+            order: Some(OrderBy {
+                field: "rank".to_string(),
+                direction: OrderDirection::Desc,
+            }),
+            limit: None,
+        },
+        page_size: 2,
+        after: None,
+    };
+
+    let first_page =
+        evaluate_paginated(&store, &paginated).expect("first fallback page should evaluate");
+    assert_eq!(
+        first_page
+            .data
+            .iter()
+            .map(|document| {
+                document
+                    .get("rank")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("rank should be present")
+            })
+            .collect::<Vec<_>>(),
+        vec![10, 8]
+    );
+    assert!(first_page.has_more);
+    let second_page = evaluate_paginated(
+        &store,
+        &PaginatedQuery {
+            after: first_page.next_cursor.clone(),
+            ..paginated.clone()
+        },
+    )
+    .expect("second fallback page should evaluate");
+    assert_eq!(
+        second_page
+            .data
+            .iter()
+            .map(|document| {
+                document
+                    .get("rank")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("rank should be present")
+            })
+            .collect::<Vec<_>>(),
+        vec![6, 4]
+    );
+    assert!(second_page.has_more);
+    let third_page = evaluate_paginated(
+        &store,
+        &PaginatedQuery {
+            after: second_page.next_cursor.clone(),
+            ..paginated
+        },
+    )
+    .expect("third fallback page should evaluate");
+    assert_eq!(
+        third_page
+            .data
+            .iter()
+            .map(|document| {
+                document
+                    .get("rank")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("rank should be present")
+            })
+            .collect::<Vec<_>>(),
+        vec![2, 0]
+    );
+    assert!(!third_page.has_more);
+    assert!(third_page.next_cursor.is_none());
 }
 
 #[test]

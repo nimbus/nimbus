@@ -107,6 +107,12 @@ export {};
         metrics_body["metrics"]["worker_dispatched_invocations"],
         json!(1)
     );
+    assert_eq!(metrics_body["metrics"]["isolate_pool_misses"], json!(1));
+    assert_eq!(metrics_body["metrics"]["isolate_pool_hits"], json!(0));
+    assert_eq!(
+        metrics_body["metrics"]["isolate_pool_replacements"],
+        json!(0)
+    );
     assert_eq!(
         metrics_body["metrics"]["tenants"]["demo"]["started_invocations"],
         json!(1)
@@ -135,6 +141,9 @@ export {};
     assert_eq!(metrics.nested_local_dispatches, 1);
     assert_eq!(metrics.fallback_cross_isolate_dispatches, 0);
     assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(metrics.isolate_pool_misses, 1);
+    assert_eq!(metrics.isolate_pool_hits, 0);
+    assert_eq!(metrics.isolate_pool_replacements, 0);
     assert_eq!(
         metrics
             .host_operations

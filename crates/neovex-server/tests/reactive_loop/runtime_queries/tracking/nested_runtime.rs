@@ -1,4 +1,5 @@
 use super::*;
+use neovex_runtime::RuntimeLimits;
 
 #[tokio::test]
 async fn convex_runtime_nested_query_subscription_tracks_inner_runtime_reads() {
@@ -50,18 +51,22 @@ const handlers = new Map(
   ]),
 );
 
+async function invokeLocal(request) {
+  const handler = handlers.get(request.function_name);
+  return await handler(
+    globalThis.__neovexCreateContext({
+      sessionId: `${request.kind}:${request.function_name}`,
+    }),
+    request.args ?? {},
+    request,
+  );
+}
+
 globalThis.__neovexInvoke = async function(request) {
   try {
-    const handler = handlers.get(request.function_name);
     return {
       status: "ok",
-      value: await handler(
-        globalThis.__neovexCreateContext({
-          sessionId: `${request.kind}:${request.function_name}`,
-        }),
-        request.args ?? {},
-        request,
-      ),
+      value: await invokeLocal(request),
     };
   } catch (error) {
     if (error && typeof error === "object" && "neovexHostError" in error) {
@@ -71,12 +76,22 @@ globalThis.__neovexInvoke = async function(request) {
   }
 };
 
+globalThis.__neovexInvokeNamedLocal = invokeLocal;
+
 export {};
 "#,
         ),
-    );
+    )
+    .with_runtime_limits(RuntimeLimits {
+        max_concurrent_isolates: 1,
+        ..RuntimeLimits::default()
+    });
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(build_router_with_convex(
+        fixture.service(),
+        registry.clone(),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -149,4 +164,9 @@ export {};
         data.iter()
             .all(|document| document["author"] == json!("Ada"))
     );
+
+    let metrics = registry.runtime_metrics_snapshot();
+    assert_eq!(metrics.isolate_pool_misses, 1);
+    assert_eq!(metrics.isolate_pool_hits, 1);
+    assert_eq!(metrics.isolate_pool_replacements, 0);
 }

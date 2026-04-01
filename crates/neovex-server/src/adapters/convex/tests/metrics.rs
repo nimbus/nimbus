@@ -72,3 +72,25 @@ async fn runtime_async_db_get_precancel_records_canceled_host_op_metric() {
     assert_eq!(db_get_metrics.started, 0);
     assert_eq!(db_get_metrics.canceled_before_start, 1);
 }
+
+#[test]
+fn runtime_metrics_snapshot_surfaces_rejected_invocation_counts() {
+    let (_tempdir, _service, _tenant_id, bridge) = host_bridge_fixture();
+
+    bridge
+        .registry
+        .runtime_policy()
+        .metrics()
+        .record_rejected_invocation_for_tenant(Some("demo"));
+
+    let metrics = bridge.registry.runtime_metrics_snapshot();
+    assert_eq!(metrics.rejected_invocations, 1);
+    assert_eq!(
+        metrics
+            .tenants
+            .get("demo")
+            .expect("tenant runtime metrics should be present")
+            .rejected_invocations,
+        1
+    );
+}

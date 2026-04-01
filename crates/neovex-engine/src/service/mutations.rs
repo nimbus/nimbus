@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use neovex_core::{
-    CommitEntry, Document, DocumentId, Error, Mutation, Result, TableName, TenantId,
+    CommitEntry, Document, DocumentId, Error, Mutation, Result, Schema, TableName, TenantId,
 };
 use neovex_storage::TenantStore;
 use tracing::warn;
@@ -10,6 +10,17 @@ use crate::subscriptions::SubscriptionUpdate;
 use crate::tenant::TenantRuntime;
 
 use super::{Service, documents_to_json, queries::evaluate_with_index};
+
+#[derive(Clone, Copy)]
+enum MutationExecutionMode<'a> {
+    Immediate,
+    Scheduled { execution_id: &'a str },
+}
+
+enum MutationExecutionResult {
+    Immediate(Option<DocumentId>),
+    Scheduled(bool),
+}
 
 impl Service {
     /// Inserts a document and fan-outs any resulting subscription updates.
@@ -99,9 +110,11 @@ impl Service {
         &self,
         runtime: Arc<TenantRuntime>,
         commit: &CommitEntry,
+        candidate_documents: &[Document],
         deleted_documents: &[Document],
     ) {
-        let affected = runtime.subscriptions.affected(&commit.affected_tables());
+        runtime.invalidate_document_cache_for_commit(commit);
+        let affected = runtime.subscriptions.affected(commit, candidate_documents);
         let mut failed = Vec::new();
         for subscription in affected {
             match evaluate_with_index(&runtime, &subscription.query) {
@@ -143,23 +156,33 @@ impl Service {
         }
     }
 
-    fn run_store_mutation<F>(&self, runtime: Arc<TenantRuntime>, mutate: F) -> Result<CommitEntry>
+    fn run_store_mutation<F>(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        candidate_documents: &[Document],
+        mutate: F,
+    ) -> Result<CommitEntry>
     where
         F: FnOnce(&TenantStore) -> Result<CommitEntry>,
     {
         let commit = mutate(&runtime.store)?;
-        self.process_commit(runtime, &commit, &[]);
+        self.process_commit(runtime, &commit, candidate_documents, &[]);
         Ok(commit)
     }
 
-    fn run_store_mutation_once<F>(&self, runtime: Arc<TenantRuntime>, mutate: F) -> Result<bool>
+    fn run_store_mutation_once<F>(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        candidate_documents: &[Document],
+        mutate: F,
+    ) -> Result<bool>
     where
         F: FnOnce(&TenantStore) -> Result<Option<CommitEntry>>,
     {
         let Some(commit) = mutate(&runtime.store)? else {
             return Ok(false);
         };
-        self.process_commit(runtime, &commit, &[]);
+        self.process_commit(runtime, &commit, candidate_documents, &[]);
         Ok(true)
     }
 
@@ -172,7 +195,12 @@ impl Service {
         F: FnOnce(&TenantStore) -> Result<(CommitEntry, Document)>,
     {
         let (commit, deleted_document) = mutate(&runtime.store)?;
-        self.process_commit(runtime, &commit, &[deleted_document]);
+        self.process_commit(
+            runtime,
+            &commit,
+            std::slice::from_ref(&deleted_document),
+            std::slice::from_ref(&deleted_document),
+        );
         Ok(commit)
     }
 
@@ -187,8 +215,36 @@ impl Service {
         let Some((commit, deleted_document)) = mutate(&runtime.store)? else {
             return Ok(false);
         };
-        self.process_commit(runtime, &commit, &[deleted_document]);
+        self.process_commit(
+            runtime,
+            &commit,
+            std::slice::from_ref(&deleted_document),
+            std::slice::from_ref(&deleted_document),
+        );
         Ok(true)
+    }
+
+    fn apply_mutation_with_mode(
+        &self,
+        tenant_id: &TenantId,
+        mode: MutationExecutionMode<'_>,
+        mutation: Mutation,
+    ) -> Result<MutationExecutionResult> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let schema = runtime.schema();
+
+        match mutation {
+            Mutation::Insert { table, fields } => {
+                self.apply_insert_like(runtime.clone(), &schema, mode, table, fields)
+            }
+            Mutation::Update { table, id, patch } => {
+                self.apply_update_like(runtime.clone(), &schema, mode, table, id, patch)
+            }
+            Mutation::Delete { table, id } => {
+                self.apply_delete_like(runtime.clone(), &schema, mode, table, id)
+            }
+        }
     }
 
     fn apply_mutation(
@@ -196,73 +252,14 @@ impl Service {
         tenant_id: &TenantId,
         mutation: Mutation,
     ) -> Result<Option<DocumentId>> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let _operation = runtime.enter_operation(tenant_id)?;
-        let schema = runtime.schema();
-
-        match mutation {
-            Mutation::Insert { table, fields } => {
-                let indexes = schema
-                    .get_table(&table)
-                    .map(|table_schema| {
-                        table_schema.validate(&fields)?;
-                        Ok(table_schema.indexes.clone())
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                let document = Document::new(table, fields);
-                let document_id = document.id;
-                if indexes.is_empty() {
-                    self.run_store_mutation(runtime.clone(), |store| store.insert(&document))?;
-                } else {
-                    self.run_store_mutation(runtime.clone(), |store| {
-                        store.insert_with_indexes(&document, &indexes)
-                    })?;
-                }
-                Ok(Some(document_id))
-            }
-            Mutation::Update { table, id, patch } => {
-                if let Some(table_schema) = schema.get_table(&table).cloned() {
-                    if table_schema.indexes.is_empty() {
-                        self.run_store_mutation(runtime.clone(), move |store| {
-                            store.update_validated(&table, &id, &patch, |document| {
-                                table_schema.validate(&document.fields)
-                            })
-                        })?;
-                    } else {
-                        let indexes = table_schema.indexes.clone();
-                        self.run_store_mutation(runtime.clone(), move |store| {
-                            store.update_with_indexes_validated(
-                                &table,
-                                &id,
-                                &patch,
-                                &indexes,
-                                |document| table_schema.validate(&document.fields),
-                            )
-                        })?;
-                    }
-                } else {
-                    self.run_store_mutation(runtime.clone(), move |store| {
-                        store.update(&table, &id, &patch)
-                    })?;
-                }
-                Ok(Some(id))
-            }
-            Mutation::Delete { table, id } => {
-                let indexes = schema
-                    .get_table(&table)
-                    .map(|table_schema| table_schema.indexes.clone())
-                    .unwrap_or_default();
-                if indexes.is_empty() {
-                    self.run_store_delete_mutation(runtime.clone(), |store| {
-                        store.delete_returning_document(&table, &id)
-                    })?;
-                } else {
-                    self.run_store_delete_mutation(runtime.clone(), |store| {
-                        store.delete_with_indexes_returning_document(&table, &id, &indexes)
-                    })?;
-                }
-                Ok(None)
+        match self.apply_mutation_with_mode(
+            tenant_id,
+            MutationExecutionMode::Immediate,
+            mutation,
+        )? {
+            MutationExecutionResult::Immediate(document_id) => Ok(document_id),
+            MutationExecutionResult::Scheduled(_) => {
+                unreachable!("immediate mutation execution should not return a scheduled result")
             }
         }
     }
@@ -273,46 +270,120 @@ impl Service {
         execution_id: &str,
         mutation: Mutation,
     ) -> Result<bool> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let _operation = runtime.enter_operation(tenant_id)?;
-        let schema = runtime.schema();
-
-        match mutation {
-            Mutation::Insert { table, fields } => {
-                let indexes = schema
-                    .get_table(&table)
-                    .map(|table_schema| {
-                        table_schema.validate(&fields)?;
-                        Ok(table_schema.indexes.clone())
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                let document = Document::new(table, fields);
-                if indexes.is_empty() {
-                    self.run_store_mutation_once(runtime.clone(), |store| {
-                        store.insert_once(&document, Some(execution_id))
-                    })
-                } else {
-                    self.run_store_mutation_once(runtime.clone(), |store| {
-                        store.insert_with_indexes_once(&document, &indexes, Some(execution_id))
-                    })
-                }
+        match self.apply_mutation_with_mode(
+            tenant_id,
+            MutationExecutionMode::Scheduled { execution_id },
+            mutation,
+        )? {
+            MutationExecutionResult::Scheduled(applied) => Ok(applied),
+            MutationExecutionResult::Immediate(_) => {
+                unreachable!("scheduled mutation execution should not return an immediate result")
             }
-            Mutation::Update { table, id, patch } => {
-                if let Some(table_schema) = schema.get_table(&table).cloned() {
-                    if table_schema.indexes.is_empty() {
-                        self.run_store_mutation_once(runtime.clone(), move |store| {
-                            store.update_validated_once(
+        }
+    }
+
+    fn apply_insert_like(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        schema: &Schema,
+        mode: MutationExecutionMode<'_>,
+        table: TableName,
+        fields: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<MutationExecutionResult> {
+        let indexes = schema
+            .get_table(&table)
+            .map(|table_schema| {
+                table_schema.validate(&fields)?;
+                Ok(table_schema.indexes.clone())
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let document = Document::new(table, fields);
+        let document_id = document.id;
+
+        match mode {
+            MutationExecutionMode::Immediate => {
+                if indexes.is_empty() {
+                    self.run_store_mutation(runtime, std::slice::from_ref(&document), |store| {
+                        store.insert(&document)
+                    })?;
+                } else {
+                    self.run_store_mutation(runtime, std::slice::from_ref(&document), |store| {
+                        store.insert_with_indexes(&document, &indexes)
+                    })?;
+                }
+                Ok(MutationExecutionResult::Immediate(Some(document_id)))
+            }
+            MutationExecutionMode::Scheduled { execution_id } => {
+                let applied = if indexes.is_empty() {
+                    self.run_store_mutation_once(
+                        runtime,
+                        std::slice::from_ref(&document),
+                        |store| store.insert_once(&document, Some(execution_id)),
+                    )?
+                } else {
+                    self.run_store_mutation_once(
+                        runtime,
+                        std::slice::from_ref(&document),
+                        |store| {
+                            store.insert_with_indexes_once(&document, &indexes, Some(execution_id))
+                        },
+                    )?
+                };
+                Ok(MutationExecutionResult::Scheduled(applied))
+            }
+        }
+    }
+
+    fn apply_update_like(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        schema: &Schema,
+        mode: MutationExecutionMode<'_>,
+        table: TableName,
+        id: DocumentId,
+        patch: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<MutationExecutionResult> {
+        match schema.get_table(&table).cloned() {
+            Some(table_schema) if table_schema.indexes.is_empty() => match mode {
+                MutationExecutionMode::Immediate => {
+                    self.run_store_mutation(runtime, &[], move |store| {
+                        store.update_validated(&table, &id, &patch, |document| {
+                            table_schema.validate(&document.fields)
+                        })
+                    })?;
+                    Ok(MutationExecutionResult::Immediate(Some(id)))
+                }
+                MutationExecutionMode::Scheduled { execution_id } => {
+                    let applied = self.run_store_mutation_once(runtime, &[], move |store| {
+                        store.update_validated_once(
+                            &table,
+                            &id,
+                            &patch,
+                            Some(execution_id),
+                            |document| table_schema.validate(&document.fields),
+                        )
+                    })?;
+                    Ok(MutationExecutionResult::Scheduled(applied))
+                }
+            },
+            Some(table_schema) => {
+                let indexes = table_schema.indexes.clone();
+                match mode {
+                    MutationExecutionMode::Immediate => {
+                        self.run_store_mutation(runtime, &[], move |store| {
+                            store.update_with_indexes_validated(
                                 &table,
                                 &id,
                                 &patch,
-                                Some(execution_id),
+                                &indexes,
                                 |document| table_schema.validate(&document.fields),
                             )
-                        })
-                    } else {
-                        let indexes = table_schema.indexes.clone();
-                        self.run_store_mutation_once(runtime.clone(), move |store| {
+                        })?;
+                        Ok(MutationExecutionResult::Immediate(Some(id)))
+                    }
+                    MutationExecutionMode::Scheduled { execution_id } => {
+                        let applied = self.run_store_mutation_once(runtime, &[], move |store| {
                             store.update_with_indexes_validated_once(
                                 &table,
                                 &id,
@@ -321,35 +392,72 @@ impl Service {
                                 Some(execution_id),
                                 |document| table_schema.validate(&document.fields),
                             )
-                        })
+                        })?;
+                        Ok(MutationExecutionResult::Scheduled(applied))
                     }
-                } else {
-                    self.run_store_mutation_once(runtime.clone(), move |store| {
+                }
+            }
+            None => match mode {
+                MutationExecutionMode::Immediate => {
+                    self.run_store_mutation(runtime, &[], move |store| {
+                        store.update(&table, &id, &patch)
+                    })?;
+                    Ok(MutationExecutionResult::Immediate(Some(id)))
+                }
+                MutationExecutionMode::Scheduled { execution_id } => {
+                    let applied = self.run_store_mutation_once(runtime, &[], move |store| {
                         store.update_validated_once(&table, &id, &patch, Some(execution_id), |_| {
                             Ok(())
                         })
-                    })
+                    })?;
+                    Ok(MutationExecutionResult::Scheduled(applied))
                 }
-            }
-            Mutation::Delete { table, id } => {
-                let indexes = schema
-                    .get_table(&table)
-                    .map(|table_schema| table_schema.indexes.clone())
-                    .unwrap_or_default();
+            },
+        }
+    }
+
+    fn apply_delete_like(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        schema: &Schema,
+        mode: MutationExecutionMode<'_>,
+        table: TableName,
+        id: DocumentId,
+    ) -> Result<MutationExecutionResult> {
+        let indexes = schema
+            .get_table(&table)
+            .map(|table_schema| table_schema.indexes.clone())
+            .unwrap_or_default();
+
+        match mode {
+            MutationExecutionMode::Immediate => {
                 if indexes.is_empty() {
-                    self.run_store_delete_mutation_once(runtime.clone(), |store| {
-                        store.delete_once_returning_document(&table, &id, Some(execution_id))
-                    })
+                    self.run_store_delete_mutation(runtime, |store| {
+                        store.delete_returning_document(&table, &id)
+                    })?;
                 } else {
-                    self.run_store_delete_mutation_once(runtime.clone(), |store| {
+                    self.run_store_delete_mutation(runtime, |store| {
+                        store.delete_with_indexes_returning_document(&table, &id, &indexes)
+                    })?;
+                }
+                Ok(MutationExecutionResult::Immediate(None))
+            }
+            MutationExecutionMode::Scheduled { execution_id } => {
+                let applied = if indexes.is_empty() {
+                    self.run_store_delete_mutation_once(runtime, |store| {
+                        store.delete_once_returning_document(&table, &id, Some(execution_id))
+                    })?
+                } else {
+                    self.run_store_delete_mutation_once(runtime, |store| {
                         store.delete_with_indexes_once_returning_document(
                             &table,
                             &id,
                             &indexes,
                             Some(execution_id),
                         )
-                    })
-                }
+                    })?
+                };
+                Ok(MutationExecutionResult::Scheduled(applied))
             }
         }
     }

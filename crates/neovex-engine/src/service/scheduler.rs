@@ -25,6 +25,7 @@ impl Service {
             created_at: now,
         };
         runtime.store.insert_scheduled_job(&job)?;
+        self.wake_scheduler();
         Ok(job.id)
     }
 
@@ -180,7 +181,9 @@ impl Service {
             next_run,
             created_at: now,
         };
-        runtime.store.save_cron_job(&cron)
+        runtime.store.save_cron_job(&cron)?;
+        self.wake_scheduler();
+        Ok(())
     }
 
     /// Creates a new cron job definition asynchronously.
@@ -268,6 +271,36 @@ impl Service {
             .collect::<Vec<_>>();
         tenant_ids.sort();
         tenant_ids
+    }
+
+    /// Returns the earliest due scheduled or cron work for a loaded tenant.
+    pub(crate) fn next_scheduled_work_at(&self, tenant_id: &TenantId) -> Result<Option<Timestamp>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.store.next_scheduled_work_at()
+    }
+
+    /// Returns the earliest due scheduled or cron work across all loaded tenants.
+    pub(crate) fn next_loaded_scheduled_work_at(&self) -> Result<Option<Timestamp>> {
+        let mut next_due: Option<Timestamp> = None;
+        for tenant_id in self.loaded_tenant_ids() {
+            let Some(candidate) = self.next_scheduled_work_at(&tenant_id)? else {
+                continue;
+            };
+            next_due = Some(match next_due {
+                Some(current) => current.min(candidate),
+                None => candidate,
+            });
+        }
+        Ok(next_due)
+    }
+
+    /// Returns the earliest due scheduled or cron work across all loaded tenants asynchronously.
+    pub(crate) async fn next_loaded_scheduled_work_at_async(
+        self: &Arc<Self>,
+    ) -> Result<Option<Timestamp>> {
+        self.call_blocking(move |service| service.next_loaded_scheduled_work_at())
+            .await
     }
 
     /// Loads tenants that have scheduled work and recovers orphaned running jobs.
