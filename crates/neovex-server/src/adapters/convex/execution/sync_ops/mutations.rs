@@ -24,7 +24,8 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
     let principal = normalize_principal_context(auth);
     match mutation {
         Mutation::Insert { table, fields } => {
-            let id = service.insert_document_with_principal(tenant_id, table, fields, &principal)?;
+            let id =
+                service.insert_document_with_principal(tenant_id, table, fields, &principal)?;
             Ok(Value::String(id.to_string()))
         }
         Mutation::Update { table, id, patch } => {

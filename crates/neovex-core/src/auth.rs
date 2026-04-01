@@ -27,8 +27,8 @@ impl PrincipalContext {
     /// Returns a stable snapshot fingerprint for subscription ownership and
     /// conservative invalidation.
     pub fn snapshot(&self) -> Result<PrincipalSnapshot> {
-        let bytes = serde_json::to_vec(self)
-            .map_err(|error| Error::Serialization(error.to_string()))?;
+        let bytes =
+            serde_json::to_vec(self).map_err(|error| Error::Serialization(error.to_string()))?;
         let digest = Sha256::digest(bytes);
         Ok(PrincipalSnapshot {
             digest: format!("{digest:x}"),
@@ -348,22 +348,26 @@ impl AccessValue {
     ) -> Result<Option<Value>> {
         match self {
             Self::Literal { value } => Ok(Some(value.clone())),
-            Self::PrincipalClaim { principal: source, claim } => Ok(principal
-                .claim(*source, claim)
-                .cloned()),
-            Self::DocumentField { field } => Ok(candidate_document
-                .and_then(|document| document_field_value(document, field))),
-            Self::ExistingDocumentField { field } => Ok(existing_document
-                .and_then(|document| document_field_value(document, field))),
+            Self::PrincipalClaim {
+                principal: source,
+                claim,
+            } => Ok(principal.claim(*source, claim).cloned()),
+            Self::DocumentField { field } => {
+                Ok(candidate_document.and_then(|document| document_field_value(document, field)))
+            }
+            Self::ExistingDocumentField { field } => {
+                Ok(existing_document.and_then(|document| document_field_value(document, field)))
+            }
         }
     }
 
     fn resolve_constant_for_read(&self, principal: &PrincipalContext) -> Result<Option<Value>> {
         match self {
             Self::Literal { value } => Ok(Some(value.clone())),
-            Self::PrincipalClaim { principal: source, claim } => {
-                Ok(principal.claim(*source, claim).cloned())
-            }
+            Self::PrincipalClaim {
+                principal: source,
+                claim,
+            } => Ok(principal.claim(*source, claim).cloned()),
             Self::DocumentField { .. } => Ok(None),
             Self::ExistingDocumentField { .. } => Ok(None),
         }
@@ -382,7 +386,10 @@ impl AccessValue {
 
     fn depends_on_missing_principal(&self, principal: &PrincipalContext) -> bool {
         match self {
-            Self::PrincipalClaim { principal: source, claim } => principal.claim(*source, claim).is_none(),
+            Self::PrincipalClaim {
+                principal: source,
+                claim,
+            } => principal.claim(*source, claim).is_none(),
             _ => false,
         }
     }
@@ -398,8 +405,8 @@ pub enum PrincipalClaimSource {
 
 /// Returns a stable revision fingerprint for a table access policy.
 pub fn policy_revision_id(policy: Option<&TableAccessPolicy>) -> Result<String> {
-    let bytes = serde_json::to_vec(&policy)
-        .map_err(|error| Error::Serialization(error.to_string()))?;
+    let bytes =
+        serde_json::to_vec(&policy).map_err(|error| Error::Serialization(error.to_string()))?;
     let digest = Sha256::digest(bytes);
     Ok(format!("{digest:x}"))
 }

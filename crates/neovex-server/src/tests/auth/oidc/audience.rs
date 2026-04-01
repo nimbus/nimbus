@@ -2,6 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn convex_runtime_query_rejects_multi_audience_oidc_tokens() {
+    let _guard = auth_test_guard().await;
     let application_id = "neovex-test";
     let (provider, token, _jwks) = mock_oidc_provider_with_token(
         json!([application_id, "other-audience"]),

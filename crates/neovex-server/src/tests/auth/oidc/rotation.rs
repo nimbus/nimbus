@@ -2,6 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn convex_oidc_jwks_are_refetched_after_rotation() {
+    let _guard = auth_test_guard().await;
     let application_id = "neovex-test";
     let (provider, first_token, _first_jwks) =
         mock_oidc_provider_with_token(json!(application_id), "user-123", json!({})).await;

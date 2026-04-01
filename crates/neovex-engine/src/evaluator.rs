@@ -34,12 +34,9 @@ pub fn evaluate_query_with_docs_cancellable(
     query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
-    evaluate_query_with_docs_cancellable_and_predicate(
-        documents,
-        query,
-        check_cancel,
-        &mut |_| Ok(true),
-    )
+    evaluate_query_with_docs_cancellable_and_predicate(documents, query, check_cancel, &mut |_| {
+        Ok(true)
+    })
 }
 
 pub(crate) fn evaluate_query_cancellable_with_predicate<F>(
@@ -67,7 +64,8 @@ pub(crate) fn evaluate_query_with_docs_cancellable_and_predicate<F>(
 where
     F: FnMut(&Document) -> Result<bool>,
 {
-    let filtered = filter_documents_cancellable(documents, &query.filters, check_cancel, include_document)?;
+    let filtered =
+        filter_documents_cancellable(documents, &query.filters, check_cancel, include_document)?;
     finalize_query_documents(filtered, query, check_cancel)
 }
 
@@ -152,12 +150,7 @@ pub fn evaluate_paginated_cancellable(
     paginated: &PaginatedQuery,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Page> {
-    evaluate_paginated_cancellable_with_predicate(
-        store,
-        paginated,
-        check_cancel,
-        &mut |_| Ok(true),
-    )
+    evaluate_paginated_cancellable_with_predicate(store, paginated, check_cancel, &mut |_| Ok(true))
 }
 
 /// Evaluates a paginated query using preloaded documents instead of scanning the store.
@@ -194,7 +187,9 @@ where
     let filtered = store.scan_table_matching_cancellable(
         &paginated.query.table,
         check_cancel,
-        |document| Ok(matches_filters(document, &paginated.query.filters)? && include_document(document)?),
+        |document| {
+            Ok(matches_filters(document, &paginated.query.filters)? && include_document(document)?)
+        },
     )?;
     evaluate_paginated_with_filtered_docs_cancellable(filtered, paginated, check_cancel)
 }

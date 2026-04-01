@@ -34,8 +34,8 @@ mod templates;
 #[cfg(test)]
 mod tests;
 
-use self::execution::{ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent};
 use self::auth::normalize_principal_context;
+use self::execution::{ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent};
 pub(crate) use self::handlers::{
     action, cancel_scheduled_job, http_route, http_route_root, mutation, paginated_query, query,
     schedule_after, schedule_at, ws,
