@@ -1,7 +1,7 @@
 use super::*;
 
 impl ConvexRuntimeBridge {
-    pub(in crate::convex) fn invoke_http_route(
+    pub(in crate::adapters::convex) fn invoke_http_route(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -9,7 +9,7 @@ impl ConvexRuntimeBridge {
         self.invoke_http_route_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_http_route_cancellable(
+    pub(in crate::adapters::convex) fn invoke_http_route_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -36,7 +36,7 @@ impl ConvexRuntimeBridge {
         serde_json::to_value(response).map_err(NeovexRuntimeError::from)
     }
 
-    pub(in crate::convex) fn invoke_ctx_query(
+    pub(in crate::adapters::convex) fn invoke_ctx_query(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -44,7 +44,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_query_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_query_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_query_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -65,7 +65,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn invoke_ctx_paginated_query(
+    pub(in crate::adapters::convex) fn invoke_ctx_paginated_query(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -73,7 +73,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_paginated_query_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_paginated_query_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_paginated_query_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -107,7 +107,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn invoke_ctx_mutation(
+    pub(in crate::adapters::convex) fn invoke_ctx_mutation(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -115,7 +115,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_mutation_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_mutation_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_mutation_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -133,7 +133,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn invoke_ctx_action(
+    pub(in crate::adapters::convex) fn invoke_ctx_action(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -141,7 +141,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_action_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_action_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_action_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -159,7 +159,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn invoke_ctx_run_query(
+    pub(in crate::adapters::convex) fn invoke_ctx_run_query(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -167,7 +167,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_run_query_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_run_query_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_run_query_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -187,7 +187,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn invoke_ctx_runtime_enter_nested_call(
+    pub(in crate::adapters::convex) fn invoke_ctx_runtime_enter_nested_call(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -211,7 +211,7 @@ impl ConvexRuntimeBridge {
         serde_json::to_value(response).map_err(NeovexRuntimeError::from)
     }
 
-    pub(in crate::convex) fn invoke_ctx_run_mutation(
+    pub(in crate::adapters::convex) fn invoke_ctx_run_mutation(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -219,7 +219,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_run_mutation_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_run_mutation_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_run_mutation_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -239,7 +239,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn invoke_ctx_run_action(
+    pub(in crate::adapters::convex) fn invoke_ctx_run_action(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
@@ -247,7 +247,7 @@ impl ConvexRuntimeBridge {
         self.invoke_ctx_run_action_cancellable(payload, &cancellation)
     }
 
-    pub(in crate::convex) fn invoke_ctx_run_action_cancellable(
+    pub(in crate::adapters::convex) fn invoke_ctx_run_action_cancellable(
         &self,
         payload: Value,
         cancellation: &HostCallCancellation,
@@ -267,7 +267,7 @@ impl ConvexRuntimeBridge {
         encode_runtime_core_result(response)
     }
 
-    pub(in crate::convex) fn execute_runtime_function_call_cancellable(
+    pub(in crate::adapters::convex) fn execute_runtime_function_call_cancellable(
         &self,
         kind: InvocationKind,
         name: &str,
@@ -332,7 +332,7 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn should_use_nested_runtime(
+    pub(in crate::adapters::convex) fn should_use_nested_runtime(
         &self,
         kind: InvocationKind,
         name: &str,
@@ -370,7 +370,7 @@ impl ConvexRuntimeBridge {
         Ok(definition.runtime_handler.is_some() && definition.plan.is_null())
     }
 
-    pub(in crate::convex) fn invoke_nested_runtime_function_cancellable(
+    pub(in crate::adapters::convex) fn invoke_nested_runtime_function_cancellable(
         &self,
         kind: InvocationKind,
         name: &str,

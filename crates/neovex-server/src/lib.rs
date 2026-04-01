@@ -1,14 +1,16 @@
 //! Neovex server crate.
 
-mod convex;
+mod adapters;
 mod http;
 mod license;
 mod protocol;
+mod runtime;
 mod state;
 mod ws;
 
 use std::sync::Arc;
 
+use adapters::convex;
 use axum::Router;
 use axum::routing::{any, delete, get, post};
 use neovex_engine::Service;
@@ -17,7 +19,7 @@ use tower_http::services::ServeDir;
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
-pub use convex::ConvexRegistry;
+pub use adapters::convex::ConvexRegistry;
 pub use license::{
     DEFAULT_LICENSE_PATH, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,

@@ -206,7 +206,7 @@ impl HostBridge for ConvexRuntimeBridge {
 }
 
 impl ConvexRuntimeBridge {
-    pub(in crate::convex) fn dispatch_host_call_cancellable(
+    pub(in crate::adapters::convex) fn dispatch_host_call_cancellable(
         &self,
         request: HostCallRequest,
         cancellation: &HostCallCancellation,
@@ -296,7 +296,7 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn dispatch_host_call(
+    pub(in crate::adapters::convex) fn dispatch_host_call(
         &self,
         request: HostCallRequest,
     ) -> std::result::Result<Value, NeovexRuntimeError> {

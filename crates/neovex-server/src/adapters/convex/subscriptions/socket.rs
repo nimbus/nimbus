@@ -1,9 +1,13 @@
-use super::runtime::subscribe_runtime_base_queries;
 use super::transforms::{
     activate_transform, apply_subscription_transform, clear_pending_transform,
     remove_subscription_transform, set_pending_transform, subscription_plan_for_named_query,
+    update_runtime_transform_read_set,
+};
+use super::types::{
+    ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
 };
 use super::*;
+use crate::runtime::subscriptions::subscribe_runtime_base_queries;
 
 async fn unsubscribe_active_subscriptions(
     service: &Arc<neovex_engine::Service>,
@@ -250,8 +254,6 @@ pub(super) async fn handle_convex_socket_for_tenant(
                             state.service.clone(),
                             tenant_id.clone(),
                             setup.base_queries,
-                            setup.transform,
-                            &transforms,
                             subscription_tx.clone(),
                         )
                         .await
@@ -266,12 +268,17 @@ pub(super) async fn handle_convex_socket_for_tenant(
                             }
                         };
 
+                        update_runtime_transform_read_set(
+                            &transforms,
+                            handle.primary_subscription_id,
+                            setup.transform,
+                        );
                         active_subscriptions.insert(
-                            handle.convex_subscription_id,
+                            handle.primary_subscription_id,
                             handle.underlying_subscription_ids,
                         );
                         let _ = outbound_tx.send(ServerMessage::SubscriptionResult {
-                            subscription_id: handle.convex_subscription_id,
+                            subscription_id: handle.primary_subscription_id,
                             request_id: Some(request_id),
                             data: setup.initial_value,
                         });

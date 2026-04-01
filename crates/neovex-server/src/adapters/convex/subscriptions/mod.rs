@@ -4,9 +4,9 @@ use super::dispatch::{
 };
 use super::*;
 
-mod runtime;
 mod socket;
 mod transforms;
+pub(in crate::adapters::convex) mod types;
 
 fn next_runtime_subscription_server_request_id(prefix: &str) -> String {
     next_runtime_server_request_id(prefix)

@@ -4,9 +4,12 @@ use super::sync_ops::{
     execute_named_paginated_query_request_direct, execute_named_query_request_direct,
 };
 use super::*;
+use crate::adapters::convex::subscriptions::types::{
+    ConvexRuntimeSubscriptionSetup, ConvexSubscriptionTransform,
+};
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_query_request(
+pub(in crate::adapters::convex) fn execute_named_query_request(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -32,7 +35,7 @@ pub(in crate::convex) fn execute_named_query_request(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_paginated_query_request(
+pub(in crate::adapters::convex) fn execute_named_paginated_query_request(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -68,7 +71,7 @@ pub(in crate::convex) fn execute_named_paginated_query_request(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_mutation_request(
+pub(in crate::adapters::convex) fn execute_named_mutation_request(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -100,7 +103,7 @@ pub(in crate::convex) fn execute_named_mutation_request(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_action_request(
+pub(in crate::adapters::convex) fn execute_named_action_request(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -136,7 +139,7 @@ fn invoke_named_convex_function(
         .map(|(value, _)| value)
 }
 
-pub(in crate::convex) fn next_runtime_server_request_id(prefix: &str) -> String {
+pub(in crate::adapters::convex) fn next_runtime_server_request_id(prefix: &str) -> String {
     static NEXT_RUNTIME_SERVER_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
     format!(
         "{prefix}-{}",
@@ -144,7 +147,7 @@ pub(in crate::convex) fn next_runtime_server_request_id(prefix: &str) -> String 
     )
 }
 
-pub(in crate::convex) async fn invoke_named_convex_function_async_cancellable(
+pub(in crate::adapters::convex) async fn invoke_named_convex_function_async_cancellable(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -170,7 +173,7 @@ fn invoke_named_convex_function_with_trace(
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: InvocationRequest,
-) -> Result<(Value, ConvexRuntimeReadSet), Error> {
+) -> Result<(Value, RuntimeReadSet), Error> {
     invoke_named_convex_function_with_trace_cancellable(
         service,
         registry,
@@ -187,7 +190,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
     tenant_id: &TenantId,
     request: InvocationRequest,
     cancellation: HostCallCancellation,
-) -> Result<(Value, ConvexRuntimeReadSet), Error> {
+) -> Result<(Value, RuntimeReadSet), Error> {
     let bundle = registry
         .runtime_bundle()
         .cloned()
@@ -220,7 +223,7 @@ async fn invoke_named_convex_function_with_trace_async(
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: InvocationRequest,
-) -> Result<(Value, ConvexRuntimeReadSet), Error> {
+) -> Result<(Value, RuntimeReadSet), Error> {
     invoke_named_convex_function_with_trace_async_cancellable(
         service,
         registry,
@@ -232,14 +235,14 @@ async fn invoke_named_convex_function_with_trace_async(
     .await
 }
 
-pub(in crate::convex) async fn invoke_named_convex_function_with_trace_async_cancellable(
+pub(in crate::adapters::convex) async fn invoke_named_convex_function_with_trace_async_cancellable(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: InvocationRequest,
     cancellation: HostCallCancellation,
     server_request_id: Option<String>,
-) -> Result<(Value, ConvexRuntimeReadSet), Error> {
+) -> Result<(Value, RuntimeReadSet), Error> {
     let bundle = registry
         .runtime_bundle()
         .cloned()
@@ -279,7 +282,7 @@ pub(in crate::convex) async fn invoke_named_convex_function_with_trace_async_can
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::convex) async fn bootstrap_runtime_named_subscription_async(
+pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,

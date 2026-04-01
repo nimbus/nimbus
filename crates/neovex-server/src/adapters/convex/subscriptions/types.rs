@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone)]
-pub(super) enum ConvexSubscriptionTransform {
+pub(in crate::adapters::convex) enum ConvexSubscriptionTransform {
     Identity,
     Get {
         document_id: DocumentId,
@@ -12,7 +12,7 @@ pub(super) enum ConvexSubscriptionTransform {
         name: String,
         args: Value,
         auth: Option<InvocationAuth>,
-        read_set: Option<ConvexRuntimeReadSet>,
+        read_set: Option<RuntimeReadSet>,
     },
     RuntimeNamedPaginatedQuery {
         name: String,
@@ -20,32 +20,26 @@ pub(super) enum ConvexSubscriptionTransform {
         page_size: usize,
         cursor: Option<String>,
         auth: Option<InvocationAuth>,
-        read_set: Option<ConvexRuntimeReadSet>,
+        read_set: Option<RuntimeReadSet>,
     },
 }
 
 #[derive(Debug)]
-pub(super) struct ConvexRuntimeSubscriptionSetup {
-    pub(super) initial_value: Value,
-    pub(super) base_queries: Vec<Query>,
-    pub(super) transform: ConvexSubscriptionTransform,
-}
-
-#[derive(Debug)]
-pub(super) struct ConvexRuntimeSubscriptionHandle {
-    pub(super) convex_subscription_id: u64,
-    pub(super) underlying_subscription_ids: Vec<u64>,
+pub(in crate::adapters::convex) struct ConvexRuntimeSubscriptionSetup {
+    pub(in crate::adapters::convex) initial_value: Value,
+    pub(in crate::adapters::convex) base_queries: Vec<Query>,
+    pub(in crate::adapters::convex) transform: ConvexSubscriptionTransform,
 }
 
 #[derive(Debug, Default)]
-pub(super) struct ConvexSubscriptionTransforms {
-    pub(super) by_id: HashMap<u64, ConvexSubscriptionTransform>,
-    pub(super) by_request: HashMap<String, ConvexSubscriptionTransform>,
+pub(in crate::adapters::convex) struct ConvexSubscriptionTransforms {
+    pub(in crate::adapters::convex) by_id: HashMap<u64, ConvexSubscriptionTransform>,
+    pub(in crate::adapters::convex) by_request: HashMap<String, ConvexSubscriptionTransform>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum ConvexClientMessage {
+pub(in crate::adapters::convex) enum ConvexClientMessage {
     Authenticate {
         token: String,
     },

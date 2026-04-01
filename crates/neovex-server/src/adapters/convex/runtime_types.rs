@@ -206,7 +206,7 @@ pub(super) struct ConvexRuntimeBridge {
     pub(super) max_nested_runtime_invocations: usize,
     pub(super) remaining_nested_runtime_invocations: Arc<AtomicUsize>,
     pub(super) query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
-    pub(super) read_set: Arc<Mutex<ConvexRuntimeReadSet>>,
+    pub(super) read_set: Arc<Mutex<RuntimeReadSet>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

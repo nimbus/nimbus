@@ -4,7 +4,7 @@ pub(crate) fn commit_intersects_runtime_read_set(
     service: &neovex_engine::Service,
     tenant_id: &TenantId,
     commit: &CommitEntry,
-    read_set: &ConvexRuntimeReadSet,
+    read_set: &RuntimeReadSet,
     deleted_documents: &[Document],
 ) -> bool {
     commit.writes.iter().any(|write| {
@@ -16,7 +16,7 @@ fn write_intersects_runtime_read_set(
     service: &neovex_engine::Service,
     tenant_id: &TenantId,
     write: &neovex_core::WriteOp,
-    read_set: &ConvexRuntimeReadSet,
+    read_set: &RuntimeReadSet,
     deleted_documents: &[Document],
 ) -> bool {
     if read_set.tables.contains(&write.table) {
@@ -93,7 +93,7 @@ fn write_intersects_runtime_read_set(
     }
 }
 
-pub(super) fn filters_from_runtime_index_read(read: &ConvexRuntimeIndexRangeRead) -> Vec<Filter> {
+pub(super) fn filters_from_runtime_index_read(read: &RuntimeIndexRangeRead) -> Vec<Filter> {
     let mut filters = Vec::new();
     if let Some(start) = read.start.clone() {
         filters.push(Filter {
@@ -130,11 +130,11 @@ fn deleted_document_snapshot<'a>(
         .find(|document| &document.table == table && document.id == *document_id)
 }
 
-fn document_matches_predicate_read(document: &Document, read: &ConvexRuntimePredicateRead) -> bool {
+fn document_matches_predicate_read(document: &Document, read: &RuntimePredicateRead) -> bool {
     filters_match_document(document, &read.filters).unwrap_or(true)
 }
 
-fn document_matches_index_read(value: Option<&Value>, read: &ConvexRuntimeIndexRangeRead) -> bool {
+fn document_matches_index_read(value: Option<&Value>, read: &RuntimeIndexRangeRead) -> bool {
     let Some(value) = value else {
         return false;
     };
@@ -143,7 +143,7 @@ fn document_matches_index_read(value: Option<&Value>, read: &ConvexRuntimeIndexR
 
 fn document_may_affect_paginated_window(
     document: &Document,
-    read: &ConvexRuntimePaginatedWindowRead,
+    read: &RuntimePaginatedWindowRead,
 ) -> bool {
     if !filters_match_document(document, &read.filters).unwrap_or(true) {
         return false;
@@ -233,7 +233,7 @@ fn compare_filter_values(left: &Value, right: &Value) -> Result<std::cmp::Orderi
 }
 
 #[derive(Debug, Deserialize)]
-struct ConvexRuntimeCursorBoundaryPayload {
+struct RuntimeCursorBoundaryPayload {
     sort_value: Option<Value>,
     doc_id: String,
 }
@@ -242,7 +242,7 @@ pub(super) fn decode_runtime_cursor_boundary(
     cursor: &Cursor,
 ) -> Option<(Option<Value>, DocumentId)> {
     let bytes = URL_SAFE_NO_PAD.decode(&cursor.0).ok()?;
-    let payload: ConvexRuntimeCursorBoundaryPayload = serde_json::from_slice(&bytes).ok()?;
+    let payload: RuntimeCursorBoundaryPayload = serde_json::from_slice(&bytes).ok()?;
     let document_id = payload.doc_id.parse().ok()?;
     Some((payload.sort_value, document_id))
 }
@@ -295,7 +295,7 @@ fn compare_document_to_runtime_boundary(
     Ok(ordering.then_with(|| document.id.cmp(boundary_doc_id)))
 }
 
-fn value_matches_bounds(value: &Value, read: &ConvexRuntimeIndexRangeRead) -> bool {
+fn value_matches_bounds(value: &Value, read: &RuntimeIndexRangeRead) -> bool {
     if let Some(start) = read.start.as_ref() {
         let Some(ordering) = compare_index_values(value, start) else {
             return true;

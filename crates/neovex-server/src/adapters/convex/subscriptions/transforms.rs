@@ -1,3 +1,4 @@
+use super::types::{ConvexSubscriptionTransform, ConvexSubscriptionTransforms};
 use super::*;
 
 fn subscription_plan_for_query(

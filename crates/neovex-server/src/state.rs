@@ -9,7 +9,7 @@ use neovex_runtime::{HostCallCancellation, InvocationAuth};
 use serde_json::json;
 use tracing::warn;
 
-use crate::convex::ConvexRegistry;
+use crate::adapters::convex::ConvexRegistry;
 use crate::license::LicenseState;
 
 /// Shared application state.

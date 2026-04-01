@@ -1,7 +1,7 @@
 use super::*;
 
 impl ConvexRuntimeBridge {
-    pub(in crate::convex) fn new_builder_id(&self) -> String {
+    pub(in crate::adapters::convex) fn new_builder_id(&self) -> String {
         let mut builders = self
             .query_builders
             .lock()
@@ -10,7 +10,7 @@ impl ConvexRuntimeBridge {
         format!("{}-builder-{}", self.session_id, builders.next_builder_id)
     }
 
-    pub(in crate::convex) fn insert_builder(
+    pub(in crate::adapters::convex) fn insert_builder(
         &self,
         builder_id: String,
         state: ConvexRuntimeQueryBuilderState,
@@ -22,7 +22,7 @@ impl ConvexRuntimeBridge {
             .insert(builder_id, state);
     }
 
-    pub(in crate::convex) fn with_builder_mut<R>(
+    pub(in crate::adapters::convex) fn with_builder_mut<R>(
         &self,
         builder_id: &str,
         update: impl FnOnce(&mut ConvexRuntimeQueryBuilderState) -> Result<R, Error>,
@@ -39,7 +39,7 @@ impl ConvexRuntimeBridge {
         update(state)
     }
 
-    pub(in crate::convex) fn take_builder(
+    pub(in crate::adapters::convex) fn take_builder(
         &self,
         builder_id: &str,
     ) -> Result<ConvexRuntimeQueryBuilderState, Error> {
@@ -55,14 +55,14 @@ impl ConvexRuntimeBridge {
             })
     }
 
-    pub(in crate::convex) fn record_table_read(&self, table: &TableName) {
+    pub(in crate::adapters::convex) fn record_table_read(&self, table: &TableName) {
         self.read_set
             .lock()
             .expect("convex runtime read set lock should not be poisoned")
             .record_table(table);
     }
 
-    pub(in crate::convex) fn record_document_read(
+    pub(in crate::adapters::convex) fn record_document_read(
         &self,
         table: &TableName,
         document_id: &DocumentId,
@@ -73,7 +73,11 @@ impl ConvexRuntimeBridge {
             .record_document(table, document_id);
     }
 
-    pub(in crate::convex) fn record_result_documents(&self, table: &TableName, value: &Value) {
+    pub(in crate::adapters::convex) fn record_result_documents(
+        &self,
+        table: &TableName,
+        value: &Value,
+    ) {
         match value {
             Value::Array(items) => {
                 for item in items {
@@ -97,7 +101,7 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn record_query_result_value(
+    pub(in crate::adapters::convex) fn record_query_result_value(
         &self,
         query: &ConvexExecutableQuery,
         value: &Value,
@@ -116,7 +120,7 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn record_paginated_window_read(
+    pub(in crate::adapters::convex) fn record_paginated_window_read(
         &self,
         query: &Query,
         page_size: usize,
@@ -129,7 +133,7 @@ impl ConvexRuntimeBridge {
             .record_paginated_window(query, page_size, after, page);
     }
 
-    pub(in crate::convex) fn record_limited_query_window(
+    pub(in crate::adapters::convex) fn record_limited_query_window(
         &self,
         query: &Query,
         limit: usize,
@@ -153,21 +157,25 @@ impl ConvexRuntimeBridge {
         Ok(())
     }
 
-    pub(in crate::convex) fn record_index_read(&self, read: ConvexRuntimeIndexRangeRead) {
+    pub(in crate::adapters::convex) fn record_index_read(&self, read: RuntimeIndexRangeRead) {
         self.read_set
             .lock()
             .expect("convex runtime read set lock should not be poisoned")
             .record_index_range(read);
     }
 
-    pub(in crate::convex) fn record_predicate_read(&self, table: &TableName, filters: &[Filter]) {
+    pub(in crate::adapters::convex) fn record_predicate_read(
+        &self,
+        table: &TableName,
+        filters: &[Filter],
+    ) {
         self.read_set
             .lock()
             .expect("convex runtime read set lock should not be poisoned")
             .record_predicate(table, filters);
     }
 
-    pub(in crate::convex) fn lookup_index_primary_field(
+    pub(in crate::adapters::convex) fn lookup_index_primary_field(
         &self,
         table: &TableName,
         index_name: &str,
@@ -180,7 +188,7 @@ impl ConvexRuntimeBridge {
             .map(|index| index.field.clone()))
     }
 
-    pub(in crate::convex) fn record_query_read(&self, query: &Query) {
+    pub(in crate::adapters::convex) fn record_query_read(&self, query: &Query) {
         if !query.filters.is_empty() {
             self.record_predicate_read(&query.table, &query.filters);
         }
@@ -191,7 +199,10 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn record_executable_query_read(&self, query: &ConvexExecutableQuery) {
+    pub(in crate::adapters::convex) fn record_executable_query_read(
+        &self,
+        query: &ConvexExecutableQuery,
+    ) {
         match query {
             ConvexExecutableQuery::Query(query) => self.record_query_read(query),
             ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
@@ -204,7 +215,7 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn record_builder_read(
+    pub(in crate::adapters::convex) fn record_builder_read(
         &self,
         state: &ConvexRuntimeQueryBuilderState,
         query: &Query,
@@ -219,11 +230,11 @@ impl ConvexRuntimeBridge {
         }
     }
 
-    pub(in crate::convex) fn derive_index_read(
+    pub(in crate::adapters::convex) fn derive_index_read(
         &self,
         query: &Query,
         preferred_index_name: Option<&str>,
-    ) -> Option<ConvexRuntimeIndexRangeRead> {
+    ) -> Option<RuntimeIndexRangeRead> {
         let table_schema = self
             .service
             .get_table_schema(&self.tenant_id, &query.table)
@@ -292,7 +303,7 @@ impl ConvexRuntimeBridge {
             return None;
         }
 
-        Some(ConvexRuntimeIndexRangeRead {
+        Some(RuntimeIndexRangeRead {
             table: query.table.clone(),
             index_name: index.name.clone(),
             field,
@@ -305,7 +316,7 @@ impl ConvexRuntimeBridge {
 }
 
 impl ConvexRuntimeQueryBuilderState {
-    pub(in crate::convex) fn into_query(self, limit: Option<usize>) -> Query {
+    pub(in crate::adapters::convex) fn into_query(self, limit: Option<usize>) -> Query {
         Query {
             table: self.table,
             filters: self.filters,

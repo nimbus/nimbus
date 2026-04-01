@@ -17,16 +17,17 @@ use self::intersection::{
     filters_from_runtime_index_read,
 };
 pub(crate) use intersection::commit_intersects_runtime_read_set;
+
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ConvexRuntimeReadSet {
+pub(crate) struct RuntimeReadSet {
     tables: HashSet<TableName>,
     documents: HashSet<(TableName, DocumentId)>,
-    index_ranges: Vec<ConvexRuntimeIndexRangeRead>,
-    predicates: Vec<ConvexRuntimePredicateRead>,
-    paginated_windows: Vec<ConvexRuntimePaginatedWindowRead>,
+    index_ranges: Vec<RuntimeIndexRangeRead>,
+    predicates: Vec<RuntimePredicateRead>,
+    paginated_windows: Vec<RuntimePaginatedWindowRead>,
 }
 
-impl ConvexRuntimeReadSet {
+impl RuntimeReadSet {
     pub(crate) fn record_table(&mut self, table: &TableName) {
         self.tables.insert(table.clone());
     }
@@ -35,7 +36,7 @@ impl ConvexRuntimeReadSet {
         self.documents.insert((table.clone(), *document_id));
     }
 
-    pub(crate) fn record_index_range(&mut self, read: ConvexRuntimeIndexRangeRead) {
+    pub(crate) fn record_index_range(&mut self, read: RuntimeIndexRangeRead) {
         if !self.index_ranges.iter().any(|existing| existing == &read) {
             self.index_ranges.push(read);
         }
@@ -46,7 +47,7 @@ impl ConvexRuntimeReadSet {
             return;
         }
 
-        let read = ConvexRuntimePredicateRead {
+        let read = RuntimePredicateRead {
             table: table.clone(),
             filters: filters.to_vec(),
         };
@@ -74,7 +75,7 @@ impl ConvexRuntimeReadSet {
             .map_or((None, None), |(sort_value, doc_id)| {
                 (sort_value, Some(doc_id))
             });
-        let read = ConvexRuntimePaginatedWindowRead {
+        let read = RuntimePaginatedWindowRead {
             table: query.table.clone(),
             filters: query.filters.clone(),
             order: query.order.clone(),
@@ -113,7 +114,7 @@ impl ConvexRuntimeReadSet {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ConvexRuntimeIndexRangeRead {
+pub(crate) struct RuntimeIndexRangeRead {
     pub(crate) table: TableName,
     pub(crate) index_name: String,
     pub(crate) field: String,
@@ -124,13 +125,13 @@ pub(crate) struct ConvexRuntimeIndexRangeRead {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct ConvexRuntimePredicateRead {
+struct RuntimePredicateRead {
     table: TableName,
     filters: Vec<Filter>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct ConvexRuntimePaginatedWindowRead {
+struct RuntimePaginatedWindowRead {
     table: TableName,
     filters: Vec<Filter>,
     order: Option<OrderBy>,
@@ -143,7 +144,7 @@ struct ConvexRuntimePaginatedWindowRead {
 }
 
 pub(crate) fn synthesize_runtime_subscription_base_queries(
-    read_set: &ConvexRuntimeReadSet,
+    read_set: &RuntimeReadSet,
 ) -> Result<Vec<Query>, Error> {
     let mut tables = read_set.tables().into_iter().collect::<Vec<_>>();
     tables.sort();
@@ -167,7 +168,7 @@ pub(crate) fn synthesize_runtime_subscription_base_queries(
 }
 
 fn synthesize_runtime_subscription_base_queries_for_table(
-    read_set: &ConvexRuntimeReadSet,
+    read_set: &RuntimeReadSet,
     table: &TableName,
 ) -> Vec<Query> {
     if read_set.tables.contains(table) {
