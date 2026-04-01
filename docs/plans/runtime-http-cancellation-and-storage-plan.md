@@ -622,10 +622,10 @@ Initial instrumentation now includes:
 - per-host-operation started / succeeded / failed / canceled counts in runtime
   diagnostics
 - tracing spans for async host-op enqueue / start / finish / cancel transitions
+- per-tenant queue wait and execution distributions
 
 Candidate follow-on work:
 
-- per-tenant queue wait and execution distributions
 - clearer timeout vs disconnect vs explicit-cancel attribution
 - correlation between server request ids and runtime invocation ids
 

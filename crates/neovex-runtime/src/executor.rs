@@ -74,7 +74,11 @@ impl RuntimeExecutor {
                             .as_ref()
                             .is_some_and(HostCallCancellation::is_cancelled)
                         {
-                            policy.metrics().record_queued_canceled_invocation();
+                            policy
+                                .metrics()
+                                .record_queued_canceled_invocation_for_tenant(
+                                    job.context.tenant_label.as_deref(),
+                                );
                             let _ = job.result_tx.send(Err(NeovexRuntimeError::Cancelled));
                             continue;
                         }
@@ -155,9 +159,10 @@ impl RuntimeExecutor {
         if !runtime.bypasses_concurrency_limit() {
             metrics.decrement_queued_invocations();
             let queue_wait = queue_started_at.elapsed();
-            metrics.record_queue_wait(queue_wait);
+            metrics.record_queue_wait_for_tenant(context.tenant_label.as_deref(), queue_wait);
             debug!(
                 invocation_id = context.invocation_id,
+                tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
                 function = %context.function_name,
                 kind = context.kind,
                 queue_wait_ms = queue_wait.as_secs_f64() * 1000.0,
@@ -166,21 +171,25 @@ impl RuntimeExecutor {
             );
         }
 
-        metrics.increment_active_isolates();
+        metrics.increment_active_isolates_for_tenant(context.tenant_label.as_deref());
         let execution_started_at = Instant::now();
         runtime
             .invoke_bundle_unmanaged(&bundle, &request, &context, cancellation)
             .await
             .inspect_err(|error| match error {
                 NeovexRuntimeError::ExecutionTimeout(_) => metrics.record_timeout(),
-                NeovexRuntimeError::Cancelled => metrics.record_in_flight_canceled_invocation(),
+                NeovexRuntimeError::Cancelled => metrics
+                    .record_in_flight_canceled_invocation_for_tenant(
+                        context.tenant_label.as_deref(),
+                    ),
                 _ => {}
             })
             .inspect(|_| {
                 let execution = execution_started_at.elapsed();
-                metrics.record_execution(execution);
+                metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
                 debug!(
                     invocation_id = context.invocation_id,
+                    tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
                     function = %context.function_name,
                     kind = context.kind,
                     execution_ms = execution.as_secs_f64() * 1000.0,
@@ -190,10 +199,14 @@ impl RuntimeExecutor {
             })
             .inspect_err(|_| {
                 let execution = execution_started_at.elapsed();
-                metrics.record_execution(execution);
+                metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
             })
-            .inspect(|_| metrics.decrement_active_isolates())
-            .inspect_err(|_| metrics.decrement_active_isolates())
+            .inspect(|_| {
+                metrics.decrement_active_isolates_for_tenant(context.tenant_label.as_deref())
+            })
+            .inspect_err(|_| {
+                metrics.decrement_active_isolates_for_tenant(context.tenant_label.as_deref())
+            })
     }
 
     pub async fn invoke(
@@ -242,7 +255,7 @@ impl RuntimeExecutor {
             self.inner
                 .policy
                 .metrics()
-                .record_queued_canceled_invocation();
+                .record_queued_canceled_invocation_for_tenant(context.tenant_label.as_deref());
             return Err(NeovexRuntimeError::Cancelled);
         }
 

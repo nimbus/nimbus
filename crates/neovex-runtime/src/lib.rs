@@ -14,7 +14,10 @@ pub use executor::RuntimeExecutor;
 pub use host::{HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest};
 pub use host_executor::RuntimeHostExecutor;
 pub use limits::{RuntimeLimits, RuntimePolicy};
-pub use metrics::{RuntimeHostOperationMetricsSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
+pub use metrics::{
+    RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,
+    RuntimeMetricsSnapshot, RuntimeTenantMetricsSnapshot,
+};
 pub use runtime::{
     ConvexRuntime, InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntime, RuntimeBundle,
     RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,

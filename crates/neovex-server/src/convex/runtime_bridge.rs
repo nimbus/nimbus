@@ -1663,17 +1663,25 @@ impl ConvexRuntimeBridge {
             Arc::new(self.clone()),
             self.registry.runtime_policy(),
         );
-        let response = runtime
-            .invoke_bundle_blocking_with_cancellation(
-                &bundle,
-                &InvocationRequest {
-                    kind,
-                    function_name: name.to_string(),
-                    args: args.clone(),
-                    page_size: None,
-                    cursor: None,
-                    auth,
-                },
+        let request = InvocationRequest {
+            kind,
+            function_name: name.to_string(),
+            args: args.clone(),
+            page_size: None,
+            cursor: None,
+            auth,
+        };
+        let response = self
+            .registry
+            .runtime_executor()
+            .invoke_blocking_with_cancellation(
+                runtime,
+                bundle,
+                request.clone(),
+                RuntimeInvocationContext::top_level_for_tenant(
+                    &request,
+                    self.tenant_id.to_string(),
+                ),
                 Some(cancellation.clone()),
             )
             .map_err(runtime_error_to_core)?;
