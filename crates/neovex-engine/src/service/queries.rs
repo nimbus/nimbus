@@ -9,6 +9,7 @@ use neovex_core::{
     TenantId, policy_revision_id,
 };
 use neovex_storage::index::encode_index_value;
+use neovex_storage::{TenantReadStorage, TenantStore};
 use serde_json::Value;
 
 use crate::evaluator::{
@@ -63,9 +64,18 @@ impl Service {
         table: TableName,
         principal: PrincipalContext,
     ) -> Result<Vec<Document>> {
-        self.call_blocking(move |service| {
-            service.list_documents_with_principal(&tenant_id, &table, &principal)
-        })
+        self.query_documents_async_cancellable_with_principal(
+            tenant_id,
+            Query {
+                table,
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            principal,
+            pending(),
+            || Ok(()),
+        )
         .await
     }
 
@@ -104,20 +114,18 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.call_blocking_cancellable(cancel_wait, move |service| {
-            let mut check_cancel = || check_cancel();
-            service.query_documents_with_principal_cancellable(
-                &tenant_id,
-                &Query {
-                    table,
-                    filters: Vec::new(),
-                    order: None,
-                    limit: None,
-                },
-                &principal,
-                &mut check_cancel,
-            )
-        })
+        self.query_documents_async_cancellable_with_principal(
+            tenant_id,
+            Query {
+                table,
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            principal,
+            cancel_wait,
+            check_cancel,
+        )
         .await
     }
 
@@ -177,8 +185,13 @@ impl Service {
         table: TableName,
         document_id: DocumentId,
     ) -> Result<Document> {
-        self.call_blocking(move |service| service.get_document(&tenant_id, &table, document_id))
-            .await
+        self.get_document_async_with_principal(
+            tenant_id,
+            table,
+            document_id,
+            PrincipalContext::anonymous(),
+        )
+        .await
     }
 
     /// Fetches a single document asynchronously for the provided principal.
@@ -189,10 +202,37 @@ impl Service {
         document_id: DocumentId,
         principal: PrincipalContext,
     ) -> Result<Document> {
-        self.call_blocking(move |service| {
-            service.get_document_with_principal(&tenant_id, &table, document_id, &principal)
-        })
-        .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let schema = runtime.schema();
+        let authorization = ReadAuthorization::for_table(schema.get_table(&table), &principal)?;
+        if authorization.impossible {
+            return Err(Error::DocumentNotFound(document_id));
+        }
+
+        if let Some(document) = runtime.get_cached_document(&table, document_id) {
+            let _operation = runtime.enter_operation(&tenant_id)?;
+            if !authorization.allows_document(&principal, &document)? {
+                return Err(Error::DocumentNotFound(document_id));
+            }
+            return Ok(document);
+        }
+
+        let runtime_for_task = runtime.clone();
+        let tenant_id_for_task = tenant_id.clone();
+        let table_for_task = table.clone();
+        let document = runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store.get(&table_for_task, &document_id)
+            })
+            .await?
+            .ok_or(Error::DocumentNotFound(document_id))?;
+        if !authorization.allows_document(&principal, &document)? {
+            return Err(Error::DocumentNotFound(document_id));
+        }
+        runtime.cache_document(&document);
+        Ok(document)
     }
 
     /// Evaluates a query for a tenant.
@@ -254,10 +294,13 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.call_blocking_cancellable(cancel_wait, move |service| {
-            let mut check_cancel = || check_cancel();
-            service.query_documents_cancellable(&tenant_id, &query, &mut check_cancel)
-        })
+        self.query_documents_async_cancellable_with_principal(
+            tenant_id,
+            query,
+            PrincipalContext::anonymous(),
+            cancel_wait,
+            check_cancel,
+        )
         .await
     }
 
@@ -274,15 +317,15 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.call_blocking_cancellable(cancel_wait, move |service| {
-            let mut check_cancel = || check_cancel();
-            service.query_documents_with_principal_cancellable(
-                &tenant_id,
-                &query,
-                &principal,
-                &mut check_cancel,
-            )
-        })
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        evaluate_with_index_async_for_principal(
+            runtime,
+            tenant_id,
+            query,
+            principal,
+            cancel_wait,
+            check_cancel,
+        )
         .await
     }
 
@@ -375,10 +418,13 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.call_blocking_cancellable(cancel_wait, move |service| {
-            let mut check_cancel = || check_cancel();
-            service.paginate_documents_cancellable(&tenant_id, &query, &mut check_cancel)
-        })
+        self.paginate_documents_async_cancellable_with_principal(
+            tenant_id,
+            query,
+            PrincipalContext::anonymous(),
+            cancel_wait,
+            check_cancel,
+        )
         .await
     }
 
@@ -395,15 +441,15 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.call_blocking_cancellable(cancel_wait, move |service| {
-            let mut check_cancel = || check_cancel();
-            service.paginate_documents_with_principal_cancellable(
-                &tenant_id,
-                &query,
-                &principal,
-                &mut check_cancel,
-            )
-        })
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        paginate_with_index_async_for_principal(
+            runtime,
+            tenant_id,
+            query,
+            principal,
+            cancel_wait,
+            check_cancel,
+        )
         .await
     }
 
@@ -433,50 +479,13 @@ impl Service {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let schema = runtime.schema();
-        let table_schema = schema.get_table(&query.query.table);
-        let authorization = ReadAuthorization::for_table(table_schema, principal)?;
-        if authorization.impossible {
-            return Ok(Page {
-                data: Vec::new(),
-                next_cursor: None,
-                has_more: false,
-            });
-        }
-
-        let planned_query = authorization.merge_query(&query.query);
-        let planned_paginated = PaginatedQuery {
-            query: planned_query.clone(),
-            page_size: query.page_size,
-            after: query.after.clone(),
-        };
-        let plan = plan_query(&planned_paginated.query, table_schema)?;
-        let mut include_document =
-            |document: &Document| authorization.allows_document(principal, document);
-        if let Some(index_docs) = load_query_plan_documents_cancellable(
-            &runtime,
-            &planned_paginated.query,
-            &plan,
+        paginate_documents_for_store_and_principal(
+            runtime.store.as_ref(),
+            query,
+            schema.get_table(&query.query.table),
+            principal,
             check_cancel,
-        )? {
-            let residual_paginated = PaginatedQuery {
-                query: plan.residual_query(&planned_paginated.query),
-                page_size: planned_paginated.page_size,
-                after: planned_paginated.after.clone(),
-            };
-            evaluate_paginated_with_docs_cancellable_and_predicate(
-                index_docs,
-                &residual_paginated,
-                check_cancel,
-                &mut include_document,
-            )
-        } else {
-            evaluate_paginated_cancellable_with_predicate(
-                &runtime.store,
-                &planned_paginated,
-                check_cancel,
-                &mut include_document,
-            )
-        }
+        )
     }
 
     /// Reads commit log entries committed after the provided sequence number.
@@ -497,7 +506,16 @@ impl Service {
         tenant_id: TenantId,
         after: SequenceNumber,
     ) -> Result<Vec<CommitEntry>> {
-        self.call_blocking(move |service| service.read_commit_log(&tenant_id, after))
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                let from = SequenceNumber(after.0.saturating_add(1));
+                store.read_commit_log_from(from)
+            })
             .await
     }
 
@@ -513,7 +531,15 @@ impl Service {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<SequenceNumber> {
-        self.call_blocking(move |service| service.latest_sequence(&tenant_id))
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store.latest_sequence()
+            })
             .await
     }
 
@@ -535,7 +561,92 @@ pub(super) fn evaluate_with_index_cancellable_for_principal(
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
     let schema = runtime.schema();
-    let table_schema = schema.get_table(&query.table);
+    let documents = query_documents_for_store_and_principal_cancellable(
+        runtime.store.as_ref(),
+        query,
+        schema.get_table(&query.table),
+        principal,
+        check_cancel,
+    )?;
+    runtime.cache_documents(&documents);
+    Ok(documents)
+}
+
+async fn evaluate_with_index_async_for_principal<Fut, Check>(
+    runtime: Arc<TenantRuntime>,
+    tenant_id: TenantId,
+    query: Query,
+    principal: PrincipalContext,
+    cancel_wait: Fut,
+    check_cancel: Check,
+) -> Result<Vec<Document>>
+where
+    Fut: Future<Output = ()> + Send,
+    Check: Fn() -> Result<()> + Send + 'static,
+{
+    let schema = runtime.schema();
+    let table_schema = schema.get_table(&query.table).cloned();
+    let runtime_for_task = runtime.clone();
+    let tenant_id_for_task = tenant_id.clone();
+    let query_for_task = query.clone();
+    let principal_for_task = principal.clone();
+    let documents = runtime
+        .read_storage
+        .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
+            let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+            query_documents_for_store_and_principal_cancellable(
+                store.as_ref(),
+                &query_for_task,
+                table_schema.as_ref(),
+                &principal_for_task,
+                check_cancel,
+            )
+        })
+        .await?;
+    runtime.cache_documents(&documents);
+    Ok(documents)
+}
+
+async fn paginate_with_index_async_for_principal<Fut, Check>(
+    runtime: Arc<TenantRuntime>,
+    tenant_id: TenantId,
+    query: PaginatedQuery,
+    principal: PrincipalContext,
+    cancel_wait: Fut,
+    check_cancel: Check,
+) -> Result<Page>
+where
+    Fut: Future<Output = ()> + Send,
+    Check: Fn() -> Result<()> + Send + 'static,
+{
+    let schema = runtime.schema();
+    let table_schema = schema.get_table(&query.query.table).cloned();
+    let runtime_for_task = runtime.clone();
+    let tenant_id_for_task = tenant_id.clone();
+    let query_for_task = query.clone();
+    let principal_for_task = principal.clone();
+    runtime
+        .read_storage
+        .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
+            let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+            paginate_documents_for_store_and_principal(
+                store.as_ref(),
+                &query_for_task,
+                table_schema.as_ref(),
+                &principal_for_task,
+                check_cancel,
+            )
+        })
+        .await
+}
+
+fn query_documents_for_store_and_principal_cancellable(
+    store: &TenantStore,
+    query: &Query,
+    table_schema: Option<&TableSchema>,
+    principal: &PrincipalContext,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Vec<Document>> {
     let authorization = ReadAuthorization::for_table(table_schema, principal)?;
     if authorization.impossible {
         return Ok(Vec::new());
@@ -545,8 +656,8 @@ pub(super) fn evaluate_with_index_cancellable_for_principal(
     let plan = plan_query(&planned_query, table_schema)?;
     let mut include_document =
         |document: &Document| authorization.allows_document(principal, document);
-    let documents = if let Some(documents) =
-        load_query_plan_documents_cancellable(runtime, &planned_query, &plan, check_cancel)?
+    if let Some(documents) =
+        load_query_plan_documents_cancellable(store, &planned_query, &plan, check_cancel)?
     {
         let residual_query = plan.residual_query(&planned_query);
         evaluate_query_with_docs_cancellable_and_predicate(
@@ -554,17 +665,64 @@ pub(super) fn evaluate_with_index_cancellable_for_principal(
             &residual_query,
             check_cancel,
             &mut include_document,
-        )?
+        )
     } else {
         evaluate_query_cancellable_with_predicate(
-            &runtime.store,
+            store,
             &planned_query,
             check_cancel,
             &mut include_document,
-        )?
+        )
+    }
+}
+
+fn paginate_documents_for_store_and_principal(
+    store: &TenantStore,
+    query: &PaginatedQuery,
+    table_schema: Option<&TableSchema>,
+    principal: &PrincipalContext,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Page> {
+    let authorization = ReadAuthorization::for_table(table_schema, principal)?;
+    if authorization.impossible {
+        return Ok(Page {
+            data: Vec::new(),
+            next_cursor: None,
+            has_more: false,
+        });
+    }
+
+    let planned_query = authorization.merge_query(&query.query);
+    let planned_paginated = PaginatedQuery {
+        query: planned_query.clone(),
+        page_size: query.page_size,
+        after: query.after.clone(),
     };
-    runtime.cache_documents(&documents);
-    Ok(documents)
+    let plan = plan_query(&planned_paginated.query, table_schema)?;
+    let mut include_document =
+        |document: &Document| authorization.allows_document(principal, document);
+    if let Some(index_docs) =
+        load_query_plan_documents_cancellable(store, &planned_paginated.query, &plan, check_cancel)?
+    {
+        let residual_paginated = PaginatedQuery {
+            query: plan.residual_query(&planned_paginated.query),
+            page_size: planned_paginated.page_size,
+            after: planned_paginated.after.clone(),
+        };
+        evaluate_paginated_with_docs_cancellable_and_predicate(
+            index_docs,
+            &residual_paginated,
+            check_cancel,
+            &mut include_document,
+        )
+    } else {
+        evaluate_paginated_cancellable_with_predicate(
+            store,
+            &planned_paginated,
+            check_cancel,
+            &mut include_document,
+        )
+    }
 }
 
 pub(super) fn table_policy_revision(table_schema: Option<&TableSchema>) -> Result<String> {
@@ -757,7 +915,7 @@ fn plan_range_index_scan(
 }
 
 fn load_query_plan_documents_cancellable(
-    runtime: &TenantRuntime,
+    store: &TenantStore,
     query: &Query,
     plan: &QueryPlan,
     check_cancel: &mut dyn FnMut() -> Result<()>,
@@ -766,34 +924,26 @@ fn load_query_plan_documents_cancellable(
         QueryPlan::FullScan => Ok(None),
         QueryPlan::ExactIndex {
             index_name, value, ..
-        } => {
-            let documents = runtime.store.index_scan_eq_cancellable(
-                &query.table,
-                index_name,
-                value,
-                check_cancel,
-            )?;
-            runtime.cache_documents(&documents);
-            Ok(Some(documents))
-        }
+        } => Ok(Some(store.index_scan_eq_cancellable(
+            &query.table,
+            index_name,
+            value,
+            check_cancel,
+        )?)),
         QueryPlan::RangeIndex {
             index_name,
             lower,
             upper,
             ..
-        } => {
-            let documents = runtime.store.index_scan_range_cancellable(
-                &query.table,
-                index_name,
-                lower.as_ref().map(|bound| &bound.value),
-                upper.as_ref().map(|bound| &bound.value),
-                lower.as_ref().is_none_or(|bound| bound.inclusive),
-                upper.as_ref().is_none_or(|bound| bound.inclusive),
-                check_cancel,
-            )?;
-            runtime.cache_documents(&documents);
-            Ok(Some(documents))
-        }
+        } => Ok(Some(store.index_scan_range_cancellable(
+            &query.table,
+            index_name,
+            lower.as_ref().map(|bound| &bound.value),
+            upper.as_ref().map(|bound| &bound.value),
+            lower.as_ref().is_none_or(|bound| bound.inclusive),
+            upper.as_ref().is_none_or(|bound| bound.inclusive),
+            check_cancel,
+        )?)),
     }
 }
 

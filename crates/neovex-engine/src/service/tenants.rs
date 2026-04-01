@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use neovex_storage::StorageEngine;
+
 use neovex_core::{Error, Result, TenantId};
 
 use crate::tenant::TenantRuntime;
@@ -10,6 +12,7 @@ use super::Service;
 impl Service {
     /// Creates a tenant explicitly.
     pub fn create_tenant(&self, tenant_id: TenantId) -> Result<()> {
+        let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let path = self.tenant_path(&tenant_id);
         let mut tenants = self
             .tenants
@@ -21,7 +24,7 @@ impl Service {
             )));
         }
 
-        let runtime = Arc::new(TenantRuntime::new(self.open_tenant_store(&path)?)?);
+        let runtime = self.build_loaded_tenant_runtime(self.open_tenant_store(&path)?)?;
         tenants.insert(tenant_id, runtime);
         Ok(())
     }
@@ -54,12 +57,12 @@ impl Service {
 
     /// Lists all tenant ids on disk asynchronously.
     pub async fn list_tenants_async(self: &Arc<Self>) -> Result<Vec<TenantId>> {
-        self.call_blocking(move |service| service.list_tenants())
-            .await
+        self.storage_engine.list_tenants().await
     }
 
     /// Deletes a tenant database and evicts it from memory.
     pub fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
+        let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let path = self.tenant_path(tenant_id);
         if !path.exists() {
             return Err(Error::TenantNotFound(tenant_id.clone()));
@@ -95,8 +98,9 @@ impl Service {
 
     /// Verifies that a tenant exists asynchronously.
     pub async fn ensure_tenant_exists_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
-        self.call_blocking(move |service| service.ensure_tenant_exists(&tenant_id))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let _operation = runtime.enter_operation(&tenant_id)?;
+        Ok(())
     }
 
     pub(super) fn get_existing_tenant(&self, tenant_id: &TenantId) -> Result<Arc<TenantRuntime>> {
@@ -110,6 +114,7 @@ impl Service {
             return Ok(runtime);
         }
 
+        let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let mut tenants = self
             .tenants
             .write()
@@ -123,8 +128,47 @@ impl Service {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         }
 
-        let runtime = Arc::new(TenantRuntime::new(self.open_tenant_store(&path)?)?);
+        let runtime = self.build_loaded_tenant_runtime(self.open_tenant_store(&path)?)?;
         tenants.insert(tenant_id.clone(), runtime.clone());
+        Ok(runtime)
+    }
+
+    pub(super) async fn get_existing_tenant_async(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+    ) -> Result<Arc<TenantRuntime>> {
+        if let Some(runtime) = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .cloned()
+        {
+            return Ok(runtime);
+        }
+
+        let _tenant_load_guard = self.tenant_load_gate.lock().await;
+        if let Some(runtime) = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .cloned()
+        {
+            return Ok(runtime);
+        }
+
+        let Some(opened) = self.storage_engine.open_existing_tenant(tenant_id).await? else {
+            return Err(Error::TenantNotFound(tenant_id.clone()));
+        };
+        let runtime = Arc::new(TenantRuntime::from_parts(
+            opened.store,
+            opened.read_storage,
+        )?);
+        self.tenants
+            .write()
+            .expect("tenant registry lock should not be poisoned")
+            .insert(tenant_id.clone(), runtime.clone());
         Ok(runtime)
     }
 

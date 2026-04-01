@@ -826,6 +826,7 @@ impl Default for RuntimeExecutor {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
     use std::sync::Mutex as StdMutex;
     use std::sync::{Arc, OnceLock};
 
@@ -976,6 +977,23 @@ export {};
         (bundle_dir, bundle_path)
     }
 
+    fn write_constant_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
+        let bundle_dir = tempdir().expect("tempdir should build");
+        let bundle_path = bundle_dir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function () {
+  return "ok";
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+        (bundle_dir, bundle_path)
+    }
+
     fn test_request(function_name: &str) -> InvocationRequest {
         InvocationRequest {
             kind: crate::runtime::InvocationKind::Query,
@@ -1086,6 +1104,59 @@ export {};
         assert_eq!(metrics.isolate_pool_misses, 1);
         assert_eq!(metrics.isolate_pool_hits, 1);
         assert_eq!(metrics.isolate_pool_replacements, 0);
+    }
+
+    #[test]
+    fn sibling_threads_can_boot_runtime_executors_in_parallel() {
+        let _test_lock = runtime_executor_test_lock().blocking_lock();
+        let (_bundle_dir, bundle_path) = write_constant_bundle();
+        let before = crate::runtime::bootstrap_snapshot_build_count_for_test();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let worker =
+            |request_id: &'static str, barrier: Arc<Barrier>, bundle_path: std::path::PathBuf| {
+                std::thread::spawn(move || {
+                    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+                        max_concurrent_isolates: 1,
+                        ..RuntimeLimits::default()
+                    }));
+                    let executor = RuntimeExecutor::new(policy.clone());
+                    let request = test_request("messages:list");
+                    barrier.wait();
+                    executor.invoke_blocking_with_cancellation(
+                        NeovexRuntime::with_policy(Arc::new(NoopHost), policy),
+                        RuntimeBundle::new(bundle_path),
+                        request.clone(),
+                        test_context(&request, request_id),
+                        None,
+                    )
+                })
+            };
+
+        let first = worker("req-sibling-1", barrier.clone(), bundle_path.clone());
+        let second = worker("req-sibling-2", barrier.clone(), bundle_path);
+        barrier.wait();
+
+        assert_eq!(
+            first
+                .join()
+                .expect("first sibling-thread executor should join")
+                .expect("first sibling-thread invocation should succeed"),
+            json!("ok")
+        );
+        assert_eq!(
+            second
+                .join()
+                .expect("second sibling-thread executor should join")
+                .expect("second sibling-thread invocation should succeed"),
+            json!("ok")
+        );
+
+        let after = crate::runtime::bootstrap_snapshot_build_count_for_test();
+        assert!(
+            after.saturating_sub(before) <= 1,
+            "parallel sibling-thread executor startups should reuse one process-global bootstrap snapshot"
+        );
     }
 
     #[test]

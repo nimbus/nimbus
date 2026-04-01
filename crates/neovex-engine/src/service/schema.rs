@@ -57,8 +57,9 @@ impl Service {
 
     /// Returns the full tenant schema asynchronously.
     pub async fn get_schema_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<Schema> {
-        self.call_blocking(move |service| service.get_schema(&tenant_id))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let _operation = runtime.enter_operation(&tenant_id)?;
+        Ok(runtime.schema())
     }
 
     /// Returns a single table schema for a tenant.
@@ -78,8 +79,13 @@ impl Service {
         tenant_id: TenantId,
         table: TableName,
     ) -> Result<TableSchema> {
-        self.call_blocking(move |service| service.get_table_schema(&tenant_id, &table))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let _operation = runtime.enter_operation(&tenant_id)?;
+        runtime
+            .schema()
+            .get_table(&table)
+            .cloned()
+            .ok_or(Error::SchemaNotFound(table))
     }
 
     /// Deletes a single table schema for a tenant.

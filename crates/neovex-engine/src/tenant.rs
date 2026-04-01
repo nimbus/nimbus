@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use neovex_core::{CommitEntry, Document, DocumentId, Error, Result, Schema, TableName, TenantId};
-use neovex_storage::TenantStore;
+use neovex_storage::{RedbTenantStorage, TenantStore};
 
 use crate::subscriptions::SubscriptionRegistry;
 
@@ -94,6 +94,7 @@ impl TenantDocumentCache {
 /// Runtime state for a loaded tenant.
 pub struct TenantRuntime {
     pub store: Arc<TenantStore>,
+    pub read_storage: Arc<RedbTenantStorage>,
     pub subscriptions: SubscriptionRegistry,
     pub schema: RwLock<Schema>,
     document_cache: TenantDocumentCache,
@@ -111,10 +112,14 @@ pub struct TenantDeletionGuard<'a> {
 
 impl TenantRuntime {
     /// Creates a tenant runtime from a store.
-    pub fn new(store: TenantStore) -> Result<Self> {
+    pub fn from_parts(
+        store: Arc<TenantStore>,
+        read_storage: Arc<RedbTenantStorage>,
+    ) -> Result<Self> {
         let schema = store.load_schema()?;
         Ok(Self {
-            store: Arc::new(store),
+            store,
+            read_storage,
             subscriptions: SubscriptionRegistry::new(),
             schema: RwLock::new(schema),
             document_cache: TenantDocumentCache::new(),

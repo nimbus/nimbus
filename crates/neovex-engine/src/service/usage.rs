@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use neovex_core::Result;
-use neovex_storage::MonthlyActiveUsersSnapshot;
+use neovex_storage::{MonthlyActiveUsersSnapshot, UsageStorage};
 
 use crate::Service;
 
@@ -30,7 +30,9 @@ impl Service {
     pub async fn current_monthly_active_users_async(
         self: &Arc<Self>,
     ) -> Result<MonthlyActiveUsersSnapshot> {
-        self.call_blocking(move |service| service.current_monthly_active_users())
+        let now = self.now().0;
+        self.usage_read_storage
+            .execute(move |usage_store| usage_store.monthly_active_users_for(now))
             .await
     }
 }
