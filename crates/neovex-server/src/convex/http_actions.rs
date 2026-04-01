@@ -2,7 +2,7 @@
 
 use super::dispatch::{
     check_host_cancellation, execute_convex_action_async, execute_convex_action_cancellable,
-    invoke_named_convex_function_async_cancellable,
+    invoke_named_convex_function_async_cancellable, next_runtime_server_request_id,
 };
 use super::*;
 use crate::state::RequestCancellationGuard;
@@ -74,6 +74,7 @@ pub(super) async fn dispatch_http_route(
                 auth: runtime_auth,
             },
             request_cancellation.token(),
+            Some(next_runtime_server_request_id("convex-http-action")),
         )
         .await?;
         let response: ConvexHttpResponseParts = serde_json::from_value(response)

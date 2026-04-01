@@ -87,6 +87,7 @@ impl ConvexRuntimeBridge {
         service: Arc<neovex_engine::Service>,
         registry: Arc<ConvexRegistry>,
         tenant_id: TenantId,
+        server_request_id: Option<String>,
     ) -> Self {
         static NEXT_RUNTIME_SESSION_ID: AtomicU64 = AtomicU64::new(1);
         let max_nested_runtime_invocations = registry
@@ -97,6 +98,7 @@ impl ConvexRuntimeBridge {
             service,
             registry,
             tenant_id,
+            server_request_id,
             session_id: format!(
                 "convex-runtime-session-{}",
                 NEXT_RUNTIME_SESSION_ID.fetch_add(1, Ordering::Relaxed)
@@ -965,6 +967,7 @@ impl AsyncHostCallTrace {
         let span = tracing::debug_span!(
             "convex_runtime_async_host_call",
             tenant = %bridge.tenant_id,
+            server_request_id = ?bridge.server_request_id,
             session_id = %bridge.session_id,
             operation,
             host_call_id = NEXT_ASYNC_HOST_CALL_ID.fetch_add(1, Ordering::Relaxed),
@@ -1699,10 +1702,19 @@ impl ConvexRuntimeBridge {
                 runtime,
                 bundle,
                 request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(
-                    &request,
-                    self.tenant_id.to_string(),
-                ),
+                match self.server_request_id.as_deref() {
+                    Some(server_request_id) => {
+                        RuntimeInvocationContext::top_level_for_tenant_and_request(
+                            &request,
+                            self.tenant_id.to_string(),
+                            server_request_id,
+                        )
+                    }
+                    None => RuntimeInvocationContext::top_level_for_tenant(
+                        &request,
+                        self.tenant_id.to_string(),
+                    ),
+                },
                 Some(cancellation.clone()),
             )
             .map_err(runtime_error_to_core)?;

@@ -410,6 +410,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["metrics"]["in_flight_canceled_host_ops"], json!(0));
     assert_eq!(body["metrics"]["host_operations"], json!({}));
     assert_eq!(body["metrics"]["tenants"], json!({}));
+    assert_eq!(body["metrics"]["recent_request_correlations"], json!([]));
     assert_eq!(
         body["metrics"]["fallback_cross_isolate_dispatches"],
         json!(0)
@@ -1137,6 +1138,15 @@ export {};
             .succeeded,
         1
     );
+    let correlation = metrics
+        .recent_request_correlations
+        .last()
+        .expect("request correlation should be present");
+    assert_eq!(correlation.function_name, "messages:outer");
+    assert_eq!(correlation.kind, "query");
+    assert_eq!(correlation.tenant_label.as_deref(), Some("demo"));
+    assert!(correlation.server_request_id.starts_with("convex-query-"));
+    assert!(correlation.invocation_id > 0);
     assert_eq!(
         metrics
             .tenants

@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::context::RuntimeInvocationContext;
 use crate::host::HostCallCancellationCause;
 
 #[derive(Debug, Default)]
@@ -29,6 +30,7 @@ pub struct RuntimeMetrics {
     fallback_cross_isolate_dispatches: AtomicU64,
     host_operations: Mutex<BTreeMap<String, RuntimeHostOperationMetrics>>,
     tenant_metrics: Mutex<BTreeMap<String, RuntimeTenantMetrics>>,
+    recent_request_correlations: Mutex<VecDeque<RuntimeRequestCorrelation>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -53,6 +55,7 @@ pub struct RuntimeMetricsSnapshot {
     pub fallback_cross_isolate_dispatches: u64,
     pub host_operations: BTreeMap<String, RuntimeHostOperationMetricsSnapshot>,
     pub tenants: BTreeMap<String, RuntimeTenantMetricsSnapshot>,
+    pub recent_request_correlations: Vec<RuntimeRequestCorrelationSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -90,6 +93,15 @@ pub struct RuntimeTenantMetricsSnapshot {
     pub execution_distribution: RuntimeDurationDistributionSnapshot,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeRequestCorrelationSnapshot {
+    pub invocation_id: u64,
+    pub server_request_id: String,
+    pub tenant_label: Option<String>,
+    pub function_name: String,
+    pub kind: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct RuntimeHostOperationMetrics {
     started: u64,
@@ -123,6 +135,15 @@ struct RuntimeTenantMetrics {
     execution_nanos_total: u64,
     queue_wait_distribution: RuntimeDurationDistribution,
     execution_distribution: RuntimeDurationDistribution,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeRequestCorrelation {
+    invocation_id: u64,
+    server_request_id: String,
+    tenant_label: Option<String>,
+    function_name: String,
+    kind: &'static str,
 }
 
 impl RuntimeMetrics {
@@ -285,6 +306,28 @@ impl RuntimeMetrics {
             .fetch_add(1, Ordering::SeqCst);
     }
 
+    pub fn record_request_correlation(&self, context: &RuntimeInvocationContext) {
+        let Some(server_request_id) = context.server_request_id.clone() else {
+            return;
+        };
+        const MAX_RECENT_REQUEST_CORRELATIONS: usize = 128;
+
+        let mut recent_request_correlations = self
+            .recent_request_correlations
+            .lock()
+            .expect("runtime request correlations lock should not be poisoned");
+        if recent_request_correlations.len() == MAX_RECENT_REQUEST_CORRELATIONS {
+            recent_request_correlations.pop_front();
+        }
+        recent_request_correlations.push_back(RuntimeRequestCorrelation {
+            invocation_id: context.invocation_id,
+            server_request_id,
+            tenant_label: context.tenant_label.clone(),
+            function_name: context.function_name.clone(),
+            kind: context.kind,
+        });
+    }
+
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
         RuntimeMetricsSnapshot {
             active_isolates: self.active_isolates.load(Ordering::SeqCst),
@@ -356,6 +399,19 @@ impl RuntimeMetrics {
                             execution_distribution: metrics.execution_distribution.snapshot(),
                         },
                     )
+                })
+                .collect(),
+            recent_request_correlations: self
+                .recent_request_correlations
+                .lock()
+                .expect("runtime request correlations lock should not be poisoned")
+                .iter()
+                .map(|correlation| RuntimeRequestCorrelationSnapshot {
+                    invocation_id: correlation.invocation_id,
+                    server_request_id: correlation.server_request_id.clone(),
+                    tenant_label: correlation.tenant_label.clone(),
+                    function_name: correlation.function_name.clone(),
+                    kind: correlation.kind.to_string(),
                 })
                 .collect(),
         }
@@ -470,6 +526,14 @@ mod tests {
             Some("demo"),
             Some(HostCallCancellationCause::Explicit),
         );
+        metrics.record_request_correlation(&RuntimeInvocationContext {
+            invocation_id: 7,
+            function_name: "messages:list".to_string(),
+            kind: "query",
+            is_top_level: true,
+            tenant_label: Some("demo".to_string()),
+            server_request_id: Some("req-7".to_string()),
+        });
         metrics.decrement_active_isolates_for_tenant(Some("demo"));
 
         let snapshot = metrics.snapshot();
@@ -500,6 +564,16 @@ mod tests {
                 },
             }
         );
+        assert_eq!(
+            snapshot.recent_request_correlations,
+            vec![RuntimeRequestCorrelationSnapshot {
+                invocation_id: 7,
+                server_request_id: "req-7".to_string(),
+                tenant_label: Some("demo".to_string()),
+                function_name: "messages:list".to_string(),
+                kind: "query".to_string(),
+            }]
+        );
     }
 
     #[test]
@@ -513,5 +587,6 @@ mod tests {
         metrics.decrement_active_isolates();
 
         assert!(metrics.snapshot().tenants.is_empty());
+        assert!(metrics.snapshot().recent_request_correlations.is_empty());
     }
 }

@@ -18,7 +18,7 @@ pub use host_executor::RuntimeHostExecutor;
 pub use limits::{RuntimeLimits, RuntimePolicy};
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,
-    RuntimeMetricsSnapshot, RuntimeTenantMetricsSnapshot,
+    RuntimeMetricsSnapshot, RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
 };
 pub use runtime::{
     ConvexRuntime, InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntime, RuntimeBundle,

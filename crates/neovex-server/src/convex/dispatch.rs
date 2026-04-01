@@ -133,12 +133,21 @@ fn invoke_named_convex_function(
         .map(|(value, _)| value)
 }
 
+pub(super) fn next_runtime_server_request_id(prefix: &str) -> String {
+    static NEXT_RUNTIME_SERVER_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+    format!(
+        "{prefix}-{}",
+        NEXT_RUNTIME_SERVER_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 pub(super) async fn invoke_named_convex_function_async_cancellable(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     request: InvocationRequest,
     cancellation: HostCallCancellation,
+    server_request_id: Option<String>,
 ) -> Result<Value, Error> {
     invoke_named_convex_function_with_trace_async_cancellable(
         service,
@@ -146,6 +155,7 @@ pub(super) async fn invoke_named_convex_function_async_cancellable(
         tenant_id,
         request,
         cancellation,
+        server_request_id,
     )
     .await
     .map(|(value, _)| value)
@@ -183,6 +193,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
         service.clone(),
         registry.clone(),
         tenant_id.clone(),
+        None,
     ));
     let runtime = NeovexRuntime::with_policy(bridge.clone(), registry.runtime_policy());
     let response = registry
@@ -213,6 +224,7 @@ async fn invoke_named_convex_function_with_trace_async(
         tenant_id,
         request,
         HostCallCancellation::default(),
+        None,
     )
     .await
 }
@@ -223,6 +235,7 @@ pub(super) async fn invoke_named_convex_function_with_trace_async_cancellable(
     tenant_id: &TenantId,
     request: InvocationRequest,
     cancellation: HostCallCancellation,
+    server_request_id: Option<String>,
 ) -> Result<(Value, ConvexRuntimeReadSet), Error> {
     let bundle = registry
         .runtime_bundle()
@@ -232,6 +245,7 @@ pub(super) async fn invoke_named_convex_function_with_trace_async_cancellable(
         service.clone(),
         registry.clone(),
         tenant_id.clone(),
+        server_request_id.clone(),
     ));
     let runtime = NeovexRuntime::with_policy(bridge.clone(), registry.runtime_policy());
     let response = registry
@@ -240,7 +254,18 @@ pub(super) async fn invoke_named_convex_function_with_trace_async_cancellable(
             runtime,
             bundle,
             request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&request, tenant_id.to_string()),
+            match server_request_id.as_deref() {
+                Some(server_request_id) => {
+                    RuntimeInvocationContext::top_level_for_tenant_and_request(
+                        &request,
+                        tenant_id.to_string(),
+                        server_request_id,
+                    )
+                }
+                None => {
+                    RuntimeInvocationContext::top_level_for_tenant(&request, tenant_id.to_string())
+                }
+            },
             Some(cancellation),
         )
         .await
@@ -261,6 +286,7 @@ pub(super) async fn bootstrap_runtime_named_subscription_async(
     cursor: Option<String>,
     auth: Option<InvocationAuth>,
     cancellation: HostCallCancellation,
+    server_request_id: Option<String>,
 ) -> Result<ConvexRuntimeSubscriptionSetup, Error> {
     let kind = if page_size.is_some() {
         InvocationKind::PaginatedQuery
@@ -280,6 +306,7 @@ pub(super) async fn bootstrap_runtime_named_subscription_async(
             auth: auth.clone(),
         },
         cancellation,
+        server_request_id,
     )
     .await?;
     let base_queries = synthesize_runtime_subscription_base_queries(&read_set)?;
