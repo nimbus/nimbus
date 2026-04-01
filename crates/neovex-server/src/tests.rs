@@ -135,7 +135,7 @@ async fn wait_for_runtime_metrics(
     }
 }
 
-#[path = "tests/auth_fixtures.rs"]
+#[path = "tests/auth_fixtures/mod.rs"]
 mod auth_fixtures;
 
 #[path = "tests/auth.rs"]
@@ -146,7 +146,7 @@ mod convex_functions;
 mod convex_runtime;
 #[path = "tests/core_http.rs"]
 mod core_http;
-#[path = "tests/registry_and_license.rs"]
+#[path = "tests/registry_and_license/mod.rs"]
 mod registry_and_license;
 #[path = "tests/scheduling.rs"]
 mod scheduling;

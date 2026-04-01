@@ -1,0 +1,54 @@
+use super::*;
+
+/// Executes a Convex-style action backed by an existing Neovex operation.
+pub(crate) async fn action(
+    State(state): State<Arc<AppState>>,
+    AxumPath(tenant_id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(request): Json<ConvexActionRequest>,
+) -> Result<Json<Value>, AppError> {
+    let tenant_id = TenantId::new(tenant_id)?;
+    let service = state.service.clone();
+    let (registry, auth) = registry_and_auth(
+        &state,
+        &headers,
+        "convex action route requires Convex support state",
+    )
+    .await?;
+    let value = match request {
+        ConvexActionRequest::Named(request) if registry.runtime_bundle().is_some() => {
+            let request_cancellation = RequestCancellationGuard::new();
+            invoke_named_convex_function_async_cancellable(
+                &service,
+                &registry,
+                &tenant_id,
+                InvocationRequest {
+                    kind: InvocationKind::Action,
+                    function_name: request.name,
+                    args: request.args,
+                    page_size: None,
+                    cursor: None,
+                    auth: auth.clone(),
+                },
+                request_cancellation.token(),
+                Some(next_runtime_server_request_id("convex-action")),
+            )
+            .await?
+        }
+        ConvexActionRequest::Named(request) => {
+            let action = registry.resolve_action(&request.name, &request.args)?;
+            execute_convex_action_async(&service, &registry, &tenant_id, action, None).await?
+        }
+        ConvexActionRequest::Raw { action } => {
+            execute_convex_action_async(
+                &service,
+                &registry,
+                &tenant_id,
+                ConvexExecutableAction::Action(action),
+                None,
+            )
+            .await?
+        }
+    };
+    Ok(Json(value))
+}

@@ -1,4 +1,4 @@
-#[path = "convex_functions/basic.rs"]
+#[path = "convex_functions/basic/mod.rs"]
 mod basic;
 #[path = "convex_functions/query_shapes.rs"]
 mod query_shapes;

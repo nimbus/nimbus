@@ -1,4 +1,4 @@
-#[path = "runtime_queries/get_and_query.rs"]
+#[path = "runtime_queries/get_and_query/mod.rs"]
 mod get_and_query;
 #[path = "runtime_queries/single_result.rs"]
 mod single_result;
