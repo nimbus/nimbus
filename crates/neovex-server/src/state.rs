@@ -114,7 +114,7 @@ impl RequestCancellationGuard {
 
 impl Drop for RequestCancellationGuard {
     fn drop(&mut self) {
-        self.token.cancel();
+        self.token.cancel_due_to_disconnect();
     }
 }
 

@@ -404,6 +404,8 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["metrics"]["nested_local_dispatches"], json!(0));
     assert_eq!(body["metrics"]["queued_canceled_invocations"], json!(0));
     assert_eq!(body["metrics"]["in_flight_canceled_invocations"], json!(0));
+    assert_eq!(body["metrics"]["disconnect_canceled_invocations"], json!(0));
+    assert_eq!(body["metrics"]["explicit_canceled_invocations"], json!(0));
     assert_eq!(body["metrics"]["precanceled_host_ops"], json!(0));
     assert_eq!(body["metrics"]["in_flight_canceled_host_ops"], json!(0));
     assert_eq!(body["metrics"]["host_operations"], json!({}));
@@ -1102,6 +1104,14 @@ export {};
     assert_eq!(
         metrics_body["metrics"]["tenants"]["demo"]["started_invocations"],
         json!(1)
+    );
+    assert_eq!(
+        metrics_body["metrics"]["tenants"]["demo"]["disconnect_canceled_invocations"],
+        json!(0)
+    );
+    assert_eq!(
+        metrics_body["metrics"]["tenants"]["demo"]["explicit_canceled_invocations"],
+        json!(0)
     );
     assert_eq!(
         metrics_body["metrics"]["tenants"]["demo"]["completed_invocations"],
@@ -2630,6 +2640,8 @@ export {};
     assert_eq!(metrics.canceled_invocations, 1);
     assert_eq!(metrics.queued_canceled_invocations, 0);
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(metrics.disconnect_canceled_invocations, 1);
+    assert_eq!(metrics.explicit_canceled_invocations, 0);
     let tenant_metrics = metrics
         .tenants
         .get("demo")
@@ -2638,6 +2650,8 @@ export {};
     assert_eq!(tenant_metrics.completed_invocations, 1);
     assert_eq!(tenant_metrics.queued_canceled_invocations, 0);
     assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.disconnect_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
 }
 
 #[tokio::test]
@@ -2766,6 +2780,8 @@ export {};
     assert_eq!(metrics.worker_dispatched_invocations, 1);
     assert_eq!(metrics.queued_canceled_invocations, 1);
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(metrics.disconnect_canceled_invocations, 2);
+    assert_eq!(metrics.explicit_canceled_invocations, 0);
     let tenant_metrics = metrics
         .tenants
         .get("demo")
@@ -2774,6 +2790,8 @@ export {};
     assert_eq!(tenant_metrics.completed_invocations, 1);
     assert_eq!(tenant_metrics.queued_canceled_invocations, 1);
     assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.disconnect_canceled_invocations, 2);
+    assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
 
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
     let documents = service

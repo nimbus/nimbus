@@ -78,6 +78,9 @@ impl RuntimeExecutor {
                                 .metrics()
                                 .record_queued_canceled_invocation_for_tenant(
                                     job.context.tenant_label.as_deref(),
+                                    job.cancellation
+                                        .as_ref()
+                                        .and_then(HostCallCancellation::cause),
                                 );
                             let _ = job.result_tx.send(Err(NeovexRuntimeError::Cancelled));
                             continue;
@@ -173,6 +176,7 @@ impl RuntimeExecutor {
 
         metrics.increment_active_isolates_for_tenant(context.tenant_label.as_deref());
         let execution_started_at = Instant::now();
+        let cancellation_for_metrics = cancellation.clone();
         runtime
             .invoke_bundle_unmanaged(&bundle, &request, &context, cancellation)
             .await
@@ -181,6 +185,9 @@ impl RuntimeExecutor {
                 NeovexRuntimeError::Cancelled => metrics
                     .record_in_flight_canceled_invocation_for_tenant(
                         context.tenant_label.as_deref(),
+                        cancellation_for_metrics
+                            .as_ref()
+                            .and_then(HostCallCancellation::cause),
                     ),
                 _ => {}
             })
@@ -255,7 +262,10 @@ impl RuntimeExecutor {
             self.inner
                 .policy
                 .metrics()
-                .record_queued_canceled_invocation_for_tenant(context.tenant_label.as_deref());
+                .record_queued_canceled_invocation_for_tenant(
+                    context.tenant_label.as_deref(),
+                    cancellation.as_ref().and_then(HostCallCancellation::cause),
+                );
             return Err(NeovexRuntimeError::Cancelled);
         }
 

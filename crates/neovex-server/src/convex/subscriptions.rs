@@ -759,7 +759,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
                 .await;
         }
     }
-    runtime_cancellation.cancel();
+    runtime_cancellation.cancel_due_to_disconnect();
     drop(subscription_tx);
     drop(outbound_tx);
     let _ = forward_task.await;

@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::host::HostCallCancellationCause;
+
 #[derive(Debug, Default)]
 pub struct RuntimeMetrics {
     active_isolates: AtomicUsize,
@@ -18,6 +20,8 @@ pub struct RuntimeMetrics {
     canceled_invocations: AtomicU64,
     queued_canceled_invocations: AtomicU64,
     in_flight_canceled_invocations: AtomicU64,
+    disconnect_canceled_invocations: AtomicU64,
+    explicit_canceled_invocations: AtomicU64,
     canceled_host_ops: AtomicU64,
     precanceled_host_ops: AtomicU64,
     in_flight_canceled_host_ops: AtomicU64,
@@ -40,6 +44,8 @@ pub struct RuntimeMetricsSnapshot {
     pub canceled_invocations: u64,
     pub queued_canceled_invocations: u64,
     pub in_flight_canceled_invocations: u64,
+    pub disconnect_canceled_invocations: u64,
+    pub explicit_canceled_invocations: u64,
     pub canceled_host_ops: u64,
     pub precanceled_host_ops: u64,
     pub in_flight_canceled_host_ops: u64,
@@ -76,6 +82,8 @@ pub struct RuntimeTenantMetricsSnapshot {
     pub completed_invocations: u64,
     pub queued_canceled_invocations: u64,
     pub in_flight_canceled_invocations: u64,
+    pub disconnect_canceled_invocations: u64,
+    pub explicit_canceled_invocations: u64,
     pub queue_wait_nanos_total: u64,
     pub execution_nanos_total: u64,
     pub queue_wait_distribution: RuntimeDurationDistributionSnapshot,
@@ -109,6 +117,8 @@ struct RuntimeTenantMetrics {
     completed_invocations: u64,
     queued_canceled_invocations: u64,
     in_flight_canceled_invocations: u64,
+    disconnect_canceled_invocations: u64,
+    explicit_canceled_invocations: u64,
     queue_wait_nanos_total: u64,
     execution_nanos_total: u64,
     queue_wait_distribution: RuntimeDurationDistribution,
@@ -190,26 +200,36 @@ impl RuntimeMetrics {
     }
 
     pub fn record_queued_canceled_invocation(&self) {
-        self.record_queued_canceled_invocation_for_tenant(None);
+        self.record_queued_canceled_invocation_for_tenant(None, None);
     }
 
-    pub fn record_queued_canceled_invocation_for_tenant(&self, tenant_label: Option<&str>) {
+    pub fn record_queued_canceled_invocation_for_tenant(
+        &self,
+        tenant_label: Option<&str>,
+        cause: Option<HostCallCancellationCause>,
+    ) {
         self.queued_canceled_invocations
             .fetch_add(1, Ordering::SeqCst);
         self.record_canceled_invocation();
+        self.record_canceled_invocation_cause(tenant_label, cause);
         self.update_tenant_metrics(tenant_label, |metrics| {
             metrics.queued_canceled_invocations += 1;
         });
     }
 
     pub fn record_in_flight_canceled_invocation(&self) {
-        self.record_in_flight_canceled_invocation_for_tenant(None);
+        self.record_in_flight_canceled_invocation_for_tenant(None, None);
     }
 
-    pub fn record_in_flight_canceled_invocation_for_tenant(&self, tenant_label: Option<&str>) {
+    pub fn record_in_flight_canceled_invocation_for_tenant(
+        &self,
+        tenant_label: Option<&str>,
+        cause: Option<HostCallCancellationCause>,
+    ) {
         self.in_flight_canceled_invocations
             .fetch_add(1, Ordering::SeqCst);
         self.record_canceled_invocation();
+        self.record_canceled_invocation_cause(tenant_label, cause);
         self.update_tenant_metrics(tenant_label, |metrics| {
             metrics.in_flight_canceled_invocations += 1;
         });
@@ -282,6 +302,12 @@ impl RuntimeMetrics {
             in_flight_canceled_invocations: self
                 .in_flight_canceled_invocations
                 .load(Ordering::SeqCst),
+            disconnect_canceled_invocations: self
+                .disconnect_canceled_invocations
+                .load(Ordering::SeqCst),
+            explicit_canceled_invocations: self
+                .explicit_canceled_invocations
+                .load(Ordering::SeqCst),
             canceled_host_ops: self.canceled_host_ops.load(Ordering::SeqCst),
             precanceled_host_ops: self.precanceled_host_ops.load(Ordering::SeqCst),
             in_flight_canceled_host_ops: self.in_flight_canceled_host_ops.load(Ordering::SeqCst),
@@ -321,6 +347,9 @@ impl RuntimeMetrics {
                             completed_invocations: metrics.completed_invocations,
                             queued_canceled_invocations: metrics.queued_canceled_invocations,
                             in_flight_canceled_invocations: metrics.in_flight_canceled_invocations,
+                            disconnect_canceled_invocations: metrics
+                                .disconnect_canceled_invocations,
+                            explicit_canceled_invocations: metrics.explicit_canceled_invocations,
                             queue_wait_nanos_total: metrics.queue_wait_nanos_total,
                             execution_nanos_total: metrics.execution_nanos_total,
                             queue_wait_distribution: metrics.queue_wait_distribution.snapshot(),
@@ -359,6 +388,30 @@ impl RuntimeMetrics {
             .expect("runtime tenant metrics lock should not be poisoned");
         let metrics = tenant_metrics.entry(tenant_label.to_string()).or_default();
         update(metrics);
+    }
+
+    fn record_canceled_invocation_cause(
+        &self,
+        tenant_label: Option<&str>,
+        cause: Option<HostCallCancellationCause>,
+    ) {
+        match cause {
+            Some(HostCallCancellationCause::Disconnect) => {
+                self.disconnect_canceled_invocations
+                    .fetch_add(1, Ordering::SeqCst);
+                self.update_tenant_metrics(tenant_label, |metrics| {
+                    metrics.disconnect_canceled_invocations += 1;
+                });
+            }
+            Some(HostCallCancellationCause::Explicit) => {
+                self.explicit_canceled_invocations
+                    .fetch_add(1, Ordering::SeqCst);
+                self.update_tenant_metrics(tenant_label, |metrics| {
+                    metrics.explicit_canceled_invocations += 1;
+                });
+            }
+            None => {}
+        }
     }
 }
 
@@ -409,8 +462,14 @@ mod tests {
         metrics.increment_active_isolates_for_tenant(Some("demo"));
         metrics.record_queue_wait_for_tenant(Some("demo"), Duration::from_micros(500));
         metrics.record_execution_for_tenant(Some("demo"), Duration::from_millis(7));
-        metrics.record_queued_canceled_invocation_for_tenant(Some("demo"));
-        metrics.record_in_flight_canceled_invocation_for_tenant(Some("demo"));
+        metrics.record_queued_canceled_invocation_for_tenant(
+            Some("demo"),
+            Some(HostCallCancellationCause::Disconnect),
+        );
+        metrics.record_in_flight_canceled_invocation_for_tenant(
+            Some("demo"),
+            Some(HostCallCancellationCause::Explicit),
+        );
         metrics.decrement_active_isolates_for_tenant(Some("demo"));
 
         let snapshot = metrics.snapshot();
@@ -425,6 +484,8 @@ mod tests {
                 completed_invocations: 1,
                 queued_canceled_invocations: 1,
                 in_flight_canceled_invocations: 1,
+                disconnect_canceled_invocations: 1,
+                explicit_canceled_invocations: 1,
                 queue_wait_nanos_total: 500_000,
                 execution_nanos_total: 7_000_000,
                 queue_wait_distribution: RuntimeDurationDistributionSnapshot {
