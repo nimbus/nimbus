@@ -50,7 +50,7 @@ mod manifest;
 mod runtime_paginated;
 #[path = "reactive_loop/runtime_queries.rs"]
 mod runtime_queries;
-#[path = "reactive_loop/socket_behaviors/mod.rs"]
-mod socket_behaviors;
+#[path = "reactive_loop/socket/mod.rs"]
+mod socket;
 #[path = "reactive_loop/transport/mod.rs"]
 mod transport;
