@@ -16,6 +16,23 @@ Reviewed against:
   absorbed async rewrite content
 - `docs/research/reactive-database-research-guide.md`
 - `docs/research/horizontal-scaling-architecture-spec.md`
+- `docs/research/tigerbeetle-code-reference.md`
+- redb design docs and README for copy-on-write MVCC and
+  single-writer/multi-reader behavior
+- TigerBeetle safety docs for source-of-truth WAL discipline, recovery, and
+  deterministic durability testing
+- OpenRaft `RaftLogStorage` docs for append, flush-callback, and no-hole log
+  invariants
+- RocksDB and Fjall WAL/journal docs for storage-engine-internal log and
+  materialization behavior
+- Convex OCC docs for read-set-oriented transaction and invalidation direction
+- Electric Postgres Sync and Shapes docs for log-driven fan-out and embedded
+  replica direction
+- PostgREST schema-isolation docs for schema-owned generated API boundaries
+- Hasura permissions docs for role-aware declarative access policy over a
+  generated API surface
+- Wasmtime and WebAssembly Component Model docs for a typed, capability-scoped
+  Rust-native plugin runtime
 - the current Rust crate layout under `crates/`
 
 ---
@@ -116,7 +133,10 @@ Every work item below should preserve them.
 6. Redb remains the storage engine for this roadmap.
    Phase 5 is an execution-model rewrite, not a storage-engine replacement. The
    first async implementation keeps the existing redb-backed storage semantics
-   behind an async boundary. Backend replacement is a separate future project.
+   behind an async boundary. The async boundary and later durable journal should
+   preserve room for a future write-optimized layer or alternate storage engine,
+   and should avoid baking redb page-layout assumptions into higher-level
+   contracts, but backend replacement is a separate future project.
 
 7. Explicit commit semantics matter more than transport delivery.
    Engine and storage code must define a durable commit point. Before that
@@ -137,6 +157,98 @@ Every work item below should preserve them.
 10. One plan document must stay authoritative.
     Agents should not have to reconcile multiple partial plans before they can
     start implementation.
+
+11. Dependency tracking should converge, not fork further.
+    Near-term heuristics may differ between engine and runtime paths, but the
+    roadmap should move toward one normalized dependency-set model that can feed
+    invalidation, replay consumers, and future OCC-style read/write-set work.
+
+12. If Neovex adds a custom journal-driven materializer, it should favor
+    deterministic compaction and replay semantics inspired by TigerBeetle.
+    Compaction and recovery behavior should be driven by journal state,
+    checkpoint state, and explicit configuration rather than wall-clock timing
+    or nondeterministic scheduling. The first implementation should run in
+    shadow mode against redb before it is allowed onto any serving path.
+
+13. Authentication and authorization must stay separate.
+    Authentication is transport- and provider-specific and should stay at the
+    server or adapter boundary. Authorization must move into the engine and
+    planner so reads, writes, subscriptions, and runtime host calls cannot
+    bypass policy by using a different route shape.
+
+14. Runtime compatibility and database-native extensibility are different
+    goals.
+    The current V8 and `deno_core` runtime remains first-class for Convex
+    compatibility and JavaScript portability. Future schema-generated CRUD and
+    WASM plugin support should complement that path, not silently replace it.
+
+15. Deterministic simulation must expand with durability-critical features.
+    The database already exists, so the roadmap cannot literally "build the
+    simulator first". From this point forward, new journal, materializer, and
+    transaction work should add swappable time, storage, and fault-injection
+    seams before it is trusted on any serving path.
+
+---
+
+## Research Recommendation Status
+
+This section records how the research guide maps onto Neovex's actual project
+decisions so agents do not have to infer intent from multiple documents.
+
+### Adopted in this roadmap
+
+1. Start with `redb`, not an early storage-engine swap.
+
+2. Use full re-evaluation plus dependency tracking as the correctness path
+   before more advanced invalidation or materialization work.
+
+3. Build one Neovex-owned logical durable journal that can later serve replay,
+   invalidation, CDC, and replica consumers.
+
+4. Keep the server authoritative for v1 sync while preserving a later path to
+   streaming and embedded replicas.
+
+5. Treat TigerBeetle as the primary reference for durability discipline,
+   checkpoint plus replay rebuilds, deterministic compaction, and harsh
+   robustness testing.
+
+### Deferred but explicitly scheduled here
+
+1. Planner-enforced declarative authorization is scheduled in Phase `3E`.
+   Adapter-layer authentication remains, but authorization stops living in
+   route-specific code.
+
+2. Serializable OCC-style read/write-set validation is scheduled in Phase
+   `3F`, built on the shared dependency model from Phase `3D`.
+
+3. Deterministic simulation seams for time, storage, and injected faults are
+   scheduled in Phase `4D` so later journal and materializer work can be
+   verified under controlled failures.
+
+4. MVCC-style snapshot and time-travel reads remain a later extension after OCC
+   is in place. This roadmap preserves room for that layer, but does not make
+   it a near-term implementation target.
+
+5. A Neovex-native schema-generated API and typed WASM plugin ABI are scheduled
+   in Phase `11`, using battle-tested patterns from PostgREST, Hasura, and
+   Wasmtime while staying additive to the Convex compatibility surface.
+
+### Intentional deviations from the research guide
+
+1. Neovex will not replace the V8 runtime with WASM in this roadmap.
+   The research guide's "schema-generated CRUD plus WASM plugins" direction is
+   still valuable, but this project deliberately keeps V8 and `deno_core` as a
+   first-class execution surface for Convex compatibility. If WASM is added, it
+   will be a complementary database-native extension path rather than a forced
+   migration off the compatibility runtime. Phase `11` is where that additive
+   path should be made concrete.
+
+2. TigerBeetle is not the primary reference for every layer.
+   It is the closest implementation reference for ordered durability,
+   materialization, recovery, and robustness testing. Query-engine
+   authorization, schema-driven API generation, and OCC semantics should still
+   follow the research guide's Postgres, Firebase Rules, Convex, and
+   FoundationDB references.
 
 ---
 
@@ -785,7 +897,10 @@ today.
 
 ---
 
-## Phase 3: Query And Subscription Optimization
+## Phase 3: Query, Subscription, And Policy Model
+
+These items tighten the long-term query, subscription, authorization, and
+transaction substrate before the deeper async and journal work.
 
 ### 3A. Narrow engine subscription invalidation conservatively
 
@@ -966,10 +1081,281 @@ documents.
 
 ---
 
-## Phase 4: Server-Layer Cleanup And Lifecycle Tightening
+### 3D. Introduce a shared dependency-set model for engine and runtime subscriptions
 
-These items are lower priority than the data-path and runtime-path performance
-work above. They are worth doing, but they should not preempt core path work.
+**Priority:** medium  
+**Expected impact:** aligns subscription invalidation with the research target
+and provides the substrate for journal-driven matching later.
+
+#### Current verified state
+
+- engine subscriptions currently rely on table-level matching in
+  `crates/neovex-engine/src/subscriptions.rs`, with Phase 3A only narrowing that
+  path conservatively
+- runtime-backed named subscriptions already capture `RuntimeReadSet` and use
+  `commit_intersects_runtime_read_set(...)` in the server crate
+- there is no single normalized dependency-set type shared across engine and
+  runtime subscription paths
+
+#### Implementation plan
+
+1. Introduce a normalized dependency-set model in a workspace-shared layer,
+   most likely `neovex-core`, that can represent current coarse-to-fine
+   dependency forms such as:
+   - table-level reads
+   - document-level reads
+   - index-range or predicate reads
+   - paginated or ordered window reads where needed by the current runtime path
+
+2. Keep coarse dependencies valid.
+   Table-level tracking remains a legal fallback representation; the first pass
+   does not need perfect precision everywhere.
+
+3. Teach engine subscription registration and re-evaluation paths to store this
+   normalized dependency-set form rather than relying on ad-hoc table-only
+   matching forever.
+
+4. Teach runtime-backed subscription re-evaluation to translate
+   `RuntimeReadSet` into the same normalized dependency-set model rather than
+   treating runtime invalidation as a permanently separate subsystem.
+
+5. Add shared helpers that match a commit or future durable-journal write set
+   against a normalized dependency set.
+
+6. Shape the model so it can later support OCC-style read/write-set validation
+   and possible MVCC-aware dependency work, even though transaction retry or
+   validation semantics remain out of scope for this phase.
+
+#### Files to change
+
+- `crates/neovex-core/src/` for the shared dependency-set types
+- `crates/neovex-engine/src/subscriptions.rs`
+- `crates/neovex-engine/src/service/subscriptions.rs`
+- `crates/neovex-engine/src/service/mutations.rs`
+- `crates/neovex-server/src/runtime/read_tracking/`
+- `crates/neovex-server/src/adapters/convex/subscriptions/transforms/runtime/`
+
+#### Existing tests to extend
+
+- engine subscription tests in `crates/neovex-engine/src/tests.rs`
+- runtime read-tracking tests in `crates/neovex-server/src/runtime/read_tracking/tests.rs`
+- Convex reactive subscription tests in `crates/neovex-server/tests/reactive_loop.rs`
+
+#### New tests
+
+- add shared intersection tests for table, document, index-range, and paginated
+  window dependencies
+- add a test proving runtime-backed subscription tracking can be converted into
+  the shared dependency-set form without losing current skip behavior
+- add a test proving engine subscriptions can store coarse table-level
+  dependencies in the same normalized model when finer-grained tracking is not
+  yet available
+
+#### Acceptance criteria
+
+- engine and runtime subscriptions no longer rely on permanently separate
+  invalidation models
+- coarse table-level tracking remains a valid fallback
+- the normalized dependency-set model is usable by later journal-driven
+  invalidation work
+
+---
+
+### 3E. Move authorization into the query engine and planner while keeping authentication at the boundary
+
+**Priority:** high  
+**Expected impact:** closes a major research gap by making data access policy
+part of the query path instead of a route-specific convention.
+
+#### Current verified state
+
+- the current codebase authenticates Convex requests in
+  `crates/neovex-server/src/adapters/convex/auth.rs` and passes
+  `InvocationAuth` into runtime handlers
+- Neovex-native routes do not currently prescribe a built-in authentication or
+  authorization model
+- there is no schema-level declarative authorization layer enforced inside
+  engine reads, writes, or subscription re-evaluation
+- active subscriptions and engine caches do not yet define what happens when
+  policy definitions change or when a principal's claims snapshot changes
+
+#### Implementation plan
+
+1. Make the architecture boundary explicit.
+   Authentication remains a server or adapter responsibility that validates
+   credentials and normalizes them into a principal context. Authorization
+   becomes an engine and planner responsibility that cannot be bypassed by
+   route shape.
+
+2. Introduce declarative access-policy types in a workspace-shared layer, most
+   likely `neovex-core`, so policy can be defined alongside schema rather than
+   inside ad hoc handler code.
+
+3. Start with a constrained rule model.
+   The first pass should support policy predicates over:
+   - the authenticated principal
+   - the candidate document
+   - for writes, the existing document where relevant
+   Avoid arbitrary user code as the enforcement mechanism.
+
+4. Teach the query planning and evaluation path to incorporate authorization
+   rules before results are returned. A policy may compile into planner filters,
+   residual evaluator predicates, or both, but it must not be a best-effort
+   post-filter layered outside the engine.
+
+5. Teach the mutation path to enforce create, update, and delete authorization
+   atomically with validation and commit.
+
+6. Route all subscription re-evaluation and runtime host calls through the same
+   authorization-aware engine entrypoints so Convex compatibility paths and
+   native paths see the same policy outcomes.
+
+7. Make policy and identity changes explicit invalidation inputs.
+   The first implementation does not need fine-grained live reauthorization.
+   It does need a safe rule: if a policy revision changes or if the principal
+   context for a live subscription changes, the engine must conservatively
+   re-evaluate or terminate the affected subscription and invalidate any
+   affected cache entries rather than continuing to serve previously authorized
+   results.
+
+8. Record enough auth context to avoid painting the architecture into a corner.
+   Subscription registrations, cache keys, or adjacent metadata should carry a
+   principal snapshot and policy revision identifier so future finer-grained
+   auth invalidation can be implemented without redesigning the registry model.
+
+9. Keep the Convex auth shim as the compatibility-layer authenticator.
+   Its job is identity verification and normalization, not owning long-term
+   authorization semantics.
+
+#### Files to change
+
+- `crates/neovex-core/src/schema.rs`
+- `crates/neovex-core/src/` for new principal and policy types
+- `crates/neovex-engine/src/service/queries.rs`
+- `crates/neovex-engine/src/service/mutations.rs`
+- `crates/neovex-engine/src/service/subscriptions.rs`
+- `crates/neovex-engine/src/subscriptions.rs`
+- `crates/neovex-engine/src/tenant.rs`
+- `crates/neovex-engine/src/evaluator.rs`
+- `crates/neovex-server/src/adapters/convex/auth.rs`
+- `crates/neovex-server/src/adapters/convex/runtime_bridge.rs`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- engine query tests in `crates/neovex-engine/src/tests.rs`
+- auth tests in `crates/neovex-server/src/tests/auth/`
+- reactive loop tests in `crates/neovex-server/tests/reactive_loop.rs`
+
+#### New tests
+
+- verify indexed queries, fallback scans, pagination, and subscriptions never
+  return rows that policy forbids for the active principal
+- verify unauthorized create, update, and delete attempts fail before commit
+- verify the same normalized principal yields the same authorization result
+  through native and Convex-backed request paths
+- verify a policy revision change causes affected subscriptions or cached views
+  to be revalidated or dropped before another result is delivered
+- verify a principal-context change for a live subscription does not continue to
+  receive results authorized under the old claims snapshot
+- verify runtime host calls cannot bypass engine authorization by calling the
+  mutation or query path indirectly
+
+#### Acceptance criteria
+
+- authorization rules are enforced inside the engine and planner rather than in
+  route-specific middleware
+- authentication remains at the adapter or transport boundary
+- subscriptions and caches do not continue serving data across policy or
+  principal-context changes without revalidation
+- no supported query shape can observe rows that policy forbids
+- Convex compatibility auth continues to work through identity normalization
+  rather than a separate authorization subsystem
+
+---
+
+### 3F. Add serializable OCC validation on top of the shared dependency model
+
+**Priority:** medium, after 3D and 3E  
+**Expected impact:** aligns the transaction model with the research guide by
+using read and write sets for both invalidation and conflict detection.
+
+#### Current verified state
+
+- the current engine centers on single-operation mutations through
+  `Service::apply_mutation(...)`
+- Phase `3D` introduces a shared dependency-set model, but current code still
+  lacks serializable OCC validation built on those dependency forms
+- there is no explicit transaction boundary that captures a multi-step
+  read/write execution unit and validates it at commit time
+
+#### Implementation plan
+
+1. Introduce an explicit transaction or execution-unit boundary in the engine
+   for any path that needs multi-step read plus write behavior, without
+   bypassing the existing validation and commit path.
+
+2. Capture normalized read and write sets using the shared dependency model
+   from Phase `3D`, including planner-enforced authorization predicates where
+   they affect the visible read set.
+
+3. Validate the transaction at commit against writes that became durable after
+   the transaction's read snapshot, aborting or retrying on conflict rather
+   than blocking readers.
+
+4. Keep reads non-blocking in the first implementation.
+   Do not fall back to a lock-based transaction manager just to avoid retries.
+
+5. Ensure subscription invalidation, durable-journal write metadata, and OCC
+   conflict checking all reuse the same dependency vocabulary rather than
+   evolving separate representations.
+
+6. Shape the implementation so later snapshot or time-travel read support can
+   layer on top of the same model without replacing OCC as the baseline
+   transaction mechanism.
+
+#### Files to change
+
+- `crates/neovex-core/src/` for shared transaction and dependency metadata
+- `crates/neovex-engine/src/service/mutations.rs`
+- `crates/neovex-engine/src/service/queries.rs`
+- `crates/neovex-engine/src/service/` for new transaction coordination code
+- `crates/neovex-server/src/adapters/convex/runtime_bridge.rs`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- engine service tests in `crates/neovex-engine/src/tests.rs`
+- runtime read-tracking tests in
+  `crates/neovex-server/src/runtime/read_tracking/tests.rs`
+
+#### New tests
+
+- verify conflicting transactions with overlapping document or range reads
+  cause deterministic abort or retry behavior
+- verify non-conflicting transactions can commit concurrently without blocking
+  reads
+- verify authorization-filtered reads still produce correct conflict detection
+  when policies affect the visible result set
+- verify dependency metadata used for invalidation is the same metadata used
+  for OCC validation
+
+#### Acceptance criteria
+
+- Neovex has a concrete serializable OCC path rather than only "future-ready"
+  dependency tracking
+- read and write sets drive both invalidation and conflict detection
+- read paths remain non-blocking
+- the OCC implementation preserves room for later snapshot-style MVCC reads
+  without replacing the core model
+
+---
+
+## Phase 4: Testability And Server-Layer Cleanup
+
+Phase `4A` through `4C` are lower-priority cleanup work. Phase `4D` is more
+important: it establishes deterministic test seams that should land before the
+later journal, materializer, or replica work is trusted.
 
 ### 4A. Consolidate repeated request concerns into middleware or extractors
 
@@ -1142,6 +1528,90 @@ current in-process metrics model.
 
 ---
 
+### 4D. Introduce deterministic simulation seams for time, storage, and injected faults
+
+**Priority:** high, before Phase 6 and serving-path materializer work  
+**Expected impact:** brings the roadmap closer to the research guide's
+simulation-first recommendation and gives later durability work a harsh but
+reproducible verification environment.
+
+#### Current verified state
+
+- the project already has conventional unit and integration tests, but no
+  shared deterministic simulation harness for storage, clock, or failure
+  injection
+- the later journal and materializer phases now depend on stronger replay,
+  corruption, and shadow-parity testing than the current test scaffolding can
+  express cleanly
+- TigerBeetle and FoundationDB treat this style of deterministic failure
+  testing as part of the architecture, not a bolt-on after implementation
+
+#### Implementation plan
+
+1. Add explicit seams for the new durability-critical subsystems rather than
+   abstracting the entire existing codebase at once. Start with:
+   - clock and time progression
+   - journal append, flush, and reopen boundaries
+   - checkpoint and manifest persistence boundaries
+   - injected crash or fault hooks around visibility transitions
+
+2. Provide both production implementations and seeded deterministic test
+   implementations of those seams.
+
+3. Add a lightweight single-process harness that can drive scripted failures,
+   restarts, and replays deterministically. The goal is not a distributed
+   cluster simulator in the first pass; it is precise control over local
+   storage and execution failure modes.
+
+4. Add BUGGIFY-style or failpoint-style hooks for rare but critical boundaries
+   such as:
+   - append before durable flush
+   - durable flush before visibility
+   - checkpoint publish before manifest update
+   - compaction start before compaction publish
+
+5. Require new journal, materializer, and replica-path code to expose these
+   seams before serving-path promotion.
+
+6. Keep the design close to TigerBeetle and FoundationDB in spirit:
+   deterministic replay, seeded reproducibility, and harsh failure injection.
+   Do not copy their distributed simulators literally.
+
+#### Files to change
+
+- `crates/neovex-storage/src/` for new journal and checkpoint seam types
+- `crates/neovex-engine/src/` where new time or fault seams are needed
+- `crates/neovex-test-support/src/`
+- `crates/neovex-server/tests/` if socket or transport replay harnesses are added
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- storage tests in `crates/neovex-storage/src/tests.rs`
+- engine tests in `crates/neovex-engine/src/tests.rs`
+- any later journal or materializer tests added under `crates/neovex-storage/src/`
+
+#### New tests
+
+- verify the same seed and failure schedule reproduce the same crash or replay
+  result exactly
+- verify injected crash points around append, flush, checkpoint, and compaction
+  boundaries either recover correctly or fail loudly and deterministically
+- verify simulated clocks can advance retries, deadlines, and background work
+  without wall-clock sleeps
+- verify deterministic failure tests can run in CI without relying on timing
+  races
+
+#### Acceptance criteria
+
+- new durability-critical subsystems expose deterministic clock, storage, and
+  fault-injection seams
+- failure schedules are reproducible by seed
+- later Phase `6`, `8`, and `9` work can be tested under crash and replay
+  conditions without depending on wall-clock timing or flaky races
+
+---
+
 ## Phase 5: Async Storage And Service Rewrite
 
 This phase is fully governed by this document. It absorbs the remaining rewrite
@@ -1208,7 +1678,12 @@ execution and real cancellation propagation.
    in scan and index loops rather than burying them behind an uncancelable async
    wrapper.
 
-5. Do not reopen the storage-backend choice in this phase.
+5. Preserve redb's multiple-reader behavior.
+   The async rewrite must not force all reads and writes for a tenant through a
+   single FIFO actor queue. Writes may remain serialized, but reads should still
+   be able to make concurrent progress against stable snapshots.
+
+6. Do not reopen the storage-backend choice in this phase.
    The concrete implementation is "redb behind an async execution boundary"
    first.
 
@@ -1221,7 +1696,9 @@ execution and real cancellation propagation.
    boundary.
    This may be an actor, dedicated executor, or similarly explicit ownership
    model, but the design must keep tenant ordering and cancellation behavior
-   clear.
+   clear while preserving multiple concurrent readers. If an actor boundary is
+   used, reads must not be forced through the same single serialized lane as
+   writes.
 
 3. Migrate read APIs first:
    - point reads
@@ -1265,6 +1742,8 @@ execution and real cancellation propagation.
   full scan
 - cancel an in-flight index scan and prove the same behavior
 - verify a queued canceled read request never begins real storage execution
+- add a concurrency test proving one blocked read does not force a second read
+  on the same tenant to wait behind a single actor-style FIFO queue
 - verify async read-path results match the previous synchronous implementation
   for point reads, queries, pagination, commit-log reads, and latest-sequence
   reads
@@ -1274,6 +1753,8 @@ execution and real cancellation propagation.
 - read paths no longer depend on `call_blocking(...)` or
   `call_blocking_cancellable(...)`
 - cancellation propagates into real storage work for reads
+- the async boundary does not reduce tenant reads to one-at-a-time FIFO
+  execution
 - evaluator purity and existing read semantics are preserved
 - the first async storage implementation still uses redb
 
@@ -1482,28 +1963,99 @@ preserving durability.
 This phase must not acknowledge a mutation or publish a reactive update from
 state that is not durably ordered.
 
+#### Important clarification
+
+redb is already crash-safe via copy-on-write atomic commit. This phase is not
+compensating for a missing storage WAL. It introduces an application-level
+durable mutation journal because we need an ordered history for replay,
+dependency-driven invalidation, streaming, and later replica consumption.
+
+If Neovex later adds a custom write-optimized layer such as an LSM-style
+memtable plus SST materializer, this durable journal should become the
+log-before-materialization contract for that layer. The roadmap should not
+assume a second Neovex-owned WAL by default. A future third-party storage engine
+may still keep its own internal WAL or journal, but the Neovex architecture
+should prefer one logical ordered-history contract rather than two competing
+application-level logs.
+
+#### Architectural decision
+
+For this roadmap, Neovex will implement and own the durable logical journal
+inside the existing `neovex-core` and `neovex-storage` architecture. Agents
+must not reopen this decision while executing Phase 6 work.
+
+Why this is the project decision:
+
+- redb already provides crash-safe atomic commit, so Phase 6 is not trying to
+  patch a missing storage-engine WAL
+- Neovex needs a logical ordered history for replay, invalidation, streaming,
+  and future replicas, not just a physical recovery log
+- that logical history must align with Neovex mutation semantics, dependency
+  matching, visibility rules, and tenant-scoped replay
+- building the journal as a Neovex-owned layer keeps the storage contract
+  stable even if a future materializer or storage engine changes underneath it
+
+External systems are references, not substitutes:
+
+- TigerBeetle is the main durability and verification reference
+- OpenRaft provides useful append, flush-notification, truncation, and no-hole
+  log invariants
+- RocksDB and Fjall are references for engine-internal WAL or journal
+  lifecycle, batching, recovery, and materialization behavior
+
+Explicit non-decisions for Phase 6:
+
+- do not adopt OpenRaft as the local journal implementation; it is the wrong
+  abstraction layer for a single-node per-tenant logical journal
+- do not swap the storage engine to Fjall, RocksDB, or another LSM as part of
+  this phase; that is a separate architecture project
+- do not reduce the journal to a thin byte-log crate that lacks Neovex replay,
+  visibility, and dependency-tracking semantics
+
 #### Implementation plan
 
-1. Introduce a richer durable mutation record.
-   The existing `CommitEntry` is not enough for replay. Before any WAL-style
-   architecture can work, we need a record type that contains enough data to
-   reconstruct writes.
+1. Implement the project-level durable-journal decision.
+   Build the Phase 6 journal as a Neovex-owned logical ordered-history layer in
+   the current redb-backed architecture. Do not spend execution PRs revisiting
+   storage-engine adoption or journal ownership.
 
-2. Keep `Service::apply_mutation(...)` as the semantic entrypoint.
+2. Introduce a richer durable mutation record.
+   The existing `CommitEntry` is not enough for replay or for the scaling spec's
+   commit-log-driven invalidation model. Before any journal-driven replication
+   or materialization architecture can work, we need a record type that
+   contains enough data to serve both:
+   - replay and materialization
+   - write-set-against-dependency-set matching for invalidation and streaming
 
-3. Append the richer mutation record durably before acknowledging the write.
+   At minimum the durable record should include:
+   - normalized logical write-set metadata such as table, op kind, document id,
+     and any key/range metadata required by the shared dependency-set matcher
+   - replay payload data such as post-image, patch, or tombstone data sufficient
+     to reconstruct state in order
+   - record versioning and integrity metadata suitable for durable streaming and
+     recovery
+
+   The journal contract must remain logical and storage-engine-agnostic.
+   Do not encode redb page identifiers, physical table layout, or other
+   backend-specific details into the durable record format.
+
+3. Keep `Service::apply_mutation(...)` as the semantic entrypoint.
+
+4. Append the richer mutation record durably before acknowledging the write.
    Group commit may batch multiple append requests into a single durable flush,
    but durability still comes before acknowledgment.
 
-4. Materialize into redb document/index tables in strict commit order.
+5. Materialize into redb document/index tables in strict commit order.
+   If a future custom LSM-style layer is introduced, it should consume this same
+   durable journal rather than defining a second application-level write log.
 
-5. Decide on one read-consistency strategy before implementation:
+6. Decide on one read-consistency strategy before implementation:
    - overlay pending materialized records onto reads, or
    - block reads until the materializer has applied the acknowledged sequence
 
-6. Keep subscription fan-out behind the same visibility boundary.
+7. Keep subscription fan-out behind the same visibility boundary.
 
-7. Add recovery logic so startup can replay durable-but-unapplied records.
+8. Add recovery logic so startup can replay durable-but-unapplied records.
 
 #### Files to change
 
@@ -1520,6 +2072,12 @@ state that is not durably ordered.
 #### New tests
 
 - verify a write is not acknowledged before durable append
+- verify the visible durable sequence never contains holes across batched appends
+  and recovery
+- verify durable journal serialization preserves both replay payload and
+  normalized write-set metadata
+- verify representative dependency-set intersections can be decided from durable
+  journal metadata for table, document, and index-range cases
 - verify recovery replays durable-but-unapplied records on startup
 - verify read-your-own-writes semantics across the materialization boundary
 
@@ -1527,6 +2085,15 @@ state that is not durably ordered.
 
 - there is no visibility of non-durable writes
 - write acknowledgments are durable even when materialization is deferred
+- journal records support both replay/materialization and dependency-driven
+  invalidation use cases
+- the implementation follows the project-level decision to keep the journal
+  Neovex-owned and does not silently replace the storage engine architecture
+- journal records remain logical enough to support future alternate
+  materializers or storage engines without redefining the ordered-history
+  contract
+- the roadmap remains compatible with a future custom LSM-style materializer
+  without requiring a second Neovex-owned application WAL
 - startup recovery can reapply durable journal entries safely
 
 ---
@@ -1558,6 +2125,11 @@ source of replayable state.
 
 5. Use consumer cursors and retention rules that align with the horizontal
    scaling spec's commit-log model.
+
+6. Treat this phase as the end of the server-internal foundation, not the full
+   end-state architecture.
+   The next phase should make that journal consumable by streaming and replica
+   paths rather than letting the roadmap stop at internal CDC readiness.
 
 #### Files to change
 
@@ -1728,6 +2300,559 @@ This remains blocked on deploy identity and auth design.
 
 ---
 
+## Phase 8: Log Streaming And Replica Paths
+
+This phase carries the roadmap beyond server-side re-evaluation toward the
+scaling spec's longer-term C+D+E architecture: database-per-tenant plus
+commit-log-driven invalidation plus embedded replicas.
+
+### 8A. Stream the authoritative per-tenant journal to external consumers
+
+**Priority:** low, after 6B  
+**Expected impact:** turns the durable journal into a concrete sync and replica
+feed instead of stopping at internal CDC readiness.
+
+#### Current verified state
+
+- the roadmap in Phase 6 moves the journal toward authoritative ordered history,
+  but there is not yet a concrete consumer-facing streaming path
+- clients today still receive server-computed subscription results rather than
+  consuming the ordered history directly
+
+#### Implementation plan
+
+1. Introduce a tenant-scoped journal streaming API using ordered sequence
+   cursors.
+
+2. Keep the first consumer model read-only and replay-friendly:
+   - resume from sequence cursor
+   - at-least-once delivery semantics
+   - explicit duplicate-tolerant replay contract
+
+3. Reuse the authoritative durable journal format from 6A and 6B. Do not invent
+   a second replication log for consumers.
+
+4. Support internal and infrastructure consumers first, such as:
+   - backup or audit pipelines
+   - an edge or embedded-replica feeder
+   - verification or state-rebuild tooling
+
+5. Define retention, cursor, and bootstrap rules before broad adoption:
+   - snapshot plus journal tail bootstrap
+   - retention cut points
+   - cursor invalidation behavior after compaction
+
+#### Files to change
+
+- `crates/neovex-storage/src/`
+- `crates/neovex-engine/src/service/queries.rs`
+- `crates/neovex-server/src/http/`
+- `crates/neovex-server/src/protocol.rs`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- commit-log and sequence-read tests in `crates/neovex-engine/src/tests.rs`
+- server HTTP tests in `crates/neovex-server/src/tests/`
+
+#### New tests
+
+- verify journal streaming resumes correctly from a sequence cursor
+- verify consumers observe strictly ordered entries with documented replay
+  semantics
+- verify bootstrap from snapshot plus journal tail reconstructs the same state as
+  live reads
+
+#### Acceptance criteria
+
+- there is a concrete ordered journal stream for tenant-scoped consumers
+- consumers can resume from sequence cursors without a second log format
+- the roadmap now has an explicit bridge from authoritative journal history to
+  sync and replica consumers
+
+---
+
+### 8B. Add an embedded-replica path for local or edge query evaluation
+
+**Priority:** low, after 8A  
+**Expected impact:** establishes a concrete path from server-evaluated pushes to
+replica-local reads for selected workloads.
+
+#### Current verified state
+
+- the server remains responsible for re-evaluating subscriptions and pushing
+  results directly
+- there is no embedded replica or edge-consumption path in the current codebase
+- the scaling spec's north star explicitly calls for embedded replicas as a
+  complement to database-per-tenant plus commit-log invalidation
+
+#### Implementation plan
+
+1. Start with a narrow replica target:
+   - one tenant at a time
+   - read-only replica
+   - supported by snapshot plus journal-tail bootstrap
+
+2. Build a replica consumer that applies authoritative journal records into a
+   local materialized view or embedded store.
+
+3. Evaluate a representative subset of query and subscription workloads against
+   that local replica and compare the results with the current server-evaluated
+   path.
+
+4. Keep writes server-authoritative in the first pass.
+   Replica work is about read-path offload and local evaluation, not multi-master
+   mutation.
+
+5. Use this phase to prove correctness and economics before productizing wider
+   offline or edge features.
+
+#### Files to change
+
+- new replica or sync-consumer module location
+- `crates/neovex-engine/src/service/queries.rs` as needed for replica-comparison
+  helpers
+- `crates/neovex-server/src/` for bootstrap or streaming integration
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- engine replay and rebuild tests in `crates/neovex-engine/src/tests.rs`
+- server integration tests in `crates/neovex-server/src/tests/`
+
+#### New tests
+
+- bootstrap a replica from snapshot plus journal and verify it matches the live
+  tenant state
+- verify representative subscription or query results computed from the replica
+  match server-evaluated results
+- verify a temporarily disconnected replica can catch up from the journal after
+  reconnection
+
+#### Acceptance criteria
+
+- the roadmap no longer stops at internal CDC foundations
+- there is a validated path for replica-local query evaluation on top of the
+  authoritative journal
+- server-side re-evaluation is clearly documented as the near-term path, not the
+  final architecture endpoint
+
+---
+
+## Phase 9: Deterministic Materializer And Robustness
+
+This phase puts a TigerBeetle-inspired deterministic materializer explicitly in
+scope, but only on top of the durable journal introduced in Phase 6. It is not
+a Phase 6 storage-engine swap and it does not replace redb as the durability
+base for this roadmap.
+
+### 9A. Build a shadow journal-driven materializer with deterministic compaction
+
+**Priority:** low, after 6B  
+**Expected impact:** establishes a concrete path to a custom write-optimized
+materializer without weakening the current redb-backed correctness path.
+
+#### Current verified state
+
+- redb document and index tables remain the only materialized serving state
+- there is no custom Neovex materializer consuming the durable journal
+- TigerBeetle's LSM and checkpoint model are now an explicit design reference,
+  but not yet represented in the codebase
+
+#### Architectural decision
+
+If Neovex builds a custom materializer, the first version should:
+
+- consume the authoritative durable journal from Phase 6
+- use deterministic compaction principles inspired by TigerBeetle
+- run in shadow mode first, with redb remaining the serving path and
+  correctness oracle
+
+Deterministic compaction here means:
+
+- compaction inputs and outputs are chosen from journal state, checkpoint
+  state, and explicit configuration
+- compaction behavior does not depend on wall-clock timing, racing background
+  tasks, or incidental execution order
+- given the same checkpoint, journal suffix, and configuration, rebuild and
+  compaction should converge on the same logical materialized state
+
+#### Implementation plan
+
+1. Add a journal-driven materializer module under `crates/neovex-storage/src/materializer/`
+   or a closely adjacent storage-owned location. Keep the first version clearly
+   subordinate to the redb-backed serving path.
+
+2. Build the materializer from snapshot plus journal tail and support full
+   replay from an explicit checkpoint boundary.
+
+3. Adopt deterministic compaction rules inspired by TigerBeetle:
+   - compaction triggers depend on explicit thresholds and state, not timers
+   - compaction input selection is deterministic for a given state
+   - checkpoint and manifest updates are explicit and versioned
+
+4. Keep the first implementation in shadow mode.
+   Every selected query or lookup path should be able to compare materializer
+   results against the current redb-backed path before any serving promotion.
+
+5. Keep the journal contract logical and storage-engine-agnostic even if the
+   materializer uses LSM-style internal structures.
+
+6. Document the compaction invariants and checkpoint semantics in
+   `ARCHITECTURE.md` when the shadow implementation lands.
+
+#### Files to change
+
+- `crates/neovex-storage/src/materializer/`
+- `crates/neovex-storage/src/`
+- `crates/neovex-engine/src/service/queries.rs`
+- `crates/neovex-engine/src/tests.rs`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- storage replay and commit-log tests in `crates/neovex-storage/src/tests.rs`
+- engine query tests in `crates/neovex-engine/src/tests.rs`
+
+#### New tests
+
+- rebuild the materializer from checkpoint plus journal and verify it matches
+  the live redb-backed state
+- verify the same replay input and compaction configuration produce the same
+  logical materialized state across repeated rebuilds
+- verify crash-recovery from a checkpoint boundary plus journal tail restores
+  the same materialized state
+- verify representative shadow queries return the same results as the redb
+  serving path
+
+#### Acceptance criteria
+
+- a custom materializer exists only in shadow mode at first
+- deterministic compaction rules are explicit, documented, and testable
+- materialized state can be rebuilt from checkpoint plus durable journal
+- redb remains the correctness oracle until shadow verification proves parity
+
+---
+
+### 9B. Add TigerBeetle-style robustness testing for journal and materializer
+
+**Priority:** low, after 9A  
+**Expected impact:** ensures any future materializer is introduced with replay,
+crash, and corruption robustness rather than benchmark-first optimism.
+
+#### Current verified state
+
+- the roadmap already calls for durable-journal tests, but not yet for a
+  TigerBeetle-style robustness harness around a custom materializer
+- there is no dedicated failure-injection or crash-replay test harness for a
+  journal-driven materializer
+
+#### Implementation plan
+
+1. Add deterministic replay tests that exercise:
+   - replay from clean checkpoints
+   - replay after interrupted materialization
+   - replay after interrupted compaction
+
+2. Add corruption and partial-write-style tests for journal segments,
+   checkpoints, manifests, or equivalent materializer metadata.
+
+3. Add fuzz or property-style tests looking for:
+   - replay crash loops
+   - divergence between redb and the shadow materializer
+   - no-hole or out-of-order journal visibility bugs
+   - compaction behaviors that depend on nondeterministic scheduling
+
+4. Keep redb-vs-materializer shadow comparison in the test matrix until the
+   materializer is promoted for any serving path.
+
+5. Require any serving promotion to document:
+   - which query classes are now allowed to read from the materializer
+   - what shadow-validation evidence justified the promotion
+   - what rollback path returns serving reads to redb if divergence is detected
+
+#### Files to change
+
+- `crates/neovex-storage/src/materializer/`
+- `crates/neovex-storage/src/tests.rs`
+- `crates/neovex-engine/src/tests.rs`
+- `crates/neovex-test-support/`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- storage replay tests in `crates/neovex-storage/src/tests.rs`
+- engine query parity tests in `crates/neovex-engine/src/tests.rs`
+
+#### New tests
+
+- verify interrupted compaction plus replay converges to the same materialized
+  state
+- verify injected corruption is detected and does not silently yield divergent
+  query answers
+- verify repeated replay of the same journal suffix is idempotent
+- verify shadow divergence is surfaced deterministically in tests
+
+#### Acceptance criteria
+
+- the materializer has a TigerBeetle-inspired robustness harness before serving
+  promotion
+- replay, corruption detection, and shadow-parity guarantees are testable
+- no serving-path promotion occurs without documented shadow-validation
+  evidence
+
+---
+
+## Phase 10: Snapshot And Historical Read Evolution
+
+This phase is intentionally after the core OCC, journal, and materializer work.
+It exists to preserve the research guide's MVCC extension path without
+pretending Neovex needs time-travel reads immediately.
+
+### 10A. Layer optional snapshot and historical reads on top of OCC and the durable journal
+
+**Priority:** low, after 3F and 6B  
+**Expected impact:** preserves a future path to MVCC-style snapshot reads or
+time-travel queries without replacing OCC as the primary transaction model.
+
+#### Current verified state
+
+- `redb` already provides internal copy-on-write MVCC snapshots for storage
+  correctness
+- the Neovex engine does not yet expose snapshot, historical, or time-travel
+  query semantics as a product feature
+- the roadmap now commits to OCC as the primary concurrency model, with the
+  durable journal as the longer-term ordered history substrate
+
+#### Implementation plan
+
+1. Treat this as an additive read feature layered on top of OCC, not as a
+   replacement concurrency model.
+
+2. Define which snapshot forms are actually supported before implementation,
+   such as:
+   - read-at-transaction-start snapshots
+   - bounded historical reads by sequence number
+   - bounded historical reads by timestamp if sequence-to-time mapping is
+     explicit enough
+
+3. Use the durable journal, checkpoints, and retained materialized history as
+   the basis for any historical visibility contract rather than leaking raw
+   storage-engine internals into the public API.
+
+4. Keep planner-enforced authorization semantics defined for historical reads
+   as well as current reads.
+
+5. Add explicit retention and garbage-collection rules so historical reads do
+   not become an accidental infinite-history promise.
+
+#### Files to change
+
+- `crates/neovex-core/src/query.rs`
+- `crates/neovex-engine/src/service/queries.rs`
+- `crates/neovex-storage/src/`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- engine query tests in `crates/neovex-engine/src/tests.rs`
+- storage replay tests in `crates/neovex-storage/src/tests.rs`
+
+#### New tests
+
+- verify a snapshot query sees a stable view while concurrent writes continue
+- verify bounded historical reads reconstruct the correct view from retained
+  history
+- verify authorization rules still apply to snapshot and historical queries
+- verify retention rules reject history requests that fall outside the retained
+  window
+
+#### Acceptance criteria
+
+- snapshot or historical reads are clearly additive to the OCC model
+- visibility rules are explicit and testable
+- retention boundaries are documented and enforced
+- the feature does not rely on implicit redb internals as the public contract
+
+---
+
+## Phase 11: Schema-Generated Native API And Typed Extension ABI
+
+This phase operationalizes the research guide's schema-driven API direction
+without replacing the Convex compatibility surface. It is intentionally late in
+this roadmap because the engine must first gain planner-enforced authorization,
+shared dependency semantics, and a stable enough internal contract to expose a
+generated native API safely.
+
+### 11A. Add a schema-generated Neovex-native API surface
+
+**Priority:** low, after 3B and 3E  
+**Expected impact:** gives Neovex a first-class schema-generated developer
+surface for CRUD, pagination, and subscriptions instead of relying only on
+hand-written native routes or the Convex compatibility path.
+
+#### Current verified state
+
+- Neovex-native routes are currently hand-written server endpoints
+- Convex compatibility exposes a function-oriented JavaScript surface through
+  V8 and generated manifests, but Neovex does not yet expose a schema-generated
+  native API
+- planner-enforced authorization is scheduled earlier in the roadmap and should
+  become the policy substrate for any generated API
+
+#### Architectural decision
+
+Follow battle-tested generated-API patterns rather than inventing a bespoke
+opaque layer:
+
+- like PostgREST, the generated API should expose a schema-owned public model
+  rather than leaking raw storage internals directly
+- like Hasura, role- or principal-aware policy should remain declarative and
+  planner-enforced rather than moving authorization logic into generated route
+  glue
+- like Convex, compatibility-specific function execution remains a distinct
+  surface rather than the only way to reach database behavior
+
+There is no single Rust library that solves this entire product surface for
+Neovex. The generated API contract, schema exposure rules, and auth semantics
+should remain Neovex-owned.
+
+#### Implementation plan
+
+1. Define an explicit public schema exposure model.
+   The generated API should be derived from the schema objects Neovex marks as
+   public or exposed, not from every internal storage structure automatically.
+
+2. Generate a typed API contract for:
+   - CRUD operations
+   - pagination and filtering
+   - subscription registration shapes
+   - schema-derived metadata needed by SDKs or tooling
+
+3. Keep generated endpoints planner-first.
+   Generated reads and writes should call the same engine entrypoints as manual
+   routes, with planner-enforced authorization and dependency tracking.
+
+4. Preserve versionability.
+   The generated surface should make it possible to evolve the internal schema
+   and storage layout without making every internal change a wire-breaking API
+   change.
+
+5. Keep the generated Neovex-native API distinct from the Convex compatibility
+   layer.
+   Shared engine semantics are desirable; forced contract unification is not.
+
+#### Files to change
+
+- `crates/neovex-core/src/schema.rs`
+- `crates/neovex-server/src/`
+- `packages/codegen/` or a new Neovex-native codegen package
+- `packages/neovex/`
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- server route tests in `crates/neovex-server/src/tests/`
+- JS package tests in `packages/neovex/`
+
+#### New tests
+
+- verify the same schema produces a deterministic generated API contract
+- verify generated CRUD and subscription routes enforce the same planner-level
+  authorization as manual engine calls
+- verify generated pagination and filtering behavior matches the engine's query
+  semantics exactly
+- verify internal schema or storage-only changes do not accidentally leak into
+  the generated public contract
+
+#### Acceptance criteria
+
+- Neovex has a schema-generated native API surface distinct from the Convex
+  compatibility layer
+- generated routes remain planner-enforced and authorization-safe
+- the public generated contract is explicit, versionable, and deterministic
+
+---
+
+### 11B. Add a typed WASM plugin ABI for Neovex-native extensions
+
+**Priority:** low, after 11A  
+**Expected impact:** creates a database-native extension surface for tightly
+bounded custom logic without overloading the Convex compatibility runtime.
+
+#### Current verified state
+
+- the current extensibility surface is the V8-based Convex compatibility path
+- there is no Wasmtime- or WIT-based plugin ABI for Neovex-native extensions
+- the roadmap already treats future WASM support as additive rather than a
+  replacement for V8
+
+#### Architectural decision
+
+Use battle-tested typed-component practices rather than a generic "run wasm"
+escape hatch:
+
+- use Wasmtime as the Rust-native runtime for plugin execution
+- define the ABI in WIT or the Component Model so imports and exports are typed
+  and versionable
+- expose explicit capabilities rather than broad engine internals
+- keep authorization and query planning in the engine; plugins consume narrow
+  authorized capabilities instead of deciding policy for themselves
+
+#### Implementation plan
+
+1. Define a narrow first plugin scope, such as:
+   - computed fields
+   - validation helpers
+   - deterministic transforms
+   Avoid an unrestricted general-purpose serverless runtime in the first pass.
+
+2. Define a typed WIT interface for the first plugin scope, including explicit
+   capability handles for the host services a plugin may use.
+
+3. Embed Wasmtime at the server or engine integration boundary, not inside
+   `neovex-runtime`.
+   Keep the existing V8 compatibility runtime independent and separate.
+
+4. Version the plugin ABI explicitly so host and plugin mismatches fail fast
+   instead of silently reinterpreting memory layouts or semantics.
+
+5. Keep planner-enforced authorization in the engine.
+   Plugins should observe only the capabilities and data their caller is
+   already authorized to access.
+
+#### Files to change
+
+- new Wasmtime integration module location
+- `crates/neovex-core/src/` for plugin ABI metadata
+- `crates/neovex-server/src/` or `crates/neovex-engine/src/` at the chosen host
+  boundary
+- `ARCHITECTURE.md`
+
+#### Existing tests to extend
+
+- engine tests in `crates/neovex-engine/src/tests.rs`
+- server integration tests in `crates/neovex-server/src/tests/`
+
+#### New tests
+
+- verify ABI version mismatches fail explicitly
+- verify a plugin cannot access host capabilities it was not granted
+- verify plugin execution remains deterministic for the same inputs and host
+  state
+- verify planner-enforced authorization still governs any data reached through
+  plugin calls
+
+#### Acceptance criteria
+
+- Neovex has a typed, versioned WASM plugin ABI that is separate from the V8
+  compatibility runtime
+- Wasmtime is used as the plugin runtime rather than a generic untyped wasm
+  loader
+- plugin capabilities are narrow, explicit, and authorization-safe
+
+---
+
 ## Standing Architectural Guidelines
 
 These are continuous review rules, not one-time deliverables.
@@ -1773,23 +2898,42 @@ Phase 3:
   3A independent
   3B independent
   3C benefits from 3A and 3B
+  3D depends on 3A and 3B, and benefits from 3C
+  3E depends on 3B and benefits from 3D
+  3F depends on 3D and 3E
 
 Phase 4:
   4A independent
   4B independent
   4C optional and independent
+  4D should land before 6A, 8A, and 9A
 
 Phase 5:
   5A -> 5B -> 5C
   5 benefits from 1D and 1F
 
 Phase 6:
-  6A depends on Phase 5
+  6A depends on Phase 5 and benefits from 3D and 4D
   6B depends on 6A
 
 Phase 7:
   7A depends on the runtime executor shape from 2A
   7B remains blocked on deploy identity/auth
+
+Phase 8:
+  8A depends on 6B
+  8B depends on 8A
+
+Phase 9:
+  9A depends on 6B and 4D, and benefits from 3D
+  9B depends on 9A
+
+Phase 10:
+  10A depends on 3F and 6B
+
+Phase 11:
+  11A depends on 3B and 3E
+  11B depends on 11A and benefits from 3E
 ```
 
 ---
@@ -1803,10 +2947,21 @@ Phase 7:
 5. 3A
 6. 3B
 7. 3C
-8. 4A and 4B if handler/lifecycle pain is still active
-9. 5A
-10. 5B
-11. 5C
-12. 6A
-13. 6B
-14. 7B when deploy identity exists
+8. 3D
+9. 3E
+10. 4D
+11. 3F
+12. 4A and 4B if handler or lifecycle pain is still active
+13. 5A
+14. 5B
+15. 5C
+16. 6A
+17. 6B
+18. 8A
+19. 8B
+20. 9A
+21. 9B
+22. 10A if snapshot or historical reads become a product requirement
+23. 11A if the Neovex-native generated API becomes a product priority
+24. 11B after 11A if a typed WASM plugin ABI becomes a product priority
+25. 7B when deploy identity exists
