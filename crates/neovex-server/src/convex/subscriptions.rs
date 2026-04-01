@@ -1,8 +1,12 @@
 use super::dispatch::{
     bootstrap_runtime_named_subscription_async,
-    invoke_named_convex_function_with_trace_async_cancellable,
+    invoke_named_convex_function_with_trace_async_cancellable, next_runtime_server_request_id,
 };
 use super::*;
+
+fn next_runtime_subscription_server_request_id(prefix: &str) -> String {
+    next_runtime_server_request_id(prefix)
+}
 
 fn subscription_plan_for_query(
     query: ConvexExecutableQuery,
@@ -163,7 +167,9 @@ async fn apply_subscription_transform(
                     auth: auth.clone(),
                 },
                 runtime_cancellation.clone(),
-                event.request_id.map(str::to_owned),
+                Some(next_runtime_subscription_server_request_id(
+                    "convex-ws-subscription-reeval",
+                )),
             )
             .await
             {
@@ -221,7 +227,9 @@ async fn apply_subscription_transform(
                     auth: auth.clone(),
                 },
                 runtime_cancellation.clone(),
-                event.request_id.map(str::to_owned),
+                Some(next_runtime_subscription_server_request_id(
+                    "convex-ws-subscription-reeval",
+                )),
             )
             .await
             .and_then(|(value, read_set)| {
@@ -627,7 +635,9 @@ pub(super) async fn handle_convex_socket_for_tenant(
                                 cursor_for_worker,
                                 current_auth.clone(),
                                 runtime_cancellation,
-                                Some(request_id.clone()),
+                                Some(next_runtime_subscription_server_request_id(
+                                    "convex-ws-subscription-bootstrap",
+                                )),
                             )
                             .await
                             {

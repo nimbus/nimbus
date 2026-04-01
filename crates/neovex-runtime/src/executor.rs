@@ -175,7 +175,6 @@ impl RuntimeExecutor {
             );
         }
 
-        metrics.record_request_correlation(&context);
         metrics.increment_active_isolates_for_tenant(context.tenant_label.as_deref());
         let execution_started_at = Instant::now();
         let cancellation_for_metrics = cancellation.clone();
@@ -238,6 +237,10 @@ impl RuntimeExecutor {
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
+        self.inner
+            .policy
+            .metrics()
+            .record_request_correlation(&context);
         Self::invoke_job(
             self.inner.policy.clone(),
             runtime,
@@ -258,6 +261,10 @@ impl RuntimeExecutor {
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
+        self.inner
+            .policy
+            .metrics()
+            .record_request_correlation(&context);
         if cancellation
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
@@ -381,5 +388,68 @@ impl Default for RuntimeExecutor {
     fn default() -> Self {
         let policy = Arc::new(RuntimePolicy::default());
         Self::new(policy)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::Value;
+
+    use super::*;
+    use crate::host::{HostBridge, HostCallRequest};
+
+    struct NoopHost;
+
+    impl HostBridge for NoopHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Ok(Value::Null)
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_canceled_worker_invocation_records_request_correlation() {
+        let policy = Arc::new(RuntimePolicy::default());
+        let executor = RuntimeExecutor::new(policy.clone());
+        let request = InvocationRequest {
+            kind: crate::runtime::InvocationKind::Query,
+            function_name: "messages:list".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            &request,
+            "demo",
+            "req-pre-canceled",
+        );
+        let cancellation = HostCallCancellation::default();
+        cancellation.cancel_due_to_disconnect();
+
+        let error = executor
+            .invoke_on_worker(
+                NeovexRuntime::new(Arc::new(NoopHost)),
+                RuntimeBundle::new("unused.mjs"),
+                request,
+                context,
+                Some(cancellation),
+            )
+            .await
+            .expect_err("pre-canceled worker invocation should fail");
+
+        assert!(matches!(error, NeovexRuntimeError::Cancelled));
+
+        let snapshot = policy.metrics_snapshot();
+        assert_eq!(snapshot.queued_canceled_invocations, 1);
+        assert_eq!(snapshot.disconnect_canceled_invocations, 1);
+        assert_eq!(snapshot.recent_request_correlations.len(), 1);
+        let correlation = &snapshot.recent_request_correlations[0];
+        assert_eq!(correlation.server_request_id, "req-pre-canceled");
+        assert_eq!(correlation.function_name, "messages:list");
+        assert_eq!(correlation.kind, "query");
+        assert_eq!(correlation.tenant_label.as_deref(), Some("demo"));
+        assert!(correlation.invocation_id > 0);
     }
 }
