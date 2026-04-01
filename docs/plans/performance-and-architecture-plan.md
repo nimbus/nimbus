@@ -240,12 +240,12 @@ dependencies are `done`.
 | 3C | todo | none | benefits from 3A and 3B, but no hard gate |
 | 3D | todo | 3A, 3B | dependency model work starts after 3A and 3B |
 | 3E | todo | 3B | authorization move starts after 3B |
-| 4D | todo | none | should land before 6A, 8A, and 9A |
+| 4D | todo | none | simulation seam groundwork should land before 6A, 8A, and 9A |
 | 3F | todo | 3D, 3E | OCC starts after dependency model and auth work |
 | 5A | todo | none | async rewrite start |
 | 5B | todo | 5A | write-path transaction model |
 | 5C | todo | 5A, 5B | remove blocking wrappers after async read/write migration |
-| 6A | todo | 5A, 5B, 5C | durable journal begins after Phase 5 |
+| 6A | todo | 4D, 5A, 5B, 5C | durable journal begins after Phase 5 and deterministic seam groundwork |
 | 6B | todo | 6A | promote journal after 6A |
 | 8A | todo | 6B | external journal streaming after authoritative journal |
 | 8B | todo | 8A | embedded replica path after streaming path |
@@ -364,6 +364,10 @@ Every work item below should preserve them.
    point, cancellation may abort the write. After that point, the engine/storage
    boundary must not surface `Cancelled`. However, an HTTP or WebSocket client
    that disconnects after commit still may not observe the success response.
+   When Phase 6 separates durable ordering from later materialization, serving
+   reads should wait for the required applied sequence rather than overlay
+   journal-only records onto the read path unless a later roadmap phase
+   explicitly changes that contract.
 
 8. Runtime bundle integrity remains strict.
    For mutable, path-backed bundles, the runtime continues to verify content
@@ -1321,7 +1325,7 @@ and provides the substrate for journal-driven matching later.
 #### Implementation plan
 
 1. Introduce a normalized dependency-set model in a workspace-shared layer,
-   most likely `neovex-core`, that can represent current coarse-to-fine
+   `neovex-core`, that can represent current coarse-to-fine
    dependency forms such as:
    - table-level reads
    - document-level reads
@@ -1391,7 +1395,7 @@ part of the query path instead of a route-specific convention.
 #### Current verified state
 
 - the current codebase authenticates Convex requests in
-  `crates/neovex-server/src/adapters/convex/auth.rs` and passes
+  `crates/neovex-server/src/adapters/convex/auth/` and passes
   `InvocationAuth` into runtime handlers
 - Neovex-native routes do not currently prescribe a built-in authentication or
   authorization model
@@ -1408,9 +1412,9 @@ part of the query path instead of a route-specific convention.
    becomes an engine and planner responsibility that cannot be bypassed by
    route shape.
 
-2. Introduce declarative access-policy types in a workspace-shared layer, most
-   likely `neovex-core`, so policy can be defined alongside schema rather than
-   inside ad hoc handler code.
+2. Introduce declarative access-policy types directly in `neovex-core` so
+   policy can be defined alongside schema rather than inside ad hoc handler
+   code.
 
 3. Start with a constrained rule model.
    The first pass should support policy predicates over:
@@ -1458,8 +1462,8 @@ part of the query path instead of a route-specific convention.
 - `crates/neovex-engine/src/subscriptions.rs`
 - `crates/neovex-engine/src/tenant.rs`
 - `crates/neovex-engine/src/evaluator.rs`
-- `crates/neovex-server/src/adapters/convex/auth.rs`
-- `crates/neovex-server/src/adapters/convex/runtime_bridge.rs`
+- `crates/neovex-server/src/adapters/convex/auth/`
+- `crates/neovex-server/src/adapters/convex/host_bridge/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
@@ -1541,7 +1545,7 @@ using read and write sets for both invalidation and conflict detection.
 - `crates/neovex-engine/src/service/mutations.rs`
 - `crates/neovex-engine/src/service/queries.rs`
 - `crates/neovex-engine/src/service/` for new transaction coordination code
-- `crates/neovex-server/src/adapters/convex/runtime_bridge.rs`
+- `crates/neovex-server/src/adapters/convex/host_bridge/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
@@ -1775,6 +1779,12 @@ reproducible verification environment.
    - journal append, flush, and reopen boundaries
    - checkpoint and manifest persistence boundaries
    - injected crash or fault hooks around visibility transitions
+
+   Before the journal or checkpoint subsystems exist, keep the production
+   implementations narrow. In the first pass these seams may be thin wrappers
+   around existing clock, task, and test-support boundaries that later expand
+   as Phase 6 and Phase 9 land. Do not build speculative framework layers that
+   guess at final journal internals too early.
 
 2. Provide both production implementations and seeded deterministic test
    implementations of those seams.
@@ -2266,17 +2276,37 @@ Explicit non-decisions for Phase 6:
    Group commit may batch multiple append requests into a single durable flush,
    but durability still comes before acknowledgment.
 
-5. Materialize into redb document/index tables in strict commit order.
+5. Materialize into redb document/index tables in strict commit order and track
+   both a durable sequence head and an applied sequence head per tenant.
    If a future custom LSM-style layer is introduced, it should consume this same
    durable journal rather than defining a second application-level write log.
 
-6. Decide on one read-consistency strategy before implementation:
-   - overlay pending materialized records onto reads, or
-   - block reads until the materializer has applied the acknowledged sequence
+6. Keep one authoritative read-visible state in Phase 6A: the applied
+   materialized state in redb.
+   Do not overlay pending journal records onto point reads, scans,
+   subscriptions, or cache lookups in this phase. The first implementation
+   should preserve one serving read path rather than inventing a second
+   correctness-critical overlay engine.
 
-7. Keep subscription fan-out behind the same visibility boundary.
+7. Gate reads on the applied sequence watermark.
+   Reads should execute only when `applied_sequence >= required_sequence`.
+   In the first implementation:
+   - a normal "latest" read should wait for at least the durable head observed
+     when the read is admitted
+   - a read-your-own-write or causally-following read should wait for at least
+     the caller's acknowledged sequence
+   - the engine should expose metrics for durable head, applied head, apply lag,
+     and read wait time so lag is observable and backpressure can be added
+     before correctness is weakened
 
-8. Add recovery logic so startup can replay durable-but-unapplied records.
+8. Keep subscription fan-out and cache publication behind the same applied
+   visibility boundary.
+   A mutation may be durably committed before it is read-visible, but reactive
+   reevaluation and cache publication must not run ahead of the applied
+   sequence.
+
+9. Add recovery logic so startup can replay durable-but-unapplied records and
+   restore the correct applied watermark before serving reads.
 
 #### Files to change
 
@@ -2300,12 +2330,27 @@ Explicit non-decisions for Phase 6:
 - verify representative dependency-set intersections can be decided from durable
   journal metadata for table, document, and index-range cases
 - verify recovery replays durable-but-unapplied records on startup
-- verify read-your-own-writes semantics across the materialization boundary
+- verify normal "latest" reads wait for the admitted durable head before
+  returning
+- verify read-your-own-writes and causally-following reads wait for the
+  acknowledged sequence across the materialization boundary
+- verify reads do not synthesize overlay results from journal-only records that
+  are not yet applied to materialized state
+- verify subscription fan-out and cache publication happen only after the
+  applied sequence has advanced past the mutation sequence
+- verify durable head, applied head, apply lag, and read wait time metrics are
+  emitted for the new visibility boundary
 
 #### Acceptance criteria
 
 - there is no visibility of non-durable writes
 - write acknowledgments are durable even when materialization is deferred
+- there is one authoritative read-visible state in Phase 6A: applied
+  materialized state
+- serving reads wait on the applied sequence watermark rather than using a
+  journal-overlay read path
+- no journal-only write becomes query-visible, subscription-visible, or
+  cache-visible before its sequence is applied
 - journal records support both replay/materialization and dependency-driven
   invalidation use cases
 - the implementation follows the project-level decision to keep the journal
@@ -2336,11 +2381,16 @@ source of replayable state.
 
 2. Treat redb document/index tables as a materialized view maintained from that
    history.
+   Even after the journal becomes the canonical ordered history, serving reads
+   should still come from applied materialized state unless a later roadmap
+   phase explicitly promotes another read path.
 
 3. Add replay and snapshot boundaries:
    - bootstrap from snapshot plus journal tail
    - rebuild from journal for verification
    - define compaction and snapshot cut points explicitly
+   - persist enough sequence metadata to prove which journal entries are
+     already reflected in materialized serving state
 
 4. Add CDC or streaming APIs only after replay and recovery semantics are solid.
 
@@ -2372,11 +2422,15 @@ source of replayable state.
 - rebuild state from snapshot plus journal and verify it matches live state
 - verify journal consumers observe strictly ordered entries
 - verify point-in-time replay to a chosen sequence number
+- verify rebuilt materialized state reports the same applied sequence boundary
+  as the live serving path
 
 #### Acceptance criteria
 
 - durable journal order is the canonical order for downstream consumers
 - document/index state can be rebuilt from journal plus snapshot boundaries
+- serving reads still obey applied materialized visibility rather than direct
+  journal visibility
 - CDC and future replication work have a concrete, testable foundation
 
 ---
@@ -3091,7 +3145,8 @@ These are continuous review rules, not one-time deliverables.
 4. Keep caches and journals subordinate to ordering rules.
    A cache is never authoritative. A journal is not authoritative until a later
    phase explicitly makes it so with replay, recovery, and durability
-   semantics.
+   semantics. In Phase 6, serving reads still come from applied materialized
+   state rather than direct journal overlay.
 
 5. Do not weaken durability for speed.
    No best-effort write buffer should become visible to clients before it is
@@ -3103,6 +3158,11 @@ These are continuous review rules, not one-time deliverables.
 7. Keep transport semantics honest.
    "Committed" at the engine boundary does not guarantee an already-disconnected
    client observed the response.
+
+8. Preserve Convex compatibility unless the roadmap explicitly says otherwise.
+   Changes that affect the Convex adapter, runtime bridge, generated bundles,
+   or protocol semantics should keep existing compatibility tests passing unless
+   a roadmap item records an intentional compatibility change.
 
 ---
 
@@ -3127,14 +3187,14 @@ Phase 4:
   4A independent
   4B independent
   4C optional and independent
-  4D should land before 6A, 8A, and 9A
+  4D independent
 
 Phase 5:
   5A -> 5B -> 5C
   5 benefits from 1D and 1F
 
 Phase 6:
-  6A depends on Phase 5 and benefits from 3D and 4D
+  6A depends on Phase 5 and 4D, and benefits from 3D
   6B depends on 6A
 
 Phase 7:
@@ -3173,16 +3233,17 @@ Phase 11:
 10. 4D
 11. 3F
 12. 4A and 4B if handler or lifecycle pain is still active
-13. 5A
-14. 5B
-15. 5C
-16. 6A
-17. 6B
-18. 8A
-19. 8B
-20. 9A
-21. 9B
-22. 10A if snapshot or historical reads become a product requirement
-23. 11A if the Neovex-native generated API becomes a product priority
-24. 11B after 11A if a typed WASM plugin ABI becomes a product priority
-25. 7B when deploy identity exists
+13. 4C if external metrics export becomes a concrete requirement
+14. 5A
+15. 5B
+16. 5C
+17. 6A
+18. 6B
+19. 8A
+20. 8B
+21. 9A
+22. 9B
+23. 10A if snapshot or historical reads become a product requirement
+24. 11A if the Neovex-native generated API becomes a product priority
+25. 11B after 11A if a typed WASM plugin ABI becomes a product priority
+26. 7B when deploy identity exists

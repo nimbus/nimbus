@@ -109,11 +109,11 @@ connects the two independent subsystems below it:
 - **neovex-runtime** is a standalone V8 execution environment with zero
   workspace dependencies. It defines a `HostBridge` trait that declares what
   host operations a V8 handler can perform (`ctx.db.*`, `ctx.scheduler.*`,
-  `ctx.run*`). The server implements that trait in `runtime_bridge.rs` by
-  calling into the engine's `Service` — so at runtime, V8 handler code reaches
-  the engine, but at the crate level, the runtime knows nothing about it. This
-  is dependency inversion: the runtime declares what it needs; the server
-  provides it.
+  `ctx.run*`). The server implements that trait in
+  `adapters/convex/host_bridge/` by calling into the engine's `Service` — so
+  at runtime, V8 handler code reaches the engine, but at the crate level, the
+  runtime knows nothing about it. This is dependency inversion: the runtime
+  declares what it needs; the server provides it.
 
 The server has two request paths. **Native** requests (Neovex HTTP/WS API) go
 directly to the engine via `spawn_blocking`. **Convex** requests go to the
@@ -201,15 +201,15 @@ file links (links go stale; symbol search does not).
 **`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
 - `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`. `serve` starts the axum listener.
-- `http.rs` — Neovex-native HTTP handlers. They delegate to `spawn_blocking(|| service.method())`.
+- `http/` — Neovex-native HTTP handlers. They delegate to `spawn_blocking(|| service.method())`.
 - `ws.rs` — Neovex-native WebSocket upgrade, message loop, and subscription cleanup.
-- `license.rs` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `.neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
+- `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `.neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
 - `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor` and `RuntimeHostExecutor` instances.
-- `convex/auth.rs` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
-- `convex/registry.rs` — Manifest loading, runtime bundle discovery, function lookup, and Convex support route resolution.
-- `convex/runtime_bridge.rs` — The `HostBridge` implementation that adapts Neovex engine operations into the contract the runtime expects.
-- `convex/dispatch.rs`, `http_actions.rs`, `subscriptions.rs` — Shared Convex support execution, HTTP route dispatch, and live subscription plumbing.
-- `convex/runtime_reads.rs` — Runtime read-set tracking used by runtime-backed Convex support subscriptions for narrower-than-table-level invalidation.
+- `convex/auth/` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
+- `convex/registry/` and `convex/manifest.rs` — Manifest loading, runtime bundle discovery, function lookup, and Convex support route resolution.
+- `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex engine operations into the contract the runtime expects.
+- `convex/execution/`, `convex/http_actions/`, `convex/subscriptions/`, and `convex/handlers/` — Shared Convex support execution, HTTP route dispatch, and live subscription plumbing.
+- `convex/host_bridge/read_tracking/` — Runtime read-set tracking used by runtime-backed Convex support subscriptions for narrower-than-table-level invalidation.
 - `protocol.rs` — Request/response DTOs. `ClientMessage` (Subscribe/Unsubscribe) and `ServerMessage` (SubscriptionResult/Error).
 - `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, and `LicenseState`. `AppError` maps `Error` variants to HTTP status codes.
 
@@ -433,6 +433,15 @@ This is the right decision for Neovex because:
   materializers later without redefining the application-level durability
   contract
 
+**Committed does not immediately mean read-visible once Phase 6 lands.** The
+durable journal defines commit order and durability. The serving read path
+still comes from applied materialized state. For the first journal-backed
+implementation, Neovex should keep one authoritative read-visible state and
+wait for `applied_sequence >= required_sequence` instead of overlaying
+journal-only records directly into point reads, scans, subscriptions, or cache
+lookups. That keeps visibility rules explicit, preserves one serving read path,
+and avoids introducing a second correctness-critical overlay engine too early.
+
 **What should guide the durable journal design?** Use external systems as
 reference implementations, not as accidental architecture replacements. The
 current direction is:
@@ -560,16 +569,17 @@ entitlements, warnings, and MAU usage.
 
 **Auth.** Authentication and authorization are separate architecture concerns.
 Today the Convex adapter layer supports OIDC and custom JWT providers via
-`convex/auth.rs`. JWT validation uses `ring` for signature verification with
-JWKS key fetching and clock-skew tolerance, and validated identities are passed
-to runtime handlers as `InvocationAuth`. Neovex-native routes still do not
-prescribe a built-in authentication mechanism. The roadmap moves authorization
-into the engine and planner as declarative schema-level policy so reads,
-writes, subscriptions, and runtime host calls share one enforcement model. In
-other words: adapters authenticate and normalize principals; the engine
-authorizes data access. A live subscription or cache entry must not continue to
-serve data across a policy revision or principal-context change without
-revalidation or teardown.
+`convex/auth/`. JWT validation uses `ring` for signature verification with JWKS
+key fetching and clock-skew tolerance, and validated identities are passed to
+runtime handlers as `InvocationAuth`. Neovex-native routes still do not
+prescribe one built-in transport authentication mechanism. That is not the same
+as leaving authorization in the adapter layer. The roadmap's explicit `3E`
+phase moves authorization into the engine and planner as declarative
+schema-level policy so reads, writes, subscriptions, and runtime host calls
+share one enforcement model. In other words: adapters authenticate and
+normalize principals; the engine authorizes data access. A live subscription or
+cache entry must not continue to serve data across a policy revision or
+principal-context change without revalidation or teardown.
 
 **Testing.** Unit tests live in each crate's `tests.rs`. Integration tests
 (HTTP + WebSocket end-to-end) live in `neovex-server/tests/reactive_loop.rs`.
