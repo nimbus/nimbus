@@ -11,7 +11,9 @@ mod runtime;
 pub use context::RuntimeInvocationContext;
 pub use error::{ConvexRuntimeError, NeovexRuntimeError, Result};
 pub use executor::RuntimeExecutor;
-pub use host::{HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest};
+pub use host::{
+    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallCancellationCause, HostCallRequest,
+};
 pub use host_executor::RuntimeHostExecutor;
 pub use limits::{RuntimeLimits, RuntimePolicy};
 pub use metrics::{

@@ -980,12 +980,23 @@ impl AsyncHostCallTrace {
         trace
     }
 
-    fn record_canceled_before_start(&self) {
-        tracing::debug!(
-            parent: &self.span,
-            queue_wait_ms = self.enqueued_at.elapsed().as_secs_f64() * 1000.0,
-            "convex runtime async host call canceled before start"
-        );
+    fn record_canceled_before_start(
+        &self,
+        cause: Option<neovex_runtime::HostCallCancellationCause>,
+    ) {
+        match cause {
+            Some(cause) => tracing::debug!(
+                parent: &self.span,
+                queue_wait_ms = self.enqueued_at.elapsed().as_secs_f64() * 1000.0,
+                cancellation_cause = cause.as_str(),
+                "convex runtime async host call canceled before start"
+            ),
+            None => tracing::debug!(
+                parent: &self.span,
+                queue_wait_ms = self.enqueued_at.elapsed().as_secs_f64() * 1000.0,
+                "convex runtime async host call canceled before start"
+            ),
+        }
     }
 
     fn record_started(&self) -> std::time::Instant {
@@ -1002,6 +1013,7 @@ impl AsyncHostCallTrace {
         &self,
         started_at: std::time::Instant,
         result: &std::result::Result<Value, NeovexRuntimeError>,
+        cancellation_cause: Option<neovex_runtime::HostCallCancellationCause>,
     ) {
         let execution_ms = started_at.elapsed().as_secs_f64() * 1000.0;
         match result {
@@ -1010,11 +1022,19 @@ impl AsyncHostCallTrace {
                 execution_ms,
                 "convex runtime async host call finished"
             ),
-            Err(NeovexRuntimeError::Cancelled) => tracing::debug!(
-                parent: &self.span,
-                execution_ms,
-                "convex runtime async host call canceled in flight"
-            ),
+            Err(NeovexRuntimeError::Cancelled) => match cancellation_cause {
+                Some(cause) => tracing::debug!(
+                    parent: &self.span,
+                    execution_ms,
+                    cancellation_cause = cause.as_str(),
+                    "convex runtime async host call canceled in flight"
+                ),
+                None => tracing::debug!(
+                    parent: &self.span,
+                    execution_ms,
+                    "convex runtime async host call canceled in flight"
+                ),
+            },
             Err(error) => tracing::debug!(
                 parent: &self.span,
                 execution_ms,
@@ -1045,9 +1065,10 @@ where
         + Send
         + 'static,
 {
+    let cancellation_cause = cancellation.cause();
     if cancellation.is_cancelled() {
         metrics.record_host_operation_canceled_before_start(&operation);
-        trace.record_canceled_before_start();
+        trace.record_canceled_before_start(cancellation_cause);
         return Err(NeovexRuntimeError::Cancelled);
     }
 
@@ -1070,7 +1091,7 @@ where
             )));
         }
     };
-    trace.record_finished(started_at, &result);
+    trace.record_finished(started_at, &result, cancellation_cause);
     record_host_operation_result(&metrics, &operation, &result);
     result
 }
