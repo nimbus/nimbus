@@ -1,5 +1,6 @@
 //! Core types for Neovex.
 
+pub mod dependency;
 pub mod document;
 pub mod error;
 pub mod mutation;
@@ -8,6 +9,10 @@ pub mod scheduled;
 pub mod schema;
 pub mod types;
 
+pub use dependency::{
+    DependencySet, IndexRangeDependency, PaginatedWindowDependency, PredicateDependency,
+    commit_intersects_dependency_set,
+};
 pub use document::Document;
 pub use error::{Error, Result};
 pub use mutation::{CommitEntry, Mutation, WriteOp, WriteOpType};

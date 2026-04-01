@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
-use neovex_engine::SubscriptionUpdate;
+use neovex_engine::{SubscriptionCleanupHandle, SubscriptionUpdate};
 use tokio::sync::mpsc;
 
 use crate::protocol::{ClientMessage, ServerMessage};
@@ -56,7 +56,7 @@ pub(crate) async fn handle_socket_for_tenant(
         }
     });
 
-    let mut active_subscriptions = HashSet::new();
+    let mut active_subscriptions = HashMap::<u64, SubscriptionCleanupHandle>::new();
     while let Some(message_result) = socket_rx.next().await {
         let message = match message_result {
             Ok(message) => message,
@@ -85,8 +85,9 @@ pub(crate) async fn handle_socket_for_tenant(
                         .subscribe_async(tenant_id, query, request_id_for_worker, sender)
                         .await
                     {
-                        Ok(subscription_id) => {
-                            active_subscriptions.insert(subscription_id);
+                        Ok(registration) => {
+                            let (subscription_id, cleanup_handle) = registration.into_parts();
+                            active_subscriptions.insert(subscription_id, cleanup_handle);
                         }
                         Err(error) => {
                             let _ = outbound_tx.send(ServerMessage::Error {
@@ -97,7 +98,7 @@ pub(crate) async fn handle_socket_for_tenant(
                     }
                 }
                 Ok(ClientMessage::Unsubscribe { subscription_id }) => {
-                    active_subscriptions.remove(&subscription_id);
+                    let cleanup_handle = active_subscriptions.remove(&subscription_id);
                     let service = state.service.clone();
                     let tenant_id = tenant_id.clone();
                     if let Err(error) = service.unsubscribe_async(tenant_id, subscription_id).await
@@ -107,6 +108,7 @@ pub(crate) async fn handle_socket_for_tenant(
                             message: error.to_string(),
                         });
                     }
+                    drop(cleanup_handle);
                 }
                 Err(error) => {
                     let _ = outbound_tx.send(ServerMessage::Error {
@@ -120,11 +122,7 @@ pub(crate) async fn handle_socket_for_tenant(
         }
     }
 
-    for subscription_id in active_subscriptions {
-        let service = state.service.clone();
-        let tenant_id = tenant_id.clone();
-        let _ = service.unsubscribe_async(tenant_id, subscription_id).await;
-    }
+    drop(active_subscriptions);
     drop(subscription_tx);
     drop(outbound_tx);
     let _ = forward_task.await;

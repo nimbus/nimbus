@@ -65,18 +65,15 @@ pub(super) async fn handle_named_subscription(
                 return;
             }
         };
+        let primary_subscription_id = handle.primary_subscription_id;
 
-        update_runtime_transform_read_set(
-            ctx.transforms,
-            handle.primary_subscription_id,
-            setup.transform,
-        );
+        update_runtime_transform_read_set(ctx.transforms, primary_subscription_id, setup.transform);
         active_subscriptions.insert(
-            handle.primary_subscription_id,
-            handle.underlying_subscription_ids,
+            primary_subscription_id,
+            ActiveSubscription::from_runtime_handle(handle),
         );
         let _ = ctx.outbound_tx.send(ServerMessage::SubscriptionResult {
-            subscription_id: handle.primary_subscription_id,
+            subscription_id: primary_subscription_id,
             request_id: Some(request_id),
             data: setup.initial_value,
         });
@@ -110,8 +107,12 @@ pub(super) async fn handle_named_subscription(
         .subscribe_async(tenant_id, base_query, request_id_for_worker, sender)
         .await
     {
-        Ok(subscription_id) => {
-            active_subscriptions.insert(subscription_id, vec![subscription_id]);
+        Ok(registration) => {
+            let subscription_id = registration.id();
+            active_subscriptions.insert(
+                subscription_id,
+                ActiveSubscription::from_registration(registration),
+            );
             activate_transform(ctx.transforms, subscription_id, &request_id, transform);
         }
         Err(error) => {

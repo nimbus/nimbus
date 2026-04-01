@@ -774,6 +774,73 @@ fn has_scheduled_work_detects_pending_or_running_jobs() {
 }
 
 #[test]
+fn next_scheduled_work_at_prefers_earliest_pending_or_enabled_cron() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    assert_eq!(
+        store
+            .next_scheduled_work_at()
+            .expect("next due lookup should succeed"),
+        None
+    );
+
+    let future_job = scheduled_insert_job(Timestamp(5_000), "later");
+    let earlier_job = scheduled_insert_job(Timestamp(2_000), "earlier");
+    store
+        .insert_scheduled_job(&future_job)
+        .expect("future job insert should succeed");
+    store
+        .insert_scheduled_job(&earlier_job)
+        .expect("earlier job insert should succeed");
+    store
+        .save_cron_job(&CronJob {
+            name: "disabled".to_string(),
+            schedule: CronSchedule::Interval { seconds: 10 },
+            mutation: Mutation::Insert {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                fields: serde_json::Map::from_iter([("title".to_string(), json!("disabled"))]),
+            },
+            enabled: false,
+            last_run: None,
+            next_run: Timestamp(1_000),
+            created_at: Timestamp(500),
+        })
+        .expect("disabled cron should save");
+    store
+        .save_cron_job(&CronJob {
+            name: "heartbeat".to_string(),
+            schedule: CronSchedule::Interval { seconds: 10 },
+            mutation: Mutation::Insert {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                fields: serde_json::Map::from_iter([("title".to_string(), json!("heartbeat"))]),
+            },
+            enabled: true,
+            last_run: None,
+            next_run: Timestamp(3_000),
+            created_at: Timestamp(500),
+        })
+        .expect("enabled cron should save");
+
+    assert_eq!(
+        store
+            .next_scheduled_work_at()
+            .expect("next due lookup should succeed"),
+        Some(Timestamp(2_000))
+    );
+
+    let claimed = store
+        .claim_due_jobs(Timestamp(2_000))
+        .expect("claim should succeed");
+    assert_eq!(claimed, vec![earlier_job]);
+
+    assert_eq!(
+        store
+            .next_scheduled_work_at()
+            .expect("next due lookup should succeed"),
+        Some(Timestamp(3_000))
+    );
+}
+
+#[test]
 fn scheduled_job_result_roundtrip_and_lookup() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let job = scheduled_insert_job(Timestamp(1_000), "done");

@@ -10,8 +10,19 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
             "visibility": "public",
             "plan": null,
             "runtime_handler": "async () => { while (true) {} }"
+        },
+        {
+            "name": "messages:echo",
+            "kind": "query",
+            "visibility": "public",
+            "plan": null,
+            "runtime_handler": "async (_ctx, { value }) => value"
         }
-    ]));
+    ]))
+    .with_runtime_limits(RuntimeLimits {
+        max_concurrent_isolates: 1,
+        ..RuntimeLimits::default()
+    });
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router_with_convex(
         fixture.service(),
@@ -50,6 +61,9 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
     assert_eq!(metrics.disconnect_canceled_invocations, 1);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
+    assert_eq!(metrics.isolate_pool_misses, 1);
+    assert_eq!(metrics.isolate_pool_hits, 0);
+    assert_eq!(metrics.isolate_pool_replacements, 1);
     let tenant_metrics = metrics
         .tenants
         .get("demo")
@@ -60,4 +74,26 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
     assert_eq!(tenant_metrics.disconnect_canceled_invocations, 1);
     assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
+
+    let recovery_response = api
+        .convex_named_query("demo", "messages:echo", json!({ "value": "after-cancel" }))
+        .await;
+    assert_eq!(recovery_response.status(), StatusCode::OK);
+    let recovery_body = recovery_response
+        .json::<serde_json::Value>()
+        .await
+        .expect("recovery runtime query response should parse");
+    assert_eq!(recovery_body, json!("after-cancel"));
+
+    let recovery_metrics = wait_for_runtime_metrics(
+        &registry,
+        "recovery runtime invocation after cancellation",
+        |metrics| {
+            metrics.worker_dispatched_invocations == 2
+                && metrics.isolate_pool_hits == 1
+                && metrics.isolate_pool_replacements == 1
+        },
+    )
+    .await;
+    assert_eq!(recovery_metrics.isolate_pool_misses, 1);
 }

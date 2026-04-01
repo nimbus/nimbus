@@ -15,6 +15,7 @@ pub(in crate::adapters::convex) enum ConvexRuntimeEncodedError {
     DocumentNotFound { document_id: String },
     ScheduledJobNotFound { job_id: String },
     AlreadyExists { message: String },
+    ResourceExhausted { message: String },
     InvalidInput { message: String },
     SchemaValidation { message: String },
     SchemaNotFound { table: String },
@@ -56,6 +57,7 @@ impl ConvexRuntimeEncodedError {
                 job_id: job_id.to_string(),
             },
             Error::AlreadyExists(message) => Self::AlreadyExists { message },
+            Error::ResourceExhausted(message) => Self::ResourceExhausted { message },
             Error::InvalidInput(message) => Self::InvalidInput { message },
             Error::SchemaValidation(message) => Self::SchemaValidation { message },
             Error::SchemaNotFound(table) => Self::SchemaNotFound {
@@ -82,6 +84,7 @@ impl ConvexRuntimeEncodedError {
                 .map(Error::ScheduledJobNotFound)
                 .unwrap_or_else(|error| Error::Internal(error.to_string())),
             Self::AlreadyExists { message } => Error::AlreadyExists(message),
+            Self::ResourceExhausted { message } => Error::ResourceExhausted(message),
             Self::InvalidInput { message } => Error::InvalidInput(message),
             Self::SchemaValidation { message } => Error::SchemaValidation(message),
             Self::SchemaNotFound { table } => TableName::new(table)

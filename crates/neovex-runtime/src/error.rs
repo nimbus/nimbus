@@ -28,6 +28,11 @@ pub enum NeovexRuntimeError {
     #[error("runtime nested invocation limit exceeded ({0})")]
     NestedInvocationLimitExceeded(usize),
 
+    #[error(
+        "runtime tenant queue limit exceeded for {tenant_label} ({limit} queued top-level invocations)"
+    )]
+    TenantQueueLimitExceeded { tenant_label: String, limit: usize },
+
     #[error("runtime host call canceled")]
     Cancelled,
 }

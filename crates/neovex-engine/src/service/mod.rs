@@ -14,6 +14,7 @@ use std::sync::RwLock;
 
 use neovex_core::{Document, Error, Result, TenantId};
 use neovex_storage::UsageStore;
+use tokio::sync::Notify;
 
 use crate::tenant::TenantRuntime;
 
@@ -22,6 +23,7 @@ pub struct Service {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
     usage_store: Arc<UsageStore>,
+    scheduler_wakeup: Notify,
 }
 
 impl Service {
@@ -34,6 +36,7 @@ impl Service {
             data_dir,
             tenants: RwLock::new(HashMap::new()),
             usage_store,
+            scheduler_wakeup: Notify::new(),
         })
     }
 
@@ -67,6 +70,14 @@ impl Service {
             result = handle => result
                 .map_err(|error| Error::Internal(format!("blocking task failed: {error}")))?,
         }
+    }
+
+    pub(crate) fn wake_scheduler(&self) {
+        self.scheduler_wakeup.notify_one();
+    }
+
+    pub(crate) fn scheduler_notifier(&self) -> &Notify {
+        &self.scheduler_wakeup
     }
 }
 

@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use deno_core::op2;
+use deno_core::JsRuntimeForSnapshot;
 use deno_core::{
     CancelFuture, CancelHandle, JsRuntime, ModuleSpecifier, OpState, PollEventLoopOptions,
-    RuntimeOptions, extension, scope, serde_v8, v8,
+    RuntimeOptions, extension, op2, scope, serde_v8, v8,
 };
 use deno_error::JsErrorBox;
 use serde::{Deserialize, Serialize};
@@ -194,32 +194,60 @@ impl InvocationAuth {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeBundle {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RuntimeBundleIdentity {
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
 }
 
+impl RuntimeBundleIdentity {
+    pub fn entrypoint(&self) -> &Path {
+        &self.entrypoint
+    }
+
+    pub fn expected_sha256(&self) -> Option<&str> {
+        self.expected_sha256.as_deref()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RuntimeBundleShared {
+    entrypoint: PathBuf,
+    canonical_entrypoint: Option<PathBuf>,
+    expected_sha256: Option<String>,
+    identity: RuntimeBundleIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeBundle {
+    shared: Arc<RuntimeBundleShared>,
+}
+
 impl RuntimeBundle {
     pub fn new(entrypoint: impl AsRef<Path>) -> Self {
-        Self {
-            entrypoint: entrypoint.as_ref().to_path_buf(),
-            expected_sha256: None,
-        }
+        Self::from_parts(entrypoint.as_ref().to_path_buf(), None)
     }
 
     pub fn with_expected_sha256(
         entrypoint: impl AsRef<Path>,
         expected_sha256: impl AsRef<str>,
     ) -> Result<Self> {
-        Ok(Self {
-            entrypoint: entrypoint.as_ref().to_path_buf(),
-            expected_sha256: Some(normalize_sha256(expected_sha256.as_ref())?),
-        })
+        Ok(Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            Some(normalize_sha256(expected_sha256.as_ref())?),
+        ))
     }
 
     pub fn entrypoint(&self) -> &Path {
-        &self.entrypoint
+        &self.shared.entrypoint
+    }
+
+    pub fn canonical_entrypoint(&self) -> Option<&Path> {
+        self.shared.canonical_entrypoint.as_deref()
+    }
+
+    pub fn bundle_identity(&self) -> &RuntimeBundleIdentity {
+        &self.shared.identity
     }
 
     pub fn compute_sha256_for_path(path: impl AsRef<Path>) -> Result<String> {
@@ -228,21 +256,21 @@ impl RuntimeBundle {
     }
 
     fn module_specifier(&self) -> Result<ModuleSpecifier> {
-        ModuleSpecifier::from_file_path(&self.entrypoint).map_err(|_| {
+        ModuleSpecifier::from_file_path(self.entrypoint()).map_err(|_| {
             NeovexRuntimeError::Contract(format!(
                 "bundle entrypoint is not a valid file URL: {}",
-                self.entrypoint.display()
+                self.entrypoint().display()
             ))
         })
     }
 
     fn module_root(&self) -> Result<PathBuf> {
-        self.entrypoint
+        self.entrypoint()
             .parent()
             .ok_or_else(|| {
                 NeovexRuntimeError::Contract(format!(
                     "bundle entrypoint does not have a parent directory: {}",
-                    self.entrypoint.display()
+                    self.entrypoint().display()
                 ))
             })?
             .canonicalize()
@@ -250,19 +278,39 @@ impl RuntimeBundle {
     }
 
     fn verify_integrity(&self) -> Result<()> {
-        let Some(expected_sha256) = &self.expected_sha256 else {
+        // Stable bundle identity is only for pooling, metrics, and provenance bookkeeping.
+        // Path-backed bundles remain mutable, so every invocation must re-hash bundle contents.
+        let Some(expected_sha256) = &self.shared.expected_sha256 else {
             return Ok(());
         };
-        let actual_sha256 = Self::compute_sha256_for_path(&self.entrypoint)?;
+        let actual_sha256 = Self::compute_sha256_for_path(self.entrypoint())?;
         if &actual_sha256 == expected_sha256 {
             return Ok(());
         }
         Err(NeovexRuntimeError::BundleIntegrityMismatch(format!(
             "{} (expected {}, got {})",
-            self.entrypoint.display(),
+            self.entrypoint().display(),
             expected_sha256,
             actual_sha256
         )))
+    }
+
+    fn from_parts(entrypoint: PathBuf, expected_sha256: Option<String>) -> Self {
+        let canonical_entrypoint = entrypoint.canonicalize().ok();
+        let identity = RuntimeBundleIdentity {
+            entrypoint: canonical_entrypoint
+                .clone()
+                .unwrap_or_else(|| entrypoint.clone()),
+            expected_sha256: expected_sha256.clone(),
+        };
+        Self {
+            shared: Arc::new(RuntimeBundleShared {
+                entrypoint,
+                canonical_entrypoint,
+                expected_sha256,
+                identity,
+            }),
+        }
     }
 }
 
@@ -275,6 +323,65 @@ struct RuntimeHostState {
 struct RuntimeCancellationState {
     cancel_handle: Rc<CancelHandle>,
     signal: HostCallCancellation,
+}
+
+struct RuntimeStartupSnapshot {
+    bytes: &'static [u8],
+}
+
+impl RuntimeStartupSnapshot {
+    fn new(bytes: Box<[u8]>) -> Self {
+        // deno_core currently accepts startup snapshots as &'static [u8]. The
+        // worker pool keeps a single bootstrap snapshot for its own lifetime,
+        // so leaking one buffer per worker matches the pool's lifetime and
+        // avoids unsound lifetime extension tricks.
+        Self {
+            bytes: Box::leak(bytes),
+        }
+    }
+
+    fn as_startup_snapshot(&self) -> &'static [u8] {
+        self.bytes
+    }
+}
+
+pub(crate) struct RuntimeWorkerIsolatePool {
+    startup_snapshot: Option<RuntimeStartupSnapshot>,
+}
+
+impl RuntimeWorkerIsolatePool {
+    pub(crate) fn new() -> Self {
+        Self {
+            startup_snapshot: None,
+        }
+    }
+
+    fn take_runtime(
+        &mut self,
+        runtime_owner: &NeovexRuntime,
+        bundle: &RuntimeBundle,
+    ) -> Result<JsRuntime> {
+        match self.startup_snapshot.as_ref() {
+            Some(snapshot) => {
+                runtime_owner.policy.metrics().record_isolate_pool_hit();
+                runtime_owner.create_runtime_from_snapshot(bundle, snapshot)
+            }
+            None => {
+                runtime_owner.policy.metrics().record_isolate_pool_miss();
+                let snapshot = runtime_owner.create_bootstrap_snapshot()?;
+                let runtime = runtime_owner.create_runtime_from_snapshot(bundle, &snapshot)?;
+                self.startup_snapshot = Some(snapshot);
+                Ok(runtime)
+            }
+        }
+    }
+
+    fn record_replacement(&self, runtime_owner: &NeovexRuntime) {
+        runtime_owner
+            .policy
+            .metrics()
+            .record_isolate_pool_replacement();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -879,8 +986,9 @@ globalThis.__neovexCreateContext = function(options = {}) {
 Object.freeze(globalThis.__neovexSyncHostValue);
 Object.freeze(globalThis.__neovexAsyncHostValue);
 Object.freeze(globalThis.__neovexCreateContext);
-delete globalThis.Deno;
 "#;
+
+const POST_BOOTSTRAP_SOURCE: &str = "delete globalThis.Deno;";
 
 #[op2]
 #[serde]
@@ -1229,6 +1337,10 @@ impl NeovexRuntime {
         }
     }
 
+    pub(crate) fn into_policy(self, policy: Arc<RuntimePolicy>) -> Self {
+        Self { policy, ..self }
+    }
+
     pub async fn invoke_bundle(
         &self,
         bundle: &RuntimeBundle,
@@ -1282,15 +1394,24 @@ impl NeovexRuntime {
         self.bypass_concurrency_limit
     }
 
+    pub(crate) fn policy(&self) -> Arc<RuntimePolicy> {
+        self.policy.clone()
+    }
+
     pub(crate) async fn invoke_bundle_unmanaged(
         &self,
+        isolate_pool: Option<&mut RuntimeWorkerIsolatePool>,
         bundle: &RuntimeBundle,
         request: &InvocationRequest,
         _context: &RuntimeInvocationContext,
         external_cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
         bundle.verify_integrity()?;
-        let mut runtime = self.create_runtime(bundle)?;
+        let mut isolate_pool = isolate_pool;
+        let mut runtime = match isolate_pool.as_deref_mut() {
+            Some(pool) => pool.take_runtime(self, bundle)?,
+            None => self.create_runtime(bundle, None)?,
+        };
         let timeout = self.policy.limits().execution_timeout;
         let timeout_triggered = Arc::new(AtomicBool::new(false));
         let heap_limit_triggered = Arc::new(AtomicBool::new(false));
@@ -1388,7 +1509,11 @@ impl NeovexRuntime {
             let _ = thread.join();
         }
 
-        result.map_err(|error| {
+        let replacement_required = timeout_triggered.load(Ordering::SeqCst)
+            || heap_limit_triggered.load(Ordering::SeqCst)
+            || external_cancellation_triggered.load(Ordering::SeqCst);
+
+        let result = result.map_err(|error| {
             classify_runtime_error(
                 error,
                 &timeout_triggered,
@@ -1396,7 +1521,14 @@ impl NeovexRuntime {
                 &external_cancellation_triggered,
                 self.policy.limits(),
             )
-        })
+        });
+        if result.is_err()
+            && replacement_required
+            && let Some(pool) = isolate_pool.as_deref()
+        {
+            pool.record_replacement(self);
+        }
+        result
     }
 
     async fn load_bundle(&self, runtime: &mut JsRuntime, bundle: &RuntimeBundle) -> Result<()> {
@@ -1432,18 +1564,53 @@ impl NeovexRuntime {
         deserialize_json_value(runtime, value)
     }
 
-    fn create_runtime(&self, bundle: &RuntimeBundle) -> Result<JsRuntime> {
-        let heap_megabyte = 1usize << 20;
-        let create_params = v8::Isolate::create_params().heap_limits(
-            self.policy.limits().initial_heap_mb * heap_megabyte,
-            self.policy.limits().max_heap_mb * heap_megabyte,
-        );
-        let mut runtime = JsRuntime::new(RuntimeOptions {
-            create_params: Some(create_params),
-            module_loader: Some(Rc::new(SandboxedModuleLoader::new(bundle.module_root()?))),
+    fn create_bootstrap_snapshot(&self) -> Result<RuntimeStartupSnapshot> {
+        let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
+            create_params: Some(self.create_isolate_params()),
             extensions: vec![neovex_runtime_ext::init()],
             ..Default::default()
         });
+        self.install_bootstrap(&mut runtime)?;
+        Ok(RuntimeStartupSnapshot::new(runtime.snapshot()))
+    }
+
+    fn create_runtime_from_snapshot(
+        &self,
+        bundle: &RuntimeBundle,
+        snapshot: &RuntimeStartupSnapshot,
+    ) -> Result<JsRuntime> {
+        self.create_runtime(bundle, Some(snapshot))
+    }
+
+    fn create_runtime(
+        &self,
+        bundle: &RuntimeBundle,
+        startup_snapshot: Option<&RuntimeStartupSnapshot>,
+    ) -> Result<JsRuntime> {
+        let mut runtime = JsRuntime::new(RuntimeOptions {
+            create_params: Some(self.create_isolate_params()),
+            module_loader: Some(Rc::new(SandboxedModuleLoader::new(bundle.module_root()?))),
+            extensions: vec![neovex_runtime_ext::init()],
+            startup_snapshot: startup_snapshot.map(RuntimeStartupSnapshot::as_startup_snapshot),
+            ..Default::default()
+        });
+        self.initialize_runtime_state(&mut runtime);
+        if startup_snapshot.is_none() {
+            self.install_bootstrap(&mut runtime)?;
+        }
+        self.finalize_bootstrap(&mut runtime)?;
+        Ok(runtime)
+    }
+
+    fn create_isolate_params(&self) -> v8::CreateParams {
+        let heap_megabyte = 1usize << 20;
+        v8::Isolate::create_params().heap_limits(
+            self.policy.limits().initial_heap_mb * heap_megabyte,
+            self.policy.limits().max_heap_mb * heap_megabyte,
+        )
+    }
+
+    fn initialize_runtime_state(&self, runtime: &mut JsRuntime) {
         {
             let op_state = runtime.op_state();
             let mut state = op_state.borrow_mut();
@@ -1456,10 +1623,20 @@ impl NeovexRuntime {
                 signal,
             });
         }
+    }
+
+    fn install_bootstrap(&self, runtime: &mut JsRuntime) -> Result<()> {
         runtime
             .execute_script("<neovex-runtime:bootstrap>", BOOTSTRAP_SOURCE)
             .map_err(runtime_js_error)?;
-        Ok(runtime)
+        Ok(())
+    }
+
+    fn finalize_bootstrap(&self, runtime: &mut JsRuntime) -> Result<()> {
+        runtime
+            .execute_script("<neovex-runtime:bootstrap:finalize>", POST_BOOTSTRAP_SOURCE)
+            .map_err(runtime_js_error)?;
+        Ok(())
     }
 }
 
@@ -1660,6 +1837,53 @@ mod tests {
                     "async host bridge path should not be used for sync ops".to_string(),
                 ))
             })
+        }
+    }
+
+    async fn invoke_on_single_worker(
+        executor: &RuntimeExecutor,
+        runtime: NeovexRuntime,
+        bundle: &RuntimeBundle,
+        request: InvocationRequest,
+    ) -> Result<Value> {
+        executor
+            .invoke_on_worker(
+                runtime,
+                bundle.clone(),
+                request.clone(),
+                RuntimeInvocationContext::top_level(&request),
+                None,
+            )
+            .await
+    }
+
+    fn test_invocation_auth(token_identifier: &str) -> InvocationAuth {
+        InvocationAuth {
+            identity: Some(RuntimeUserIdentity {
+                token_identifier: token_identifier.to_string(),
+                subject: token_identifier.to_string(),
+                issuer: "https://issuer.example.com".to_string(),
+                name: None,
+                given_name: None,
+                family_name: None,
+                nickname: None,
+                preferred_username: None,
+                profile_url: None,
+                picture_url: None,
+                email: None,
+                email_verified: None,
+                gender: None,
+                birthday: None,
+                timezone: None,
+                language: None,
+                phone_number: None,
+                phone_number_verified: None,
+                address: None,
+                updated_at: None,
+                custom_claims: Map::new(),
+            }),
+            verified_identity: None,
+            throw_on_missing_identity: false,
         }
     }
 
@@ -2217,6 +2441,135 @@ export {};
     }
 
     #[tokio::test]
+    async fn pooled_runtime_invocations_keep_module_state_fresh() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__moduleLoadCount = (globalThis.__moduleLoadCount ?? 0) + 1;
+
+globalThis.__neovexInvoke = async function () {
+  return { moduleLoadCount: globalThis.__moduleLoadCount };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            max_concurrent_isolates: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:list".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+
+        let first = invoke_on_single_worker(&executor, runtime.clone(), &bundle, request.clone())
+            .await
+            .expect("first pooled invocation should succeed");
+        let second = invoke_on_single_worker(&executor, runtime, &bundle, request)
+            .await
+            .expect("second pooled invocation should succeed");
+
+        assert_eq!(first, serde_json::json!({ "moduleLoadCount": 1 }));
+        assert_eq!(second, serde_json::json!({ "moduleLoadCount": 1 }));
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.isolate_pool_misses, 1);
+        assert_eq!(metrics.isolate_pool_hits, 1);
+    }
+
+    #[tokio::test]
+    async fn pooled_runtime_invocations_reset_auth_and_session_state() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  const user = await ctx.auth.getUserIdentity();
+  const host = await ctx.db.get("messages", "doc-1");
+  return {
+    token: user?.tokenIdentifier ?? null,
+    session: host.payload.session_id,
+  };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            max_concurrent_isolates: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let first = invoke_on_single_worker(
+            &executor,
+            runtime.clone(),
+            &bundle,
+            InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "auth:first".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: Some(test_invocation_auth("token-1")),
+            },
+        )
+        .await
+        .expect("first pooled invocation should succeed");
+        let second = invoke_on_single_worker(
+            &executor,
+            runtime,
+            &bundle,
+            InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "auth:second".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: Some(test_invocation_auth("token-2")),
+            },
+        )
+        .await
+        .expect("second pooled invocation should succeed");
+
+        assert_eq!(
+            first,
+            serde_json::json!({
+                "token": "token-1",
+                "session": "session-1",
+            })
+        );
+        assert_eq!(
+            second,
+            serde_json::json!({
+                "token": "token-2",
+                "session": "session-1",
+            })
+        );
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.isolate_pool_misses, 1);
+        assert_eq!(metrics.isolate_pool_hits, 1);
+        assert_eq!(metrics.isolate_pool_replacements, 0);
+    }
+
+    #[tokio::test]
     async fn runtime_query_builder_setup_uses_sync_host_bridge_path() {
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
@@ -2546,6 +2899,10 @@ export {};
                 initial_heap_mb: 4,
                 execution_timeout: std::time::Duration::from_secs(2),
                 max_concurrent_isolates: 1,
+                max_top_level_invocations_per_tenant: RuntimeLimits::default()
+                    .max_top_level_invocations_per_tenant,
+                max_queued_top_level_invocations_per_tenant: RuntimeLimits::default()
+                    .max_queued_top_level_invocations_per_tenant,
                 max_nested_runtime_invocations: RuntimeLimits::default()
                     .max_nested_runtime_invocations,
             },
@@ -2670,5 +3027,165 @@ export {};
             }
             other => panic!("unexpected integrity error: {other}"),
         }
+    }
+
+    #[test]
+    fn runtime_bundle_clones_share_normalized_identity() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = function () {
+  return { ok: true };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let expected_sha256 =
+            RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+        let bundle = RuntimeBundle::with_expected_sha256(
+            bundle_path
+                .parent()
+                .expect("bundle parent should exist")
+                .join(".")
+                .join("bundle.mjs"),
+            expected_sha256.to_ascii_uppercase(),
+        )
+        .expect("bundle identity metadata should build");
+        let cloned = bundle.clone();
+        let canonical_bundle_path = bundle_path
+            .canonicalize()
+            .expect("bundle path should canonicalize");
+
+        assert!(Arc::ptr_eq(&bundle.shared, &cloned.shared));
+        assert_eq!(bundle.bundle_identity(), cloned.bundle_identity());
+        assert_eq!(bundle.bundle_identity().entrypoint(), canonical_bundle_path);
+        assert_eq!(
+            bundle.bundle_identity().expected_sha256(),
+            Some(expected_sha256.as_str())
+        );
+        assert_eq!(
+            bundle.canonical_entrypoint(),
+            Some(canonical_bundle_path.as_path())
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_bundle_rechecks_integrity_after_prior_success() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = function () {
+  return { ok: true };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let expected_sha256 =
+            RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+        let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
+            .expect("bundle integrity metadata should build");
+        let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:list".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+
+        let first_result = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .expect("first bundle invocation should succeed");
+        assert_eq!(first_result, serde_json::json!({ "ok": true }));
+
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = function () {
+  return { ok: false };
+};
+
+export {};
+"#,
+        )
+        .expect("tampered bundle should write");
+
+        let error = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .expect_err("tampered bundle should fail integrity verification");
+        assert!(matches!(
+            error,
+            NeovexRuntimeError::BundleIntegrityMismatch(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runtime_bundle_identity_canonicalizes_paths_without_changing_integrity_results() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = function () {
+  return { ok: true };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let expected_sha256 =
+            RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+        let canonical_bundle = RuntimeBundle::with_expected_sha256(&bundle_path, &expected_sha256)
+            .expect("canonical bundle should build");
+        let dot_path_bundle = RuntimeBundle::with_expected_sha256(
+            bundle_path
+                .parent()
+                .expect("bundle parent should exist")
+                .join(".")
+                .join("bundle.mjs"),
+            format!("{expected_sha256}\n"),
+        )
+        .expect("dot path bundle should build");
+        let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:list".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+
+        assert_eq!(
+            canonical_bundle.bundle_identity(),
+            dot_path_bundle.bundle_identity()
+        );
+
+        let canonical_result = runtime
+            .invoke_bundle(&canonical_bundle, &request)
+            .await
+            .expect("canonical bundle invocation should succeed");
+        let dot_path_result = runtime
+            .invoke_bundle(&dot_path_bundle, &request)
+            .await
+            .expect("dot path bundle invocation should succeed");
+
+        assert_eq!(canonical_result, serde_json::json!({ "ok": true }));
+        assert_eq!(dot_path_result, canonical_result);
     }
 }

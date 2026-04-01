@@ -108,8 +108,12 @@ async fn handle_plain_subscription(
         .subscribe_async(tenant_id, query, request_id_for_worker, sender)
         .await
     {
-        Ok(subscription_id) => {
-            active_subscriptions.insert(subscription_id, vec![subscription_id]);
+        Ok(registration) => {
+            let subscription_id = registration.id();
+            active_subscriptions.insert(
+                subscription_id,
+                ActiveSubscription::from_registration(registration),
+            );
             activate_transform(
                 ctx.transforms,
                 subscription_id,
@@ -132,11 +136,11 @@ async fn handle_unsubscribe(
     active_subscriptions: &mut ActiveSubscriptions,
     subscription_id: u64,
 ) {
-    if let Some(underlying_ids) = active_subscriptions.remove(&subscription_id) {
+    if let Some(active_subscription) = active_subscriptions.remove(&subscription_id) {
         forwarding::unsubscribe_active_subscriptions(
             &ctx.state.service,
             ctx.tenant_id,
-            HashMap::from([(subscription_id, underlying_ids)]),
+            HashMap::from([(subscription_id, active_subscription)]),
             ctx.outbound_tx,
             true,
             ctx.transforms,

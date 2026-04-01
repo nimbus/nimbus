@@ -1,5 +1,15 @@
 use super::*;
 
+pub(super) fn drop_active_subscriptions(
+    active_subscriptions: ActiveSubscriptions,
+    transforms: &RwLock<ConvexSubscriptionTransforms>,
+) {
+    for convex_subscription_id in active_subscriptions.keys().copied() {
+        remove_subscription_transform(transforms, convex_subscription_id);
+    }
+    drop(active_subscriptions);
+}
+
 pub(super) async fn unsubscribe_active_subscriptions(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
@@ -8,9 +18,9 @@ pub(super) async fn unsubscribe_active_subscriptions(
     emit_errors: bool,
     transforms: &RwLock<ConvexSubscriptionTransforms>,
 ) {
-    for (convex_subscription_id, underlying_ids) in active_subscriptions {
+    for (convex_subscription_id, active_subscription) in active_subscriptions {
         remove_subscription_transform(transforms, convex_subscription_id);
-        for underlying_subscription_id in underlying_ids {
+        for underlying_subscription_id in active_subscription.underlying_ids() {
             let result = service
                 .unsubscribe_async(tenant_id.clone(), underlying_subscription_id)
                 .await;

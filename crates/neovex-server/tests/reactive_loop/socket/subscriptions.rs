@@ -66,3 +66,43 @@ async fn websocket_multiple_subscriptions_share_a_connection() {
         "unrelated subscription should stay idle"
     );
 }
+
+#[tokio::test]
+async fn websocket_disconnect_drops_subscription_without_explicit_unsubscribe() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router(service.clone())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert!(api.create_tenant("demo").await.status().is_success());
+    let tenant_id = neovex_core::TenantId::new("demo").expect("tenant id should be valid");
+
+    let mut socket = WebSocketFixture::connect(&api.ws_url("/ws"), "demo").await;
+    socket.subscribe_all("disconnect", "tasks").await;
+
+    let initial = socket.next_json().await;
+    assert_eq!(initial["type"], json!("subscription_result"));
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        1
+    );
+
+    drop(socket);
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if service
+                .active_subscription_count(&tenant_id)
+                .expect("subscription count should load")
+                == 0
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("connection teardown should release subscription handles");
+}

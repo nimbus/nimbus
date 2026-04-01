@@ -68,10 +68,16 @@ impl Service {
     ) -> Result<Document> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        runtime
+        if let Some(document) = runtime.get_cached_document(table, document_id) {
+            return Ok(document);
+        }
+
+        let document = runtime
             .store
             .get(table, &document_id)?
-            .ok_or(Error::DocumentNotFound(document_id))
+            .ok_or(Error::DocumentNotFound(document_id))?;
+        runtime.cache_document(&document);
+        Ok(document)
     }
 
     /// Fetches a single document in a logical table asynchronously.
@@ -174,7 +180,10 @@ impl Service {
     ) -> Result<Page> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        if let Some(index_docs) = try_index_scan(&runtime, &query.query, check_cancel)? {
+        let plan = plan_query(&query.query, runtime.schema().get_table(&query.query.table))?;
+        if let Some(index_docs) =
+            load_query_plan_documents_cancellable(&runtime, &query.query, &plan, check_cancel)?
+        {
             evaluate_paginated_with_docs_cancellable(index_docs, query, check_cancel)
         } else {
             evaluate_paginated_cancellable(&runtime.store, query, check_cancel)
@@ -218,6 +227,16 @@ impl Service {
         self.call_blocking(move |service| service.latest_sequence(&tenant_id))
             .await
     }
+
+    #[cfg(test)]
+    pub(crate) fn document_cache_stats_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::DocumentCacheStats> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        Ok(runtime.document_cache_stats())
+    }
 }
 
 pub(super) fn evaluate_with_index(runtime: &TenantRuntime, query: &Query) -> Result<Vec<Document>> {
@@ -229,129 +248,102 @@ pub(super) fn evaluate_with_index_cancellable(
     query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
-    if let Some(plan) = try_index_query_plan(runtime, query, check_cancel)? {
-        evaluate_query_with_docs_cancellable(plan.documents, &plan.query, check_cancel)
+    let plan = plan_query(query, runtime.schema().get_table(&query.table))?;
+    let documents = if let Some(documents) =
+        load_query_plan_documents_cancellable(runtime, query, &plan, check_cancel)?
+    {
+        let residual_query = plan.residual_query(query);
+        evaluate_query_with_docs_cancellable(documents, &residual_query, check_cancel)?
     } else {
-        evaluate_query_cancellable(&runtime.store, query, check_cancel)
-    }
-}
-
-fn try_index_scan(
-    runtime: &TenantRuntime,
-    query: &Query,
-    check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Option<Vec<Document>>> {
-    let schema = runtime.schema();
-    let Some(table_schema) = schema.get_table(&query.table) else {
-        return Ok(None);
+        evaluate_query_cancellable(&runtime.store, query, check_cancel)?
     };
-
-    if let Some(documents) = try_index_eq_scan(runtime, query, table_schema, check_cancel)? {
-        return Ok(Some(documents));
-    }
-
-    try_index_range_scan(runtime, query, table_schema, check_cancel)
+    runtime.cache_documents(&documents);
+    Ok(documents)
 }
 
-fn try_index_query_plan(
-    runtime: &TenantRuntime,
-    query: &Query,
-    check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Option<PlannedQuery>> {
-    let schema = runtime.schema();
-    let Some(table_schema) = schema.get_table(&query.table) else {
-        return Ok(None);
-    };
-
-    if let Some(plan) = try_index_eq_query_plan(runtime, query, table_schema, check_cancel)? {
-        return Ok(Some(plan));
-    }
-
-    if let Some(documents) = try_index_range_scan(runtime, query, table_schema, check_cancel)? {
-        return Ok(Some(PlannedQuery {
-            documents,
-            query: query.clone(),
-        }));
-    }
-
-    Ok(None)
+#[derive(Debug, Clone, PartialEq)]
+enum QueryPlan {
+    FullScan,
+    ExactIndex {
+        index_name: String,
+        value: Value,
+        residual_filters: Vec<Filter>,
+    },
+    RangeIndex {
+        index_name: String,
+        lower: Option<PlannedRangeBound>,
+        upper: Option<PlannedRangeBound>,
+        residual_filters: Vec<Filter>,
+    },
 }
 
-fn try_index_eq_scan(
-    runtime: &TenantRuntime,
-    query: &Query,
-    table_schema: &neovex_core::TableSchema,
-    check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Option<Vec<Document>>> {
-    for filter in &query.filters {
-        let is_scalar_value = filter.value.is_null()
-            || filter.value.is_boolean()
-            || filter.value.is_number()
-            || filter.value.is_string();
-        if filter.op == FilterOp::Eq
-            && is_scalar_value
-            && let Some(index) = table_schema
-                .indexes
-                .iter()
-                .find(|index| index.field == filter.field)
-        {
-            let documents = runtime.store.index_scan_eq_cancellable(
-                &query.table,
-                &index.name,
-                &filter.value,
-                check_cancel,
-            )?;
-            return Ok(Some(documents));
+impl QueryPlan {
+    fn residual_query(&self, query: &Query) -> Query {
+        match self {
+            Self::FullScan => query.clone(),
+            Self::ExactIndex {
+                residual_filters, ..
+            }
+            | Self::RangeIndex {
+                residual_filters, ..
+            } => {
+                let mut residual_query = query.clone();
+                residual_query.filters = residual_filters.clone();
+                residual_query
+            }
         }
     }
-
-    Ok(None)
 }
 
-fn try_index_eq_query_plan(
-    runtime: &TenantRuntime,
+fn plan_query(query: &Query, table_schema: Option<&neovex_core::TableSchema>) -> Result<QueryPlan> {
+    let Some(table_schema) = table_schema else {
+        return Ok(QueryPlan::FullScan);
+    };
+
+    if let Some(plan) = plan_exact_index_scan(query, table_schema) {
+        return Ok(plan);
+    }
+
+    if let Some(plan) = plan_range_index_scan(query, table_schema)? {
+        return Ok(plan);
+    }
+
+    Ok(QueryPlan::FullScan)
+}
+
+fn plan_exact_index_scan(
     query: &Query,
     table_schema: &neovex_core::TableSchema,
-    check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Option<PlannedQuery>> {
+) -> Option<QueryPlan> {
     for filter in &query.filters {
-        let is_scalar_value = filter.value.is_null()
-            || filter.value.is_boolean()
-            || filter.value.is_number()
-            || filter.value.is_string();
         if filter.op == FilterOp::Eq
-            && is_scalar_value
+            && is_scalar_index_value(&filter.value)
             && let Some(index) = table_schema
                 .indexes
                 .iter()
                 .find(|index| index.field == filter.field)
         {
-            let documents = runtime.store.index_scan_eq_cancellable(
-                &query.table,
-                &index.name,
-                &filter.value,
-                check_cancel,
-            )?;
-            let mut residual_query = query.clone();
-            residual_query
+            let residual_filters = query
                 .filters
-                .retain(|candidate| !matches_eq_filter(candidate, filter));
-            return Ok(Some(PlannedQuery {
-                documents,
-                query: residual_query,
-            }));
+                .iter()
+                .filter(|candidate| !matches_eq_filter(candidate, filter))
+                .cloned()
+                .collect();
+            return Some(QueryPlan::ExactIndex {
+                index_name: index.name.clone(),
+                value: filter.value.clone(),
+                residual_filters,
+            });
         }
     }
 
-    Ok(None)
+    None
 }
 
-fn try_index_range_scan(
-    runtime: &TenantRuntime,
+fn plan_range_index_scan(
     query: &Query,
     table_schema: &neovex_core::TableSchema,
-    check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Option<Vec<Document>>> {
+) -> Result<Option<QueryPlan>> {
     for index in &table_schema.indexes {
         let mut kind = None;
         let mut lower = None;
@@ -386,19 +378,60 @@ fn try_index_range_scan(
             continue;
         }
 
-        let documents = runtime.store.index_scan_range_cancellable(
-            &query.table,
-            &index.name,
-            lower.as_ref().map(|bound| &bound.value),
-            upper.as_ref().map(|bound| &bound.value),
-            lower.as_ref().is_none_or(|bound| bound.inclusive),
-            upper.as_ref().is_none_or(|bound| bound.inclusive),
-            check_cancel,
-        )?;
-        return Ok(Some(documents));
+        return Ok(Some(QueryPlan::RangeIndex {
+            index_name: index.name.clone(),
+            lower,
+            upper,
+            residual_filters: query.filters.clone(),
+        }));
     }
 
     Ok(None)
+}
+
+fn load_query_plan_documents_cancellable(
+    runtime: &TenantRuntime,
+    query: &Query,
+    plan: &QueryPlan,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Option<Vec<Document>>> {
+    match plan {
+        QueryPlan::FullScan => Ok(None),
+        QueryPlan::ExactIndex {
+            index_name, value, ..
+        } => {
+            let documents = runtime.store.index_scan_eq_cancellable(
+                &query.table,
+                index_name,
+                value,
+                check_cancel,
+            )?;
+            runtime.cache_documents(&documents);
+            Ok(Some(documents))
+        }
+        QueryPlan::RangeIndex {
+            index_name,
+            lower,
+            upper,
+            ..
+        } => {
+            let documents = runtime.store.index_scan_range_cancellable(
+                &query.table,
+                index_name,
+                lower.as_ref().map(|bound| &bound.value),
+                upper.as_ref().map(|bound| &bound.value),
+                lower.as_ref().is_none_or(|bound| bound.inclusive),
+                upper.as_ref().is_none_or(|bound| bound.inclusive),
+                check_cancel,
+            )?;
+            runtime.cache_documents(&documents);
+            Ok(Some(documents))
+        }
+    }
+}
+
+fn is_scalar_index_value(value: &Value) -> bool {
+    value.is_null() || value.is_boolean() || value.is_number() || value.is_string()
 }
 
 fn range_bound_from_filter(filter: &Filter) -> Result<Option<PlannedRangeBound>> {
@@ -487,7 +520,7 @@ enum RangeSide {
     Upper,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct PlannedRangeBound {
     value: Value,
     encoded: Vec<u8>,
@@ -511,14 +544,134 @@ struct PlannedRangeBoundRef<'a> {
     inclusive: bool,
 }
 
-struct PlannedQuery {
-    documents: Vec<Document>,
-    query: Query,
-}
-
 fn matches_eq_filter(candidate: &Filter, satisfied: &Filter) -> bool {
     candidate.op == FilterOp::Eq
         && satisfied.op == FilterOp::Eq
         && candidate.field == satisfied.field
         && candidate.value == satisfied.value
+}
+
+#[cfg(test)]
+mod tests {
+    use neovex_core::{FilterOp, IndexDefinition, Query, TableName, TableSchema};
+    use serde_json::json;
+
+    use super::*;
+
+    fn tasks_table() -> TableName {
+        TableName::new("tasks").expect("table name should be valid")
+    }
+
+    fn filter(field: &str, op: FilterOp, value: Value) -> Filter {
+        Filter {
+            field: field.to_string(),
+            op,
+            value,
+        }
+    }
+
+    fn schema_with_indexes(indexes: &[(&str, &str)]) -> TableSchema {
+        TableSchema {
+            table: tasks_table(),
+            fields: Vec::new(),
+            indexes: indexes
+                .iter()
+                .map(|(name, field)| IndexDefinition {
+                    name: (*name).to_string(),
+                    field: (*field).to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn plan_query_returns_full_scan_without_a_usable_index() {
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![filter("status", FilterOp::Eq, json!(["active"]))],
+            order: None,
+            limit: None,
+        };
+        let plan = plan_query(
+            &query,
+            Some(&schema_with_indexes(&[("by_status", "status")])),
+        )
+        .expect("planning should succeed");
+
+        assert!(matches!(plan, QueryPlan::FullScan));
+    }
+
+    #[test]
+    fn plan_query_selects_exact_index_scan_and_retains_residual_filters() {
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![
+                filter("status", FilterOp::Eq, json!("active")),
+                filter("rank", FilterOp::Gte, json!(2)),
+            ],
+            order: None,
+            limit: None,
+        };
+        let plan = plan_query(
+            &query,
+            Some(&schema_with_indexes(&[
+                ("by_status", "status"),
+                ("by_rank", "rank"),
+            ])),
+        )
+        .expect("planning should succeed");
+
+        match &plan {
+            QueryPlan::ExactIndex {
+                index_name,
+                value,
+                residual_filters,
+            } => {
+                assert_eq!(index_name, "by_status");
+                assert_eq!(value, &json!("active"));
+                assert_eq!(
+                    residual_filters,
+                    &vec![filter("rank", FilterOp::Gte, json!(2))]
+                );
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+
+        let residual_query = plan.residual_query(&query);
+        assert_eq!(
+            residual_query.filters,
+            vec![filter("rank", FilterOp::Gte, json!(2))]
+        );
+    }
+
+    #[test]
+    fn plan_query_selects_range_index_scan_when_no_exact_index_matches() {
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![
+                filter("rank", FilterOp::Gte, json!(2)),
+                filter("rank", FilterOp::Lt, json!(10)),
+                filter("status", FilterOp::Eq, json!("active")),
+            ],
+            order: None,
+            limit: None,
+        };
+        let plan = plan_query(&query, Some(&schema_with_indexes(&[("by_rank", "rank")])))
+            .expect("planning should succeed");
+
+        match &plan {
+            QueryPlan::RangeIndex {
+                index_name,
+                lower,
+                upper,
+                residual_filters,
+            } => {
+                assert_eq!(index_name, "by_rank");
+                assert_eq!(lower.as_ref().map(|bound| &bound.value), Some(&json!(2)));
+                assert_eq!(upper.as_ref().map(|bound| &bound.value), Some(&json!(10)));
+                assert_eq!(residual_filters, &query.filters);
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
 }

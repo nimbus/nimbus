@@ -226,20 +226,20 @@ dependencies are `done`.
 
 | Item | Status | Hard dependencies | Gate or unblock note |
 | --- | --- | --- | --- |
-| 1A | todo | none | first eligible |
-| 1B | todo | none | first eligible |
-| 1C | todo | none | first eligible |
-| 1D | todo | none | second delivery batch |
-| 1E | todo | none | second delivery batch |
-| 1F | todo | none | second delivery batch |
-| 1G | todo | none | second delivery batch |
-| 2A | todo | 1A | start after 1A is done |
-| 7A | todo | 2A | start after 2A is done |
-| 3A | todo | none | next core query-model item after 7A in delivery order |
-| 3B | todo | none | next core query-model item after 3A in delivery order |
-| 3C | todo | none | benefits from 3A and 3B, but no hard gate |
-| 3D | todo | 3A, 3B | dependency model work starts after 3A and 3B |
-| 3E | todo | 3B | authorization move starts after 3B |
+| 1A | done | none | completed 2026-04-01 |
+| 1B | done | none | completed 2026-04-01 |
+| 1C | done | none | completed 2026-04-01 |
+| 1D | done | none | completed 2026-04-01 |
+| 1E | done | none | completed 2026-04-01 |
+| 1F | done | none | completed 2026-04-01 |
+| 1G | done | none | completed 2026-04-01 |
+| 2A | done | 1A | completed 2026-04-01 |
+| 7A | done | 2A | completed 2026-04-01 |
+| 3A | done | none | completed 2026-04-01 |
+| 3B | done | none | completed 2026-04-01 |
+| 3C | done | none | completed 2026-04-01 |
+| 3D | done | 3A, 3B | completed 2026-04-01 |
+| 3E | in_progress | 3B | active 2026-04-01 |
 | 4D | todo | none | simulation seam groundwork should land before 6A, 8A, and 9A |
 | 3F | todo | 3D, 3E | OCC starts after dependency model and auth work |
 | 5A | todo | none | async rewrite start |
@@ -288,6 +288,19 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | 3D | done | Introduced a shared `DependencySet` model plus commit-intersection helper in `neovex-core`, moved engine subscriptions onto that normalized dependency vocabulary, translated runtime `RuntimeReadSet` values into the same shared form for re-evaluation skip checks, and added core, engine, and runtime tests for shared dependency matching and coarse engine fallback behavior. | `cargo test -p neovex-core`; `cargo test -p neovex-engine`; `cargo test -p neovex-server runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavior`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3E is now in progress |
+| 2026-04-01 | 3C | done | Added a tenant-local document cache to `TenantRuntime`, invalidated cache entries before subscription re-evaluation on every committed mutation, populated cached documents from `get_document(...)`, indexed lookups, and evaluated query results, and added deterministic hit or miss coverage for repeated gets, mutation invalidation, and subscription refreshes. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3D is now in progress |
+| 2026-04-01 | 3B | done | Extracted pure query planning into a private `QueryPlan` plus `plan_query(...)` helper in `service/queries.rs`, kept storage access in service-layer execution helpers, preserved paginated query shape while using residual filters for non-paginated exact-index scans, and added direct planner tests for full-scan, exact-index, range-index, and residual-filter behavior. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3C is now in progress |
+| 2026-04-01 | 3A | done | Narrowed engine-side subscription invalidation for insert and delete commits by reusing the evaluator filter matcher against candidate document snapshots, kept updates conservatively table-level to avoid false negatives, and added targeted subscription tests for matching inserts, matching deletes, conservative updates, and the indexed re-evaluation path. | `cargo test -p neovex-engine`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3B is now in progress |
+| 2026-04-01 | 7A | done | Added per-tenant top-level executor admission control with in-flight and queue-depth caps, recorded rejected invocation metrics globally and per tenant, mapped queue-limit failures to typed core/runtime errors plus `429` HTTP and structured WebSocket bootstrap errors, and extended runtime plus server coverage for fairness, rejection accounting, and cancellation safety. | `cargo test -p neovex-runtime`; `cargo test -p neovex-server convex_runtime_http_rejections_return_too_many_requests`; `cargo test -p neovex-server convex_runtime_websocket_bootstrap_rejections_send_error_frames`; `cargo test -p neovex-server runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is_enabled`; `cargo test -p neovex-server runtime_metrics_snapshot_surfaces_rejected_invocation_counts`; `cargo test -p neovex-server convex_runtime_only_query_reuses_same_isolate_for_ctx_run_query`; `cargo test -p neovex-server convex_runtime_only_query_enforces_nested_runtime_budget`; `cargo test -p neovex-server dropped_runtime_http_request_cancels_runtime_invocation`; `cargo test -p neovex-server dropped_queued_runtime_request_never_starts_mutation`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3A followed next in the same work session |
+| 2026-04-01 | 2A | done | Added worker-local warmed runtime shells via bootstrap startup snapshots owned by `RuntimeExecutor` workers, preserved per-invocation bundle/auth/session semantics by reinitializing runtime state and reloading user bundles each call, surfaced deterministic isolate pool counters in runtime diagnostics, and extended runtime plus server coverage for reuse, replacement on cancellation/timeout, nested dispatch, and runtime read-set tracking. | `cargo test -p neovex-runtime`; `cargo test -p neovex-server convex_runtime_only_query_reuses_same_isolate_for_ctx_run_query`; `cargo test -p neovex-server dropped_runtime_http_request_cancels_runtime_invocation`; `cargo test -p neovex-server dropped_queued_runtime_request_never_starts_mutation`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 7A is now in progress |
+| 2026-04-01 | 1G | done | Added drop-based subscription cleanup handles while preserving stable numeric ids, threaded those handles through generic, Convex, and runtime-backed websocket ownership paths, and added engine plus reactive-loop coverage for drop-based unregister on disconnect without an explicit unsubscribe message. | `cargo test -p neovex-engine`; `cargo test -p neovex-server websocket_disconnect_drops_subscription_without_explicit_unsubscribe`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 2A |
+| 2026-04-01 | 1F | done | Replaced the scheduler's unconditional interval polling with a next-due sleep loop across loaded tenants, added storage and service helpers for earliest scheduled or cron work, and introduced `Notify`-based wakeups so newly scheduled earlier work resumes promptly without changing bin-owned shutdown behavior. | `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1G |
+| 2026-04-01 | 1E | done | Routed full-scan fallback query and pagination evaluation through a row-at-a-time storage scan that only materializes matching documents, while preserving existing sort, cursor, and limit semantics and explicitly avoiding any partial MessagePack decoding claims. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1F |
+| 2026-04-01 | 1D | done | Deduplicated direct and scheduled mutation planning behind shared per-variant helpers in `service/mutations.rs`, keeping delete snapshot handling explicit while leaving the public direct and scheduled entrypoints as thin wrappers over the shared execution-mode path. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1E |
+| 2026-04-01 | 1C | done | Relaxed diagnostic-only atomic counters in `RuntimeMetrics`, documented why relaxed ordering is safe there, and expanded snapshot assertions while leaving `HostCallCancellationState` on `SeqCst`. | `rg -n "Ordering::SeqCst" crates/neovex-runtime/src/metrics.rs crates/neovex-runtime/src/host.rs`; `cargo test -p neovex-runtime metrics`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1D |
+| 2026-04-01 | 1B | done | Moved `RuntimeBundle` onto shared internal state, added a stable canonical-path-plus-digest bundle identity for pooling/provenance bookkeeping, and kept path-backed bundles on strict per-invocation SHA-256 verification with regression tests for clone identity, tamper-after-success detection, and canonical-path normalization. | `cargo test -p neovex-runtime runtime_bundle`; `cargo test -p neovex-runtime runtime_rejects_bundle_integrity_mismatch`; `cargo test -p neovex-server convex_registry_requires_runtime_bundle_hash_sidecar`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1C |
+| 2026-04-01 | 1A | done | Reused one Tokio current-thread runtime per runtime worker, replaced the blocking entrypoint's async bridge with blocking worker submission/result handling, and added deterministic executor tests for worker-runtime reuse and sync entrypoint coverage. | `cargo test -p neovex-runtime executor`; `cargo test -p neovex-server convex_runtime::cancellation::request_drops`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1B |
 | 2026-04-01 | meta | refined | Tightened the Codex protocol so resumed runs must reconcile dirty worktrees, resume `in_progress` items first, and checkpoint roadmap state before likely compaction, interruption, or handoff. | document review | keep using the roadmap as the durable progress log during implementation |
 | 2026-04-01 | meta | documented | Added Codex execution protocol, status ledger, status transitions, and execution log so the roadmap can survive autonomous compactions and handoffs. | document review | start updating this log when code work begins |
 
@@ -1248,8 +1261,6 @@ touches storage must remain in the service layer, not `evaluator.rs`.
 - evaluator purity is preserved
 - query results remain unchanged
 
----
-
 ### 3C. Add a per-tenant document cache in the engine
 
 **Priority:** medium  
@@ -1303,8 +1314,6 @@ documents.
 - cached reads never return stale data
 - hit/miss behavior is observable deterministically
 - the cache remains tenant-scoped and engine-local
-
----
 
 ### 3D. Introduce a shared dependency-set model for engine and runtime subscriptions
 
@@ -1383,8 +1392,6 @@ and provides the substrate for journal-driven matching later.
 - coarse table-level tracking remains a valid fallback
 - the normalized dependency-set model is usable by later journal-driven
   invalidation work
-
----
 
 ### 3E. Move authorization into the query engine and planner while keeping authentication at the boundary
 
@@ -1496,6 +1503,14 @@ part of the query path instead of a route-specific convention.
 - no supported query shape can observe rows that policy forbids
 - Convex compatibility auth continues to work through identity normalization
   rather than a separate authorization subsystem
+
+#### Implementation checkpoint
+
+- Started 2026-04-01 after completing 3D.
+- Next step: inspect the current schema types, Convex auth normalization, and
+  engine query plus mutation entrypoints to introduce declarative policy types
+  in `neovex-core` and thread principal context through engine-owned
+  authorization checks instead of route-specific middleware.
 
 ---
 
@@ -2502,8 +2517,6 @@ source of replayable state.
 - no single tenant can consume all top-level executor capacity
 - per-tenant rejection behavior is observable in diagnostics
 - nested runtime behavior remains safe and non-deadlocking
-
----
 
 ### 7B. Add signed deployment provenance for runtime bundles
 

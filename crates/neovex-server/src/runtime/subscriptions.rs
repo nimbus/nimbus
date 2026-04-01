@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use neovex_core::{Query, TenantId};
-use neovex_engine::SubscriptionUpdate;
+use neovex_engine::{SubscriptionCleanupHandle, SubscriptionUpdate};
 use tokio::sync::mpsc;
 
 use crate::state::AppError;
@@ -9,7 +9,7 @@ use crate::state::AppError;
 #[derive(Debug)]
 pub(crate) struct RuntimeSubscriptionHandle {
     pub(crate) primary_subscription_id: u64,
-    pub(crate) underlying_subscription_ids: Vec<u64>,
+    pub(crate) cleanup_handles: Vec<SubscriptionCleanupHandle>,
 }
 
 fn spawn_runtime_subscription_bridge(
@@ -64,33 +64,25 @@ pub(crate) async fn subscribe_runtime_base_queries(
             .subscribe_async(subscribe_tenant_id, query, request_id, bridge_tx)
             .await
         {
-            Ok(subscription_id) => underlying.push((subscription_id, bridge_rx)),
-            Err(error) => {
-                for (subscription_id, _) in underlying {
-                    let cleanup_service = service.clone();
-                    let cleanup_tenant_id = tenant_id.clone();
-                    let _ = cleanup_service
-                        .unsubscribe_async(cleanup_tenant_id, subscription_id)
-                        .await;
-                }
-                return Err(error.into());
-            }
+            Ok(registration) => underlying.push((registration, bridge_rx)),
+            Err(error) => return Err(error.into()),
         }
     }
 
     let primary_subscription_id = underlying
         .first()
-        .map(|(subscription_id, _)| *subscription_id)
+        .map(|(registration, _)| registration.id())
         .expect("runtime base query bootstrap should produce at least one subscription");
 
-    let mut underlying_subscription_ids = Vec::with_capacity(underlying.len());
-    for (subscription_id, receiver) in underlying {
-        underlying_subscription_ids.push(subscription_id);
+    let mut cleanup_handles = Vec::with_capacity(underlying.len());
+    for (registration, receiver) in underlying {
+        let (_subscription_id, cleanup_handle) = registration.into_parts();
+        cleanup_handles.push(cleanup_handle);
         spawn_runtime_subscription_bridge(primary_subscription_id, receiver, sender.clone());
     }
 
     Ok(RuntimeSubscriptionHandle {
         primary_subscription_id,
-        underlying_subscription_ids,
+        cleanup_handles,
     })
 }

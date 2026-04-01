@@ -7,6 +7,20 @@ use crate::store::{
 };
 
 impl TenantStore {
+    /// Returns the earliest due timestamp across pending scheduled jobs and enabled cron jobs.
+    pub fn next_scheduled_work_at(&self) -> Result<Option<Timestamp>> {
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let next_job_at = next_pending_scheduled_job_at(&read_txn)?;
+        let next_cron_at = next_enabled_cron_run_at(&read_txn)?;
+
+        Ok(match (next_job_at, next_cron_at) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        })
+    }
+
     /// Inserts a scheduled job into the pending queue.
     pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
         let payload = serialize_job(job)?;
@@ -344,4 +358,46 @@ fn table_has_entries_str(
         Err(error) => return Err(map_redb_error(error)),
     };
     Ok(table.iter().map_err(map_redb_error)?.next().is_some())
+}
+
+fn next_pending_scheduled_job_at(read_txn: &redb::ReadTransaction) -> Result<Option<Timestamp>> {
+    let table = match read_txn.open_table(SCHEDULED_JOBS) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+    let Some(entry) = table.iter().map_err(map_redb_error)?.next() else {
+        return Ok(None);
+    };
+    let (key, _) = entry.map_err(map_redb_error)?;
+    let bytes = key.value();
+    let run_at = u64::from_be_bytes(
+        bytes[..8]
+            .try_into()
+            .expect("scheduled job keys always start with an 8-byte timestamp"),
+    );
+    Ok(Some(Timestamp(run_at)))
+}
+
+fn next_enabled_cron_run_at(read_txn: &redb::ReadTransaction) -> Result<Option<Timestamp>> {
+    let table = match read_txn.open_table(CRON_JOBS) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+
+    let mut next_run: Option<Timestamp> = None;
+    for entry in table.iter().map_err(map_redb_error)? {
+        let (_, value) = entry.map_err(map_redb_error)?;
+        let cron: CronJob = rmp_serde::from_slice(value.value())
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        if !cron.enabled {
+            continue;
+        }
+        next_run = Some(match next_run {
+            Some(current) => current.min(cron.next_run),
+            None => cron.next_run,
+        });
+    }
+    Ok(next_run)
 }
