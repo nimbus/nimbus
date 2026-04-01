@@ -21,10 +21,11 @@ impl ConvexHostBridge {
             let query = builder.clone().into_query(None);
             self.record_builder_read(&builder, &query);
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(
+            execute_query_result_cancellable_with_auth(
                 &self.service,
                 &self.tenant_id,
                 ConvexExecutableQuery::Query(query),
+                self.auth.as_ref(),
                 &mut check_cancel,
             )
             .inspect(|value| self.record_result_documents(&builder.table, value))
@@ -53,13 +54,14 @@ impl ConvexHostBridge {
             let after = payload.cursor.map(Cursor);
             let mut check_cancel = || check_host_cancellation(cancellation);
             self.service
-                .paginate_documents_cancellable(
+                .paginate_documents_with_principal_cancellable(
                     &self.tenant_id,
                     &PaginatedQuery {
                         query: query.clone(),
                         page_size: payload.page_size,
                         after: after.clone(),
                     },
+                    &self.principal,
                     &mut check_cancel,
                 )
                 .and_then(|page| {

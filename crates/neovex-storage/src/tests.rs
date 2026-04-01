@@ -266,6 +266,7 @@ fn schema_roundtrip_through_redb() {
             },
         ],
         indexes: Vec::new(),
+        access_policy: None,
     };
 
     store
@@ -305,6 +306,7 @@ fn replace_table_schema_rebuilds_indexes_and_persists_schema() {
             name: "by_email".to_string(),
             field: "email".to_string(),
         }],
+        access_policy: None,
     };
 
     store
@@ -341,6 +343,7 @@ fn delete_table_schema_clears_schema_and_indexes() {
             name: "by_email".to_string(),
             field: "email".to_string(),
         }],
+        access_policy: None,
     };
     store
         .replace_table_schema(&table_schema)
@@ -380,7 +383,7 @@ fn update_with_indexes_validated_maintains_entries() {
             &document.id,
             &serde_json::Map::from_iter([("email".to_string(), json!("new@test.com"))]),
             std::slice::from_ref(&index),
-            |updated| {
+            |_existing, updated| {
                 assert_eq!(updated.fields.get("email"), Some(&json!("new@test.com")));
                 Ok(())
             },

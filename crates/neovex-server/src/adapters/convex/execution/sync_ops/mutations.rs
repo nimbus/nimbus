@@ -1,27 +1,39 @@
 #[cfg(test)]
 use super::queries::execute_query_result;
-use super::queries::execute_query_result_cancellable;
+use super::queries::execute_query_result_cancellable_with_auth;
 #[cfg(test)]
 use super::scheduling::execute_schedule_command;
 use super::scheduling::execute_schedule_command_cancellable;
 use super::*;
 
+#[cfg(test)]
 pub(in crate::adapters::convex) fn dispatch_mutation(
     service: &neovex_engine::Service,
     tenant_id: &TenantId,
     mutation: Mutation,
 ) -> Result<Value, Error> {
+    dispatch_mutation_with_auth(service, tenant_id, mutation, None)
+}
+
+pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
+    service: &neovex_engine::Service,
+    tenant_id: &TenantId,
+    mutation: Mutation,
+    auth: Option<&InvocationAuth>,
+) -> Result<Value, Error> {
+    let principal = normalize_principal_context(auth);
     match mutation {
         Mutation::Insert { table, fields } => {
-            let id = service.insert_document(tenant_id, table, fields)?;
+            let id = service.insert_document_with_principal(tenant_id, table, fields, &principal)?;
             Ok(Value::String(id.to_string()))
         }
         Mutation::Update { table, id, patch } => {
-            let id = service.update_document(tenant_id, table, id, patch)?;
+            let id =
+                service.update_document_with_principal(tenant_id, table, id, patch, &principal)?;
             Ok(Value::String(id.to_string()))
         }
         Mutation::Delete { table, id } => {
-            service.delete_document(tenant_id, table, id)?;
+            service.delete_document_with_principal(tenant_id, table, id, &principal)?;
             Ok(Value::Null)
         }
     }
@@ -57,21 +69,28 @@ pub(in crate::adapters::convex) fn dispatch_convex_mutation(
     }
 }
 
-pub(in crate::adapters::convex) fn dispatch_convex_mutation_cancellable(
+pub(in crate::adapters::convex) fn dispatch_convex_mutation_cancellable_with_auth(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
     mutation: ConvexExecutableMutation,
+    auth: Option<&InvocationAuth>,
     cancellation: &HostCallCancellation,
 ) -> Result<Value, Error> {
     match mutation {
         ConvexExecutableMutation::Mutation(mutation) => {
             check_host_cancellation(cancellation)?;
-            dispatch_mutation(service, tenant_id, mutation)
+            dispatch_mutation_with_auth(service, tenant_id, mutation, auth)
         }
         ConvexExecutableMutation::Query(query) => {
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(service, tenant_id, query, &mut check_cancel)
+            execute_query_result_cancellable_with_auth(
+                service,
+                tenant_id,
+                query,
+                auth,
+                &mut check_cancel,
+            )
         }
         ConvexExecutableMutation::Scheduled(command) => execute_schedule_command_cancellable(
             service,

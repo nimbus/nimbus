@@ -25,6 +25,7 @@ impl ConvexHostBridge {
             &self.tenant_id,
             &payload.route.plan,
             &request_context,
+            self.auth.as_ref(),
             cancellation,
         )
         .and_then(|parts| {

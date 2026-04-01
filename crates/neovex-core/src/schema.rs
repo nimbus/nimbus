@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::auth::{TableAccessPolicy, policy_revision_id};
 use crate::types::validate_logical_name;
 use crate::{Error, Result, TableName};
 
@@ -12,6 +13,8 @@ pub struct TableSchema {
     pub table: TableName,
     pub fields: Vec<FieldSchema>,
     pub indexes: Vec<IndexDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_policy: Option<TableAccessPolicy>,
 }
 
 /// Schema for a single field.
@@ -120,6 +123,19 @@ impl TableSchema {
 
         Ok(())
     }
+
+    /// Validate the declarative access policy definitions for this table.
+    pub fn validate_access_policy(&self) -> Result<()> {
+        if let Some(policy) = &self.access_policy {
+            policy.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Returns a stable fingerprint for the table's access policy state.
+    pub fn access_policy_revision(&self) -> Result<String> {
+        policy_revision_id(self.access_policy.as_ref())
+    }
 }
 
 impl FieldType {
@@ -175,6 +191,7 @@ mod tests {
                 },
             ],
             indexes: Vec::new(),
+            access_policy: None,
         }
     }
 

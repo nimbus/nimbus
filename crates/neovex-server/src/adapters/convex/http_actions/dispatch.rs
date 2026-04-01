@@ -73,6 +73,7 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         &tenant_id,
         &route.plan,
         &request_context,
+        request_auth.as_ref(),
     )
     .await
     .map_err(AppError::from)

@@ -5,7 +5,7 @@ use neovex_runtime::{HostCallCancellation, InvocationRequest};
 use serde_json::Value;
 
 use crate::adapters::convex::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope};
-use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet};
+use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet, normalize_principal_context};
 use crate::runtime::invocations::{
     RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
     invoke_runtime_bundle_on_worker_with_host_state,
@@ -50,6 +50,8 @@ pub(in crate::adapters::convex) async fn invoke_named_convex_function_with_trace
             service.clone(),
             registry.clone(),
             tenant_id.clone(),
+            request.auth.clone(),
+            normalize_principal_context(request.auth.as_ref()),
             server_request_id.clone(),
         )),
         bundle,

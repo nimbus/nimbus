@@ -20,11 +20,7 @@ pub fn evaluate_query_cancellable(
     query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
-    let filtered =
-        store.scan_table_matching_cancellable(&query.table, check_cancel, |document| {
-            matches_filters(document, &query.filters)
-        })?;
-    finalize_query_documents(filtered, query, check_cancel)
+    evaluate_query_cancellable_with_predicate(store, query, check_cancel, &mut |_| Ok(true))
 }
 
 /// Evaluates a query using preloaded documents instead of scanning the store.
@@ -38,7 +34,40 @@ pub fn evaluate_query_with_docs_cancellable(
     query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
-    let filtered = filter_documents_cancellable(documents, &query.filters, check_cancel)?;
+    evaluate_query_with_docs_cancellable_and_predicate(
+        documents,
+        query,
+        check_cancel,
+        &mut |_| Ok(true),
+    )
+}
+
+pub(crate) fn evaluate_query_cancellable_with_predicate<F>(
+    store: &TenantStore,
+    query: &Query,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut F,
+) -> Result<Vec<Document>>
+where
+    F: FnMut(&Document) -> Result<bool>,
+{
+    let filtered =
+        store.scan_table_matching_cancellable(&query.table, check_cancel, |document| {
+            Ok(matches_filters(document, &query.filters)? && include_document(document)?)
+        })?;
+    finalize_query_documents(filtered, query, check_cancel)
+}
+
+pub(crate) fn evaluate_query_with_docs_cancellable_and_predicate<F>(
+    documents: Vec<Document>,
+    query: &Query,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut F,
+) -> Result<Vec<Document>>
+where
+    F: FnMut(&Document) -> Result<bool>,
+{
+    let filtered = filter_documents_cancellable(documents, &query.filters, check_cancel, include_document)?;
     finalize_query_documents(filtered, query, check_cancel)
 }
 
@@ -46,11 +75,12 @@ fn filter_documents_cancellable(
     documents: Vec<Document>,
     filters: &[Filter],
     check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut dyn FnMut(&Document) -> Result<bool>,
 ) -> Result<Vec<Document>> {
     let mut filtered = Vec::with_capacity(documents.len());
     for document in documents {
         check_cancel()?;
-        if matches_filters(&document, filters)? {
+        if matches_filters(&document, filters)? && include_document(&document)? {
             filtered.push(document);
         }
     }
@@ -122,12 +152,12 @@ pub fn evaluate_paginated_cancellable(
     paginated: &PaginatedQuery,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Page> {
-    let filtered = store.scan_table_matching_cancellable(
-        &paginated.query.table,
+    evaluate_paginated_cancellable_with_predicate(
+        store,
+        paginated,
         check_cancel,
-        |document| matches_filters(document, &paginated.query.filters),
-    )?;
-    evaluate_paginated_with_filtered_docs_cancellable(filtered, paginated, check_cancel)
+        &mut |_| Ok(true),
+    )
 }
 
 /// Evaluates a paginated query using preloaded documents instead of scanning the store.
@@ -144,6 +174,40 @@ pub fn evaluate_paginated_with_docs_cancellable(
     paginated: &PaginatedQuery,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Page> {
+    evaluate_paginated_with_docs_cancellable_and_predicate(
+        documents,
+        paginated,
+        check_cancel,
+        &mut |_| Ok(true),
+    )
+}
+
+pub(crate) fn evaluate_paginated_cancellable_with_predicate<F>(
+    store: &TenantStore,
+    paginated: &PaginatedQuery,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut F,
+) -> Result<Page>
+where
+    F: FnMut(&Document) -> Result<bool>,
+{
+    let filtered = store.scan_table_matching_cancellable(
+        &paginated.query.table,
+        check_cancel,
+        |document| Ok(matches_filters(document, &paginated.query.filters)? && include_document(document)?),
+    )?;
+    evaluate_paginated_with_filtered_docs_cancellable(filtered, paginated, check_cancel)
+}
+
+pub(crate) fn evaluate_paginated_with_docs_cancellable_and_predicate<F>(
+    documents: Vec<Document>,
+    paginated: &PaginatedQuery,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    include_document: &mut F,
+) -> Result<Page>
+where
+    F: FnMut(&Document) -> Result<bool>,
+{
     if paginated.page_size == 0 {
         return Err(Error::InvalidInput(
             "page_size must be greater than zero".to_string(),
@@ -152,7 +216,12 @@ pub fn evaluate_paginated_with_docs_cancellable(
 
     let mut unbounded_query = paginated.query.clone();
     unbounded_query.limit = None;
-    let filtered = filter_documents_cancellable(documents, &unbounded_query.filters, check_cancel)?;
+    let filtered = filter_documents_cancellable(
+        documents,
+        &unbounded_query.filters,
+        check_cancel,
+        include_document,
+    )?;
     evaluate_paginated_with_filtered_docs_cancellable(filtered, paginated, check_cancel)
 }
 

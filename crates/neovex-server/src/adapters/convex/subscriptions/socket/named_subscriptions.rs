@@ -55,6 +55,7 @@ pub(super) async fn handle_named_subscription(
             ctx.state.service.clone(),
             ctx.tenant_id.clone(),
             setup.base_queries,
+            normalize_principal_context(current_auth.as_ref()),
             ctx.subscription_tx.clone(),
         )
         .await
@@ -103,8 +104,9 @@ pub(super) async fn handle_named_subscription(
     let service = ctx.state.service.clone();
     let tenant_id = ctx.tenant_id.clone();
     let sender = ctx.subscription_tx.clone();
+    let principal = normalize_principal_context(current_auth.as_ref());
     match service
-        .subscribe_async(tenant_id, base_query, request_id_for_worker, sender)
+        .subscribe_async_with_principal(tenant_id, base_query, principal, request_id_for_worker, sender)
         .await
     {
         Ok(registration) => {

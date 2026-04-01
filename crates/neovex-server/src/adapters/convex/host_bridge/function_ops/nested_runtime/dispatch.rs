@@ -29,10 +29,11 @@ impl ConvexHostBridge {
                     .registry
                     .resolve_query_for_visibility(name, args, visibility)?;
                 let mut check_cancel = || check_host_cancellation(cancellation);
-                execute_query_result_cancellable(
+                execute_query_result_cancellable_with_auth(
                     &self.service,
                     &self.tenant_id,
                     query,
+                    auth.as_ref(),
                     &mut check_cancel,
                 )
             }
@@ -43,11 +44,12 @@ impl ConvexHostBridge {
                 let mutation = self
                     .registry
                     .resolve_mutation_for_visibility(name, args, visibility)?;
-                dispatch_convex_mutation_cancellable(
+                dispatch_convex_mutation_cancellable_with_auth(
                     &self.service,
                     &self.registry,
                     &self.tenant_id,
                     mutation,
+                    auth.as_ref(),
                     cancellation,
                 )
             }
@@ -55,11 +57,12 @@ impl ConvexHostBridge {
                 let action = self
                     .registry
                     .resolve_action_for_visibility(name, args, visibility)?;
-                execute_convex_action_cancellable(
+                execute_convex_action_cancellable_with_auth(
                     &self.service,
                     &self.registry,
                     &self.tenant_id,
                     action,
+                    auth.as_ref(),
                     cancellation,
                 )
             }

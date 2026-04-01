@@ -9,6 +9,13 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         .create_tenant(tenant_id.clone())
         .expect("tenant should be created");
     let registry = Arc::new(ConvexRegistry::empty());
-    let bridge = ConvexHostBridge::new(service.clone(), registry, tenant_id.clone(), None);
+    let bridge = ConvexHostBridge::new(
+        service.clone(),
+        registry,
+        tenant_id.clone(),
+        None,
+        neovex_core::PrincipalContext::anonymous(),
+        None,
+    );
     (tempdir, service, tenant_id, bridge)
 }

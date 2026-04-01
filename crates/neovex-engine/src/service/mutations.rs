@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use neovex_core::{
-    CommitEntry, Document, DocumentId, Error, Mutation, Result, Schema, TableName, TenantId,
+    AccessAction, AccessRule, CommitEntry, Document, DocumentId, Error, Mutation,
+    PrincipalContext, Result, Schema, TableName, TableSchema, TenantId,
 };
 use neovex_storage::TenantStore;
 use tracing::warn;
@@ -9,7 +10,10 @@ use tracing::warn;
 use crate::subscriptions::SubscriptionUpdate;
 use crate::tenant::TenantRuntime;
 
-use super::{Service, documents_to_json, queries::evaluate_with_index};
+use super::{
+    Service, documents_to_json,
+    queries::evaluate_with_index_cancellable_for_principal,
+};
 
 #[derive(Clone, Copy)]
 enum MutationExecutionMode<'a> {
@@ -30,7 +34,23 @@ impl Service {
         table: TableName,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.apply_mutation(tenant_id, Mutation::Insert { table, fields })?
+        self.insert_document_with_principal(
+            tenant_id,
+            table,
+            fields,
+            &PrincipalContext::anonymous(),
+        )
+    }
+
+    /// Inserts a document for the provided principal and fan-outs any resulting subscription updates.
+    pub fn insert_document_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        table: TableName,
+        fields: serde_json::Map<String, serde_json::Value>,
+        principal: &PrincipalContext,
+    ) -> Result<DocumentId> {
+        self.apply_mutation_with_principal(tenant_id, Mutation::Insert { table, fields }, principal)?
             .ok_or_else(|| Error::Internal("insert should return a document id".to_string()))
     }
 
@@ -45,6 +65,20 @@ impl Service {
             .await
     }
 
+    /// Inserts a document asynchronously for the provided principal.
+    pub async fn insert_document_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        fields: serde_json::Map<String, serde_json::Value>,
+        principal: PrincipalContext,
+    ) -> Result<DocumentId> {
+        self.call_blocking(move |service| {
+            service.insert_document_with_principal(&tenant_id, table, fields, &principal)
+        })
+        .await
+    }
+
     /// Updates a document and fan-outs any resulting subscription updates.
     pub fn update_document(
         &self,
@@ -53,13 +87,32 @@ impl Service {
         document_id: DocumentId,
         patch: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.apply_mutation(
+        self.update_document_with_principal(
+            tenant_id,
+            table,
+            document_id,
+            patch,
+            &PrincipalContext::anonymous(),
+        )
+    }
+
+    /// Updates a document for the provided principal and fan-outs any resulting subscription updates.
+    pub fn update_document_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        patch: serde_json::Map<String, serde_json::Value>,
+        principal: &PrincipalContext,
+    ) -> Result<DocumentId> {
+        self.apply_mutation_with_principal(
             tenant_id,
             Mutation::Update {
                 table,
                 id: document_id,
                 patch,
             },
+            principal,
         )?
         .ok_or_else(|| Error::Internal("update should return a document id".to_string()))
     }
@@ -78,6 +131,27 @@ impl Service {
         .await
     }
 
+    /// Updates a document asynchronously for the provided principal.
+    pub async fn update_document_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        patch: serde_json::Map<String, serde_json::Value>,
+        principal: PrincipalContext,
+    ) -> Result<DocumentId> {
+        self.call_blocking(move |service| {
+            service.update_document_with_principal(
+                &tenant_id,
+                table,
+                document_id,
+                patch,
+                &principal,
+            )
+        })
+        .await
+    }
+
     /// Deletes a document and fan-outs any resulting subscription updates.
     pub fn delete_document(
         &self,
@@ -85,12 +159,30 @@ impl Service {
         table: TableName,
         document_id: DocumentId,
     ) -> Result<()> {
-        let _ = self.apply_mutation(
+        self.delete_document_with_principal(
+            tenant_id,
+            table,
+            document_id,
+            &PrincipalContext::anonymous(),
+        )?;
+        Ok(())
+    }
+
+    /// Deletes a document for the provided principal and fan-outs any resulting subscription updates.
+    pub fn delete_document_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        principal: &PrincipalContext,
+    ) -> Result<()> {
+        let _ = self.apply_mutation_with_principal(
             tenant_id,
             Mutation::Delete {
                 table,
                 id: document_id,
             },
+            principal,
         )?;
         Ok(())
     }
@@ -106,6 +198,20 @@ impl Service {
             .await
     }
 
+    /// Deletes a document asynchronously for the provided principal.
+    pub async fn delete_document_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        principal: PrincipalContext,
+    ) -> Result<()> {
+        self.call_blocking(move |service| {
+            service.delete_document_with_principal(&tenant_id, table, document_id, &principal)
+        })
+        .await
+    }
+
     fn process_commit(
         &self,
         runtime: Arc<TenantRuntime>,
@@ -117,7 +223,13 @@ impl Service {
         let affected = runtime.subscriptions.affected(commit, candidate_documents);
         let mut failed = Vec::new();
         for subscription in affected {
-            match evaluate_with_index(&runtime, &subscription.query) {
+            let mut check_cancel = || Ok(());
+            match evaluate_with_index_cancellable_for_principal(
+                &runtime,
+                &subscription.query,
+                &subscription.principal,
+                &mut check_cancel,
+            ) {
                 Ok(documents) => {
                     let update = SubscriptionUpdate::Result {
                         subscription_id: subscription.id,
@@ -229,6 +341,7 @@ impl Service {
         tenant_id: &TenantId,
         mode: MutationExecutionMode<'_>,
         mutation: Mutation,
+        principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
@@ -236,26 +349,28 @@ impl Service {
 
         match mutation {
             Mutation::Insert { table, fields } => {
-                self.apply_insert_like(runtime.clone(), &schema, mode, table, fields)
+                self.apply_insert_like(runtime.clone(), &schema, mode, table, fields, principal)
             }
             Mutation::Update { table, id, patch } => {
-                self.apply_update_like(runtime.clone(), &schema, mode, table, id, patch)
+                self.apply_update_like(runtime.clone(), &schema, mode, table, id, patch, principal)
             }
             Mutation::Delete { table, id } => {
-                self.apply_delete_like(runtime.clone(), &schema, mode, table, id)
+                self.apply_delete_like(runtime.clone(), &schema, mode, table, id, principal)
             }
         }
     }
 
-    fn apply_mutation(
+    fn apply_mutation_with_principal(
         &self,
         tenant_id: &TenantId,
         mutation: Mutation,
+        principal: &PrincipalContext,
     ) -> Result<Option<DocumentId>> {
         match self.apply_mutation_with_mode(
             tenant_id,
             MutationExecutionMode::Immediate,
             mutation,
+            principal,
         )? {
             MutationExecutionResult::Immediate(document_id) => Ok(document_id),
             MutationExecutionResult::Scheduled(_) => {
@@ -274,6 +389,7 @@ impl Service {
             tenant_id,
             MutationExecutionMode::Scheduled { execution_id },
             mutation,
+            &PrincipalContext::anonymous(),
         )? {
             MutationExecutionResult::Scheduled(applied) => Ok(applied),
             MutationExecutionResult::Immediate(_) => {
@@ -289,9 +405,11 @@ impl Service {
         mode: MutationExecutionMode<'_>,
         table: TableName,
         fields: serde_json::Map<String, serde_json::Value>,
+        principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
-        let indexes = schema
-            .get_table(&table)
+        let table_schema = schema.get_table(&table).cloned();
+        let indexes = table_schema
+            .as_ref()
             .map(|table_schema| {
                 table_schema.validate(&fields)?;
                 Ok(table_schema.indexes.clone())
@@ -299,6 +417,13 @@ impl Service {
             .transpose()?
             .unwrap_or_default();
         let document = Document::new(table, fields);
+        enforce_mutation_authorization(
+            table_schema.as_ref(),
+            AccessAction::Create,
+            principal,
+            Some(&document),
+            None,
+        )?;
         let document_id = document.id;
 
         match mode {
@@ -343,25 +468,46 @@ impl Service {
         table: TableName,
         id: DocumentId,
         patch: serde_json::Map<String, serde_json::Value>,
+        principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
         match schema.get_table(&table).cloned() {
             Some(table_schema) if table_schema.indexes.is_empty() => match mode {
                 MutationExecutionMode::Immediate => {
+                    let authorization_schema = table_schema.clone();
+                    let principal = principal.clone();
                     self.run_store_mutation(runtime, &[], move |store| {
-                        store.update_validated(&table, &id, &patch, |document| {
-                            table_schema.validate(&document.fields)
+                        store.update_validated(&table, &id, &patch, |existing, document| {
+                            table_schema.validate(&document.fields)?;
+                            enforce_mutation_authorization(
+                                Some(&authorization_schema),
+                                AccessAction::Update,
+                                &principal,
+                                Some(document),
+                                Some(existing),
+                            )
                         })
                     })?;
                     Ok(MutationExecutionResult::Immediate(Some(id)))
                 }
                 MutationExecutionMode::Scheduled { execution_id } => {
+                    let authorization_schema = table_schema.clone();
+                    let principal = principal.clone();
                     let applied = self.run_store_mutation_once(runtime, &[], move |store| {
                         store.update_validated_once(
                             &table,
                             &id,
                             &patch,
                             Some(execution_id),
-                            |document| table_schema.validate(&document.fields),
+                            |existing, document| {
+                                table_schema.validate(&document.fields)?;
+                                enforce_mutation_authorization(
+                                    Some(&authorization_schema),
+                                    AccessAction::Update,
+                                    &principal,
+                                    Some(document),
+                                    Some(existing),
+                                )
+                            },
                         )
                     })?;
                     Ok(MutationExecutionResult::Scheduled(applied))
@@ -371,18 +517,31 @@ impl Service {
                 let indexes = table_schema.indexes.clone();
                 match mode {
                     MutationExecutionMode::Immediate => {
+                        let authorization_schema = table_schema.clone();
+                        let principal = principal.clone();
                         self.run_store_mutation(runtime, &[], move |store| {
                             store.update_with_indexes_validated(
                                 &table,
                                 &id,
                                 &patch,
                                 &indexes,
-                                |document| table_schema.validate(&document.fields),
+                                |existing, document| {
+                                    table_schema.validate(&document.fields)?;
+                                    enforce_mutation_authorization(
+                                        Some(&authorization_schema),
+                                        AccessAction::Update,
+                                        &principal,
+                                        Some(document),
+                                        Some(existing),
+                                    )
+                                },
                             )
                         })?;
                         Ok(MutationExecutionResult::Immediate(Some(id)))
                     }
                     MutationExecutionMode::Scheduled { execution_id } => {
+                        let authorization_schema = table_schema.clone();
+                        let principal = principal.clone();
                         let applied = self.run_store_mutation_once(runtime, &[], move |store| {
                             store.update_with_indexes_validated_once(
                                 &table,
@@ -390,7 +549,16 @@ impl Service {
                                 &patch,
                                 &indexes,
                                 Some(execution_id),
-                                |document| table_schema.validate(&document.fields),
+                                |existing, document| {
+                                    table_schema.validate(&document.fields)?;
+                                    enforce_mutation_authorization(
+                                        Some(&authorization_schema),
+                                        AccessAction::Update,
+                                        &principal,
+                                        Some(document),
+                                        Some(existing),
+                                    )
+                                },
                             )
                         })?;
                         Ok(MutationExecutionResult::Scheduled(applied))
@@ -399,16 +567,38 @@ impl Service {
             }
             None => match mode {
                 MutationExecutionMode::Immediate => {
+                    let principal = principal.clone();
                     self.run_store_mutation(runtime, &[], move |store| {
-                        store.update(&table, &id, &patch)
+                        store.update_validated(&table, &id, &patch, |existing, document| {
+                            enforce_mutation_authorization(
+                                None,
+                                AccessAction::Update,
+                                &principal,
+                                Some(document),
+                                Some(existing),
+                            )
+                        })
                     })?;
                     Ok(MutationExecutionResult::Immediate(Some(id)))
                 }
                 MutationExecutionMode::Scheduled { execution_id } => {
+                    let principal = principal.clone();
                     let applied = self.run_store_mutation_once(runtime, &[], move |store| {
-                        store.update_validated_once(&table, &id, &patch, Some(execution_id), |_| {
-                            Ok(())
-                        })
+                        store.update_validated_once(
+                            &table,
+                            &id,
+                            &patch,
+                            Some(execution_id),
+                            |existing, document| {
+                                enforce_mutation_authorization(
+                                    None,
+                                    AccessAction::Update,
+                                    &principal,
+                                    Some(document),
+                                    Some(existing),
+                                )
+                            },
+                        )
                     })?;
                     Ok(MutationExecutionResult::Scheduled(applied))
                 }
@@ -423,37 +613,85 @@ impl Service {
         mode: MutationExecutionMode<'_>,
         table: TableName,
         id: DocumentId,
+        principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
-        let indexes = schema
-            .get_table(&table)
+        let table_schema = schema.get_table(&table).cloned();
+        let indexes = table_schema
+            .as_ref()
             .map(|table_schema| table_schema.indexes.clone())
             .unwrap_or_default();
 
         match mode {
             MutationExecutionMode::Immediate => {
                 if indexes.is_empty() {
+                    let table_schema = table_schema.clone();
+                    let principal = principal.clone();
                     self.run_store_delete_mutation(runtime, |store| {
-                        store.delete_returning_document(&table, &id)
+                        store.delete_validated_returning_document(&table, &id, |existing| {
+                            enforce_mutation_authorization(
+                                table_schema.as_ref(),
+                                AccessAction::Delete,
+                                &principal,
+                                None,
+                                Some(existing),
+                            )
+                        })
                     })?;
                 } else {
+                    let table_schema = table_schema.clone();
+                    let principal = principal.clone();
                     self.run_store_delete_mutation(runtime, |store| {
-                        store.delete_with_indexes_returning_document(&table, &id, &indexes)
+                        store.delete_with_indexes_validated_returning_document(
+                            &table,
+                            &id,
+                            &indexes,
+                            |existing| {
+                                enforce_mutation_authorization(
+                                    table_schema.as_ref(),
+                                    AccessAction::Delete,
+                                    &principal,
+                                    None,
+                                    Some(existing),
+                                )
+                            },
+                        )
                     })?;
                 }
                 Ok(MutationExecutionResult::Immediate(None))
             }
             MutationExecutionMode::Scheduled { execution_id } => {
                 let applied = if indexes.is_empty() {
+                    let table_schema = table_schema.clone();
+                    let principal = principal.clone();
                     self.run_store_delete_mutation_once(runtime, |store| {
-                        store.delete_once_returning_document(&table, &id, Some(execution_id))
+                        store.delete_validated_once(&table, &id, Some(execution_id), |existing| {
+                            enforce_mutation_authorization(
+                                table_schema.as_ref(),
+                                AccessAction::Delete,
+                                &principal,
+                                None,
+                                Some(existing),
+                            )
+                        })
                     })?
                 } else {
+                    let table_schema = table_schema.clone();
+                    let principal = principal.clone();
                     self.run_store_delete_mutation_once(runtime, |store| {
-                        store.delete_with_indexes_once_returning_document(
+                        store.delete_with_indexes_validated_once(
                             &table,
                             &id,
                             &indexes,
                             Some(execution_id),
+                            |existing| {
+                                enforce_mutation_authorization(
+                                    table_schema.as_ref(),
+                                    AccessAction::Delete,
+                                    &principal,
+                                    None,
+                                    Some(existing),
+                                )
+                            },
                         )
                     })?
                 };
@@ -473,4 +711,37 @@ impl Service {
         })
         .await
     }
+}
+
+fn mutation_access_rule(
+    table_schema: Option<&TableSchema>,
+    action: AccessAction,
+) -> Option<&AccessRule> {
+    table_schema
+        .and_then(|table_schema| table_schema.access_policy.as_ref())
+        .map(|policy| policy.rule_for(action))
+        .filter(|rule| !rule.is_unrestricted())
+}
+
+fn enforce_mutation_authorization(
+    table_schema: Option<&TableSchema>,
+    action: AccessAction,
+    principal: &PrincipalContext,
+    candidate_document: Option<&Document>,
+    existing_document: Option<&Document>,
+) -> Result<()> {
+    let Some(rule) = mutation_access_rule(table_schema, action) else {
+        return Ok(());
+    };
+
+    if rule.allows(principal, candidate_document, existing_document)? {
+        return Ok(());
+    }
+
+    Err(Error::PermissionDenied(match action {
+        AccessAction::Create => "create access denied".to_string(),
+        AccessAction::Update => "update access denied".to_string(),
+        AccessAction::Delete => "delete access denied".to_string(),
+        AccessAction::Read => "read access denied".to_string(),
+    }))
 }

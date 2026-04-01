@@ -1,4 +1,5 @@
 use super::*;
+use crate::adapters::convex::normalize_principal_context;
 
 pub(crate) async fn query(
     State(state): State<Arc<AppState>>,
@@ -41,6 +42,7 @@ pub(crate) async fn query(
                 &service,
                 &tenant_id,
                 query,
+                auth.as_ref(),
                 Some(request_cancellation.token()),
             )
             .await?
@@ -51,6 +53,7 @@ pub(crate) async fn query(
                 &service,
                 &tenant_id,
                 ConvexExecutableQuery::Query(query),
+                auth.as_ref(),
                 Some(request_cancellation.token()),
             )
             .await?
@@ -108,9 +111,10 @@ pub(crate) async fn paginated_query(
             let cancellation = request_cancellation.token();
             let cancellation_check = cancellation.clone();
             service
-                .paginate_documents_async_cancellable(
+                .paginate_documents_async_cancellable_with_principal(
                     tenant_id.clone(),
                     query,
+                    normalize_principal_context(auth.as_ref()),
                     cancellation.cancelled(),
                     move || check_host_cancellation(&cancellation_check),
                 )
@@ -121,9 +125,10 @@ pub(crate) async fn paginated_query(
             let cancellation = request_cancellation.token();
             let cancellation_check = cancellation.clone();
             service
-                .paginate_documents_async_cancellable(
+                .paginate_documents_async_cancellable_with_principal(
                     tenant_id.clone(),
                     query,
+                    normalize_principal_context(auth.as_ref()),
                     cancellation.cancelled(),
                     move || check_host_cancellation(&cancellation_check),
                 )

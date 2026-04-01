@@ -3,7 +3,10 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use neovex_core::{CommitEntry, DependencySet, Document, Query, commit_intersects_dependency_set};
+use neovex_core::{
+    CommitEntry, DependencySet, Document, PrincipalContext, PrincipalSnapshot, Query, TableName,
+    commit_intersects_dependency_set,
+};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -29,6 +32,9 @@ struct Subscription {
     id: u64,
     query: Query,
     dependencies: DependencySet,
+    principal: PrincipalContext,
+    principal_snapshot: PrincipalSnapshot,
+    policy_revision: String,
     sender: mpsc::UnboundedSender<SubscriptionUpdate>,
 }
 
@@ -36,6 +42,7 @@ struct Subscription {
 pub struct SubscriptionDelivery {
     pub id: u64,
     pub query: Query,
+    pub principal: PrincipalContext,
     pub sender: mpsc::UnboundedSender<SubscriptionUpdate>,
 }
 
@@ -120,12 +127,18 @@ impl SubscriptionRegistry {
     pub fn register(
         &self,
         query: Query,
+        principal: PrincipalContext,
+        principal_snapshot: PrincipalSnapshot,
+        policy_revision: String,
         sender: mpsc::UnboundedSender<SubscriptionUpdate>,
     ) -> SubscriptionRegistration {
         let id = self.state.next_id.fetch_add(1, Ordering::SeqCst);
         let subscription = Subscription {
             id,
             dependencies: DependencySet::from_engine_query(&query),
+            principal,
+            principal_snapshot,
+            policy_revision,
             query,
             sender,
         };
@@ -174,9 +187,49 @@ impl SubscriptionRegistry {
             .map(|subscription| SubscriptionDelivery {
                 id: subscription.id,
                 query: subscription.query.clone(),
+                principal: subscription.principal.clone(),
                 sender: subscription.sender.clone(),
             })
             .collect()
+    }
+
+    /// Sends a terminal error to subscriptions on the provided table that were
+    /// registered under an outdated access-policy revision, then removes them.
+    pub fn terminate_policy_revision_mismatches(
+        &self,
+        table: &TableName,
+        current_policy_revision: &str,
+        message: impl Into<String>,
+    ) {
+        let message = message.into();
+        let mut removed = Vec::new();
+        {
+            let mut subscriptions = self
+                .state
+                .subscriptions
+                .write()
+                .expect("subscription lock should not be poisoned");
+            subscriptions.retain(|_, subscription| {
+                let is_stale = &subscription.query.table == table
+                    && subscription.policy_revision != current_policy_revision;
+                if is_stale {
+                    removed.push((
+                        subscription.id,
+                        subscription.principal_snapshot.clone(),
+                        subscription.sender.clone(),
+                    ));
+                }
+                !is_stale
+            });
+        }
+
+        for (subscription_id, _principal_snapshot, sender) in removed {
+            let _ = sender.send(SubscriptionUpdate::Error {
+                subscription_id,
+                request_id: None,
+                message: message.clone(),
+            });
+        }
     }
 
     /// Sends a terminal error to all subscriptions and removes them.
@@ -223,6 +276,11 @@ mod tests {
                 order: None,
                 limit: None,
             },
+            PrincipalContext::anonymous(),
+            PrincipalContext::anonymous()
+                .snapshot()
+                .expect("anonymous principal should snapshot"),
+            "policy-v1".to_string(),
             tx,
         );
 
@@ -245,7 +303,15 @@ mod tests {
             limit: None,
         };
 
-        let registration = registry.register(query.clone(), tx);
+        let registration = registry.register(
+            query.clone(),
+            PrincipalContext::anonymous(),
+            PrincipalContext::anonymous()
+                .snapshot()
+                .expect("anonymous principal should snapshot"),
+            "policy-v1".to_string(),
+            tx,
+        );
         let stored = registry
             .state
             .subscriptions

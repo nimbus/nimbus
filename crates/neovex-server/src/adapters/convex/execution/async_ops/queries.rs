@@ -4,15 +4,18 @@ pub(super) async fn query_documents_async_with_optional_cancellation(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
     query: Query,
+    auth: Option<&InvocationAuth>,
     cancellation: Option<HostCallCancellation>,
 ) -> Result<Vec<neovex_core::Document>, Error> {
+    let principal = normalize_principal_context(auth);
     match cancellation {
         Some(cancellation) => {
             let check_cancellation = cancellation.clone();
             service
-                .query_documents_async_cancellable(
+                .query_documents_async_cancellable_with_principal(
                     tenant_id.clone(),
                     query,
+                    principal,
                     cancellation.cancelled(),
                     move || check_host_cancellation(&check_cancellation),
                 )
@@ -20,7 +23,7 @@ pub(super) async fn query_documents_async_with_optional_cancellation(
         }
         None => {
             service
-                .query_documents_async(tenant_id.clone(), query)
+                .query_documents_async_with_principal(tenant_id.clone(), query, principal)
                 .await
         }
     }
@@ -30,15 +33,18 @@ pub(super) async fn paginate_documents_async_with_optional_cancellation(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
     query: PaginatedQuery,
+    auth: Option<&InvocationAuth>,
     cancellation: Option<HostCallCancellation>,
 ) -> Result<neovex_core::Page, Error> {
+    let principal = normalize_principal_context(auth);
     match cancellation {
         Some(cancellation) => {
             let check_cancellation = cancellation.clone();
             service
-                .paginate_documents_async_cancellable(
+                .paginate_documents_async_cancellable_with_principal(
                     tenant_id.clone(),
                     query,
+                    principal,
                     cancellation.cancelled(),
                     move || check_host_cancellation(&check_cancellation),
                 )
@@ -46,7 +52,7 @@ pub(super) async fn paginate_documents_async_with_optional_cancellation(
         }
         None => {
             service
-                .paginate_documents_async(tenant_id.clone(), query)
+                .paginate_documents_async_with_principal(tenant_id.clone(), query, principal)
                 .await
         }
     }
@@ -56,6 +62,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
+    auth: Option<&InvocationAuth>,
     cancellation: Option<HostCallCancellation>,
 ) -> Result<Value, Error> {
     match query {
@@ -64,6 +71,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                 service,
                 tenant_id,
                 query,
+                auth,
                 cancellation,
             )
             .await?;
@@ -75,8 +83,9 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
             ))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
+            let principal = normalize_principal_context(auth);
             match service
-                .get_document_async(tenant_id.clone(), table, id)
+                .get_document_async_with_principal(tenant_id.clone(), table, id, principal)
                 .await
             {
                 Ok(document) => Ok(document.to_json()),
@@ -89,6 +98,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                 service,
                 tenant_id,
                 query,
+                auth,
                 cancellation,
             )
             .await?;
@@ -103,6 +113,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                 service,
                 tenant_id,
                 query,
+                auth,
                 cancellation,
             )
             .await?;

@@ -9,16 +9,32 @@ impl Service {
     pub fn set_table_schema(&self, tenant_id: &TenantId, table_schema: TableSchema) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
+        let table = table_schema.table.clone();
         table_schema.validate_indexes()?;
+        table_schema.validate_access_policy()?;
+        let previous_policy_revision = runtime
+            .schema()
+            .get_table(&table)
+            .map(TableSchema::access_policy_revision)
+            .transpose()?;
+        let next_policy_revision = table_schema.access_policy_revision()?;
 
         runtime.store.replace_table_schema(&table_schema)?;
         let mut schema = runtime
             .schema
             .write()
             .expect("schema lock should not be poisoned");
-        schema
-            .tables
-            .insert(table_schema.table.clone(), table_schema);
+        schema.tables.insert(table.clone(), table_schema);
+        drop(schema);
+
+        if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
+            runtime.clear_document_cache();
+            runtime.subscriptions.terminate_policy_revision_mismatches(
+                &table,
+                &next_policy_revision,
+                "authorization policy changed; resubscribe",
+            );
+        }
         Ok(())
     }
 
@@ -70,6 +86,11 @@ impl Service {
     pub fn delete_table_schema(&self, tenant_id: &TenantId, table: &TableName) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
+        let previous_policy_revision = runtime
+            .schema()
+            .get_table(table)
+            .map(TableSchema::access_policy_revision)
+            .transpose()?;
         runtime.store.delete_table_schema(table)?;
         runtime
             .schema
@@ -77,6 +98,15 @@ impl Service {
             .expect("schema lock should not be poisoned")
             .tables
             .remove(table);
+        let removed_policy_revision = neovex_core::policy_revision_id(None)?;
+        if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
+            runtime.clear_document_cache();
+            runtime.subscriptions.terminate_policy_revision_mismatches(
+                table,
+                &removed_policy_revision,
+                "authorization policy changed; resubscribe",
+            );
+        }
         Ok(())
     }
 

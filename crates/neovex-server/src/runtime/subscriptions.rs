@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use neovex_core::{Query, TenantId};
+use neovex_core::{PrincipalContext, Query, TenantId};
 use neovex_engine::{SubscriptionCleanupHandle, SubscriptionUpdate};
 use tokio::sync::mpsc;
 
@@ -51,6 +51,7 @@ pub(crate) async fn subscribe_runtime_base_queries(
     service: Arc<neovex_engine::Service>,
     tenant_id: TenantId,
     base_queries: Vec<Query>,
+    principal: PrincipalContext,
     sender: mpsc::UnboundedSender<SubscriptionUpdate>,
 ) -> Result<RuntimeSubscriptionHandle, AppError> {
     let mut underlying = Vec::with_capacity(base_queries.len());
@@ -61,7 +62,13 @@ pub(crate) async fn subscribe_runtime_base_queries(
         let subscribe_service = service.clone();
         let subscribe_tenant_id = tenant_id.clone();
         match subscribe_service
-            .subscribe_async(subscribe_tenant_id, query, request_id, bridge_tx)
+            .subscribe_async_with_principal(
+                subscribe_tenant_id,
+                query,
+                principal.clone(),
+                request_id,
+                bridge_tx,
+            )
             .await
         {
             Ok(registration) => underlying.push((registration, bridge_rx)),

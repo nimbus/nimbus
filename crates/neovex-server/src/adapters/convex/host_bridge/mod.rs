@@ -1,8 +1,8 @@
 use super::execution::{
-    check_host_cancellation, dispatch_convex_mutation_cancellable, dispatch_mutation,
+    check_host_cancellation, dispatch_convex_mutation_cancellable_with_auth,
     encode_runtime_core_result, ensure_runtime_host_not_cancelled,
-    execute_convex_action_cancellable, execute_query_result_cancellable, execute_schedule_command,
-    runtime_error_to_core,
+    execute_convex_action_cancellable_with_auth, execute_query_result_cancellable_with_auth,
+    execute_schedule_command, runtime_error_to_core,
 };
 use super::http_actions::prepare_http_action_response_cancellable;
 use super::registry::validate_runtime_http_route;

@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use neovex_core::{Error, Query, Result, TenantId};
+use neovex_core::{Error, PrincipalContext, Query, Result, TenantId};
 use tokio::sync::mpsc;
 
 use crate::subscriptions::{SubscriptionRegistration, SubscriptionUpdate};
 
-use super::{Service, documents_to_json, queries::evaluate_with_index};
+use super::{
+    Service, documents_to_json,
+    queries::{evaluate_with_index_cancellable_for_principal, table_policy_revision},
+};
 
 impl Service {
     /// Registers a new subscription, sends the initial result, and returns the
@@ -17,13 +20,47 @@ impl Service {
         request_id: String,
         sender: mpsc::UnboundedSender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
+        self.subscribe_with_principal(
+            tenant_id,
+            query,
+            &PrincipalContext::anonymous(),
+            request_id,
+            sender,
+        )
+    }
+
+    /// Registers a new subscription for the provided principal, sends the initial result,
+    /// and returns the stable id plus a cleanup handle owned by the caller.
+    pub fn subscribe_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        query: Query,
+        principal: &PrincipalContext,
+        request_id: String,
+        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+    ) -> Result<SubscriptionRegistration> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
+        let schema = runtime.schema();
+        let principal_snapshot = principal.snapshot()?;
+        let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
         let registration = runtime
             .subscriptions
-            .register(query.clone(), sender.clone());
+            .register(
+                query.clone(),
+                principal.clone(),
+                principal_snapshot,
+                policy_revision,
+                sender.clone(),
+            );
         let subscription_id = registration.id();
-        match evaluate_with_index(&runtime, &query) {
+        let mut check_cancel = || Ok(());
+        match evaluate_with_index_cancellable_for_principal(
+            &runtime,
+            &query,
+            principal,
+            &mut check_cancel,
+        ) {
             Ok(documents) => {
                 let update = SubscriptionUpdate::Result {
                     subscription_id,
@@ -52,6 +89,21 @@ impl Service {
     ) -> Result<SubscriptionRegistration> {
         self.call_blocking(move |service| service.subscribe(&tenant_id, query, request_id, sender))
             .await
+    }
+
+    /// Registers a new subscription asynchronously for the provided principal.
+    pub async fn subscribe_async_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        query: Query,
+        principal: PrincipalContext,
+        request_id: String,
+        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+    ) -> Result<SubscriptionRegistration> {
+        self.call_blocking(move |service| {
+            service.subscribe_with_principal(&tenant_id, query, &principal, request_id, sender)
+        })
+        .await
     }
 
     /// Removes a subscription if present.

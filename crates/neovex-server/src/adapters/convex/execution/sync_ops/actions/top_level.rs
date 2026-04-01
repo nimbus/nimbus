@@ -39,6 +39,7 @@ pub(in crate::adapters::convex) fn execute_convex_action(
     }
 }
 
+#[cfg(test)]
 pub(in crate::adapters::convex) fn execute_convex_action_cancellable(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
@@ -46,28 +47,48 @@ pub(in crate::adapters::convex) fn execute_convex_action_cancellable(
     action: ConvexExecutableAction,
     cancellation: &HostCallCancellation,
 ) -> Result<Value, Error> {
+    execute_convex_action_cancellable_with_auth(
+        service,
+        registry,
+        tenant_id,
+        action,
+        None,
+        cancellation,
+    )
+}
+
+pub(in crate::adapters::convex) fn execute_convex_action_cancellable_with_auth(
+    service: &neovex_engine::Service,
+    registry: &ConvexRegistry,
+    tenant_id: &TenantId,
+    action: ConvexExecutableAction,
+    auth: Option<&InvocationAuth>,
+    cancellation: &HostCallCancellation,
+) -> Result<Value, Error> {
     match action {
         ConvexExecutableAction::Action(ConvexAction::Query { query }) => {
             let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable(
+            execute_query_result_cancellable_with_auth(
                 service,
                 tenant_id,
                 ConvexExecutableQuery::Query(query),
+                auth,
                 &mut check_cancel,
             )
         }
         ConvexExecutableAction::Action(ConvexAction::PaginatedQuery { query }) => {
             let mut check_cancel = || check_host_cancellation(cancellation);
-            serde_json::to_value(service.paginate_documents_cancellable(
+            serde_json::to_value(service.paginate_documents_with_principal_cancellable(
                 tenant_id,
                 &query,
+                &normalize_principal_context(auth),
                 &mut check_cancel,
             )?)
             .map_err(|error| Error::Serialization(error.to_string()))
         }
         ConvexExecutableAction::Action(ConvexAction::Mutation { mutation }) => {
             check_host_cancellation(cancellation)?;
-            dispatch_mutation(service, tenant_id, mutation)
+            dispatch_mutation_with_auth(service, tenant_id, mutation, auth)
         }
         ConvexExecutableAction::Scheduled(command) => execute_schedule_command_cancellable(
             service,
@@ -81,6 +102,7 @@ pub(in crate::adapters::convex) fn execute_convex_action_cancellable(
             registry,
             tenant_id,
             command,
+            auth,
             cancellation,
         ),
     }
