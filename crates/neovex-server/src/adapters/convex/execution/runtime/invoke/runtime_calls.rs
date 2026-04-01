@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use neovex_core::{Error, TenantId};
-use neovex_runtime::{HostCallCancellation, InvocationRequest};
+use neovex_runtime::{HostCallCancellation, InvocationKind, InvocationRequest};
 use serde_json::Value;
 
 use crate::adapters::convex::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope};
@@ -43,17 +43,20 @@ pub(in crate::adapters::convex) async fn invoke_named_convex_function_with_trace
     server_request_id: Option<String>,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let bundle = required_runtime_bundle(registry)?;
+    let invocation_kind = request.kind.clone();
+    let bridge = Arc::new(ConvexHostBridge::new_with_invocation_kind(
+        service.clone(),
+        registry.clone(),
+        tenant_id.clone(),
+        request.auth.clone(),
+        normalize_principal_context(request.auth.as_ref()),
+        server_request_id.clone(),
+        invocation_kind.clone(),
+    )?);
     let (response, read_set) = invoke_runtime_bundle_on_worker_with_host_state(
         &registry.runtime_executor(),
         registry.runtime_policy(),
-        Arc::new(ConvexHostBridge::new(
-            service.clone(),
-            registry.clone(),
-            tenant_id.clone(),
-            request.auth.clone(),
-            normalize_principal_context(request.auth.as_ref()),
-            server_request_id.clone(),
-        )),
+        bridge.clone(),
         bundle,
         request,
         RuntimeBundleInvocationOptions {
@@ -68,5 +71,9 @@ pub(in crate::adapters::convex) async fn invoke_named_convex_function_with_trace
     .map_err(runtime_error_to_core)?;
     let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
         .map_err(|error| Error::Serialization(error.to_string()))?;
-    Ok((envelope.into_core_result()?, read_set))
+    let value = envelope.into_core_result()?;
+    if matches!(invocation_kind, InvocationKind::Mutation) {
+        bridge.commit_mutation_execution_unit()?;
+    }
+    Ok((value, read_set))
 }

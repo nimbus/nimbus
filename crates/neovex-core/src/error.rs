@@ -26,6 +26,9 @@ pub enum Error {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
+    #[error("conflict: {0}")]
+    Conflict(String),
+
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

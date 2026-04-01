@@ -118,6 +118,23 @@ fn owner_write_policy() -> TableAccessPolicy {
     }
 }
 
+fn owner_read_write_policy() -> TableAccessPolicy {
+    TableAccessPolicy {
+        read: owner_matches_subject_rule(AccessValue::DocumentField {
+            field: "owner".to_string(),
+        }),
+        create: owner_matches_subject_rule(AccessValue::DocumentField {
+            field: "owner".to_string(),
+        }),
+        update: owner_matches_subject_rule(AccessValue::ExistingDocumentField {
+            field: "owner".to_string(),
+        }),
+        delete: owner_matches_subject_rule(AccessValue::ExistingDocumentField {
+            field: "owner".to_string(),
+        }),
+    }
+}
+
 fn messages_schema(
     table: &str,
     indexes: Vec<IndexDefinition>,
@@ -3381,6 +3398,213 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
             .expect("body should be present"),
         &json!("Allowed")
     );
+}
+
+#[test]
+fn mutation_execution_unit_aborts_on_overlapping_document_conflict() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_doc");
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let document = execution_unit
+        .get_document(&table, document_id)
+        .expect("point read should succeed")
+        .expect("document should exist");
+    assert_eq!(document.get_field("body"), Some(&json!("Initial")));
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Tx update"))]),
+        )
+        .expect("staged update should succeed");
+
+    service
+        .update_document(
+            &tenant_id,
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Outside update"))]),
+        )
+        .expect("concurrent update should commit");
+
+    let error = execution_unit
+        .commit()
+        .expect_err("commit should detect the conflict");
+    assert!(matches!(error, Error::Conflict(_)));
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, document_id)
+            .expect("document should remain committed")
+            .get_field("body"),
+        Some(&json!("Outside update"))
+    );
+}
+
+#[test]
+fn mutation_execution_unit_commits_when_concurrent_write_is_disjoint() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_disjoint");
+
+    let first_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("First")),
+            ]),
+        )
+        .expect("first fixture insert should succeed");
+    let second_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-456")),
+                ("body".to_string(), json!("Second")),
+            ]),
+        )
+        .expect("second fixture insert should succeed");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let read_back = execution_unit
+        .get_document(&table, first_id)
+        .expect("point read should succeed")
+        .expect("document should exist");
+    assert_eq!(read_back.get_field("body"), Some(&json!("First")));
+    execution_unit
+        .update_document(
+            table.clone(),
+            first_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Tx update"))]),
+        )
+        .expect("staged update should succeed");
+
+    service
+        .update_document(
+            &tenant_id,
+            table.clone(),
+            second_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Outside update"))]),
+        )
+        .expect("disjoint update should commit");
+
+    let commit = execution_unit
+        .commit()
+        .expect("commit should succeed")
+        .expect("commit entry should be returned");
+    assert_eq!(commit.writes.len(), 1);
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, first_id)
+            .expect("first document should exist")
+            .get_field("body"),
+        Some(&json!("Tx update"))
+    );
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, second_id)
+            .expect("second document should exist")
+            .get_field("body"),
+        Some(&json!("Outside update"))
+    );
+}
+
+#[test]
+fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_auth");
+
+    service
+        .set_table_schema(
+            &tenant_id,
+            messages_schema(
+                "messages_occ_auth",
+                vec![IndexDefinition {
+                    name: "by_owner".to_string(),
+                    field: "owner".to_string(),
+                }],
+                Some(owner_read_write_policy()),
+            ),
+        )
+        .expect("schema should save");
+    let hidden_owner = principal_with_subject("user-456");
+
+    let hidden_id = service
+        .insert_document_with_principal(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-456")),
+                ("body".to_string(), json!("Hidden")),
+            ]),
+            &hidden_owner,
+        )
+        .expect("hidden document insert should succeed");
+
+    let principal = principal_with_subject("user-123");
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), principal.clone())
+        .expect("execution unit should start");
+    let visible = execution_unit
+        .query_documents_cancellable(
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            &mut || Ok(()),
+        )
+        .expect("authorized query should succeed");
+    assert!(visible.is_empty(), "hidden row should not be visible yet");
+
+    execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Tx insert")),
+            ]),
+        )
+        .expect("authorized staged insert should succeed");
+
+    service
+        .update_document_with_principal(
+            &tenant_id,
+            table.clone(),
+            hidden_id,
+            serde_json::Map::from_iter([("owner".to_string(), json!("user-123"))]),
+            &hidden_owner,
+        )
+        .expect("external update should make the hidden row visible");
+
+    let error = execution_unit
+        .commit()
+        .expect_err("commit should detect the auth-filtered visibility change");
+    assert!(matches!(error, Error::Conflict(_)));
 }
 
 #[tokio::test]

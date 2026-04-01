@@ -28,13 +28,10 @@ impl ConvexHostBridge {
                 let query = self
                     .registry
                     .resolve_query_for_visibility(name, args, visibility)?;
-                let mut check_cancel = || check_host_cancellation(cancellation);
-                execute_query_result_cancellable_with_auth(
-                    &self.service,
-                    &self.tenant_id,
+                self.execute_query_with_execution_context_cancellable(
                     query,
                     auth.as_ref(),
-                    &mut check_cancel,
+                    cancellation,
                 )
             }
             InvocationKind::PaginatedQuery => Err(Error::InvalidInput(
@@ -44,10 +41,7 @@ impl ConvexHostBridge {
                 let mutation = self
                     .registry
                     .resolve_mutation_for_visibility(name, args, visibility)?;
-                dispatch_convex_mutation_cancellable_with_auth(
-                    &self.service,
-                    &self.registry,
-                    &self.tenant_id,
+                self.dispatch_convex_mutation_with_execution_context_cancellable(
                     mutation,
                     auth.as_ref(),
                     cancellation,

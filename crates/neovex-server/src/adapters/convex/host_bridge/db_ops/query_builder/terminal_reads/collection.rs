@@ -20,13 +20,10 @@ impl ConvexHostBridge {
         let response = self.take_builder(&payload.builder_id).and_then(|builder| {
             let query = builder.clone().into_query(None);
             self.record_builder_read(&builder, &query);
-            let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable_with_auth(
-                &self.service,
-                &self.tenant_id,
+            self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Query(query),
                 self.auth.as_ref(),
-                &mut check_cancel,
+                cancellation,
             )
             .inspect(|value| self.record_result_documents(&builder.table, value))
         });
@@ -52,30 +49,20 @@ impl ConvexHostBridge {
         let response = self.take_builder(&payload.builder_id).and_then(|builder| {
             let query = builder.clone().into_query(None);
             let after = payload.cursor.map(Cursor);
-            let mut check_cancel = || check_host_cancellation(cancellation);
-            self.service
-                .paginate_documents_with_principal_cancellable(
-                    &self.tenant_id,
-                    &PaginatedQuery {
-                        query: query.clone(),
-                        page_size: payload.page_size,
-                        after: after.clone(),
-                    },
-                    &self.principal,
-                    &mut check_cancel,
-                )
-                .and_then(|page| {
-                    self.record_paginated_window_read(
-                        &query,
-                        payload.page_size,
-                        after.as_ref(),
-                        &page,
-                    );
-                    let value = serde_json::to_value(page)
-                        .map_err(|error| Error::Serialization(error.to_string()))?;
-                    self.record_result_documents(&builder.table, &value);
-                    Ok(value)
-                })
+            self.paginate_query_with_execution_context_cancellable(
+                query.clone(),
+                payload.page_size,
+                after.clone(),
+                &self.principal,
+                cancellation,
+            )
+            .and_then(|page| {
+                self.record_paginated_window_read(&query, payload.page_size, after.as_ref(), &page);
+                let value = serde_json::to_value(page)
+                    .map_err(|error| Error::Serialization(error.to_string()))?;
+                self.record_result_documents(&builder.table, &value);
+                Ok(value)
+            })
         });
         encode_runtime_core_result(response)
     }

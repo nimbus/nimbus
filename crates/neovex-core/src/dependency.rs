@@ -71,6 +71,32 @@ impl DependencySet {
             self.paginated_windows.push(dependency);
         }
     }
+
+    pub fn extend(&mut self, other: &DependencySet) {
+        for table in &other.tables {
+            self.record_table(table);
+        }
+        for (table, document_id) in &other.documents {
+            self.record_document(table, *document_id);
+        }
+        for dependency in &other.index_ranges {
+            self.record_index_range(dependency.clone());
+        }
+        for dependency in &other.predicates {
+            self.record_predicate(dependency.clone());
+        }
+        for dependency in &other.paginated_windows {
+            self.record_paginated_window(dependency.clone());
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tables.is_empty()
+            && self.documents.is_empty()
+            && self.index_ranges.is_empty()
+            && self.predicates.is_empty()
+            && self.paginated_windows.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +193,28 @@ where
         || relevant_index_ranges.clone().next().is_some();
     if !has_relevant_dependencies {
         return false;
+    }
+
+    if let Some(document) = write.current.as_ref()
+        && document_intersects_dependencies(
+            document,
+            &relevant_predicates,
+            &relevant_paginated_windows,
+            &mut relevant_index_ranges.clone(),
+        )
+    {
+        return true;
+    }
+
+    if let Some(document) = write.previous.as_ref()
+        && document_intersects_dependencies(
+            document,
+            &relevant_predicates,
+            &relevant_paginated_windows,
+            &mut relevant_index_ranges.clone(),
+        )
+    {
+        return true;
     }
 
     if let Some(document) = candidate_documents
@@ -437,6 +485,8 @@ mod tests {
                 table,
                 op_type,
                 doc_id,
+                previous: None,
+                current: None,
             }],
         }
     }

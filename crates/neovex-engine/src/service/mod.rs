@@ -1,3 +1,4 @@
+mod execution_units;
 mod mutations;
 mod queries;
 mod scheduler;
@@ -17,6 +18,8 @@ use neovex_storage::UsageStore;
 use tokio::sync::Notify;
 
 use crate::tenant::TenantRuntime;
+
+pub use execution_units::MutationExecutionUnit;
 
 /// Top-level Neovex engine service.
 pub struct Service {

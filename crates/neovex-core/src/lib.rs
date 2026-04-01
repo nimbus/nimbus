@@ -116,16 +116,22 @@ mod tests {
                     table: tasks.clone(),
                     op_type: WriteOpType::Insert,
                     doc_id: DocumentId::new(),
+                    previous: None,
+                    current: None,
                 },
                 WriteOp {
                     table: tasks.clone(),
                     op_type: WriteOpType::Update,
                     doc_id: DocumentId::new(),
+                    previous: None,
+                    current: None,
                 },
                 WriteOp {
                     table: users.clone(),
                     op_type: WriteOpType::Delete,
                     doc_id: DocumentId::new(),
+                    previous: None,
+                    current: None,
                 },
             ],
         };

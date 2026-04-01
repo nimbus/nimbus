@@ -64,6 +64,7 @@ impl IntoResponse for AppError {
                     | Error::DocumentNotFound(_)
                     | Error::ScheduledJobNotFound(_)
                     | Error::SchemaNotFound(_) => StatusCode::NOT_FOUND,
+                    Error::Conflict(_) => StatusCode::CONFLICT,
                     Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
                     Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,

@@ -23,13 +23,10 @@ impl ConvexHostBridge {
             if query.order.is_none() {
                 self.record_builder_read(&builder, &query);
             }
-            let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable_with_auth(
-                &self.service,
-                &self.tenant_id,
+            self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Query(query),
                 self.auth.as_ref(),
-                &mut check_cancel,
+                cancellation,
             )
             .and_then(|value| {
                 self.record_limited_query_window(&tracked_query, payload.limit, &value)?;
@@ -62,13 +59,10 @@ impl ConvexHostBridge {
             if query.order.is_none() {
                 self.record_builder_read(&builder, &query);
             }
-            let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable_with_auth(
-                &self.service,
-                &self.tenant_id,
+            self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Read(ConvexReadCommand::First { query }),
                 self.auth.as_ref(),
-                &mut check_cancel,
+                cancellation,
             )
             .and_then(|value| {
                 self.record_limited_query_window(&tracked_query, 1, &value)?;
@@ -101,13 +95,10 @@ impl ConvexHostBridge {
             if query.order.is_none() {
                 self.record_builder_read(&builder, &query);
             }
-            let mut check_cancel = || check_host_cancellation(cancellation);
-            execute_query_result_cancellable_with_auth(
-                &self.service,
-                &self.tenant_id,
+            self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }),
                 self.auth.as_ref(),
-                &mut check_cancel,
+                cancellation,
             )
             .and_then(|value| {
                 self.record_limited_query_window(&tracked_query, 2, &value)?;

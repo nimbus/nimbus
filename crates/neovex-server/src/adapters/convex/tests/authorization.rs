@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::Arc;
 
 use neovex_core::{
@@ -5,7 +6,7 @@ use neovex_core::{
     IndexDefinition, OrderBy, OrderDirection, PrincipalClaimSource, Query, TableAccessPolicy,
     TableName, TableSchema,
 };
-use neovex_runtime::{InvocationAuth, RuntimeUserIdentity};
+use neovex_runtime::{InvocationAuth, InvocationKind, RuntimeUserIdentity};
 use serde_json::{Map, Value, json};
 
 use super::super::execution::execute_query_result_cancellable_with_auth;
@@ -102,6 +103,63 @@ fn decode_runtime_result(value: Value) -> Result<Value, Error> {
     let envelope: ConvexRuntimeResponseEnvelope =
         serde_json::from_value(value).expect("runtime envelope should deserialize");
     envelope.into_core_result()
+}
+
+fn mutation_bridge(
+    service: Arc<Service>,
+    registry: Arc<ConvexRegistry>,
+    tenant_id: TenantId,
+    principal: neovex_core::PrincipalContext,
+) -> ConvexHostBridge {
+    ConvexHostBridge::new_with_invocation_kind(
+        service,
+        registry,
+        tenant_id,
+        None,
+        principal,
+        None,
+        InvocationKind::Mutation,
+    )
+    .expect("mutation bridge should build")
+}
+
+fn registry_with_scheduled_mutation() -> Arc<ConvexRegistry> {
+    let tempdir = tempfile::tempdir().expect("convex registry tempdir should build");
+    let convex_dir = tempdir.path().join(".neovex").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [
+                {
+                    "name": "messages:sendInternal",
+                    "kind": "mutation",
+                    "visibility": "internal",
+                    "schedulable": true,
+                    "plan": {
+                        "type": "insert",
+                        "table": "messages",
+                        "fields": {
+                            "owner": "system",
+                            "body": { "$arg": "body" }
+                        }
+                    }
+                }
+            ]
+        }))
+        .expect("convex manifest json should serialize"),
+    )
+    .expect("convex manifest should write");
+    fs::write(
+        convex_dir.join("http_routes.json"),
+        serde_json::to_vec_pretty(&json!({ "routes": [] }))
+            .expect("convex http route manifest should serialize"),
+    )
+    .expect("convex http route manifest should write");
+    let registry =
+        ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+    std::mem::forget(tempdir);
+    Arc::new(registry)
 }
 
 #[test]
@@ -258,5 +316,202 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             .latest_sequence(&tenant_id)
             .expect("latest sequence should remain unchanged"),
         sequence_before
+    );
+}
+
+#[test]
+fn runtime_mutation_bridge_stages_writes_until_commit_and_reads_its_own_writes() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let table = messages_table();
+    let bridge = mutation_bridge(
+        service.clone(),
+        Arc::new(ConvexRegistry::empty()),
+        tenant_id.clone(),
+        neovex_core::PrincipalContext::anonymous(),
+    );
+
+    let inserted = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_insert(json!({
+                "table": table,
+                "fields": {
+                    "owner": "user-123",
+                    "body": "Hello from tx"
+                }
+            }))
+            .expect("staged insert should encode"),
+    )
+    .expect("staged insert should succeed");
+    let document_id = inserted
+        .as_str()
+        .expect("insert should return a document id")
+        .parse::<neovex_core::DocumentId>()
+        .expect("document id should parse");
+
+    let read_back = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_get(json!({
+                "table": table,
+                "id": document_id
+            }))
+            .expect("staged get should encode"),
+    )
+    .expect("staged get should succeed");
+    assert_eq!(read_back["body"], json!("Hello from tx"));
+    assert!(matches!(
+        service.get_document(&tenant_id, &table, document_id),
+        Err(Error::DocumentNotFound(_))
+    ));
+
+    bridge
+        .commit_mutation_execution_unit()
+        .expect("commit should persist staged writes");
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, document_id)
+            .expect("committed document should exist")
+            .get_field("body"),
+        Some(&json!("Hello from tx"))
+    );
+}
+
+#[test]
+fn runtime_mutation_bridge_commit_detects_occ_conflicts() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let table = messages_table();
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+    let bridge = mutation_bridge(
+        service.clone(),
+        Arc::new(ConvexRegistry::empty()),
+        tenant_id.clone(),
+        neovex_core::PrincipalContext::anonymous(),
+    );
+
+    let _ = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_get(json!({
+                "table": table,
+                "id": document_id
+            }))
+            .expect("point read should encode"),
+    )
+    .expect("point read should succeed");
+    let _ = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_patch(json!({
+                "table": table,
+                "id": document_id,
+                "patch": {
+                    "body": "Bridge update"
+                }
+            }))
+            .expect("staged patch should encode"),
+    )
+    .expect("staged patch should succeed");
+
+    service
+        .update_document(
+            &tenant_id,
+            table.clone(),
+            document_id,
+            Map::from_iter([("body".to_string(), json!("Outside update"))]),
+        )
+        .expect("outside update should commit");
+
+    let error = bridge
+        .commit_mutation_execution_unit()
+        .expect_err("commit should detect the conflict");
+    assert!(matches!(error, Error::Conflict(_)));
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, document_id)
+            .expect("document should remain committed")
+            .get_field("body"),
+        Some(&json!("Outside update"))
+    );
+}
+
+#[test]
+fn runtime_mutation_bridge_conflict_discards_staged_scheduler_side_effects() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let table = messages_table();
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+    let bridge = mutation_bridge(
+        service.clone(),
+        registry_with_scheduled_mutation(),
+        tenant_id.clone(),
+        neovex_core::PrincipalContext::anonymous(),
+    );
+
+    let scheduled_job_id = decode_runtime_result(
+        bridge
+            .invoke_ctx_scheduler_run_after(json!({
+                "delay_ms": 0,
+                "name": "messages:sendInternal",
+                "visibility": "internal",
+                "args": {
+                    "body": "Scheduled from tx"
+                }
+            }))
+            .expect("staged scheduler call should encode"),
+    )
+    .expect("staged scheduler call should succeed");
+    assert!(scheduled_job_id.as_str().is_some());
+    assert!(
+        service
+            .list_scheduled_jobs(&tenant_id)
+            .expect("scheduled jobs should load")
+            .is_empty()
+    );
+
+    let _ = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_patch(json!({
+                "table": table,
+                "id": document_id,
+                "patch": {
+                    "body": "Bridge update"
+                }
+            }))
+            .expect("staged patch should encode"),
+    )
+    .expect("staged patch should succeed");
+
+    service
+        .update_document(
+            &tenant_id,
+            table.clone(),
+            document_id,
+            Map::from_iter([("body".to_string(), json!("Outside update"))]),
+        )
+        .expect("outside update should commit");
+
+    let error = bridge
+        .commit_mutation_execution_unit()
+        .expect_err("commit should detect the conflict");
+    assert!(matches!(error, Error::Conflict(_)));
+    assert!(
+        service
+            .list_scheduled_jobs(&tenant_id)
+            .expect("scheduled jobs should load")
+            .is_empty()
     );
 }

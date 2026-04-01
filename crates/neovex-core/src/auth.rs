@@ -210,10 +210,12 @@ impl AccessPredicate {
     }
 
     fn compile_read_filter(&self, principal: &PrincipalContext) -> Result<CompiledReadPredicate> {
-        match (
-            self.left.resolve_constant_for_read(principal)?,
-            self.right.resolve_constant_for_read(principal)?,
-        ) {
+        let left = self.left.resolve_constant_for_read(principal)?;
+        let right = self.right.resolve_constant_for_read(principal)?;
+        let missing_principal = self.left.depends_on_missing_principal(principal)
+            || self.right.depends_on_missing_principal(principal);
+
+        match (left, right) {
             (Some(left), None) if self.right.is_document_field() => {
                 let field = self
                     .right
@@ -243,12 +245,7 @@ impl AccessPredicate {
                     Ok(CompiledReadPredicate::AlwaysFalse)
                 }
             }
-            (Some(_), None) | (None, Some(_))
-                if self.left.depends_on_missing_principal(principal)
-                    || self.right.depends_on_missing_principal(principal) =>
-            {
-                Ok(CompiledReadPredicate::AlwaysFalse)
-            }
+            _ if missing_principal => Ok(CompiledReadPredicate::AlwaysFalse),
             _ => Ok(CompiledReadPredicate::ResidualOnly),
         }
     }

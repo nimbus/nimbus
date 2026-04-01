@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use neovex_core::{Error, TenantId};
-use neovex_runtime::{HostCallCancellation, InvocationRequest};
+use neovex_runtime::{HostCallCancellation, InvocationKind, InvocationRequest};
 use serde_json::Value;
 
 use crate::adapters::convex::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope};
@@ -48,17 +48,20 @@ fn invoke_named_convex_function_with_trace_cancellable(
     cancellation: HostCallCancellation,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let bundle = required_runtime_bundle(registry)?;
+    let invocation_kind = request.kind.clone();
+    let bridge = Arc::new(ConvexHostBridge::new_with_invocation_kind(
+        service.clone(),
+        registry.clone(),
+        tenant_id.clone(),
+        request.auth.clone(),
+        normalize_principal_context(request.auth.as_ref()),
+        None,
+        invocation_kind.clone(),
+    )?);
     let (response, read_set) = invoke_runtime_bundle_blocking_with_host_state(
         &registry.runtime_executor(),
         registry.runtime_policy(),
-        Arc::new(ConvexHostBridge::new(
-            service.clone(),
-            registry.clone(),
-            tenant_id.clone(),
-            request.auth.clone(),
-            normalize_principal_context(request.auth.as_ref()),
-            None,
-        )),
+        bridge.clone(),
         bundle,
         request,
         RuntimeBundleInvocationOptions {
@@ -72,7 +75,11 @@ fn invoke_named_convex_function_with_trace_cancellable(
     .map_err(runtime_error_to_core)?;
     let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
         .map_err(|error| Error::Serialization(error.to_string()))?;
-    Ok((envelope.into_core_result()?, read_set))
+    let value = envelope.into_core_result()?;
+    if matches!(invocation_kind, InvocationKind::Mutation) {
+        bridge.commit_mutation_execution_unit()?;
+    }
+    Ok((value, read_set))
 }
 
 #[allow(dead_code)]
