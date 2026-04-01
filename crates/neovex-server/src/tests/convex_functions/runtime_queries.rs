@@ -1,4 +1,4 @@
-#[path = "runtime_queries/execution.rs"]
+#[path = "runtime_queries/execution/mod.rs"]
 mod execution;
 #[path = "runtime_queries/nested_runtime.rs"]
 mod nested_runtime;

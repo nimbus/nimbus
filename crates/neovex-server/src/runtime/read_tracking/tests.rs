@@ -1,4 +1,6 @@
 use super::*;
+use neovex_core::{Filter, FilterOp, Query, TableName};
+use serde_json::Value;
 
 #[test]
 fn synthesize_runtime_subscription_base_queries_keeps_disjoint_same_table_predicates() {

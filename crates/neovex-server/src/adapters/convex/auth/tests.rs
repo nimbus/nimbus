@@ -1,4 +1,4 @@
-use super::*;
+use neovex_runtime::VerifiedUserIdentityKind;
 use serde_json::{Map, Value, json};
 
 use super::jwt::ParsedClaims;

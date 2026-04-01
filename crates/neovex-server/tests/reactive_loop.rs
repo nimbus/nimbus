@@ -44,13 +44,13 @@ fn convex_registry_with_bundle(
     registry
 }
 
-#[path = "reactive_loop/manifest.rs"]
+#[path = "reactive_loop/manifest/mod.rs"]
 mod manifest;
-#[path = "reactive_loop/runtime_paginated.rs"]
+#[path = "reactive_loop/runtime_paginated/mod.rs"]
 mod runtime_paginated;
 #[path = "reactive_loop/runtime_queries.rs"]
 mod runtime_queries;
-#[path = "reactive_loop/socket_behaviors.rs"]
+#[path = "reactive_loop/socket_behaviors/mod.rs"]
 mod socket_behaviors;
-#[path = "reactive_loop/transport.rs"]
+#[path = "reactive_loop/transport/mod.rs"]
 mod transport;
