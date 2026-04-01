@@ -1,7 +1,6 @@
 # Performance And Architecture Master Plan
 
-Verified against repo state at `4996aee` on 2026-04-01, plus local uncommitted
-workspace changes already present when this document was revised.
+Verified against clean repo state at `7fa907d` on 2026-04-01.
 
 This is the canonical execution roadmap for the next architecture and
 performance cycle. It replaces the old split-plan setup as the single source of
