@@ -120,6 +120,19 @@ directly to the engine via `spawn_blocking`. **Convex** requests go to the
 runtime, which executes a V8 handler; host operations inside that handler flow
 back through the bridge into the engine.
 
+This leads to a deliberate two-tier logic model. V8 and `deno_core` remain a
+first-class execution surface for Convex compatibility, JavaScript portability,
+and the existing function-oriented developer model. At the same time, the
+long-term Neovex-native surface should keep moving toward schema-driven CRUD,
+planner-enforced policy, and, when needed, a database-native WASM plugin ABI
+for tightly scoped extensions. WASM is therefore an additive path for Neovex,
+not a planned replacement for the Convex compatibility runtime.
+
+When that Neovex-native path lands, it should follow the same broad patterns
+used by systems such as PostgREST, Hasura, and Wasmtime: a schema-owned public
+API contract, planner-enforced policy, and a typed, capability-scoped plugin
+ABI rather than an untyped general escape hatch.
+
 The Convex surface also depends on a build-time pipeline: `packages/codegen`
 (Node.js) reads application source and emits a function manifest
 (`functions.json`), a runtime ESM bundle (`bundle.mjs`), and an integrity hash
@@ -345,7 +358,7 @@ Each tenant's redb file contains 10 key-value tables:
 | `DOCUMENTS` | `table\0doc_id` | msgpack(Document) | Primary document store |
 | `INDEXES` | `table\0idx\0encoded_val+doc_id` | empty | Secondary index entries |
 | `SCHEMAS` | `table_name` | msgpack(TableSchema) | Per-table schema definitions |
-| `COMMIT_LOG` | `sequence (u64)` | msgpack(CommitEntry) | Append-only mutation log |
+| `COMMIT_LOG` | `sequence (u64)` | msgpack(CommitEntry) | Append-only mutation log. Today this is a transactional side effect; the roadmap grows it into a richer durable logical journal. |
 | `METADATA` | `"next_sequence"` | `u64` | Sequence counter |
 | `SCHEDULED_JOBS` | `run_at(8B)+job_id(16B)` | msgpack(ScheduledJob) | Pending scheduled mutations |
 | `RUNNING_SCHEDULED_JOBS` | `job_id(16B)` | msgpack(ScheduledJob) | In-flight jobs (crash recovery) |
@@ -392,6 +405,80 @@ snapshots, ACID transactions, and a single-file database per tenant.
 Alternatives considered: SQLite (FFI boundary), RocksDB (FFI + complexity),
 sled (unmaintained). redb is the simplest correct choice for an embedded
 single-writer database.
+
+**Why a durable journal instead of a traditional storage WAL?** redb already
+provides crash-safe atomic commit, so Neovex does not need a page-level WAL to
+make today's writes safe. The next architectural step is a richer logical
+ordered history that can drive replay, dependency-aware invalidation, CDC,
+streaming, and future replicas. If Neovex later adds a custom write-optimized
+materializer such as an LSM-style layer, it should consume that same logical
+journal as its log-before-materialization contract. A third-party storage engine
+may still keep an internal WAL or journal, but Neovex should avoid inventing a
+second application-level durability log when one logical ordered-history
+contract can serve the write path, recovery, and downstream consumers.
+
+**Architectural decision: Neovex owns the durable journal.** For this project,
+the durable journal is a Neovex-defined logical ordered-history layer built
+inside the current redb-based architecture. Agents should not reinterpret Phase
+6 as permission to adopt a different storage engine or a generic external log as
+the primary design.
+
+This is the right decision for Neovex because:
+
+- the reactive architecture needs logical mutation records, not just a physical
+  recovery stream
+- dependency-aware invalidation, replay, and future replica consumption all
+  need the same tenant-scoped ordered history
+- keeping the journal above storage-engine internals preserves freedom to change
+  materializers later without redefining the application-level durability
+  contract
+
+**What should guide the durable journal design?** Use external systems as
+reference implementations, not as accidental architecture replacements. The
+current direction is:
+
+- `docs/research/tigerbeetle-code-reference.md` for the Neovex-specific code
+  reading map into TigerBeetle
+- TigerBeetle as the main reference for durability discipline, recovery
+  semantics, and deterministic test expectations
+- OpenRaft log-storage invariants as a reference for append ordering, flush
+  notification, and no-hole sequence behavior
+- storage-engine WALs such as RocksDB or Fjall as references for batching,
+  recovery, and materialization lifecycle, but not as direct justification to
+  replace the Phase 6 journal with a storage-engine swap
+
+**Deterministic compaction is now in roadmap scope.** If Neovex adds a custom
+journal-driven materializer after Phase 6, it should use deterministic
+compaction principles inspired by TigerBeetle and ship first in shadow mode
+against the redb-backed serving path. Promotion onto any serving path requires
+replay, corruption, and shadow-parity testing rather than benchmark-only
+confidence.
+
+**Explicit non-decisions.**
+
+- OpenRaft is not the local journal implementation; it solves a different
+  distributed-consensus problem
+- Fjall, RocksDB, or another LSM engine are not Phase 6 substitutions for redb
+- a thin generic append-only log crate is not enough on its own because Neovex
+  needs logical replay payloads, dependency metadata, visibility rules, and
+  tenant-scoped recovery semantics
+
+**Why keep V8 and still leave room for WASM?** The research guide is right
+that schema-generated APIs and WASM plugins are attractive for a database: WASM
+is language-agnostic, sandbox-friendly, and a better fit for tightly bounded
+engine-local extensions such as policies, triggers, or deterministic compute.
+But Neovex also has an explicit Convex-compatibility goal today, and that goal
+is best served by keeping the V8 and `deno_core` runtime first-class. The
+project decision is therefore:
+
+- keep V8 for the Convex compatibility surface and JavaScript function model
+- keep the engine and planner language-agnostic
+- treat future WASM support as a complementary Neovex-native extension path,
+  not a forced replacement for the compatibility runtime
+
+TigerBeetle is not the reference system for this layer. For runtime surface,
+schema API design, and extension boundaries, the better references remain
+Convex, Hasura, PostgREST, and Wasmtime.
 
 **Why database-per-tenant?** Tenant boundaries are scaling boundaries. Each
 tenant is a self-contained redb file. No distributed transactions, no
@@ -471,17 +558,27 @@ enterprise tiers are loaded from a JSON license file. The
 `GET /debug/license/status` endpoint exposes the current license kind, status,
 entitlements, warnings, and MAU usage.
 
-**Auth.** Neovex-native routes have no built-in auth. The Convex adapter layer
-supports OIDC and custom JWT providers via `convex/auth.rs`. JWT validation
-uses `ring` for signature verification with JWKS key fetching and clock-skew
-tolerance. Validated identities are passed to runtime handlers as
-`InvocationAuth`.
+**Auth.** Authentication and authorization are separate architecture concerns.
+Today the Convex adapter layer supports OIDC and custom JWT providers via
+`convex/auth.rs`. JWT validation uses `ring` for signature verification with
+JWKS key fetching and clock-skew tolerance, and validated identities are passed
+to runtime handlers as `InvocationAuth`. Neovex-native routes still do not
+prescribe a built-in authentication mechanism. The roadmap moves authorization
+into the engine and planner as declarative schema-level policy so reads,
+writes, subscriptions, and runtime host calls share one enforcement model. In
+other words: adapters authenticate and normalize principals; the engine
+authorizes data access. A live subscription or cache entry must not continue to
+serve data across a policy revision or principal-context change without
+revalidation or teardown.
 
 **Testing.** Unit tests live in each crate's `tests.rs`. Integration tests
 (HTTP + WebSocket end-to-end) live in `neovex-server/tests/reactive_loop.rs`.
 Shared fixtures live in `neovex-test-support`. The `TenantStore::create_in_memory()`
 and `UsageStore::create_in_memory()` constructors enable fast storage tests
-without disk I/O.
+without disk I/O. The roadmap also commits Neovex to stronger deterministic
+simulation seams for new durability-critical subsystems: clock, journal,
+checkpoint, and fault-injection boundaries should become swappable and
+seed-reproducible as journal, materializer, and OCC work lands.
 
 **Serialization.** MessagePack (via `rmp-serde`) for storage. JSON (via
 `serde_json`) for HTTP and WebSocket wire format. Documents carry both
