@@ -277,7 +277,7 @@ impl MutationExecutionUnit {
         delay_ms: u64,
     ) -> Result<neovex_core::JobId> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let now = Timestamp::now();
+        let now = self.service.now();
         let job = neovex_core::ScheduledJob {
             id: neovex_core::JobId::new(),
             run_at: Timestamp(now.0.saturating_add(delay_ms)),
@@ -295,7 +295,7 @@ impl MutationExecutionUnit {
         timestamp_ms: u64,
     ) -> Result<neovex_core::JobId> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let now = Timestamp::now();
+        let now = self.service.now();
         let job = neovex_core::ScheduledJob {
             id: neovex_core::JobId::new(),
             run_at: Timestamp(timestamp_ms.max(now.0)),

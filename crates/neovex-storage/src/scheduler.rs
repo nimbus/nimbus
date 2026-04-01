@@ -25,7 +25,7 @@ impl TenantStore {
     pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         insert_scheduled_job_in_write_txn(&write_txn, job)?;
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -74,7 +74,7 @@ impl TenantStore {
             }
         }
 
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(due.into_iter().map(|(_, job)| job).collect())
     }
 
@@ -90,7 +90,7 @@ impl TenantStore {
             let key = running_job_key(job_id);
             table.remove(key.as_slice()).map_err(map_redb_error)?;
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -98,7 +98,7 @@ impl TenantStore {
     pub fn cancel_scheduled_job(&self, job_id: &JobId) -> Result<bool> {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         let removed = cancel_scheduled_job_in_write_txn(&write_txn, job_id)?;
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(removed)
     }
 
@@ -116,7 +116,7 @@ impl TenantStore {
                 .insert(key.as_slice(), payload.as_slice())
                 .map_err(map_redb_error)?;
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -197,7 +197,7 @@ impl TenantStore {
             }
         }
 
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -224,7 +224,7 @@ impl TenantStore {
                 .insert(cron.name.as_str(), payload.as_slice())
                 .map_err(map_redb_error)?;
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -259,7 +259,7 @@ impl TenantStore {
             };
             table.remove(name).map_err(map_redb_error)?;
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 }

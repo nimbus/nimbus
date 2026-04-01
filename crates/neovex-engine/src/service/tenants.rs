@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use neovex_core::{Error, Result, TenantId};
-use neovex_storage::TenantStore;
 
 use crate::tenant::TenantRuntime;
 
@@ -22,7 +21,7 @@ impl Service {
             )));
         }
 
-        let runtime = Arc::new(TenantRuntime::new(TenantStore::open(&path)?)?);
+        let runtime = Arc::new(TenantRuntime::new(self.open_tenant_store(&path)?)?);
         tenants.insert(tenant_id, runtime);
         Ok(())
     }
@@ -124,7 +123,7 @@ impl Service {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         }
 
-        let runtime = Arc::new(TenantRuntime::new(TenantStore::open(&path)?)?);
+        let runtime = Arc::new(TenantRuntime::new(self.open_tenant_store(&path)?)?);
         tenants.insert(tenant_id.clone(), runtime.clone());
         Ok(runtime)
     }

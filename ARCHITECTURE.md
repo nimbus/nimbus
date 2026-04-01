@@ -598,6 +598,14 @@ simulation seams for new durability-critical subsystems: clock, journal,
 checkpoint, and fault-injection boundaries should become swappable and
 seed-reproducible as journal, materializer, and OCC work lands.
 
+The first concrete seam layer now lives in `neovex-storage::simulation`.
+`Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test
+helpers. `TenantStore::*_with_simulation(...)` and `Service::new_with_simulation(...)`
+accept deterministic implementations, storage commit visibility exposes a
+named fault point, and engine scheduler tests can advance time without
+wall-clock sleeps. Later journal, checkpoint, and compaction work should
+extend these same seam types instead of inventing parallel harness APIs.
+
 **Serialization.** MessagePack (via `rmp-serde`) for storage. JSON (via
 `serde_json`) for HTTP and WebSocket wire format. Documents carry both
 representations: `to_msgpack()` for disk, `to_json()` for clients.

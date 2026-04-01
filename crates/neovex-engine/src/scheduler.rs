@@ -33,9 +33,9 @@ pub(crate) async fn run_scheduler_with_interval(
         tokio::pin!(wake);
 
         match next_due {
-            Some(next_due) if next_due <= Timestamp::now() => continue,
+            Some(next_due) if next_due <= service.now() => continue,
             Some(next_due) => {
-                let delay_ms = next_due.0.saturating_sub(Timestamp::now().0);
+                let delay_ms = next_due.0.saturating_sub(service.now().0);
                 let sleep = tokio::time::sleep(Duration::from_millis(delay_ms));
                 tokio::pin!(sleep);
                 tokio::select! {
@@ -65,7 +65,7 @@ pub(crate) async fn run_scheduler_with_interval(
 }
 
 pub(crate) async fn tick_async(service: &Arc<Service>) -> Result<()> {
-    tick_at_async(service, Timestamp::now()).await
+    tick_at_async(service, service.now()).await
 }
 
 #[cfg(test)]
@@ -135,7 +135,7 @@ fn process_due_jobs(service: &Service, tenant_id: &TenantId, now: Timestamp) -> 
         let execution_result = ScheduledJobResult {
             id: job.id,
             run_at: job.run_at,
-            finished_at: Timestamp::now(),
+            finished_at: service.now(),
             mutation: job.mutation,
             outcome: if result.is_ok() {
                 ScheduledJobOutcome::Completed
@@ -185,7 +185,7 @@ async fn process_due_jobs_async(
         let execution_result = ScheduledJobResult {
             id: job.id,
             run_at: job.run_at,
-            finished_at: Timestamp::now(),
+            finished_at: service.now(),
             mutation: job.mutation,
             outcome: if result.is_ok() {
                 ScheduledJobOutcome::Completed

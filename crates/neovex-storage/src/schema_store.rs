@@ -39,7 +39,7 @@ impl TenantStore {
                 .insert(table_schema.table.as_str(), payload.as_slice())
                 .map_err(map_redb_error)?;
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -69,7 +69,7 @@ impl TenantStore {
                 .map_err(map_redb_error)?;
         }
 
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -86,7 +86,7 @@ impl TenantStore {
                 .remove(table.as_str())
                 .map_err(map_redb_error)?;
         }
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 
@@ -112,7 +112,7 @@ impl TenantStore {
                 .map_err(map_redb_error)?;
         }
 
-        write_txn.commit().map_err(map_redb_error)?;
+        self.commit_write_txn(write_txn)?;
         Ok(())
     }
 }

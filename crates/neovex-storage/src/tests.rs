@@ -1,3 +1,6 @@
+use std::num::NonZeroU64;
+use std::sync::Arc;
+
 use neovex_core::{
     CronJob, CronSchedule, Document, DocumentId, Error, FieldSchema, FieldType, IndexDefinition,
     Mutation, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName,
@@ -9,7 +12,10 @@ use time::{Date, Month, PrimitiveDateTime, Time};
 
 use crate::index::encode_index_value;
 use crate::keys::{document_key, prefix_end, table_prefix};
-use crate::{TenantStore, UsageStore};
+use crate::{
+    FaultInjector, FaultOccurrence, FaultPoint, ManualClock, SeededFaultInjector, TenantStore,
+    UsageStore,
+};
 
 fn sample_document(table: &str, title: &str) -> Document {
     Document::new(
@@ -55,6 +61,73 @@ fn insert_then_get_roundtrip() {
 
     assert_eq!(commit.sequence, SequenceNumber(1));
     assert_eq!(fetched.fields.get("title"), Some(&json!("Hello")));
+}
+
+#[test]
+fn seeded_fault_injector_reproduces_the_same_schedule_for_the_same_seed() {
+    let left = SeededFaultInjector::new(7, NonZeroU64::new(3).expect("period should be non-zero"));
+    let right = SeededFaultInjector::new(7, NonZeroU64::new(3).expect("period should be non-zero"));
+
+    let left_results = [
+        FaultPoint::StorageCommitBeforeVisibility,
+        FaultPoint::JournalAppendBeforeDurableFlush,
+        FaultPoint::StorageCommitBeforeVisibility,
+        FaultPoint::CheckpointPublishBeforeManifestUpdate,
+        FaultPoint::StorageCommitBeforeVisibility,
+        FaultPoint::CompactionStartBeforePublish,
+    ]
+    .into_iter()
+    .map(|point| left.check(point).is_err())
+    .collect::<Vec<_>>();
+    let right_results = [
+        FaultPoint::StorageCommitBeforeVisibility,
+        FaultPoint::JournalAppendBeforeDurableFlush,
+        FaultPoint::StorageCommitBeforeVisibility,
+        FaultPoint::CheckpointPublishBeforeManifestUpdate,
+        FaultPoint::StorageCommitBeforeVisibility,
+        FaultPoint::CompactionStartBeforePublish,
+    ]
+    .into_iter()
+    .map(|point| right.check(point).is_err())
+    .collect::<Vec<_>>();
+
+    assert_eq!(left_results, right_results);
+}
+
+#[test]
+fn injected_fault_before_visibility_rolls_back_the_write_deterministically() {
+    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let faults = Arc::new(crate::ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::StorageCommitBeforeVisibility,
+        visit: 1,
+    }]));
+    let store = TenantStore::create_in_memory_with_simulation(clock, faults)
+        .expect("store should open with simulation seams");
+    let document = sample_document("tasks", "Hello");
+
+    let error = store
+        .insert(&document)
+        .expect_err("first insert should fail before visibility");
+    assert!(
+        matches!(error, Error::Internal(message) if message.contains("storage_commit_before_visibility"))
+    );
+    assert!(
+        store
+            .get(&document.table, &document.id)
+            .expect("get should succeed after injected failure")
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .latest_sequence()
+            .expect("latest sequence should remain unchanged"),
+        SequenceNumber(0)
+    );
+
+    let commit = store
+        .insert(&document)
+        .expect("second insert should commit");
+    assert_eq!(commit.timestamp, Timestamp(10_000));
 }
 
 #[test]

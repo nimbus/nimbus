@@ -1534,6 +1534,7 @@ dependencies = [
  "futures",
  "http",
  "neovex-core",
+ "neovex-storage",
  "reqwest",
  "serde_json",
  "tempfile",
