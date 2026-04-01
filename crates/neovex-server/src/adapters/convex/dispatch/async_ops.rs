@@ -52,7 +52,7 @@ async fn paginate_documents_async_with_optional_cancellation(
     }
 }
 
-pub(in crate::convex) async fn dispatch_mutation_async(
+pub(in crate::adapters::convex) async fn dispatch_mutation_async(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
     mutation: Mutation,
@@ -79,7 +79,7 @@ pub(in crate::convex) async fn dispatch_mutation_async(
     }
 }
 
-pub(in crate::convex) async fn execute_query_result_async(
+pub(in crate::adapters::convex) async fn execute_query_result_async(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
@@ -147,7 +147,7 @@ pub(in crate::convex) async fn execute_query_result_async(
     }
 }
 
-pub(in crate::convex) async fn dispatch_convex_mutation_async(
+pub(in crate::adapters::convex) async fn dispatch_convex_mutation_async(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -171,7 +171,7 @@ pub(in crate::convex) async fn dispatch_convex_mutation_async(
     }
 }
 
-pub(in crate::convex) async fn execute_convex_action_async(
+pub(in crate::adapters::convex) async fn execute_convex_action_async(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
@@ -276,7 +276,7 @@ async fn execute_function_call_async(
     }
 }
 
-pub(in crate::convex) async fn execute_schedule_command_async(
+pub(in crate::adapters::convex) async fn execute_schedule_command_async(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,

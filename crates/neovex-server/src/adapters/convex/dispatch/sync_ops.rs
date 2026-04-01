@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_query_request_direct(
+pub(in crate::adapters::convex) fn execute_named_query_request_direct(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -13,7 +13,7 @@ pub(in crate::convex) fn execute_named_query_request_direct(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_paginated_query_request_direct(
+pub(in crate::adapters::convex) fn execute_named_paginated_query_request_direct(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -27,7 +27,7 @@ pub(in crate::convex) fn execute_named_paginated_query_request_direct(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_mutation_request_direct(
+pub(in crate::adapters::convex) fn execute_named_mutation_request_direct(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -39,7 +39,7 @@ pub(in crate::convex) fn execute_named_mutation_request_direct(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_named_action_request_direct(
+pub(in crate::adapters::convex) fn execute_named_action_request_direct(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -50,14 +50,14 @@ pub(in crate::convex) fn execute_named_action_request_direct(
     execute_convex_action(service, registry, tenant_id, action)
 }
 
-pub(in crate::convex) fn runtime_error_to_core(error: NeovexRuntimeError) -> Error {
+pub(in crate::adapters::convex) fn runtime_error_to_core(error: NeovexRuntimeError) -> Error {
     match error {
         NeovexRuntimeError::Cancelled | NeovexRuntimeError::ExecutionTimeout(_) => Error::Cancelled,
         other => Error::Internal(format!("convex runtime error: {other}")),
     }
 }
 
-pub(in crate::convex) fn check_host_cancellation(
+pub(in crate::adapters::convex) fn check_host_cancellation(
     cancellation: &HostCallCancellation,
 ) -> Result<(), Error> {
     if cancellation.is_cancelled() {
@@ -67,13 +67,13 @@ pub(in crate::convex) fn check_host_cancellation(
     }
 }
 
-pub(in crate::convex) fn ensure_runtime_host_not_cancelled(
+pub(in crate::adapters::convex) fn ensure_runtime_host_not_cancelled(
     cancellation: &HostCallCancellation,
 ) -> std::result::Result<(), NeovexRuntimeError> {
     check_host_cancellation(cancellation).map_err(|_| NeovexRuntimeError::Cancelled)
 }
 
-pub(in crate::convex) fn encode_runtime_core_result(
+pub(in crate::adapters::convex) fn encode_runtime_core_result(
     result: Result<Value, Error>,
 ) -> std::result::Result<Value, NeovexRuntimeError> {
     match result {
@@ -85,7 +85,7 @@ pub(in crate::convex) fn encode_runtime_core_result(
     }
 }
 
-pub(in crate::convex) fn dispatch_mutation(
+pub(in crate::adapters::convex) fn dispatch_mutation(
     service: &neovex_engine::Service,
     tenant_id: &TenantId,
     mutation: Mutation,
@@ -107,7 +107,7 @@ pub(in crate::convex) fn dispatch_mutation(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn dispatch_convex_mutation(
+pub(in crate::adapters::convex) fn dispatch_convex_mutation(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -124,7 +124,7 @@ pub(in crate::convex) fn dispatch_convex_mutation(
     }
 }
 
-pub(in crate::convex) fn dispatch_convex_mutation_cancellable(
+pub(in crate::adapters::convex) fn dispatch_convex_mutation_cancellable(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -151,7 +151,7 @@ pub(in crate::convex) fn dispatch_convex_mutation_cancellable(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_query_result(
+pub(in crate::adapters::convex) fn execute_query_result(
     service: &neovex_engine::Service,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
@@ -159,7 +159,7 @@ pub(in crate::convex) fn execute_query_result(
     execute_query_result_cancellable(service, tenant_id, query, &mut || Ok(()))
 }
 
-pub(in crate::convex) fn execute_query_result_cancellable(
+pub(in crate::adapters::convex) fn execute_query_result_cancellable(
     service: &neovex_engine::Service,
     tenant_id: &TenantId,
     query: ConvexExecutableQuery,
@@ -209,7 +209,7 @@ pub(in crate::convex) fn execute_query_result_cancellable(
 }
 
 #[cfg(test)]
-pub(in crate::convex) fn execute_convex_action(
+pub(in crate::adapters::convex) fn execute_convex_action(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -235,7 +235,7 @@ pub(in crate::convex) fn execute_convex_action(
     }
 }
 
-pub(in crate::convex) fn execute_convex_action_cancellable(
+pub(in crate::adapters::convex) fn execute_convex_action_cancellable(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,
@@ -379,7 +379,7 @@ fn execute_function_call_cancellable(
     }
 }
 
-pub(in crate::convex) fn execute_schedule_command(
+pub(in crate::adapters::convex) fn execute_schedule_command(
     service: &neovex_engine::Service,
     registry: &ConvexRegistry,
     tenant_id: &TenantId,

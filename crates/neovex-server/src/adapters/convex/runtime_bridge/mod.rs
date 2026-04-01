@@ -17,17 +17,17 @@ mod function_ops;
 mod read_tracking;
 
 impl ConvexRuntimeResponseEnvelope {
-    pub(in crate::convex) fn ok(value: Value) -> Self {
+    pub(in crate::adapters::convex) fn ok(value: Value) -> Self {
         Self::Ok { value }
     }
 
-    pub(in crate::convex) fn from_core_error(error: Error) -> Self {
+    pub(in crate::adapters::convex) fn from_core_error(error: Error) -> Self {
         Self::Error {
             error: ConvexRuntimeEncodedError::from_core_error(error),
         }
     }
 
-    pub(in crate::convex) fn into_core_result(self) -> Result<Value, Error> {
+    pub(in crate::adapters::convex) fn into_core_result(self) -> Result<Value, Error> {
         match self {
             Self::Ok { value } => Ok(value),
             Self::Error { error } => Err(error.into_core_error()),
@@ -36,7 +36,7 @@ impl ConvexRuntimeResponseEnvelope {
 }
 
 impl ConvexRuntimeEncodedError {
-    pub(in crate::convex) fn from_core_error(error: Error) -> Self {
+    pub(in crate::adapters::convex) fn from_core_error(error: Error) -> Self {
         match error {
             Error::Cancelled => Self::Cancelled,
             Error::TenantNotFound(tenant_id) => Self::TenantNotFound {
@@ -60,7 +60,7 @@ impl ConvexRuntimeEncodedError {
         }
     }
 
-    pub(in crate::convex) fn into_core_error(self) -> Error {
+    pub(in crate::adapters::convex) fn into_core_error(self) -> Error {
         match self {
             Self::Cancelled => Error::Cancelled,
             Self::TenantNotFound { tenant_id } => TenantId::new(tenant_id)
@@ -88,7 +88,7 @@ impl ConvexRuntimeEncodedError {
 }
 
 impl ConvexRuntimeBridge {
-    pub(in crate::convex) fn new(
+    pub(in crate::adapters::convex) fn new(
         service: Arc<neovex_engine::Service>,
         registry: Arc<ConvexRegistry>,
         tenant_id: TenantId,
@@ -113,18 +113,18 @@ impl ConvexRuntimeBridge {
                 max_nested_runtime_invocations,
             )),
             query_builders: Arc::new(Mutex::new(ConvexRuntimeQueryBuilders::default())),
-            read_set: Arc::new(Mutex::new(ConvexRuntimeReadSet::default())),
+            read_set: Arc::new(Mutex::new(RuntimeReadSet::default())),
         }
     }
 
-    pub(in crate::convex) fn snapshot_read_set(&self) -> ConvexRuntimeReadSet {
+    pub(in crate::adapters::convex) fn snapshot_read_set(&self) -> RuntimeReadSet {
         self.read_set
             .lock()
             .expect("convex runtime read set lock should not be poisoned")
             .clone()
     }
 
-    pub(in crate::convex) fn validate_session(
+    pub(in crate::adapters::convex) fn validate_session(
         &self,
         session_id: Option<&str>,
     ) -> std::result::Result<(), NeovexRuntimeError> {
@@ -139,7 +139,9 @@ impl ConvexRuntimeBridge {
         Ok(())
     }
 
-    pub(in crate::convex) fn consume_nested_runtime_invocation_budget(&self) -> Result<(), Error> {
+    pub(in crate::adapters::convex) fn consume_nested_runtime_invocation_budget(
+        &self,
+    ) -> Result<(), Error> {
         let mut remaining = self
             .remaining_nested_runtime_invocations
             .load(Ordering::SeqCst);

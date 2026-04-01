@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn synthesize_runtime_subscription_base_queries_keeps_disjoint_same_table_predicates() {
     let table = TableName::new("messages").expect("table should be valid");
-    let mut read_set = ConvexRuntimeReadSet::default();
+    let mut read_set = RuntimeReadSet::default();
     read_set.record_predicate(
         &table,
         &[Filter {
@@ -43,7 +43,7 @@ fn synthesize_runtime_subscription_base_queries_keeps_disjoint_same_table_predic
 #[test]
 fn synthesize_runtime_subscription_base_queries_prefers_broad_query_for_full_table_reads() {
     let table = TableName::new("messages").expect("table should be valid");
-    let mut read_set = ConvexRuntimeReadSet::default();
+    let mut read_set = RuntimeReadSet::default();
     read_set.record_table(&table);
     read_set.record_predicate(
         &table,

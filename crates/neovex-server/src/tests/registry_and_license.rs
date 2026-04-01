@@ -1,4 +1,4 @@
-use super::auth_support::*;
+use super::auth_fixtures::*;
 use super::*;
 
 #[test]

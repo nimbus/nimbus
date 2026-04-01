@@ -135,8 +135,8 @@ async fn wait_for_runtime_metrics(
     }
 }
 
-#[path = "tests/auth_support.rs"]
-mod auth_support;
+#[path = "tests/auth_fixtures.rs"]
+mod auth_fixtures;
 
 #[path = "tests/auth.rs"]
 mod auth;

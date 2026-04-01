@@ -1,4 +1,4 @@
-pub(super) use super::auth_support::*;
+pub(super) use super::auth_fixtures::*;
 pub(super) use super::*;
 
 #[path = "auth/http_bearer.rs"]
