@@ -2,17 +2,37 @@
 
 Verified against repo state on 2026-03-31.
 
+## Status
+
+As of 2026-04-01:
+
+- Workstream 1 is landed
+- Workstream 2 is landed in its intended first-pass form
+- the unfinished storage/service rewrite work from Workstream 3 now lives in
+  `docs/plans/performance-and-architecture-plan.md` Phase 5
+
+This document is kept for historical context around the original cancellation
+work. It is no longer the canonical source for the remaining async storage
+rewrite.
+
+The detailed file paths and line references below reflect the 2026-03-31 repo
+snapshot and should be treated as historical context, not current module
+ownership.
+
 ## Goal
 
 Close the remaining HTTP request-teardown cancellation hole for runtime-backed
 Convex endpoints, then use that work to drive the larger async/preemption
 rewrite of the engine and storage stack.
 
-This document is intentionally split into:
+This document was originally split into:
 
 1. a small, high-value runtime-backed HTTP cancellation fix
 2. a follow-on parity pass for direct non-runtime HTTP reads
 3. the full storage/service rewrite required for true preemption
+
+The remaining item 3 work is now owned by
+`docs/plans/performance-and-architecture-plan.md`.
 
 ## Cross-Cutting Constraints
 
@@ -341,214 +361,14 @@ Add direct-path server tests for:
 
 ---
 
-## Workstream 3: Full Storage And Service Rewrite
+## Workstream 3
 
-### Objective
+The unfinished storage and service rewrite work is now covered by the canonical
+master roadmap at `docs/plans/performance-and-architecture-plan.md`, especially
+Phase 5.
 
-Replace the current synchronous storage/service boundary with a truly async,
-preemptible one so runtime cancellation stops real storage work instead of just
-worker-thread jobs wrapped around synchronous code.
-
-### Why This Is A Rewrite
-
-Today the storage surface is synchronous and concrete:
-
-- document storage in `crates/neovex-storage/src/store.rs`
-- index maintenance in `crates/neovex-storage/src/index.rs`
-- scheduler persistence in `crates/neovex-storage/src/scheduler.rs`
-- schema persistence in `crates/neovex-storage/src/schema_store.rs`
-- usage accounting in `crates/neovex-storage/src/usage_store.rs`
-
-The engine service is also synchronous and directly coupled to those concrete
-stores:
-
-- reads in `crates/neovex-engine/src/service/queries.rs`
-- writes in `crates/neovex-engine/src/service/mutations.rs`
-- scheduler in `crates/neovex-engine/src/service/scheduler.rs`
-- schema in `crates/neovex-engine/src/service/schema.rs`
-- tenant lifecycle in `crates/neovex-engine/src/service/tenants.rs`
-
-The server then compensates with `spawn_blocking(...)` in
-`crates/neovex-server/src/state.rs:100-110`, and the runtime compensates again
-with worker threads in `crates/neovex-runtime/src/host_executor.rs:41-139`.
-
-That means the real work is still synchronous underneath the bridge.
-
-### Rewrite Shape
-
-#### 1. Introduce an explicit trait hierarchy
-
-Split the boundary into:
-
-- a global storage control-plane trait for tenant lifecycle work
-- a per-tenant data-plane trait for document/index/scheduler/schema operations
-- a separate control-plane usage/accounting trait
-
-Recommended shape:
-
-- `StorageEngine`
-  - tenant open/load/list/delete
-  - returns a tenant-scoped handle
-- `TenantReadStorage`
-  - point reads
-  - table scans
-  - index scans
-  - commit-log reads
-  - latest-sequence reads
-- `TenantWriteStorage`
-  - begins a tenant-scoped write transaction
-- `TenantWriteTransaction`
-  - document mutations
-  - index maintenance
-  - scheduler state transitions
-  - schema/index rebuild mutations
-  - commit / rollback
-  - drop without commit implies rollback / abort
-- `UsageStorage`
-  - monthly active user recording and reporting
-
-Tenant-vs-global boundary:
-
-- `StorageEngine` is global
-- `TenantReadStorage` / `TenantWriteStorage` / `TenantWriteTransaction` are
-  per-tenant
-- `UsageStorage` remains a separate global control-plane store
-
-#### 2. Prefer native async trait methods for the new boundary
-
-Prefer native `async fn` trait methods for the first internal boundary, keeping
-the engine generically typed over storage implementations rather than forcing
-trait-object dispatch on day one.
-
-Guidance:
-
-- prefer native async traits / RPITIT-style internal boundaries over
-  `async_trait` unless object-safety becomes a real blocker
-- keep the first version statically dispatched through concrete storage types or
-  generic parameters
-- only introduce boxed trait objects if the engine/service wiring truly needs
-  dynamic dispatch
-
-#### 3. Split read APIs from write transaction APIs
-
-Reads and writes need different cancellation semantics.
-
-Read APIs should cover:
-
-- point reads
-- scans
-- query/index evaluation support
-
-- should be cancelable throughout
-- should expose async iteration or async batched collection where practical
-- should preserve existing cooperative checkpoints from the current scan/index
-  loops
-
-Write transaction APIs should cover:
-
-- write transactions
-- scheduler queue operations
-- schema operations that mutate persisted state
-
-Write APIs:
-
-- must define an explicit durable commit point
-- should be cancelable before commit
-- must not report `Cancelled` after the commit point has passed
-- should return success once durability is guaranteed, even if later response
-  shaping is interrupted
-- dropping or abandoning an uncommitted transaction must roll it back without
-  exposing partial durable state
-
-#### 4. Add an explicit async transaction model
-
-The current write methods inline their own `begin_write(...)`, mutate tables,
-append commit log entries, and commit in one synchronous call. The rewrite
-should replace that with an explicit async transaction boundary.
-
-Requirements:
-
-- atomic document + index + commit-log updates remain intact
-- scheduler/job state transitions remain atomic wherever the rewritten API says
-  they are atomic
-- scheduler claim / cancel / result / completion semantics are explicitly
-  documented by the new transaction boundary rather than left implicit in
-  service-layer call ordering
-- schema/index rebuild operations become async and bounded
-- the service layer no longer owns raw storage transaction plumbing
-- dropping a transaction without `commit()` rolls it back implicitly
-
-#### 5. Move the engine service layer to async
-
-Convert the service methods used by server/runtime paths to async:
-
-- read paths
-- scheduler paths
-- schema paths
-- tenant open/load paths where practical
-- eventually mutation paths once async transaction semantics exist
-
-This is the point where server routes and runtime host ops can stop treating the
-engine as a blocking subsystem.
-
-#### 6. Rework tenant lifecycle around async store handles
-
-Tenant loading/open/delete currently synchronously touches filesystem/store
-state in `crates/neovex-engine/src/service/tenants.rs:13-105`.
-
-The rewrite should define:
-
-- async tenant open/load
-- async-safe lifecycle guards
-- shutdown/delete behavior that coordinates with in-flight async storage work
-
-#### 7. Remove blocking adaptation layers once async storage exists
-
-Only after the service/storage rewrite is in place should we remove:
-
-- server `run_blocking(...)` usage for engine/storage work
-- the temporary Workstream 2 `run_blocking_cancellable(...)` helper
-- runtime host executor usage as a wrapper around synchronous storage closures
-
-At that point the runtime bridge can dispatch real async storage futures rather
-than sending sync work to worker threads.
-
-### Open Design Decision
-
-There are two viable implementation strategies:
-
-1. keep redb behind a dedicated async storage executor/actor boundary first
-2. switch to an async-native storage backend
-
-This document does not force that decision, but the engine-facing API should be
-designed so either backend can satisfy it.
-
-Selection criteria:
-
-- cancellation latency for long reads and queued writes
-- ability to preserve atomic document/index/commit-log updates
-- migration risk for existing `.redb` tenant data on disk
-- operational complexity and deployment footprint
-- implementation risk for scheduler/cron/schema rebuild behavior
-- observability and debugging ergonomics under contention/cancellation
-
-### Tests
-
-Add rewrite-level tests for:
-
-- timeout cancels in-flight storage reads
-- queued canceled request never begins storage execution
-- cancel before commit does not write durable state
-- cancel after commit still returns a durable success outcome
-- scheduler claims/cancels remain atomic under cancellation
-- schema/index rebuilds remain bounded and do not leak work
-
-### Acceptance Criteria
-
-- runtime cancellation propagates into real storage work, not just bridge jobs
-- server routes no longer need blocking wrappers for engine/storage paths
-- reads are truly cancelable
-- writes have explicit, documented pre-commit/post-commit semantics
+The intermediate extracted rewrite document is retained only as archived context
+at `docs/plans/archive/async-storage-and-service-rewrite-plan.md`.
 
 ---
 
