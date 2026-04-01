@@ -242,7 +242,7 @@ dependencies are `done`.
 | 3E | done | 3B | completed 2026-04-01 |
 | 4D | done | none | completed 2026-04-01 |
 | 3F | done | 3D, 3E | completed 2026-04-01 |
-| 5A | todo | none | async rewrite start |
+| 5A | done | none | completed 2026-04-01 |
 | 5B | todo | 5A | write-path transaction model |
 | 5C | todo | 5A, 5B | remove blocking wrappers after async read/write migration |
 | 6A | todo | 4D, 5A, 5B, 5C | durable journal begins after Phase 5 and deterministic seam groundwork |
@@ -288,6 +288,9 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | 5A | refined | Hardened the V8 bootstrap used by the async read-path server suite by switching the embedder onto Deno's unprotected platform mode and moving runtime bootstrap snapshot creation behind one process-global cache, so sibling-thread test binaries and multiple registries no longer race or duplicate bootstrap work during default parallel `cargo test` runs. | `cargo test -p neovex-runtime executor`; `cargo test -p neovex-server tests::convex_runtime -- --test-threads=2`; `cargo test -p neovex-server --test reactive_loop -- --test-threads=2`; `cargo test -p neovex-server`; `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item remains 5B |
+| 2026-04-01 | 5A | done | Added a read-first async storage boundary in `neovex-storage` with native async traits plus redb-backed tenant and usage executors, moved tenant load or list control paths and engine read or subscription bootstrap paths onto that boundary, preserved cooperative scan or index cancellation plus concurrent same-tenant readers, removed `Service::call_blocking_cancellable(...)`, and updated `ARCHITECTURE.md` to describe the async read path while leaving writes on the synchronous path for Phase 5B. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server -- --test-threads=1`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5B |
+| 2026-04-01 | 5A | checkpointed | Promoted 5A after the clean 4D baseline, inventoried the remaining `call_blocking(...)` / `call_blocking_cancellable(...)` read and control paths in engine services, and mapped the first async migration slice to point reads, query and pagination backing scans, commit-log/latest-sequence reads, tenant load/list, schema reads, and usage reads. No code has landed yet for 5A. | document and code review | introduce the minimal async storage trait surface and a redb-backed read adapter first |
 | 2026-04-01 | 4D | done | Added first-class deterministic simulation seams in `neovex-storage` for clocks and named fault points, threaded them through `TenantStore` and `Service` via `*_with_simulation(...)` constructors, guarded storage commit visibility with reproducible injected-fault hooks, added shared deterministic harness support in `neovex-test-support`, and extended storage plus engine tests to prove seeded fault reproducibility and manual-clock scheduler execution without wall-clock sleeps. | `cargo check -p neovex-storage -p neovex-engine -p neovex-test-support`; `cargo test -p neovex-storage injected_fault_before_visibility_rolls_back_the_write_deterministically`; `cargo test -p neovex-storage seeded_fault_injector_reproduces_the_same_schedule_for_the_same_seed`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine manual_clock_advances_scheduled_work_without_wall_clock_sleep`; `cargo test -p neovex-engine scheduled_mutation_executes_and_triggers_reactive_update`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5A |
 | 2026-04-01 | 3F | done | Added a stable-snapshot `MutationExecutionUnit` in the engine, layered serializable OCC validation over the shared dependency model, reused the same dependency vocabulary for runtime read tracking and conflict checks, routed runtime mutation `ctx.db.*`, `ctx.scheduler.*`, and direct `ctx.runQuery`/`ctx.runMutation` paths through staged execution-unit state, and committed staged document plus scheduler writes atomically in one redb transaction with bridge and engine regressions for conflicts, authorization-shaped visibility, read-your-own-writes, and scheduler-side-effect rollback on conflict. | `cargo test -p neovex-storage`; `cargo test -p neovex-engine mutation_execution_unit`; `cargo test -p neovex-engine`; `cargo test -p neovex-server read_tracking::tests::`; `cargo test -p neovex-server adapters::convex::tests::authorization::`; `cargo test -p neovex-server convex_named_mutation_can_use_bootstrapped_ctx_scheduler_api`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 4D |
 | 2026-04-01 | 3E | done | Added declarative principal and access-policy types in `neovex-core`, enforced planner-aware authorization in engine reads and atomic authorization in writes, stored principal snapshots plus policy revisions on subscriptions, threaded normalized Convex auth through runtime and handler entrypoints, and added engine plus server coverage for filtered reads, denied writes, policy-change teardown, auth-change teardown, and runtime non-bypass behavior. | `cargo test -p neovex-engine`; `cargo test -p neovex-server tests::auth::`; `cargo test -p neovex-server adapters::convex::tests::authorization::`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 3F |
@@ -2017,6 +2020,34 @@ execution and real cancellation propagation.
   execution
 - evaluator purity and existing read semantics are preserved
 - the first async storage implementation still uses redb
+
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- Started 2026-04-01 after completing 4D.
+- Confirmed the first migration slice should stay read-first:
+  point reads, query and pagination backing scans, commit-log and
+  latest-sequence reads, tenant load/list control paths, schema reads, and
+  usage-store reads.
+- `Service::call_blocking_cancellable(...)` is gone.
+- Remaining `call_blocking(...)` wrappers are write-path only in
+  `service/mutations.rs`, write-side `service/scheduler.rs`, write-side
+  `service/schema.rs`, `service/tenants.rs` create or delete, and
+  `service/usage.rs` MAU recording. Mutation execution remains the Phase 5B
+  concern.
+- The landed async adapter preserves redb's concurrent-reader shape and keeps
+  cancellation wired into scan and index loops instead of funneling all tenant
+  work through one serialized actor lane.
+- Landed as:
+  `async_storage.rs` in `neovex-storage`, async tenant load or usage read
+  wiring in `Service`, async query or pagination or subscription bootstrap
+  execution over the storage boundary, and deterministic storage plus engine
+  tests for queued cancellation, in-flight scan or index cancellation, and
+  concurrent same-tenant reads.
+- Follow-up hardening on 2026-04-01 switched the embedder onto Deno's
+  unprotected V8 platform mode and shared one bootstrap snapshot across all
+  runtime executors so the default parallel `neovex-server` suite can exercise
+  the async read path without sibling-thread V8 aborts.
 
 ---
 

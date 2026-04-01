@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::OnceLock;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
@@ -345,15 +348,16 @@ impl RuntimeStartupSnapshot {
     }
 }
 
+#[cfg(test)]
+static RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
 pub(crate) struct RuntimeWorkerIsolatePool {
-    startup_snapshot: Option<RuntimeStartupSnapshot>,
+    warmed: bool,
 }
 
 impl RuntimeWorkerIsolatePool {
     pub(crate) fn new() -> Self {
-        Self {
-            startup_snapshot: None,
-        }
+        Self { warmed: false }
     }
 
     fn take_runtime(
@@ -361,18 +365,15 @@ impl RuntimeWorkerIsolatePool {
         runtime_owner: &NeovexRuntime,
         bundle: &RuntimeBundle,
     ) -> Result<JsRuntime> {
-        match self.startup_snapshot.as_ref() {
-            Some(snapshot) => {
-                runtime_owner.policy.metrics().record_isolate_pool_hit();
-                runtime_owner.create_runtime_from_snapshot(bundle, snapshot)
-            }
-            None => {
-                runtime_owner.policy.metrics().record_isolate_pool_miss();
-                let snapshot = runtime_owner.create_bootstrap_snapshot()?;
-                let runtime = runtime_owner.create_runtime_from_snapshot(bundle, &snapshot)?;
-                self.startup_snapshot = Some(snapshot);
-                Ok(runtime)
-            }
+        let snapshot = runtime_owner.bootstrap_snapshot()?;
+        if self.warmed {
+            runtime_owner.policy.metrics().record_isolate_pool_hit();
+            runtime_owner.create_runtime_from_snapshot(bundle, snapshot)
+        } else {
+            runtime_owner.policy.metrics().record_isolate_pool_miss();
+            let runtime = runtime_owner.create_runtime_from_snapshot(bundle, snapshot)?;
+            self.warmed = true;
+            Ok(runtime)
         }
     }
 
@@ -1410,7 +1411,10 @@ impl NeovexRuntime {
         let mut isolate_pool = isolate_pool;
         let mut runtime = match isolate_pool.as_deref_mut() {
             Some(pool) => pool.take_runtime(self, bundle)?,
-            None => self.create_runtime(bundle, None)?,
+            None => {
+                let snapshot = self.bootstrap_snapshot()?;
+                self.create_runtime_from_snapshot(bundle, snapshot)?
+            }
         };
         let timeout = self.policy.limits().execution_timeout;
         let timeout_triggered = Arc::new(AtomicBool::new(false));
@@ -1564,13 +1568,27 @@ impl NeovexRuntime {
         deserialize_json_value(runtime, value)
     }
 
-    fn create_bootstrap_snapshot(&self) -> Result<RuntimeStartupSnapshot> {
+    fn bootstrap_snapshot(&self) -> Result<&'static RuntimeStartupSnapshot> {
+        static BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<RuntimeStartupSnapshot, String>> =
+            OnceLock::new();
+        match BOOTSTRAP_SNAPSHOT.get_or_init(|| {
+            #[cfg(test)]
+            RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
+            Self::create_bootstrap_snapshot().map_err(|error| error.to_string())
+        }) {
+            Ok(snapshot) => Ok(snapshot),
+            Err(message) => Err(NeovexRuntimeError::Contract(format!(
+                "failed to initialize runtime bootstrap snapshot: {message}"
+            ))),
+        }
+    }
+
+    fn create_bootstrap_snapshot() -> Result<RuntimeStartupSnapshot> {
         let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
-            create_params: Some(self.create_isolate_params()),
             extensions: vec![neovex_runtime_ext::init()],
             ..Default::default()
         });
-        self.install_bootstrap(&mut runtime)?;
+        Self::install_bootstrap(&mut runtime)?;
         Ok(RuntimeStartupSnapshot::new(runtime.snapshot()))
     }
 
@@ -1596,9 +1614,9 @@ impl NeovexRuntime {
         });
         self.initialize_runtime_state(&mut runtime);
         if startup_snapshot.is_none() {
-            self.install_bootstrap(&mut runtime)?;
+            Self::install_bootstrap(&mut runtime)?;
         }
-        self.finalize_bootstrap(&mut runtime)?;
+        Self::finalize_bootstrap(&mut runtime)?;
         Ok(runtime)
     }
 
@@ -1625,19 +1643,24 @@ impl NeovexRuntime {
         }
     }
 
-    fn install_bootstrap(&self, runtime: &mut JsRuntime) -> Result<()> {
+    fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
         runtime
             .execute_script("<neovex-runtime:bootstrap>", BOOTSTRAP_SOURCE)
             .map_err(runtime_js_error)?;
         Ok(())
     }
 
-    fn finalize_bootstrap(&self, runtime: &mut JsRuntime) -> Result<()> {
+    fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
         runtime
             .execute_script("<neovex-runtime:bootstrap:finalize>", POST_BOOTSTRAP_SOURCE)
             .map_err(runtime_js_error)?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+pub(crate) fn bootstrap_snapshot_build_count_for_test() -> usize {
+    RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS.load(Ordering::Relaxed)
 }
 
 fn deserialize_json_value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {

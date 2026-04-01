@@ -8,7 +8,6 @@ mod tenants;
 mod usage;
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,9 +15,10 @@ use std::sync::RwLock;
 
 use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
-    Clock, FaultInjector, NoopFaultInjector, SystemClock, TenantStore, UsageStore,
+    Clock, FaultInjector, NoopFaultInjector, RedbStorageEngine, RedbUsageStorage, SystemClock,
+    TenantStore, UsageStore,
 };
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 use crate::tenant::TenantRuntime;
 
@@ -28,7 +28,10 @@ pub use execution_units::MutationExecutionUnit;
 pub struct Service {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
+    tenant_load_gate: AsyncMutex<()>,
+    storage_engine: Arc<RedbStorageEngine>,
     usage_store: Arc<UsageStore>,
+    usage_read_storage: Arc<RedbUsageStorage>,
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
@@ -48,11 +51,20 @@ impl Service {
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir).map_err(|error| Error::Internal(error.to_string()))?;
-        let usage_store = Arc::new(UsageStore::open(data_dir.join("neovex-control.db"))?);
+        let storage_engine = Arc::new(RedbStorageEngine::new(
+            data_dir.clone(),
+            clock.clone(),
+            storage_fault_injector.clone(),
+        )?);
+        let usage_store = storage_engine.usage_store();
+        let usage_read_storage = storage_engine.usage_read_storage();
         Ok(Self {
             data_dir,
             tenants: RwLock::new(HashMap::new()),
+            tenant_load_gate: AsyncMutex::new(()),
+            storage_engine,
             usage_store,
+            usage_read_storage,
             clock,
             storage_fault_injector,
             scheduler_wakeup: Notify::new(),
@@ -68,27 +80,6 @@ impl Service {
         tokio::task::spawn_blocking(move || task(service))
             .await
             .map_err(|error| Error::Internal(format!("blocking task failed: {error}")))?
-    }
-
-    pub(crate) async fn call_blocking_cancellable<T, Fut, F>(
-        self: &Arc<Self>,
-        cancel_wait: Fut,
-        task: F,
-    ) -> Result<T>
-    where
-        T: Send + 'static,
-        Fut: Future<Output = ()> + Send,
-        F: FnOnce(Arc<Self>) -> Result<T> + Send + 'static,
-    {
-        let service = self.clone();
-        let handle = tokio::task::spawn_blocking(move || task(service));
-        tokio::pin!(cancel_wait);
-
-        tokio::select! {
-            _ = &mut cancel_wait => Err(Error::Cancelled),
-            result = handle => result
-                .map_err(|error| Error::Internal(format!("blocking task failed: {error}")))?,
-        }
     }
 
     pub(crate) fn wake_scheduler(&self) {
@@ -109,6 +100,24 @@ impl Service {
             self.clock.clone(),
             self.storage_fault_injector.clone(),
         )
+    }
+
+    pub(crate) fn lock_tenant_load_gate_blocking(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        loop {
+            if let Ok(guard) = self.tenant_load_gate.try_lock() {
+                return guard;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    pub(crate) fn build_loaded_tenant_runtime(
+        &self,
+        store: TenantStore,
+    ) -> Result<Arc<TenantRuntime>> {
+        let store = Arc::new(store);
+        let read_storage = self.storage_engine.read_storage_for_store(store.clone());
+        Ok(Arc::new(TenantRuntime::from_parts(store, read_storage)?))
     }
 }
 

@@ -24,7 +24,7 @@ all = "deny"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
-deno_core = "0.395"
+deno_core = { version = "0.395", features = ["unsafe_use_unprotected_platform"] }
 deno_error = "0.7"
 futures = "0.3"
 http = "1"

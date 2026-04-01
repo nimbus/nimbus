@@ -1,3 +1,4 @@
+use std::future::pending;
 use std::sync::Arc;
 
 use neovex_core::{Error, PrincipalContext, Query, Result, TenantId};
@@ -85,8 +86,14 @@ impl Service {
         request_id: String,
         sender: mpsc::UnboundedSender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
-        self.call_blocking(move |service| service.subscribe(&tenant_id, query, request_id, sender))
-            .await
+        self.subscribe_async_with_principal(
+            tenant_id,
+            query,
+            PrincipalContext::anonymous(),
+            request_id,
+            sender,
+        )
+        .await
     }
 
     /// Registers a new subscription asynchronously for the provided principal.
@@ -98,10 +105,38 @@ impl Service {
         request_id: String,
         sender: mpsc::UnboundedSender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
-        self.call_blocking(move |service| {
-            service.subscribe_with_principal(&tenant_id, query, &principal, request_id, sender)
-        })
-        .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let schema = runtime.schema();
+        let principal_snapshot = principal.snapshot()?;
+        let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
+        let registration = runtime.subscriptions.register(
+            query.clone(),
+            principal.clone(),
+            principal_snapshot,
+            policy_revision,
+            sender.clone(),
+        );
+        let subscription_id = registration.id();
+        let documents = self
+            .query_documents_async_cancellable_with_principal(
+                tenant_id,
+                query,
+                principal,
+                pending(),
+                || Ok(()),
+            )
+            .await?;
+        let update = SubscriptionUpdate::Result {
+            subscription_id,
+            request_id: Some(request_id),
+            commit: None,
+            deleted_documents: Vec::new(),
+            data: documents_to_json(documents),
+        };
+        if sender.send(update).is_err() {
+            return Err(Error::Internal("subscription channel closed".to_string()));
+        }
+        Ok(registration)
     }
 
     /// Removes a subscription if present.
@@ -118,8 +153,16 @@ impl Service {
         tenant_id: TenantId,
         subscription_id: u64,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.unsubscribe(&tenant_id, subscription_id))
-            .await
+        let runtime = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(&tenant_id)
+            .cloned()
+            .ok_or(Error::TenantNotFound(tenant_id.clone()))?;
+        let _operation = runtime.enter_operation(&tenant_id)?;
+        runtime.subscriptions.remove(subscription_id);
+        Ok(())
     }
 
     /// Returns the current number of registered in-memory subscriptions for a

@@ -116,9 +116,12 @@ connects the two independent subsystems below it:
   declares what it needs; the server provides it.
 
 The server has two request paths. **Native** requests (Neovex HTTP/WS API) go
-directly to the engine via `spawn_blocking`. **Convex** requests go to the
-runtime, which executes a V8 handler; host operations inside that handler flow
-back through the bridge into the engine.
+directly to async engine methods; read and control paths now await an explicit
+async storage boundary that owns the redb blocking work, while write paths
+still bridge to synchronous storage internally until the remaining Phase 5
+write migration lands. **Convex** requests go to the runtime, which executes a
+V8 handler; host operations inside that handler flow back through the bridge
+into the engine.
 
 This leads to a deliberate two-tier logic model. V8 and `deno_core` remain a
 first-class execution surface for Convex compatibility, JavaScript portability,
@@ -163,6 +166,7 @@ file links (links go stale; symbol search does not).
 
 **`neovex-storage`** — Persistence layer. One `TenantStore` per tenant redb file, plus a global `UsageStore` for cross-tenant metering.
 
+- `async_storage.rs` — Internal async storage boundary. Defines the read-first trait hierarchy plus the redb-backed executors that preserve concurrent tenant reads, cooperative scan or index cancellation, and async tenant-control loading.
 - `store.rs` — `TenantStore` wrapping a redb `Database`. Defines 10 redb tables. CRUD operations, commit log, metadata.
 - `keys.rs` — Key construction for the DOCUMENTS table. Prefix-based range scans for table isolation.
 - `index.rs` — Order-preserving value encoding, index key construction, `index_scan_eq`, `index_scan_range`, index maintenance during writes.
@@ -173,23 +177,23 @@ file links (links go stale; symbol search does not).
 
 **`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
-- `service/mod.rs` — `Service` struct: `data_dir` + `RwLock<HashMap<TenantId, Arc<TenantRuntime>>>` + `Arc<UsageStore>`. Lazy-loads tenants from disk on first access.
+- `service/mod.rs` — `Service` struct: tenant registry plus the read-first async storage boundary (`RedbStorageEngine`, tenant read handles, usage read handle), simulation seams, and scheduler wakeups. Lazy-loads tenants from disk on first access.
 - `service/mutations.rs` — `apply_mutation`: schema validation, declarative access-policy enforcement, index-aware storage write, commit log append, subscription fan-out. This is the core write path.
-- `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Used by queries, pagination, and subscription re-evaluation.
+- `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Sync paths call it directly; async read paths route the same planner and evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
 - `service/scheduler.rs` — Schedule/cron CRUD. `load_tenants_with_scheduled_work` eagerly loads tenants on startup.
 - `service/tenants.rs` — Tenant CRUD and lifecycle management.
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` for MAU tracking.
-- `tenant.rs` — `TenantRuntime`: holds `Arc<TenantStore>`, `SubscriptionRegistry`, `RwLock<Schema>`, and lifecycle guards (`enter_operation`/`begin_delete`).
+- `tenant.rs` — `TenantRuntime`: holds `Arc<TenantStore>`, its async read handle, `SubscriptionRegistry`, `RwLock<Schema>`, and lifecycle guards (`enter_operation`/`begin_delete`).
 - `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
 - `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry. `affected(tables)` returns subscriptions that need re-evaluation.
-- `scheduler.rs` — Background loop: `run_scheduler` ticks every 1 second via `spawn_blocking`. Dispatches mutations through the public Service API.
+- `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification) and dispatches mutations through the public Service API.
 
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
 
-- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: V8 isolate creation, heap/timeout limits, `invoke_bundle_unmanaged` entry point. `RuntimeBundle` holds the ESM source + SHA-256 integrity hash. `InvocationRequest` describes the function name, kind, and args.
-- `executor.rs` — `RuntimeExecutor`: a fixed-size worker thread pool that dispatches `InvocationRequest`s to V8 isolates. Workers build a per-job current-thread tokio runtime. Supports both direct invocation and worker-pool-mediated invocation with cancellation.
+- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: V8 isolate creation, heap/timeout limits, process-global bootstrap snapshot initialization, and the `invoke_bundle_unmanaged` entry point. `RuntimeBundle` holds the ESM source + SHA-256 integrity hash. `InvocationRequest` describes the function name, kind, and args.
+- `executor.rs` — `RuntimeExecutor`: a fixed-size worker thread pool that dispatches `InvocationRequest`s to V8 isolates. Each worker owns one current-thread tokio runtime that is reused across jobs. Supports both direct invocation and worker-pool-mediated invocation with cancellation.
 - `host_executor.rs` — `RuntimeHostExecutor`: a companion thread pool for synchronous host-side operations (db reads/writes) dispatched from inside V8. Keeps host work off the V8 isolate thread.
 - `host.rs` — `HostBridge` trait and `HostCallRequest` struct defining the contract between V8 guest code and Rust host operations (db queries, mutations, scheduler commands, `ctx.run*` delegation).
 - `context.rs` — `RuntimeInvocationContext`: per-request metadata (invocation ID, function name, kind, auth identity) threaded through the runtime and host bridge.
@@ -201,7 +205,7 @@ file links (links go stale; symbol search does not).
 **`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
 - `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`. `serve` starts the axum listener.
-- `http/` — Neovex-native HTTP handlers. They delegate to `spawn_blocking(|| service.method())`.
+- `http/` — Neovex-native HTTP handlers. Read and control routes await async engine methods directly; write routes still use async service methods that bridge to synchronous storage until the Phase 5 write migration completes.
 - `ws.rs` — Neovex-native WebSocket upgrade, message loop, and subscription cleanup.
 - `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `.neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
 - `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor` and `RuntimeHostExecutor` instances.
@@ -503,11 +507,12 @@ tenant is a self-contained redb file. No distributed transactions, no
 cross-tenant interference, trivial data isolation. Horizontal scaling (future)
 means distributing tenant files across nodes, not sharding within a database.
 
-**Why `std::sync::RwLock` instead of `tokio::sync::RwLock`?** All storage
-operations are synchronous (redb is sync). The server wraps them with
-`spawn_blocking()` to avoid blocking the tokio runtime. Using
-`std::sync::RwLock` inside `spawn_blocking` is correct and avoids the footgun
-of holding a tokio lock across an await point.
+**Why `std::sync::RwLock` instead of `tokio::sync::RwLock`?** redb is still a
+synchronous engine, but read paths now enter it through explicit async storage
+executors that acquire lifecycle and schema guards inside the blocking storage
+task instead of holding tokio locks across awaits. Using `std::sync::RwLock`
+for tenant registry, schema, and lifecycle state keeps those critical sections
+small and lets the storage boundary control where blocking actually happens.
 
 **Why table-level subscription invalidation?** A write to any row in a table
 triggers re-evaluation of all subscriptions on that table — even if the
@@ -555,12 +560,15 @@ lifecycle.
 
 **Concurrency.** `Service` uses `std::sync::RwLock` for the tenant registry.
 `TenantRuntime` uses `std::sync::RwLock` for schema and lifecycle. redb
-enforces single-writer per database. The server calls all engine methods via
-`tokio::task::spawn_blocking`. The scheduler loop wraps its entire tick in
-`spawn_blocking`. The `RuntimeExecutor` runs V8 on dedicated OS threads with
-per-job current-thread tokio runtimes. The `RuntimeHostExecutor` runs host-side
-sync work on a separate thread pool. An isolate concurrency semaphore caps
-the number of simultaneous V8 invocations.
+enforces single-writer per database. Read and control paths enter storage
+through per-tenant async executors that preserve multiple concurrent readers
+with semaphore-based admission while still providing cooperative cancellation.
+Write paths still bridge to synchronous storage until the remaining Phase 5
+write migration lands. The scheduler loop sleeps until the next due work or a
+wakeup notification. The `RuntimeExecutor` runs V8 on dedicated OS threads with
+worker-local current-thread tokio runtimes. The `RuntimeHostExecutor` runs
+host-side sync work on a separate thread pool. An isolate concurrency semaphore
+caps the number of simultaneous V8 invocations.
 
 **Error handling.** All fallible operations return `neovex_core::Result<T>`.
 Runtime errors use `NeovexRuntimeError` with variants for timeout,

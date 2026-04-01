@@ -1,5 +1,6 @@
 //! Storage layer backed by redb.
 
+pub mod async_storage;
 pub mod commit_log;
 pub mod index;
 pub mod keys;
@@ -9,6 +10,10 @@ pub mod simulation;
 pub mod store;
 pub mod usage_store;
 
+pub use async_storage::{
+    OpenedRedbTenant, RedbStorageEngine, RedbTenantStorage, RedbUsageStorage, StorageEngine,
+    TenantReadStorage, TenantWriteStorage, TenantWriteTransaction, UsageStorage,
+};
 pub use simulation::{
     Clock, FaultInjector, FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector,
     ScriptedFaultInjector, SeededFaultInjector, SystemClock,

@@ -5,6 +5,7 @@ use neovex_core::{
     CreateCronRequest, CronJob, Error, JobId, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobResult, TenantId, Timestamp,
 };
+use neovex_storage::TenantReadStorage;
 
 impl Service {
     /// Schedules a mutation to execute in the future.
@@ -136,7 +137,17 @@ impl Service {
         tenant_id: TenantId,
         job_id: JobId,
     ) -> Result<ScheduledJobResult> {
-        self.call_blocking(move |service| service.get_scheduled_job_result(&tenant_id, &job_id))
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store
+                    .get_scheduled_job_result(&job_id)?
+                    .ok_or(Error::ScheduledJobNotFound(job_id))
+            })
             .await
     }
 
@@ -152,7 +163,15 @@ impl Service {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<Vec<ScheduledJob>> {
-        self.call_blocking(move |service| service.list_scheduled_jobs(&tenant_id))
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store.list_scheduled_jobs()
+            })
             .await
     }
 
@@ -206,7 +225,15 @@ impl Service {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<Vec<CronJob>> {
-        self.call_blocking(move |service| service.load_cron_jobs(&tenant_id))
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store.load_cron_jobs()
+            })
             .await
     }
 
@@ -237,8 +264,7 @@ impl Service {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<Vec<CronJob>> {
-        self.call_blocking(move |service| service.list_cron_jobs(&tenant_id))
-            .await
+        self.load_cron_jobs_async(tenant_id).await
     }
 
     /// Deletes a cron job definition if present.
@@ -271,34 +297,38 @@ impl Service {
         tenant_ids
     }
 
-    /// Returns the earliest due scheduled or cron work for a loaded tenant.
-    pub(crate) fn next_scheduled_work_at(&self, tenant_id: &TenantId) -> Result<Option<Timestamp>> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let _operation = runtime.enter_operation(tenant_id)?;
-        runtime.store.next_scheduled_work_at()
-    }
-
-    /// Returns the earliest due scheduled or cron work across all loaded tenants.
-    pub(crate) fn next_loaded_scheduled_work_at(&self) -> Result<Option<Timestamp>> {
-        let mut next_due: Option<Timestamp> = None;
-        for tenant_id in self.loaded_tenant_ids() {
-            let Some(candidate) = self.next_scheduled_work_at(&tenant_id)? else {
-                continue;
-            };
-            next_due = Some(match next_due {
-                Some(current) => current.min(candidate),
-                None => candidate,
-            });
-        }
-        Ok(next_due)
-    }
-
     /// Returns the earliest due scheduled or cron work across all loaded tenants asynchronously.
     pub(crate) async fn next_loaded_scheduled_work_at_async(
         self: &Arc<Self>,
     ) -> Result<Option<Timestamp>> {
-        self.call_blocking(move |service| service.next_loaded_scheduled_work_at())
-            .await
+        let loaded_tenants = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .iter()
+            .map(|(tenant_id, runtime)| (tenant_id.clone(), runtime.clone()))
+            .collect::<Vec<_>>();
+
+        let mut next_due: Option<Timestamp> = None;
+        for (tenant_id, runtime) in loaded_tenants {
+            let tenant_id_for_task = tenant_id.clone();
+            let runtime_for_task = runtime.clone();
+            let candidate = runtime
+                .read_storage
+                .execute(move |store| {
+                    let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                    store.next_scheduled_work_at()
+                })
+                .await?;
+            if let Some(candidate) = candidate {
+                next_due = Some(match next_due {
+                    Some(current) => current.min(candidate),
+                    None => candidate,
+                });
+            }
+        }
+
+        Ok(next_due)
     }
 
     /// Loads tenants that have scheduled work and recovers orphaned running jobs.

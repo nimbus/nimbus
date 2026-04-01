@@ -1,5 +1,7 @@
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
 
 use neovex_core::{
     CronJob, CronSchedule, Document, DocumentId, Error, FieldSchema, FieldType, IndexDefinition,
@@ -9,12 +11,14 @@ use neovex_core::{
 use serde_json::json;
 use tempfile::tempdir;
 use time::{Date, Month, PrimitiveDateTime, Time};
+use tokio::sync::Notify;
+use tokio::time::{Duration, timeout};
 
 use crate::index::encode_index_value;
 use crate::keys::{document_key, prefix_end, table_prefix};
 use crate::{
-    FaultInjector, FaultOccurrence, FaultPoint, ManualClock, SeededFaultInjector, TenantStore,
-    UsageStore,
+    FaultInjector, FaultOccurrence, FaultPoint, ManualClock, RedbTenantStorage,
+    SeededFaultInjector, TenantReadStorage, TenantStore, UsageStore,
 };
 
 fn sample_document(table: &str, title: &str) -> Document {
@@ -33,6 +37,46 @@ fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
             fields: serde_json::Map::from_iter([("title".to_string(), json!(title))]),
         },
         created_at: Timestamp(1_000),
+    }
+}
+
+struct BlockingReadGate {
+    entered: Notify,
+    release_gate: (Mutex<bool>, Condvar),
+}
+
+impl BlockingReadGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: Notify::new(),
+            release_gate: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    async fn wait_until_entered(&self) {
+        self.entered.notified().await;
+    }
+
+    fn block(&self) {
+        self.entered.notify_one();
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking read gate should acquire release lock");
+        while !*released {
+            released = cvar
+                .wait(released)
+                .expect("blocking read gate should wait for release");
+        }
+    }
+
+    fn release(&self) {
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking read gate should acquire release lock");
+        *released = true;
+        cvar.notify_all();
     }
 }
 
@@ -1012,6 +1056,116 @@ fn usage_store_counts_unique_monthly_active_users_per_month() {
         .expect("april usage should load");
     assert_eq!(april.month, "2026-04");
     assert_eq!(april.monthly_active_users, 1);
+}
+
+#[tokio::test]
+async fn queued_canceled_async_read_never_begins_real_storage_execution() {
+    let store = Arc::new(TenantStore::create_in_memory().expect("store should open"));
+    let read_storage = RedbTenantStorage::with_max_concurrent_reads(store, 1);
+    let first_gate = BlockingReadGate::new();
+    let first_gate_for_task = first_gate.clone();
+    let first_storage = read_storage.clone();
+    let first = tokio::spawn(async move {
+        first_storage
+            .execute(move |_store| {
+                first_gate_for_task.block();
+                Ok(())
+            })
+            .await
+    });
+
+    timeout(Duration::from_secs(1), first_gate.wait_until_entered())
+        .await
+        .expect("first read should acquire the only permit");
+
+    let started = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(Notify::new());
+    let started_for_task = started.clone();
+    let cancel_for_wait = cancel.clone();
+    let queued_read_storage = read_storage.clone();
+    let second = tokio::spawn(async move {
+        queued_read_storage
+            .execute_cancellable(
+                async move {
+                    cancel_for_wait.notified().await;
+                },
+                || Ok(()),
+                move |_store, _check_cancel| {
+                    started_for_task.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+    });
+
+    cancel.notify_one();
+    let error = timeout(Duration::from_secs(1), second)
+        .await
+        .expect("queued read should resolve after cancellation")
+        .expect("queued read task should join successfully")
+        .expect_err("queued read should cancel");
+    assert!(matches!(error, Error::Cancelled));
+    assert!(
+        !started.load(Ordering::SeqCst),
+        "queued read should not begin executing once canceled"
+    );
+
+    first_gate.release();
+    first
+        .await
+        .expect("first read task should join successfully")
+        .expect("first read should complete");
+}
+
+#[tokio::test]
+async fn same_tenant_async_reads_can_progress_concurrently() {
+    let store = Arc::new(TenantStore::create_in_memory().expect("store should open"));
+    let read_storage = RedbTenantStorage::with_max_concurrent_reads(store, 2);
+    let first_gate = BlockingReadGate::new();
+    let first_gate_for_task = first_gate.clone();
+    let first_storage = read_storage.clone();
+    let first = tokio::spawn(async move {
+        first_storage
+            .execute(move |_store| {
+                first_gate_for_task.block();
+                Ok(1usize)
+            })
+            .await
+    });
+
+    timeout(Duration::from_secs(1), first_gate.wait_until_entered())
+        .await
+        .expect("first read should start");
+
+    let second_started = Arc::new(AtomicBool::new(false));
+    let second_started_for_task = second_started.clone();
+    let second_storage = read_storage.clone();
+    let second = tokio::spawn(async move {
+        second_storage
+            .execute(move |_store| {
+                second_started_for_task.store(true, Ordering::SeqCst);
+                Ok(2usize)
+            })
+            .await
+    });
+
+    let second_result = timeout(Duration::from_secs(1), second)
+        .await
+        .expect("second read should not wait behind the blocked first read")
+        .expect("second read task should join successfully")
+        .expect("second read should complete");
+    assert_eq!(second_result, 2);
+    assert!(
+        second_started.load(Ordering::SeqCst),
+        "second read should begin while the first read is still blocked"
+    );
+
+    first_gate.release();
+    let first_result = first
+        .await
+        .expect("first read task should join successfully")
+        .expect("first read should complete");
+    assert_eq!(first_result, 1);
 }
 
 fn utc_unix_ms(year: i32, month: Month, day: u8) -> u64 {

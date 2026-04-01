@@ -2166,6 +2166,82 @@ async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work
 }
 
 #[tokio::test]
+async fn query_documents_async_cancellable_returns_cancelled_during_index_scan() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![FieldSchema {
+                    name: "rank".to_string(),
+                    field_type: FieldType::Number,
+                    required: false,
+                }],
+                indexes: vec![IndexDefinition {
+                    name: "by_rank".to_string(),
+                    field: "rank".to_string(),
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("schema should save");
+
+    for rank in 0..32 {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let probe = BlockingCancellationProbe::new();
+    let handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let probe_for_wait = probe.clone();
+        let probe_for_check = probe.clone();
+        async move {
+            service
+                .query_documents_async_cancellable(
+                    tenant_id,
+                    Query {
+                        table: tasks_table(),
+                        filters: vec![filter("rank", FilterOp::Gte, json!(0))],
+                        order: Some(OrderBy {
+                            field: "rank".to_string(),
+                            direction: OrderDirection::Asc,
+                        }),
+                        limit: None,
+                    },
+                    probe_for_wait.cancel_wait(),
+                    probe_for_check.check(),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), probe.wait_for_first_check())
+        .await
+        .expect("indexed query should reach cooperative cancellation check");
+    probe.trigger_cancel();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("indexed async query should resolve promptly after cancellation")
+        .expect("indexed query task should join successfully")
+        .expect_err("indexed query should cancel");
+    assert!(matches!(error, Error::Cancelled));
+
+    probe.release();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[tokio::test]
 async fn paginated_query_uses_index_for_range_filter() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
