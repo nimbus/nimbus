@@ -163,6 +163,7 @@ async fn apply_subscription_transform(
                     auth: auth.clone(),
                 },
                 runtime_cancellation.clone(),
+                event.request_id.map(str::to_owned),
             )
             .await
             {
@@ -220,6 +221,7 @@ async fn apply_subscription_transform(
                     auth: auth.clone(),
                 },
                 runtime_cancellation.clone(),
+                event.request_id.map(str::to_owned),
             )
             .await
             .and_then(|(value, read_set)| {
@@ -625,6 +627,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
                                 cursor_for_worker,
                                 current_auth.clone(),
                                 runtime_cancellation,
+                                Some(request_id.clone()),
                             )
                             .await
                             {

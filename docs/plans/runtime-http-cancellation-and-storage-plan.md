@@ -624,9 +624,6 @@ Initial instrumentation now includes:
 - tracing spans for async host-op enqueue / start / finish / cancel transitions
 - per-tenant queue wait and execution distributions
 - clearer timeout vs disconnect vs explicit-cancel attribution
-
-Candidate follow-on work:
-
 - correlation between server request ids and runtime invocation ids
 
 This is the natural place to carry forward the old spec's "deeper async bridge

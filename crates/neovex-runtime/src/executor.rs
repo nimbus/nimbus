@@ -165,6 +165,7 @@ impl RuntimeExecutor {
             metrics.record_queue_wait_for_tenant(context.tenant_label.as_deref(), queue_wait);
             debug!(
                 invocation_id = context.invocation_id,
+                request_id = ?context.server_request_id,
                 tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
                 function = %context.function_name,
                 kind = context.kind,
@@ -174,6 +175,7 @@ impl RuntimeExecutor {
             );
         }
 
+        metrics.record_request_correlation(&context);
         metrics.increment_active_isolates_for_tenant(context.tenant_label.as_deref());
         let execution_started_at = Instant::now();
         let cancellation_for_metrics = cancellation.clone();
@@ -196,6 +198,7 @@ impl RuntimeExecutor {
                 metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
                 debug!(
                     invocation_id = context.invocation_id,
+                    request_id = ?context.server_request_id,
                     tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
                     function = %context.function_name,
                     kind = context.kind,

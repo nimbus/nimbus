@@ -43,6 +43,7 @@ use self::dispatch::{
     ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent,
     check_host_cancellation, dispatch_convex_mutation_async, execute_convex_action_async,
     execute_query_result_async, invoke_named_convex_function_async_cancellable,
+    next_runtime_server_request_id,
 };
 use self::http_actions::dispatch_http_route;
 use self::subscriptions::handle_convex_socket_for_tenant;
@@ -602,6 +603,7 @@ struct ConvexRuntimeBridge {
     service: Arc<neovex_engine::Service>,
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
+    server_request_id: Option<String>,
     session_id: String,
     max_nested_runtime_invocations: usize,
     remaining_nested_runtime_invocations: Arc<AtomicUsize>,
@@ -664,6 +666,7 @@ pub(crate) async fn query(
                     auth: auth.clone(),
                 },
                 request_cancellation.token(),
+                Some(next_runtime_server_request_id("convex-query")),
             )
             .await?
         }
@@ -723,6 +726,7 @@ pub(crate) async fn paginated_query(
                     auth: auth.clone(),
                 },
                 request_cancellation.token(),
+                Some(next_runtime_server_request_id("convex-paginated-query")),
             )
             .await?;
             serde_json::from_value(value)
@@ -795,6 +799,7 @@ pub(crate) async fn mutation(
                     auth: auth.clone(),
                 },
                 request_cancellation.token(),
+                Some(next_runtime_server_request_id("convex-mutation")),
             )
             .await?
         }
@@ -847,6 +852,7 @@ pub(crate) async fn action(
                     auth: auth.clone(),
                 },
                 request_cancellation.token(),
+                Some(next_runtime_server_request_id("convex-action")),
             )
             .await?
         }
@@ -1303,7 +1309,7 @@ mod tests {
             .create_tenant(tenant_id.clone())
             .expect("tenant should be created");
         let registry = Arc::new(ConvexRegistry::empty());
-        let bridge = ConvexRuntimeBridge::new(service.clone(), registry, tenant_id.clone());
+        let bridge = ConvexRuntimeBridge::new(service.clone(), registry, tenant_id.clone(), None);
         (tempdir, service, tenant_id, bridge)
     }
 
