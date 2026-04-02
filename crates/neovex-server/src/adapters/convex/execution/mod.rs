@@ -13,6 +13,7 @@ pub(super) use crate::runtime::errors::{
 pub(super) use crate::runtime::invocations::next_runtime_server_request_id;
 pub(super) use async_ops::{
     dispatch_convex_mutation_async, execute_convex_action_async, execute_query_result_async,
+    execute_schedule_command_async,
 };
 pub(super) use runtime::{
     bootstrap_runtime_named_subscription_async, invoke_named_convex_function_async_cancellable,

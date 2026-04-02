@@ -7,7 +7,7 @@ use redb::{ReadableTable, TableError};
 use serde_json::Value;
 
 use crate::keys::prefix_end;
-use crate::store::{DOCUMENTS, INDEXES, TenantStore, begin_scheduled_execution, map_redb_error};
+use crate::store::{DOCUMENTS, INDEXES, TenantStore, TenantWriteTransaction, map_redb_error};
 
 const EMPTY_INDEX_VALUE: &[u8] = &[];
 
@@ -131,6 +131,172 @@ fn collect_index_keys_for_prefix(store: &TenantStore, prefix: &[u8]) -> Result<V
     Ok(keys)
 }
 
+impl TenantWriteTransaction {
+    pub fn insert_document_with_indexes(
+        &mut self,
+        document: &Document,
+        indexes: &[IndexDefinition],
+    ) -> Result<()> {
+        self.insert_document(document)?;
+        self.check_cancel()?;
+        let mut index_table = self
+            .write_txn()?
+            .open_table(INDEXES)
+            .map_err(map_redb_error)?;
+        for index in indexes {
+            if let Some(value) = document.get_field(&index.field) {
+                let encoded = encode_index_value(value)?;
+                let key = index_key(&document.table, &index.name, &encoded, &document.id);
+                index_table
+                    .insert(key.as_slice(), EMPTY_INDEX_VALUE)
+                    .map_err(map_redb_error)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn update_document_with_indexes_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, Value>,
+        indexes: &[IndexDefinition],
+        validate: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()>,
+    {
+        self.check_cancel()?;
+        let key = crate::keys::document_key(table, id);
+        let (old_document, new_document, payload) = {
+            let documents = self
+                .write_txn()?
+                .open_table(DOCUMENTS)
+                .map_err(map_redb_error)?;
+            let old_document = {
+                let existing = documents
+                    .get(key.as_slice())
+                    .map_err(map_redb_error)?
+                    .ok_or(neovex_core::Error::DocumentNotFound(*id))?;
+                Document::from_msgpack(existing.value())
+                    .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
+            };
+            let mut new_document = old_document.clone();
+            for (field, value) in patch {
+                new_document.fields.insert(field.clone(), value.clone());
+            }
+            validate(&old_document, &new_document)?;
+
+            let payload = new_document
+                .to_msgpack()
+                .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?;
+            (old_document, new_document, payload)
+        };
+
+        {
+            let mut documents = self
+                .write_txn()?
+                .open_table(DOCUMENTS)
+                .map_err(map_redb_error)?;
+            documents
+                .insert(key.as_slice(), payload.as_slice())
+                .map_err(map_redb_error)?;
+        }
+
+        {
+            self.check_cancel()?;
+            let mut index_table = self
+                .write_txn()?
+                .open_table(INDEXES)
+                .map_err(map_redb_error)?;
+            for index in indexes {
+                let old_key = old_document
+                    .get_field(&index.field)
+                    .map(encode_index_value)
+                    .transpose()?
+                    .map(|encoded| index_key(table, &index.name, &encoded, id));
+                let new_key = new_document
+                    .get_field(&index.field)
+                    .map(encode_index_value)
+                    .transpose()?
+                    .map(|encoded| index_key(table, &index.name, &encoded, id));
+
+                if old_key == new_key {
+                    continue;
+                }
+                if let Some(old_key) = old_key {
+                    index_table
+                        .remove(old_key.as_slice())
+                        .map_err(map_redb_error)?;
+                }
+                if let Some(new_key) = new_key {
+                    index_table
+                        .insert(new_key.as_slice(), EMPTY_INDEX_VALUE)
+                        .map_err(map_redb_error)?;
+                }
+            }
+        }
+
+        self.record_commit_write(WriteOp {
+            table: table.clone(),
+            op_type: WriteOpType::Update,
+            doc_id: *id,
+            previous: Some(old_document),
+            current: Some(new_document),
+        });
+        Ok(())
+    }
+
+    pub fn delete_document_with_indexes_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        indexes: &[IndexDefinition],
+        validate: F,
+    ) -> Result<Document>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
+        self.check_cancel()?;
+        let key = crate::keys::document_key(table, id);
+        let old_document = {
+            let mut documents = self
+                .write_txn()?
+                .open_table(DOCUMENTS)
+                .map_err(map_redb_error)?;
+            let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
+            let removed = removed.ok_or(neovex_core::Error::DocumentNotFound(*id))?;
+            Document::from_msgpack(removed.value())
+                .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
+        };
+        validate(&old_document)?;
+
+        {
+            self.check_cancel()?;
+            let mut index_table = self
+                .write_txn()?
+                .open_table(INDEXES)
+                .map_err(map_redb_error)?;
+            for index in indexes {
+                if let Some(value) = old_document.get_field(&index.field) {
+                    let encoded = encode_index_value(value)?;
+                    let key = index_key(table, &index.name, &encoded, id);
+                    index_table.remove(key.as_slice()).map_err(map_redb_error)?;
+                }
+            }
+        }
+
+        self.record_commit_write(WriteOp {
+            table: table.clone(),
+            op_type: WriteOpType::Delete,
+            doc_id: *id,
+            previous: Some(old_document.clone()),
+            current: None,
+        });
+        Ok(old_document)
+    }
+}
+
 impl TenantStore {
     /// Inserts a document and maintains indexes atomically.
     pub fn insert_with_indexes(
@@ -153,44 +319,22 @@ impl TenantStore {
         indexes: &[IndexDefinition],
         execution_id: Option<&str>,
     ) -> Result<Option<CommitEntry>> {
-        let write = WriteOp {
-            table: document.table.clone(),
-            op_type: WriteOpType::Insert,
-            doc_id: document.id,
-            previous: None,
-            current: Some(document.clone()),
-        };
-        let payload = document
-            .to_msgpack()
-            .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?;
-
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        if !begin_scheduled_execution(&write_txn, execution_id)? {
-            return Ok(None);
-        }
-        {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let key = crate::keys::document_key(&document.table, &document.id);
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        {
-            let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
-            for index in indexes {
-                if let Some(value) = document.get_field(&index.field) {
-                    let encoded = encode_index_value(value)?;
-                    let key = index_key(&document.table, &index.name, &encoded, &document.id);
-                    index_table
-                        .insert(key.as_slice(), EMPTY_INDEX_VALUE)
-                        .map_err(map_redb_error)?;
-                }
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(execution_id)? {
+                return Ok(false);
             }
-        }
-
-        let commit = self.append_commit_entry(&write_txn, vec![write])?;
-        self.commit_write_txn(write_txn)?;
-        Ok(Some(commit))
+            transaction.insert_document_with_indexes(document, indexes)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(committed.commit.ok_or_else(|| {
+                neovex_core::Error::Internal(
+                    "deduplicated indexed insert should record a commit entry".to_string(),
+                )
+            })?)
+        } else {
+            None
+        })
     }
 
     /// Updates a document and maintains indexes atomically.
@@ -237,79 +381,23 @@ impl TenantStore {
     where
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        if !begin_scheduled_execution(&write_txn, execution_id)? {
-            return Ok(None);
-        }
-        let key = crate::keys::document_key(table, id);
-        let (old_document, new_document, payload) = {
-            let documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let existing = documents
-                .get(key.as_slice())
-                .map_err(map_redb_error)?
-                .ok_or(neovex_core::Error::DocumentNotFound(*id))?;
-            let old_document = Document::from_msgpack(existing.value())
-                .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?;
-            let mut new_document = old_document.clone();
-            for (field, value) in patch {
-                new_document.fields.insert(field.clone(), value.clone());
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(execution_id)? {
+                return Ok(false);
             }
-            validate(&old_document, &new_document)?;
-
-            let payload = new_document
-                .to_msgpack()
-                .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?;
-            (old_document, new_document, payload)
-        };
-
-        {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        {
-            let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
-            for index in indexes {
-                let old_key = old_document
-                    .get_field(&index.field)
-                    .map(encode_index_value)
-                    .transpose()?
-                    .map(|encoded| index_key(table, &index.name, &encoded, id));
-                let new_key = new_document
-                    .get_field(&index.field)
-                    .map(encode_index_value)
-                    .transpose()?
-                    .map(|encoded| index_key(table, &index.name, &encoded, id));
-
-                if old_key == new_key {
-                    continue;
-                }
-                if let Some(old_key) = old_key {
-                    index_table
-                        .remove(old_key.as_slice())
-                        .map_err(map_redb_error)?;
-                }
-                if let Some(new_key) = new_key {
-                    index_table
-                        .insert(new_key.as_slice(), EMPTY_INDEX_VALUE)
-                        .map_err(map_redb_error)?;
-                }
-            }
-        }
-
-        let commit = self.append_commit_entry(
-            &write_txn,
-            vec![WriteOp {
-                table: table.clone(),
-                op_type: WriteOpType::Update,
-                doc_id: *id,
-                previous: Some(old_document),
-                current: Some(new_document),
-            }],
-        )?;
-        self.commit_write_txn(write_txn)?;
-        Ok(Some(commit))
+            transaction
+                .update_document_with_indexes_validated(table, id, patch, indexes, validate)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(committed.commit.ok_or_else(|| {
+                neovex_core::Error::Internal(
+                    "deduplicated indexed update should record a commit entry".to_string(),
+                )
+            })?)
+        } else {
+            None
+        })
     }
 
     /// Deletes a document and removes index entries atomically.
@@ -380,43 +468,26 @@ impl TenantStore {
     where
         F: FnOnce(&Document) -> Result<()>,
     {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        if !begin_scheduled_execution(&write_txn, execution_id)? {
-            return Ok(None);
-        }
-        let key = crate::keys::document_key(table, id);
-        let old_document = {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
-            let removed = removed.ok_or(neovex_core::Error::DocumentNotFound(*id))?;
-            Document::from_msgpack(removed.value())
-                .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
-        };
-        validate(&old_document)?;
-
-        {
-            let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
-            for index in indexes {
-                if let Some(value) = old_document.get_field(&index.field) {
-                    let encoded = encode_index_value(value)?;
-                    let key = index_key(table, &index.name, &encoded, id);
-                    index_table.remove(key.as_slice()).map_err(map_redb_error)?;
-                }
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(execution_id)? {
+                return Ok(None);
             }
-        }
-
-        let commit = self.append_commit_entry(
-            &write_txn,
-            vec![WriteOp {
-                table: table.clone(),
-                op_type: WriteOpType::Delete,
-                doc_id: *id,
-                previous: Some(old_document.clone()),
-                current: None,
-            }],
-        )?;
-        self.commit_write_txn(write_txn)?;
-        Ok(Some((commit, old_document)))
+            let removed_document =
+                transaction.delete_document_with_indexes_validated(table, id, indexes, validate)?;
+            Ok(Some(removed_document))
+        })?;
+        Ok(if let Some(removed_document) = committed.value {
+            Some((
+                committed.commit.ok_or_else(|| {
+                    neovex_core::Error::Internal(
+                        "deduplicated indexed delete should record a commit entry".to_string(),
+                    )
+                })?,
+                removed_document,
+            ))
+        } else {
+            None
+        })
     }
 
     /// Returns documents whose indexed field equals the provided value.

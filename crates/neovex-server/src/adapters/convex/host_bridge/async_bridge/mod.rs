@@ -1,6 +1,6 @@
 use super::*;
 use crate::runtime::host_calls::{
-    RuntimeAsyncHostCallTrace, execute_async_blocking_host_call, execute_host_call,
+    RuntimeAsyncHostCallTrace, execute_async_host_call, execute_host_call,
     execute_host_call_cancellable,
 };
 
@@ -49,12 +49,16 @@ impl HostBridge for ConvexHostBridge {
         );
         let metrics = bridge.registry.runtime_policy().metrics();
         let operation = request.operation.clone();
-        Box::pin(execute_async_blocking_host_call(
+        Box::pin(execute_async_host_call(
             trace,
             metrics,
             operation,
-            cancellation,
-            move |cancellation| bridge.dispatch_host_call_cancellable(request, &cancellation),
+            cancellation.clone(),
+            async move {
+                bridge
+                    .dispatch_host_call_async(request, &cancellation)
+                    .await
+            },
         ))
     }
 }

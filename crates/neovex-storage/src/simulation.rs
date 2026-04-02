@@ -65,16 +65,20 @@ impl Clock for ManualClock {
 #[repr(u8)]
 pub enum FaultPoint {
     StorageCommitBeforeVisibility = 1,
-    JournalAppendBeforeDurableFlush = 2,
-    JournalFlushBeforeVisibility = 3,
-    CheckpointPublishBeforeManifestUpdate = 4,
-    CompactionStartBeforePublish = 5,
+    StorageCommitAfterVisibilityBeforeReturn = 2,
+    JournalAppendBeforeDurableFlush = 3,
+    JournalFlushBeforeVisibility = 4,
+    CheckpointPublishBeforeManifestUpdate = 5,
+    CompactionStartBeforePublish = 6,
 }
 
 impl FaultPoint {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::StorageCommitBeforeVisibility => "storage_commit_before_visibility",
+            Self::StorageCommitAfterVisibilityBeforeReturn => {
+                "storage_commit_after_visibility_before_return"
+            }
             Self::JournalAppendBeforeDurableFlush => "journal_append_before_durable_flush",
             Self::JournalFlushBeforeVisibility => "journal_flush_before_visibility",
             Self::CheckpointPublishBeforeManifestUpdate => {

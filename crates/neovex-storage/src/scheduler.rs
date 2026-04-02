@@ -3,8 +3,123 @@ use redb::{ReadableTable, TableError};
 
 use crate::store::{
     CRON_JOBS, RUNNING_SCHEDULED_JOBS, SCHEDULED_JOB_RESULTS, SCHEDULED_JOBS, TenantStore,
-    map_redb_error,
+    TenantWriteTransaction, map_redb_error,
 };
+
+impl TenantWriteTransaction {
+    pub fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
+        self.check_cancel()?;
+        insert_scheduled_job_in_write_txn(self.write_txn()?, job)
+    }
+
+    pub fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
+        self.check_cancel()?;
+        let due = {
+            let table = match self.write_txn()?.open_table(SCHEDULED_JOBS) {
+                Ok(table) => table,
+                Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+                Err(error) => return Err(map_redb_error(error)),
+            };
+            let upper = due_jobs_upper_bound(now);
+            let mut due = Vec::new();
+            for entry in table
+                .range::<&[u8]>(..=upper.as_slice())
+                .map_err(map_redb_error)?
+            {
+                self.check_cancel()?;
+                let (key, value) = entry.map_err(map_redb_error)?;
+                let job = deserialize_job(value.value())?;
+                due.push((key.value().to_vec(), job));
+            }
+            due
+        };
+
+        if due.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        {
+            let mut scheduled = self
+                .write_txn()?
+                .open_table(SCHEDULED_JOBS)
+                .map_err(map_redb_error)?;
+            let mut running = self
+                .write_txn()?
+                .open_table(RUNNING_SCHEDULED_JOBS)
+                .map_err(map_redb_error)?;
+            for (pending_key, job) in &due {
+                self.check_cancel()?;
+                scheduled
+                    .remove(pending_key.as_slice())
+                    .map_err(map_redb_error)?;
+                let payload = serialize_job(job)?;
+                let running_key = running_job_key(&job.id);
+                running
+                    .insert(running_key.as_slice(), payload.as_slice())
+                    .map_err(map_redb_error)?;
+            }
+        }
+
+        Ok(due.into_iter().map(|(_, job)| job).collect())
+    }
+
+    pub fn complete_scheduled_job(&mut self, job_id: &JobId) -> Result<()> {
+        self.check_cancel()?;
+        let mut table = match self.write_txn()?.open_table(RUNNING_SCHEDULED_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+        let key = running_job_key(job_id);
+        table.remove(key.as_slice()).map_err(map_redb_error)?;
+        Ok(())
+    }
+
+    pub fn cancel_scheduled_job(&mut self, job_id: &JobId) -> Result<bool> {
+        self.check_cancel()?;
+        cancel_scheduled_job_in_write_txn(self.write_txn()?, job_id)
+    }
+
+    pub fn record_scheduled_job_result(&mut self, result: &ScheduledJobResult) -> Result<()> {
+        self.check_cancel()?;
+        let payload =
+            rmp_serde::to_vec(result).map_err(|error| Error::Serialization(error.to_string()))?;
+        let key = scheduled_job_result_key(&result.id);
+        let mut table = self
+            .write_txn()?
+            .open_table(SCHEDULED_JOB_RESULTS)
+            .map_err(map_redb_error)?;
+        table
+            .insert(key.as_slice(), payload.as_slice())
+            .map_err(map_redb_error)?;
+        Ok(())
+    }
+
+    pub fn save_cron_job(&mut self, cron: &CronJob) -> Result<()> {
+        self.check_cancel()?;
+        let payload =
+            rmp_serde::to_vec(cron).map_err(|error| Error::Serialization(error.to_string()))?;
+        let mut table = self
+            .write_txn()?
+            .open_table(CRON_JOBS)
+            .map_err(map_redb_error)?;
+        table
+            .insert(cron.name.as_str(), payload.as_slice())
+            .map_err(map_redb_error)?;
+        Ok(())
+    }
+
+    pub fn delete_cron_job(&mut self, name: &str) -> Result<()> {
+        self.check_cancel()?;
+        let mut table = match self.write_txn()?.open_table(CRON_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+        table.remove(name).map_err(map_redb_error)?;
+        Ok(())
+    }
+}
 
 impl TenantStore {
     /// Returns the earliest due timestamp across pending scheduled jobs and enabled cron jobs.
@@ -23,100 +138,33 @@ impl TenantStore {
 
     /// Inserts a scheduled job into the pending queue.
     pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        insert_scheduled_job_in_write_txn(&write_txn, job)?;
-        self.commit_write_txn(write_txn)?;
+        self.execute_write(move |transaction| transaction.insert_scheduled_job(job))?;
         Ok(())
     }
 
     /// Claims all scheduled jobs due at or before `now`.
     pub fn claim_due_jobs(&self, now: Timestamp) -> Result<Vec<ScheduledJob>> {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        let due = {
-            let table = match write_txn.open_table(SCHEDULED_JOBS) {
-                Ok(table) => table,
-                Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-                Err(error) => return Err(map_redb_error(error)),
-            };
-            let upper = due_jobs_upper_bound(now);
-            let mut due = Vec::new();
-            for entry in table
-                .range::<&[u8]>(..=upper.as_slice())
-                .map_err(map_redb_error)?
-            {
-                let (key, value) = entry.map_err(map_redb_error)?;
-                let job = deserialize_job(value.value())?;
-                due.push((key.value().to_vec(), job));
-            }
-            due
-        };
-
-        if due.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        {
-            let mut scheduled = write_txn
-                .open_table(SCHEDULED_JOBS)
-                .map_err(map_redb_error)?;
-            let mut running = write_txn
-                .open_table(RUNNING_SCHEDULED_JOBS)
-                .map_err(map_redb_error)?;
-            for (pending_key, job) in &due {
-                scheduled
-                    .remove(pending_key.as_slice())
-                    .map_err(map_redb_error)?;
-                let payload = serialize_job(job)?;
-                let running_key = running_job_key(&job.id);
-                running
-                    .insert(running_key.as_slice(), payload.as_slice())
-                    .map_err(map_redb_error)?;
-            }
-        }
-
-        self.commit_write_txn(write_txn)?;
-        Ok(due.into_iter().map(|(_, job)| job).collect())
+        Ok(self
+            .execute_write(move |transaction| transaction.claim_due_jobs(now))?
+            .value)
     }
 
     /// Marks a claimed scheduled job as finished.
     pub fn complete_scheduled_job(&self, job_id: &JobId) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        {
-            let mut table = match write_txn.open_table(RUNNING_SCHEDULED_JOBS) {
-                Ok(table) => table,
-                Err(TableError::TableDoesNotExist(_)) => return Ok(()),
-                Err(error) => return Err(map_redb_error(error)),
-            };
-            let key = running_job_key(job_id);
-            table.remove(key.as_slice()).map_err(map_redb_error)?;
-        }
-        self.commit_write_txn(write_txn)?;
+        self.execute_write(move |transaction| transaction.complete_scheduled_job(job_id))?;
         Ok(())
     }
 
     /// Cancels a pending scheduled job if it has not started running yet.
     pub fn cancel_scheduled_job(&self, job_id: &JobId) -> Result<bool> {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        let removed = cancel_scheduled_job_in_write_txn(&write_txn, job_id)?;
-        self.commit_write_txn(write_txn)?;
-        Ok(removed)
+        Ok(self
+            .execute_write(move |transaction| transaction.cancel_scheduled_job(job_id))?
+            .value)
     }
 
     /// Persists the final result for an executed scheduled job.
     pub fn record_scheduled_job_result(&self, result: &ScheduledJobResult) -> Result<()> {
-        let payload =
-            rmp_serde::to_vec(result).map_err(|error| Error::Serialization(error.to_string()))?;
-        let key = scheduled_job_result_key(&result.id);
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        {
-            let mut table = write_txn
-                .open_table(SCHEDULED_JOB_RESULTS)
-                .map_err(map_redb_error)?;
-            table
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        self.commit_write_txn(write_txn)?;
+        self.execute_write(move |transaction| transaction.record_scheduled_job_result(result))?;
         Ok(())
     }
 
@@ -215,16 +263,7 @@ impl TenantStore {
 
     /// Saves or updates a cron job definition.
     pub fn save_cron_job(&self, cron: &CronJob) -> Result<()> {
-        let payload =
-            rmp_serde::to_vec(cron).map_err(|error| Error::Serialization(error.to_string()))?;
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        {
-            let mut table = write_txn.open_table(CRON_JOBS).map_err(map_redb_error)?;
-            table
-                .insert(cron.name.as_str(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        self.commit_write_txn(write_txn)?;
+        self.execute_write(move |transaction| transaction.save_cron_job(cron))?;
         Ok(())
     }
 
@@ -250,16 +289,7 @@ impl TenantStore {
 
     /// Deletes a cron job definition if present.
     pub fn delete_cron_job(&self, name: &str) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        {
-            let mut table = match write_txn.open_table(CRON_JOBS) {
-                Ok(table) => table,
-                Err(TableError::TableDoesNotExist(_)) => return Ok(()),
-                Err(error) => return Err(map_redb_error(error)),
-            };
-            table.remove(name).map_err(map_redb_error)?;
-        }
-        self.commit_write_txn(write_txn)?;
+        self.execute_write(move |transaction| transaction.delete_cron_job(name))?;
         Ok(())
     }
 }

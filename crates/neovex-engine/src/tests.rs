@@ -2,7 +2,8 @@ use neovex_core::{
     AccessOperator, AccessPredicate, AccessRule, AccessValue, CreateCronRequest, Error,
     FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, Mutation, OrderBy, OrderDirection,
     PaginatedQuery, PrincipalClaimSource, PrincipalContext, Query, ScheduleRequest,
-    ScheduledJobOutcome, TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
+    ScheduledJobOutcome, SequenceNumber, TableAccessPolicy, TableName, TableSchema, TenantId,
+    Timestamp,
 };
 use neovex_test_support::{DeterministicHarness, ServiceFixture};
 use proptest::prelude::*;
@@ -19,6 +20,7 @@ use crate::evaluator::{
     evaluate_paginated, evaluate_paginated_cancellable, evaluate_query, evaluate_query_cancellable,
 };
 use crate::{Service, SubscriptionUpdate};
+use neovex_storage::{FaultInjector, FaultPoint, ManualClock};
 
 fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
@@ -205,6 +207,54 @@ struct BlockingCancellationProbe {
     cancelled: AtomicBool,
     first_check: AtomicBool,
     release_gate: (Mutex<bool>, Condvar),
+}
+
+struct BlockingFaultInjector {
+    point: FaultPoint,
+    entered: Notify,
+    release_gate: (Mutex<bool>, Condvar),
+}
+
+impl BlockingFaultInjector {
+    fn new(point: FaultPoint) -> Arc<Self> {
+        Arc::new(Self {
+            point,
+            entered: Notify::new(),
+            release_gate: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    async fn wait_until_entered(&self) {
+        self.entered.notified().await;
+    }
+
+    fn release(&self) {
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking fault injector should acquire release lock");
+        *released = true;
+        cvar.notify_all();
+    }
+}
+
+impl FaultInjector for BlockingFaultInjector {
+    fn check(&self, point: FaultPoint) -> neovex_core::Result<()> {
+        if point != self.point {
+            return Ok(());
+        }
+        self.entered.notify_one();
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking fault injector should acquire release lock");
+        while !*released {
+            released = cvar
+                .wait(released)
+                .expect("blocking fault injector should wait for release");
+        }
+        Ok(())
+    }
 }
 
 impl BlockingCancellationProbe {
@@ -1403,6 +1453,92 @@ async fn service_delete_tenant_tears_down_active_subscriptions() {
 }
 
 #[tokio::test]
+async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("blocker"))]),
+        )
+        .expect("seed insert should succeed");
+    let probe = BlockingCancellationProbe::new();
+
+    let read_task: tokio::task::JoinHandle<neovex_core::Result<Vec<neovex_core::Document>>> =
+        tokio::spawn({
+            let service = service.clone();
+            let tenant_id = tenant_id.clone();
+            let probe = probe.clone();
+            async move {
+                service
+                    .list_documents_async_cancellable(
+                        tenant_id,
+                        tasks_table(),
+                        probe.clone().cancel_wait(),
+                        probe.check(),
+                    )
+                    .await
+            }
+        });
+
+    timeout(Duration::from_secs(1), probe.wait_for_first_check())
+        .await
+        .expect("read operation should enter its first cancellation check");
+
+    let delete_task = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move { service.delete_tenant_async(tenant_id).await }
+    });
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        !delete_task.is_finished(),
+        "tenant deletion should wait for the in-flight operation"
+    );
+
+    let ensure_task = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move { service.ensure_tenant_exists_async(tenant_id).await }
+    });
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        !ensure_task.is_finished(),
+        "new work should remain blocked behind tenant deletion"
+    );
+
+    probe.release();
+
+    timeout(Duration::from_secs(1), async {
+        read_task
+            .await
+            .expect("read task should join")
+            .expect("read task should succeed");
+    })
+    .await
+    .expect("read task should finish after release");
+    timeout(Duration::from_secs(1), async {
+        delete_task
+            .await
+            .expect("delete task should join")
+            .expect("tenant delete should succeed");
+    })
+    .await
+    .expect("delete task should finish after the in-flight read completes");
+    let error = timeout(Duration::from_secs(1), async {
+        ensure_task
+            .await
+            .expect("ensure task should join")
+            .expect_err("new work should fail after deletion begins")
+    })
+    .await
+    .expect("ensure task should resolve after deletion completes");
+    assert!(matches!(error, Error::TenantNotFound(_)));
+}
+
+#[tokio::test]
 async fn service_create_duplicate_tenant_returns_already_exists() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -2371,6 +2507,278 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
 
     probe.release();
     tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[tokio::test]
+async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitBeforeVisibility);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(10_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let cancel = Arc::new(Notify::new());
+    let cancel_for_wait = cancel.clone();
+    let handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async_cancellable(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("rolled-back"))]),
+                    async move {
+                        cancel_for_wait.notified().await;
+                    },
+                    || Ok(()),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("write should block before the durable commit point");
+    cancel.notify_one();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    faults.release();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async mutation should resolve after cancellation")
+        .expect("mutation task should join successfully")
+        .expect_err("pre-commit cancellation should surface as cancelled");
+    assert!(matches!(error, Error::Cancelled));
+    assert!(
+        service
+            .query_documents(&tenant_id, &query_for("tasks"))
+            .expect("query should succeed")
+            .is_empty(),
+        "pre-commit cancellation should not leave a document behind"
+    );
+    assert!(
+        service
+            .read_commit_log(&tenant_id, SequenceNumber(0))
+            .expect("commit log should read")
+            .is_empty(),
+        "pre-commit cancellation should not append a commit"
+    );
+}
+
+#[tokio::test]
+async fn mutation_async_cancellable_after_commit_returns_committed_result() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(20_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let cancel = Arc::new(Notify::new());
+    let cancel_for_wait = cancel.clone();
+    let handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async_cancellable(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("after-commit"))]),
+                    async move {
+                        cancel_for_wait.notified().await;
+                    },
+                    || Ok(()),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("write should block after the durable commit point");
+    cancel.notify_one();
+    faults.release();
+
+    let document_id = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async mutation should resolve after post-commit cancellation")
+        .expect("mutation task should join successfully")
+        .expect("post-commit cancellation should still return success");
+    let documents = service
+        .query_documents(&tenant_id, &query_for("tasks"))
+        .expect("query should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, document_id);
+    assert_eq!(
+        documents[0].fields.get("title"),
+        Some(&json!("after-commit"))
+    );
+    assert_eq!(
+        service
+            .read_commit_log(&tenant_id, SequenceNumber(0))
+            .expect("commit log should read")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn scheduler_async_write_path_round_trips_pending_running_and_history_state() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let job_id = service
+        .schedule_mutation_async(
+            tenant_id.clone(),
+            ScheduleRequest {
+                run_after_ms: 25,
+                mutation: insert_task_mutation("scheduled-async"),
+            },
+        )
+        .await
+        .expect("schedule should succeed");
+    assert_eq!(
+        service
+            .list_scheduled_jobs_async(tenant_id.clone())
+            .await
+            .expect("list should succeed")
+            .len(),
+        1
+    );
+
+    let claimed = service
+        .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
+        .await
+        .expect("claim should succeed");
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].id, job_id);
+    assert!(
+        service
+            .list_scheduled_jobs_async(tenant_id.clone())
+            .await
+            .expect("list should succeed")
+            .is_empty()
+    );
+
+    let result = neovex_core::ScheduledJobResult {
+        id: job_id,
+        run_at: claimed[0].run_at,
+        finished_at: Timestamp::now(),
+        mutation: claimed[0].mutation.clone(),
+        outcome: ScheduledJobOutcome::Completed,
+        error: None,
+    };
+    service
+        .record_scheduled_job_result_async(tenant_id.clone(), result.clone())
+        .await
+        .expect("history should save");
+    service
+        .complete_scheduled_job_async(tenant_id.clone(), job_id)
+        .await
+        .expect("completion should succeed");
+
+    let loaded = service
+        .get_scheduled_job_result_async(tenant_id.clone(), job_id)
+        .await
+        .expect("history should load");
+    assert_eq!(loaded.outcome, ScheduledJobOutcome::Completed);
+}
+
+#[tokio::test]
+async fn schema_async_write_path_rebuilds_and_removes_indexes_durably() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let schema = TableSchema {
+        table: tasks_table(),
+        fields: vec![FieldSchema {
+            name: "rank".to_string(),
+            field_type: FieldType::Number,
+            required: false,
+        }],
+        indexes: vec![IndexDefinition {
+            name: "by_rank".to_string(),
+            field: "rank".to_string(),
+        }],
+        access_policy: None,
+    };
+
+    {
+        let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+        service
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(7))]),
+            )
+            .expect("insert should succeed");
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(9))]),
+            )
+            .expect("insert should succeed");
+        service
+            .set_table_schema_async(tenant_id.clone(), schema.clone())
+            .await
+            .expect("schema should save");
+    }
+
+    let store = neovex_storage::TenantStore::open(
+        data_dir.path().join(format!("{}.redb", tenant_id.as_str())),
+    )
+    .expect("tenant store should reopen");
+    assert_eq!(
+        store
+            .index_scan_eq(&tasks_table(), "by_rank", &json!(7))
+            .expect("index scan should succeed")
+            .len(),
+        1
+    );
+    drop(store);
+
+    {
+        let service = Arc::new(Service::new(data_dir.path()).expect("service should recreate"));
+        service
+            .delete_table_schema_async(tenant_id.clone(), tasks_table())
+            .await
+            .expect("schema should delete");
+    }
+
+    let store = neovex_storage::TenantStore::open(
+        data_dir.path().join(format!("{}.redb", tenant_id.as_str())),
+    )
+    .expect("tenant store should reopen after deletion");
+    assert!(
+        store
+            .index_scan_eq(&tasks_table(), "by_rank", &json!(7))
+            .expect("index scan should succeed")
+            .is_empty(),
+        "async schema deletion should clear rebuilt index entries"
+    );
 }
 
 #[tokio::test]

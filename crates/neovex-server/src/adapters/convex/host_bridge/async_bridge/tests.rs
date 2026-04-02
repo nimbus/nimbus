@@ -1,4 +1,4 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 
 use neovex_runtime::{RuntimeHostOperationMetricsSnapshot, RuntimeLimits, RuntimePolicy};
 use serde_json::json;
@@ -20,17 +20,17 @@ fn host_operation_metrics(
 }
 
 #[tokio::test]
-async fn async_blocking_host_call_records_precancel_metric() {
+async fn async_host_call_records_precancel_metric() {
     let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::default()));
     let cancellation = HostCallCancellation::default();
     cancellation.cancel();
 
-    let result = execute_async_blocking_host_call(
+    let result = execute_async_host_call(
         RuntimeAsyncHostCallTrace::new(tracing::Span::none(), "convex runtime async host call"),
         policy.metrics(),
         "convex.ctx.db.get".to_string(),
         cancellation,
-        |_cancellation| Ok(json!("unexpected")),
+        async { Ok(json!("unexpected")) },
     )
     .await;
 
@@ -52,7 +52,7 @@ async fn async_blocking_host_call_records_precancel_metric() {
 }
 
 #[tokio::test]
-async fn async_blocking_host_call_records_cooperative_read_cancellation() {
+async fn async_host_call_records_cooperative_read_cancellation() {
     let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::default()));
     let cancellation = HostCallCancellation::default();
     let started = Arc::new(Notify::new());
@@ -62,19 +62,17 @@ async fn async_blocking_host_call_records_cooperative_read_cancellation() {
         let metrics = policy.metrics();
         let cancellation = cancellation.clone();
         async move {
-            execute_async_blocking_host_call(
+            execute_async_host_call(
                 RuntimeAsyncHostCallTrace::new(
                     tracing::Span::none(),
                     "convex runtime async host call",
                 ),
                 metrics,
                 "convex.ctx.db.get".to_string(),
-                cancellation,
-                move |cancellation| {
+                cancellation.clone(),
+                async move {
                     started.notify_one();
-                    while !cancellation.is_cancelled() {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
+                    cancellation.cancelled().await;
                     Err(NeovexRuntimeError::Cancelled)
                 },
             )
@@ -109,11 +107,11 @@ async fn async_blocking_host_call_records_cooperative_read_cancellation() {
 }
 
 #[tokio::test]
-async fn async_blocking_host_call_waits_for_write_completion_after_cancellation() {
+async fn async_host_call_waits_for_write_completion_after_cancellation() {
     let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::default()));
     let cancellation = HostCallCancellation::default();
     let started = Arc::new(Notify::new());
-    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let release = Arc::new(Notify::new());
 
     let task = tokio::spawn({
         let started = started.clone();
@@ -121,7 +119,7 @@ async fn async_blocking_host_call_waits_for_write_completion_after_cancellation(
         let metrics = policy.metrics();
         let cancellation = cancellation.clone();
         async move {
-            execute_async_blocking_host_call(
+            execute_async_host_call(
                 RuntimeAsyncHostCallTrace::new(
                     tracing::Span::none(),
                     "convex runtime async host call",
@@ -129,17 +127,9 @@ async fn async_blocking_host_call_waits_for_write_completion_after_cancellation(
                 metrics,
                 "convex.ctx.db.insert".to_string(),
                 cancellation,
-                move |_cancellation| {
+                async move {
                     started.notify_one();
-                    let (lock, cvar) = &*release;
-                    let mut released = lock
-                        .lock()
-                        .expect("write completion lock should not be poisoned");
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .expect("write completion wait should not be poisoned");
-                    }
+                    release.notified().await;
                     Ok(json!("committed"))
                 },
             )
@@ -152,15 +142,7 @@ async fn async_blocking_host_call_waits_for_write_completion_after_cancellation(
         .expect("blocking write should start");
     cancellation.cancel();
     tokio::time::sleep(Duration::from_millis(25)).await;
-
-    {
-        let (lock, cvar) = &*release;
-        let mut released = lock
-            .lock()
-            .expect("write completion lock should not be poisoned");
-        *released = true;
-        cvar.notify_all();
-    }
+    release.notify_waiters();
 
     let result = timeout(Duration::from_secs(1), task)
         .await

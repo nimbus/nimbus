@@ -1,4 +1,57 @@
 use super::*;
+use std::sync::{Arc, Condvar, Mutex};
+
+use neovex_storage::{FaultInjector, FaultPoint, ManualClock};
+use tokio::sync::Notify;
+use tokio::time::{Duration, timeout};
+
+struct BlockingFaultInjector {
+    point: FaultPoint,
+    entered: Notify,
+    release_gate: (Mutex<bool>, Condvar),
+}
+
+impl BlockingFaultInjector {
+    fn new(point: FaultPoint) -> Arc<Self> {
+        Arc::new(Self {
+            point,
+            entered: Notify::new(),
+            release_gate: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    async fn wait_until_entered(&self) {
+        self.entered.notified().await;
+    }
+
+    fn release(&self) {
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking fault injector should acquire release lock");
+        *released = true;
+        cvar.notify_all();
+    }
+}
+
+impl FaultInjector for BlockingFaultInjector {
+    fn check(&self, point: FaultPoint) -> neovex_core::Result<()> {
+        if point != self.point {
+            return Ok(());
+        }
+        self.entered.notify_one();
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking fault injector should acquire release lock");
+        while !*released {
+            released = cvar
+                .wait(released)
+                .expect("blocking fault injector should wait for release");
+        }
+        Ok(())
+    }
+}
 
 #[tokio::test]
 async fn create_tenant_and_run_document_lifecycle() {
@@ -136,4 +189,62 @@ async fn get_nonexistent_document_returns_not_found() {
         .get_document("demo", "tasks", &neovex_core::DocumentId::new().to_string())
         .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn dropped_http_insert_after_commit_still_persists_the_document() {
+    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let faults_for_builder = faults.clone();
+    let fixture = ServiceFixture::new(move |path| {
+        Service::new_with_simulation(
+            path,
+            Arc::new(ManualClock::new(neovex_core::Timestamp(30_000))),
+            faults_for_builder,
+        )
+    });
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router(service.clone())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let request = open_json_post_stream(
+        &server,
+        "/api/tenants/demo/documents",
+        &serde_json::json!({
+            "table": "tasks",
+            "fields": { "title": "after-disconnect" }
+        }),
+    )
+    .await;
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("write should block after the durable commit point");
+    drop(request);
+    faults.release();
+
+    let started_at = tokio::time::Instant::now();
+    loop {
+        let documents = service
+            .list_documents(
+                &TenantId::new("demo").expect("tenant id should build"),
+                &TableName::new("tasks").expect("table should build"),
+            )
+            .expect("query should succeed");
+        if documents.len() == 1 {
+            assert_eq!(
+                documents[0].fields.get("title"),
+                Some(&serde_json::json!("after-disconnect"))
+            );
+            break;
+        }
+        assert!(
+            started_at.elapsed() < Duration::from_secs(2),
+            "timed out waiting for the committed write to become observable"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }

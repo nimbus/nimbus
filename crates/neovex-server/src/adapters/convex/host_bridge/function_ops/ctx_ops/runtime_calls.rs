@@ -1,6 +1,28 @@
 use super::*;
 
 impl ConvexHostBridge {
+    pub(in crate::adapters::convex) async fn invoke_ctx_run_query_async_cancellable(
+        &self,
+        payload: Value,
+        cancellation: &HostCallCancellation,
+    ) -> std::result::Result<Value, NeovexRuntimeError> {
+        let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
+        self.validate_session(payload.session_id.as_deref())?;
+        let response = self
+            .execute_runtime_function_call_async_cancellable(
+                InvocationKind::Query,
+                &payload.name,
+                &payload.args,
+                payload
+                    .visibility
+                    .unwrap_or(ConvexFunctionVisibility::Public),
+                payload.auth,
+                cancellation,
+            )
+            .await;
+        encode_runtime_core_result(response)
+    }
+
     pub(in crate::adapters::convex) fn invoke_ctx_run_query(
         &self,
         payload: Value,
@@ -53,6 +75,28 @@ impl ConvexHostBridge {
         serde_json::to_value(response).map_err(NeovexRuntimeError::from)
     }
 
+    pub(in crate::adapters::convex) async fn invoke_ctx_run_mutation_async_cancellable(
+        &self,
+        payload: Value,
+        cancellation: &HostCallCancellation,
+    ) -> std::result::Result<Value, NeovexRuntimeError> {
+        let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
+        self.validate_session(payload.session_id.as_deref())?;
+        let response = self
+            .execute_runtime_function_call_async_cancellable(
+                InvocationKind::Mutation,
+                &payload.name,
+                &payload.args,
+                payload
+                    .visibility
+                    .unwrap_or(ConvexFunctionVisibility::Public),
+                payload.auth,
+                cancellation,
+            )
+            .await;
+        encode_runtime_core_result(response)
+    }
+
     pub(in crate::adapters::convex) fn invoke_ctx_run_mutation(
         &self,
         payload: Value,
@@ -78,6 +122,28 @@ impl ConvexHostBridge {
             payload.auth,
             cancellation,
         );
+        encode_runtime_core_result(response)
+    }
+
+    pub(in crate::adapters::convex) async fn invoke_ctx_run_action_async_cancellable(
+        &self,
+        payload: Value,
+        cancellation: &HostCallCancellation,
+    ) -> std::result::Result<Value, NeovexRuntimeError> {
+        let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
+        self.validate_session(payload.session_id.as_deref())?;
+        let response = self
+            .execute_runtime_function_call_async_cancellable(
+                InvocationKind::Action,
+                &payload.name,
+                &payload.args,
+                payload
+                    .visibility
+                    .unwrap_or(ConvexFunctionVisibility::Public),
+                payload.auth,
+                cancellation,
+            )
+            .await;
         encode_runtime_core_result(response)
     }
 

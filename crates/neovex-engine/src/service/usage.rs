@@ -17,7 +17,11 @@ impl Service {
         self: &Arc<Self>,
         token_identifier: String,
     ) -> Result<bool> {
-        self.call_blocking(move |service| service.record_monthly_active_user(&token_identifier))
+        let now = self.now().0;
+        self.usage_storage
+            .execute(move |usage_store| {
+                usage_store.record_monthly_active_user(&token_identifier, now)
+            })
             .await
     }
 
@@ -31,7 +35,7 @@ impl Service {
         self: &Arc<Self>,
     ) -> Result<MonthlyActiveUsersSnapshot> {
         let now = self.now().0;
-        self.usage_read_storage
+        self.usage_storage
             .execute(move |usage_store| usage_store.monthly_active_users_for(now))
             .await
     }

@@ -36,6 +36,7 @@ pub(crate) async fn mutation(
             .await?
         }
         ConvexMutationRequest::Named(request) => {
+            let request_cancellation = RequestCancellationGuard::new();
             let mutation = registry.resolve_mutation(&request.name, &request.args)?;
             dispatch_convex_mutation_async(
                 &service,
@@ -43,18 +44,19 @@ pub(crate) async fn mutation(
                 &tenant_id,
                 mutation,
                 auth.as_ref(),
-                None,
+                Some(request_cancellation.token()),
             )
             .await?
         }
         ConvexMutationRequest::Raw { mutation } => {
+            let request_cancellation = RequestCancellationGuard::new();
             dispatch_convex_mutation_async(
                 &service,
                 &registry,
                 &tenant_id,
                 ConvexExecutableMutation::Mutation(mutation),
                 auth.as_ref(),
-                None,
+                Some(request_cancellation.token()),
             )
             .await?
         }

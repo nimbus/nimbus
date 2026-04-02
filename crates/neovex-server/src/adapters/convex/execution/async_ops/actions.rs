@@ -39,7 +39,8 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
             if let Some(cancellation) = cancellation.as_ref() {
                 check_host_cancellation(cancellation)?;
             }
-            dispatch_mutation_async_with_auth(service, tenant_id, mutation, auth).await
+            dispatch_mutation_async_with_auth(service, tenant_id, mutation, auth, cancellation)
+                .await
         }
         ConvexExecutableAction::Scheduled(command) => {
             execute_schedule_command_async(service, registry, tenant_id, command, cancellation)

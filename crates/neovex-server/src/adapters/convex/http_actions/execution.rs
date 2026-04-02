@@ -21,7 +21,7 @@ pub(super) async fn execute_http_action_async(
     auth: Option<&InvocationAuth>,
 ) -> Result<Response, Error> {
     let response =
-        prepare_http_action_response_async(service, registry, tenant_id, plan, request, auth)
+        prepare_http_action_response_async(service, registry, tenant_id, plan, request, auth, None)
             .await?;
     response::build_http_response_parts(response)
 }
@@ -67,19 +67,27 @@ pub(in crate::adapters::convex) fn prepare_http_action_response_cancellable(
     finalize_http_action_response(plan, request, operation_result.as_ref())
 }
 
-pub(super) async fn prepare_http_action_response_async(
+pub(in crate::adapters::convex) async fn prepare_http_action_response_async(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     tenant_id: &TenantId,
     plan: &ConvexHttpActionPlan,
     request: &ConvexHttpRequestContext,
     auth: Option<&InvocationAuth>,
+    cancellation: Option<HostCallCancellation>,
 ) -> Result<ConvexHttpResponseParts, Error> {
     let operation = resolve_http_action_operation(plan, request)?;
     let operation_result = match operation {
         Some(operation) => Some(
-            execute_convex_action_async(service, registry, tenant_id, operation, auth, None)
-                .await?,
+            execute_convex_action_async(
+                service,
+                registry,
+                tenant_id,
+                operation,
+                auth,
+                cancellation,
+            )
+            .await?,
         ),
         None => None,
     };

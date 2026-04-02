@@ -65,6 +65,195 @@ pub struct TenantReadSnapshot {
     read_txn: ReadTransaction,
 }
 
+pub struct TenantWriteCommit<T> {
+    pub value: T,
+    pub commit: Option<CommitEntry>,
+}
+
+pub struct TenantWriteTransaction {
+    write_txn: Option<redb::WriteTransaction>,
+    clock: Arc<dyn Clock>,
+    fault_injector: Arc<dyn FaultInjector>,
+    commit_writes: Vec<WriteOp>,
+    check_cancel: Box<dyn Fn() -> Result<()> + Send>,
+}
+
+impl TenantWriteTransaction {
+    fn new<Check>(
+        write_txn: redb::WriteTransaction,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        check_cancel: Check,
+    ) -> Self
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        Self {
+            write_txn: Some(write_txn),
+            clock,
+            fault_injector,
+            commit_writes: Vec::new(),
+            check_cancel: Box::new(check_cancel),
+        }
+    }
+
+    pub(crate) fn write_txn(&self) -> Result<&redb::WriteTransaction> {
+        self.write_txn
+            .as_ref()
+            .ok_or_else(|| Error::Internal("write transaction already closed".to_string()))
+    }
+
+    pub(crate) fn check_cancel(&self) -> Result<()> {
+        (self.check_cancel.as_ref())()
+    }
+
+    pub fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool> {
+        self.check_cancel()?;
+        begin_scheduled_execution(self.write_txn()?, execution_id)
+    }
+
+    pub(crate) fn record_commit_write(&mut self, write: WriteOp) {
+        self.commit_writes.push(write);
+    }
+
+    /// Commits all staged changes. Cancellation is checked immediately before the
+    /// durable commit point and never after it returns.
+    pub fn commit(mut self) -> Result<Option<CommitEntry>> {
+        self.check_cancel()?;
+        let Some(write_txn) = self.write_txn.take() else {
+            return Err(Error::Internal(
+                "write transaction already closed".to_string(),
+            ));
+        };
+        let clock = self.clock.clone();
+        let fault_injector = self.fault_injector.clone();
+        let commit_writes = std::mem::take(&mut self.commit_writes);
+        let check_cancel = self.check_cancel;
+
+        let commit = if commit_writes.is_empty() {
+            None
+        } else {
+            Some(append_commit(&write_txn, clock.now(), commit_writes)?)
+        };
+        commit_write_txn_cancellable(&*fault_injector, || check_cancel.as_ref()(), write_txn)?;
+        Ok(commit)
+    }
+
+    pub fn rollback(mut self) {
+        let _ = self.write_txn.take();
+    }
+
+    pub fn insert_document(&mut self, document: &Document) -> Result<()> {
+        self.check_cancel()?;
+        let payload = document
+            .to_msgpack()
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        {
+            let mut documents = self
+                .write_txn()?
+                .open_table(DOCUMENTS)
+                .map_err(map_redb_error)?;
+            let key = document_key(&document.table, &document.id);
+            documents
+                .insert(key.as_slice(), payload.as_slice())
+                .map_err(map_redb_error)?;
+        }
+        self.record_commit_write(WriteOp {
+            table: document.table.clone(),
+            op_type: WriteOpType::Insert,
+            doc_id: document.id,
+            previous: None,
+            current: Some(document.clone()),
+        });
+        Ok(())
+    }
+
+    pub fn update_document_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, serde_json::Value>,
+        validate: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()>,
+    {
+        self.check_cancel()?;
+        let key = document_key(table, id);
+        let (existing_document, document) = {
+            let mut documents = self
+                .write_txn()?
+                .open_table(DOCUMENTS)
+                .map_err(map_redb_error)?;
+            let existing_document = {
+                let existing = documents
+                    .get(key.as_slice())
+                    .map_err(map_redb_error)?
+                    .ok_or(Error::DocumentNotFound(*id))?;
+                Document::from_msgpack(existing.value())
+                    .map_err(|error| Error::Serialization(error.to_string()))?
+            };
+            let mut document = existing_document.clone();
+            for (field, value) in patch {
+                document.fields.insert(field.clone(), value.clone());
+            }
+            validate(&existing_document, &document)?;
+            let payload = document
+                .to_msgpack()
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            documents
+                .insert(key.as_slice(), payload.as_slice())
+                .map_err(map_redb_error)?;
+            (existing_document, document)
+        };
+
+        self.record_commit_write(WriteOp {
+            table: table.clone(),
+            op_type: WriteOpType::Update,
+            doc_id: *id,
+            previous: Some(existing_document),
+            current: Some(document),
+        });
+        Ok(())
+    }
+
+    pub fn delete_document_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        validate: F,
+    ) -> Result<Document>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
+        self.check_cancel()?;
+        let removed_document = {
+            let mut documents = self
+                .write_txn()?
+                .open_table(DOCUMENTS)
+                .map_err(map_redb_error)?;
+            let key = document_key(table, id);
+            let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
+            let removed = removed.ok_or(Error::DocumentNotFound(*id))?;
+            Document::from_msgpack(removed.value())
+                .map_err(|error| Error::Serialization(error.to_string()))?
+        };
+        validate(&removed_document)?;
+        self.record_commit_write(WriteOp {
+            table: table.clone(),
+            op_type: WriteOpType::Delete,
+            doc_id: *id,
+            previous: Some(removed_document.clone()),
+            current: None,
+        });
+        Ok(removed_document)
+    }
+}
+
+fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result<CommitEntry> {
+    commit.ok_or_else(|| Error::Internal(expectation.to_string()))
+}
+
 impl TenantStore {
     /// Opens or creates a tenant store on disk.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -111,6 +300,48 @@ impl TenantStore {
         })
     }
 
+    pub fn begin_write_transaction(&self) -> Result<TenantWriteTransaction> {
+        self.begin_write_transaction_cancellable(|| Ok(()))
+    }
+
+    pub fn begin_write_transaction_cancellable<Check>(
+        &self,
+        check_cancel: Check,
+    ) -> Result<TenantWriteTransaction>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+        Ok(TenantWriteTransaction::new(
+            write_txn,
+            self.clock.clone(),
+            self.fault_injector.clone(),
+            check_cancel,
+        ))
+    }
+
+    pub fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T>,
+    {
+        self.execute_write_cancellable(|| Ok(()), task)
+    }
+
+    pub fn execute_write_cancellable<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T>,
+    {
+        let mut transaction = self.begin_write_transaction_cancellable(check_cancel)?;
+        let value = task(&mut transaction)?;
+        let commit = transaction.commit()?;
+        Ok(TenantWriteCommit { value, commit })
+    }
+
     /// Inserts a document and appends a commit entry.
     pub fn insert(&self, document: &Document) -> Result<CommitEntry> {
         self.insert_once(document, None)?
@@ -123,31 +354,21 @@ impl TenantStore {
         document: &Document,
         execution_id: Option<&str>,
     ) -> Result<Option<CommitEntry>> {
-        let write = WriteOp {
-            table: document.table.clone(),
-            op_type: WriteOpType::Insert,
-            doc_id: document.id,
-            previous: None,
-            current: Some(document.clone()),
-        };
-        let payload = document
-            .to_msgpack()
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        if !begin_scheduled_execution(&write_txn, execution_id)? {
-            return Ok(None);
-        }
-        {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let key = document_key(&document.table, &document.id);
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        let commit = self.append_commit_entry(&write_txn, vec![write])?;
-        self.commit_write_txn(write_txn)?;
-        Ok(Some(commit))
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(execution_id)? {
+                return Ok(false);
+            }
+            transaction.insert_document(document)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(expect_write_commit(
+                committed.commit,
+                "deduplicated insert should record a commit entry",
+            )?)
+        } else {
+            None
+        })
     }
 
     /// Updates a document by applying a partial patch.
@@ -187,47 +408,21 @@ impl TenantStore {
     where
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        if !begin_scheduled_execution(&write_txn, execution_id)? {
-            return Ok(None);
-        }
-        let (existing_document, document) = {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let key = document_key(table, id);
-            let existing_document = {
-                let existing = documents
-                    .get(key.as_slice())
-                    .map_err(map_redb_error)?
-                    .ok_or(Error::DocumentNotFound(*id))?;
-                Document::from_msgpack(existing.value())
-                    .map_err(|error| Error::Serialization(error.to_string()))?
-            };
-            let mut document = existing_document.clone();
-            for (field, value) in patch {
-                document.fields.insert(field.clone(), value.clone());
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(execution_id)? {
+                return Ok(false);
             }
-            validate(&existing_document, &document)?;
-            let payload = document
-                .to_msgpack()
-                .map_err(|error| Error::Serialization(error.to_string()))?;
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-            (existing_document, document)
-        };
-
-        let commit = self.append_commit_entry(
-            &write_txn,
-            vec![WriteOp {
-                table: table.clone(),
-                op_type: WriteOpType::Update,
-                doc_id: *id,
-                previous: Some(existing_document),
-                current: Some(document),
-            }],
-        )?;
-        self.commit_write_txn(write_txn)?;
-        Ok(Some(commit))
+            transaction.update_document_validated(table, id, patch, validate)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(expect_write_commit(
+                committed.commit,
+                "deduplicated update should record a commit entry",
+            )?)
+        } else {
+            None
+        })
     }
 
     /// Deletes a document if present and records a commit entry.
@@ -281,32 +476,24 @@ impl TenantStore {
     where
         F: FnOnce(&Document) -> Result<()>,
     {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        if !begin_scheduled_execution(&write_txn, execution_id)? {
-            return Ok(None);
-        }
-        let removed_document = {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let key = document_key(table, id);
-            let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
-            let removed = removed.ok_or(Error::DocumentNotFound(*id))?;
-            Document::from_msgpack(removed.value())
-                .map_err(|error| Error::Serialization(error.to_string()))?
-        };
-        validate(&removed_document)?;
-
-        let commit = self.append_commit_entry(
-            &write_txn,
-            vec![WriteOp {
-                table: table.clone(),
-                op_type: WriteOpType::Delete,
-                doc_id: *id,
-                previous: Some(removed_document.clone()),
-                current: None,
-            }],
-        )?;
-        self.commit_write_txn(write_txn)?;
-        Ok(Some((commit, removed_document)))
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(execution_id)? {
+                return Ok(None);
+            }
+            let removed_document = transaction.delete_document_validated(table, id, validate)?;
+            Ok(Some(removed_document))
+        })?;
+        Ok(if let Some(removed_document) = committed.value {
+            Some((
+                expect_write_commit(
+                    committed.commit,
+                    "deduplicated delete should record a commit entry",
+                )?,
+                removed_document,
+            ))
+        } else {
+            None
+        })
     }
 
     /// Fetches a document by id.
@@ -379,10 +566,7 @@ impl TenantStore {
     }
 
     pub(crate) fn commit_write_txn(&self, write_txn: redb::WriteTransaction) -> Result<()> {
-        self.fault_injector
-            .check(FaultPoint::StorageCommitBeforeVisibility)?;
-        write_txn.commit().map_err(map_redb_error)?;
-        Ok(())
+        commit_write_txn_cancellable(&*self.fault_injector, || Ok(()), write_txn)
     }
 
     pub fn apply_resolved_write_batch(&self, writes: &[ResolvedWrite]) -> Result<CommitEntry> {
@@ -689,6 +873,21 @@ pub(crate) fn append_commit(
         .map_err(map_redb_error)?;
 
     Ok(entry)
+}
+
+pub(crate) fn commit_write_txn_cancellable<Check>(
+    fault_injector: &dyn FaultInjector,
+    check_cancel: Check,
+    write_txn: redb::WriteTransaction,
+) -> Result<()>
+where
+    Check: Fn() -> Result<()>,
+{
+    fault_injector.check(FaultPoint::StorageCommitBeforeVisibility)?;
+    check_cancel()?;
+    write_txn.commit().map_err(map_redb_error)?;
+    fault_injector.check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+    Ok(())
 }
 
 pub(crate) fn begin_scheduled_execution(

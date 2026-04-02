@@ -1,10 +1,14 @@
 use super::execution::{
-    check_host_cancellation, dispatch_convex_mutation_cancellable_with_auth,
-    encode_runtime_core_result, ensure_runtime_host_not_cancelled,
-    execute_convex_action_cancellable_with_auth, execute_query_result_cancellable_with_auth,
-    execute_schedule_command, runtime_error_to_core,
+    check_host_cancellation, dispatch_convex_mutation_async,
+    dispatch_convex_mutation_cancellable_with_auth, encode_runtime_core_result,
+    ensure_runtime_host_not_cancelled, execute_convex_action_async,
+    execute_convex_action_cancellable_with_auth, execute_query_result_async,
+    execute_query_result_cancellable_with_auth, execute_schedule_command,
+    execute_schedule_command_async, runtime_error_to_core,
 };
-use super::http_actions::prepare_http_action_response_cancellable;
+use super::http_actions::{
+    prepare_http_action_response_async, prepare_http_action_response_cancellable,
+};
 use super::registry::validate_runtime_http_route;
 use super::subscriptions::{
     is_scalar_filter_value, should_replace_lower_bound, should_replace_upper_bound,

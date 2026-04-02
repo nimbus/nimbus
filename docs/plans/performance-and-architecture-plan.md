@@ -243,8 +243,8 @@ dependencies are `done`.
 | 4D | done | none | completed 2026-04-01 |
 | 3F | done | 3D, 3E | completed 2026-04-01 |
 | 5A | done | none | completed 2026-04-01 |
-| 5B | todo | 5A | write-path transaction model |
-| 5C | todo | 5A, 5B | remove blocking wrappers after async read/write migration |
+| 5B | done | 5A | completed 2026-04-01 |
+| 5C | done | 5A, 5B | completed 2026-04-01 |
 | 6A | todo | 4D, 5A, 5B, 5C | durable journal begins after Phase 5 and deterministic seam groundwork |
 | 6B | todo | 6A | promote journal after 6A |
 | 8A | todo | 6B | external journal streaming after authoritative journal |
@@ -288,6 +288,10 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | 5C | done | Removed the remaining hot-path blocking adaptation layers by replacing `Service::call_blocking(...)` tenant-control and MAU paths with async storage-engine APIs, reworking tenant deletion around a tenant-local close-then-drain lifecycle primitive, and making runtime-backed async host calls await real engine or storage futures directly. Direct HTTP document reads and runtime-backed host operations now propagate cancellation to real storage work, and the default parallel `cargo test -p neovex-server` suite continues to pass after the 5A Deno-aligned bootstrap hardening. | `cargo check -p neovex-engine -p neovex-server`; `cargo test -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo test -p neovex-engine delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work`; `cargo test -p neovex-server async_runtime_integration_removes_hot_path_blocking_adapters`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6A |
+| 2026-04-01 | 5C | checkpointed | Promoted 5C after completing 5B and re-inventoried the remaining blocking adaptation layers. The only hot-path wrappers left are `Service::call_blocking(...)` in tenant create/delete and MAU recording plus the runtime host bridge `execute_async_blocking_host_call(...)` wrapper; the next slice will replace those with real async storage-backed lifecycle and host-call futures. The default parallel `cargo test -p neovex-server` suite now passes cleanly, so the earlier V8 abort appears resolved by the 5A Deno-aligned bootstrap hardening rather than this remaining 5C scope. | document and code review; `cargo test -p neovex-server` | remove the blocking helpers, migrate tenant lifecycle and usage writes onto async storage, and keep request-drop cancellation coverage green |
+| 2026-04-01 | 5B | done | Introduced an explicit async write transaction boundary in `neovex-storage` via `TenantWriteTransaction`, `TenantWriteCommit`, and `TenantWriteOutcome`; moved mutation, scheduler, and schema write paths onto that durable model; made the pre-commit versus post-commit boundary explicit with deterministic fault seams and transport-drop coverage; and updated `ARCHITECTURE.md` to describe the write-side async commit semantics. | `cargo check -p neovex-storage -p neovex-engine`; `cargo check -p neovex-server`; `cargo test -p neovex-storage async_write`; `cargo test -p neovex-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log`; `cargo test -p neovex-engine mutation_async_cancellable_after_commit_returns_committed_result`; `cargo test -p neovex-engine scheduler_async_write_path_round_trips_pending_running_and_history_state`; `cargo test -p neovex-engine schema_async_write_path_rebuilds_and_removes_indexes_durably`; `cargo test -p neovex-server dropped_http_insert_after_commit_still_persists_the_document`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 5C is now in progress |
+| 2026-04-01 | 5B | checkpointed | Promoted 5B after the clean 5A checkpoint commit and re-inventoried the remaining write-side `call_blocking(...)` paths in mutations, scheduler state transitions, schema replacement, tenant create/delete, and MAU recording. The first implementation slice will introduce an explicit async write transaction boundary in `neovex-storage`, move document mutation commit plumbing onto it, and make pre-commit versus post-commit cancellation observable in engine tests before migrating the remaining write surfaces. | document and code review | land mutation-path async transactions first, then migrate scheduler and schema writes onto the same durable boundary |
 | 2026-04-01 | 5A | refined | Hardened the V8 bootstrap used by the async read-path server suite by switching the embedder onto Deno's unprotected platform mode and moving runtime bootstrap snapshot creation behind one process-global cache, so sibling-thread test binaries and multiple registries no longer race or duplicate bootstrap work during default parallel `cargo test` runs. | `cargo test -p neovex-runtime executor`; `cargo test -p neovex-server tests::convex_runtime -- --test-threads=2`; `cargo test -p neovex-server --test reactive_loop -- --test-threads=2`; `cargo test -p neovex-server`; `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item remains 5B |
 | 2026-04-01 | 5A | done | Added a read-first async storage boundary in `neovex-storage` with native async traits plus redb-backed tenant and usage executors, moved tenant load or list control paths and engine read or subscription bootstrap paths onto that boundary, preserved cooperative scan or index cancellation plus concurrent same-tenant readers, removed `Service::call_blocking_cancellable(...)`, and updated `ARCHITECTURE.md` to describe the async read path while leaving writes on the synchronous path for Phase 5B. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server -- --test-threads=1`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5B |
 | 2026-04-01 | 5A | checkpointed | Promoted 5A after the clean 4D baseline, inventoried the remaining `call_blocking(...)` / `call_blocking_cancellable(...)` read and control paths in engine services, and mapped the first async migration slice to point reads, query and pagination backing scans, commit-log/latest-sequence reads, tenant load/list, schema reads, and usage reads. No code has landed yet for 5A. | document and code review | introduce the minimal async storage trait surface and a redb-backed read adapter first |
@@ -2149,6 +2153,22 @@ semantics, and correct cancellation behavior.
 - transport disconnect behavior remains correctly decoupled from durable commit
 - document, index, and commit-log writes remain atomic
 
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `TenantWriteTransaction` now owns the explicit durable write boundary in
+  `neovex-storage`, with `TenantWriteCommit` and `TenantWriteOutcome`
+  distinguishing committed writes from cancellation before commit.
+- Storage commit visibility now has deterministic pre-commit and post-commit
+  fault seams so tests can prove that cancellation only aborts before redb
+  commit and never after the durable commit point has been crossed.
+- Document mutation, scheduler state transitions, and schema/index rebuild
+  writes all execute through the same async storage write boundary while
+  preserving document plus index plus commit-log atomicity.
+- HTTP and Convex write entrypoints now thread disconnect cancellation into the
+  async engine write path, while transport disconnect after commit remains a
+  transport-only failure and does not roll back durable state.
+
 ---
 
 ### 5C. Remove blocking adaptation layers and complete async server/runtime integration
@@ -2227,6 +2247,27 @@ and runtime host-call path.
 - tenant lifecycle semantics remain correct
 - request cancellation now reaches real storage work on both direct and
   runtime-backed paths
+
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `Service::call_blocking(...)` is gone from the engine. Tenant create/delete
+  now use async storage-engine control APIs, and MAU recording runs through the
+  shared async usage-storage boundary.
+- Tenant deletion now uses a tenant-local close-then-drain lifecycle primitive:
+  once deletion begins, new operations are rejected immediately and the delete
+  path waits for the in-flight operation count to reach zero before removing
+  the tenant store. The primitive uses RAII operation guards plus a shared
+  deleted flag and active-operation counter, with `Condvar` for blocking waits
+  and `Notify` for async waits.
+- `execute_async_blocking_host_call(...)` is gone from the runtime host bridge.
+  Async runtime host operations now await real engine or storage futures
+  directly instead of wrapping them in a Tokio `spawn_blocking(...)` adapter.
+- Direct HTTP document reads and runtime-backed async host calls now propagate
+  disconnect and cooperative cancellation to the real async storage work.
+- The earlier parallel V8 test abort remains resolved: the default parallel
+  `cargo test -p neovex-server` suite passes with the 5A Deno-aligned bootstrap
+  hardening still in place.
 
 ---
 
