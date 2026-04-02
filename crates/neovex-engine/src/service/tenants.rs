@@ -95,6 +95,7 @@ impl Service {
         };
         if let Some(runtime) = runtime {
             let _deletion = runtime.begin_delete();
+            runtime.shutdown_subscription_delivery();
             runtime
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));
@@ -117,6 +118,7 @@ impl Service {
         }
         if let Some(runtime) = runtime {
             let _deletion = runtime.begin_delete_async().await;
+            runtime.shutdown_subscription_delivery();
             runtime
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));

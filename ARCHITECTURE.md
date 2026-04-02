@@ -190,8 +190,12 @@ file links (links go stale; symbol search does not).
 - `service/mod.rs` — `Service` struct: tenant registry plus the async storage boundary (`RedbStorageEngine`, tenant storage handles, usage storage handle), simulation seams, and scheduler wakeups. Lazy-loads tenants from disk on first access.
 - `service/mutations.rs` — `apply_mutation`: schema validation, declarative
   access-policy enforcement, durable journal append, ordered materialization
-  into document or index state, and subscription fan-out after the applied
-  watermark advances. This is the core write path.
+  into document or index state, and subscription work enqueue after the applied
+  watermark advances. A tenant-local background worker owns reactive
+  re-evaluation so committed writes no longer wait on full subscription fan-out.
+  The durable-journal batch path coalesces cache invalidation and subscription
+  wakeups across multi-record apply batches before handing work to that
+  background queue. This is the core write path.
 - `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Sync paths call it directly; async read paths route the same planner and evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
@@ -200,12 +204,22 @@ file links (links go stale; symbol search does not).
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
 - `tenant.rs` — `TenantRuntime`: holds `Arc<TenantStore>`, async storage
   handles, `SubscriptionRegistry`, `RwLock<Schema>`, a tenant-local
-  close-then-drain lifecycle primitive, and per-tenant durable versus applied
-  mutation-journal progress. Operation entry uses RAII guards to keep the
-  in-flight count correct; sync waiters use a `Condvar`, async waiters use
-  `Notify`, and both share the same deleted-plus-active-operations state.
+  close-then-drain lifecycle primitive, a bounded subscription-delivery worker
+  queue, and per-tenant durable versus applied mutation-journal progress.
+  Operation entry uses RAII guards to keep the in-flight count correct; sync
+  waiters use a `Condvar`, async waiters use `Notify`, and both share the same
+  deleted-plus-active-operations state. The subscription-delivery queue also
+  tracks batch-coalescing metrics, while the journal worker exposes an
+  async-friendly test pause seam for deterministic multi-record apply coverage.
 - `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
-- `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry. `affected(tables)` returns subscriptions that need re-evaluation.
+- `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry.
+  It identifies affected subscription ids at commit time, resolves current
+  delivery state by id for background workers, supports batch-aware affected-id
+  scans for journal apply coalescing, and tracks the latest delivered sequence
+  per subscription so async delivery never publishes older visible state after
+  newer visible state. When multiple applied commits are merged into one
+  delivery unit, subscribers receive the latest applied sequence and current
+  query result, but not per-commit metadata for the intermediate records.
 - `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification) and dispatches mutations through the public Service API.
 
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
@@ -224,12 +238,24 @@ file links (links go stale; symbol search does not).
 
 - `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`. `serve` starts the axum listener.
 - `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
-- `ws.rs` — Neovex-native WebSocket upgrade, message loop, and subscription cleanup.
+- `ws.rs` — Neovex-native WebSocket upgrade, message loop, and subscription
+  cleanup. The native session explicitly unsubscribes active subscriptions on
+  disconnect and owns its forwarder and sender tasks through `OwnedTaskSet`.
 - `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `.neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
 - `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor` and `RuntimeHostExecutor` instances.
 - `convex/auth/` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
 - `convex/registry/` and `convex/manifest.rs` — Manifest loading, runtime bundle discovery, function lookup, and Convex support route resolution.
 - `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex engine operations into the contract the runtime expects. Async host-call routes now await real engine or storage futures directly; only inherently synchronous host-side setup stays on the sync bridge path.
+- `convex/subscriptions/socket/` — Convex WebSocket session orchestration,
+  message handling, runtime transform application, and active-subscription
+  cleanup. The session now owns its sender and forwarder tasks through
+  `OwnedTaskSet`, and runtime-backed active subscriptions own their bridge
+  tasks so auth changes, unsubscribe, and disconnect drain those children
+  explicitly.
+- `runtime/subscriptions.rs` — Runtime subscription bootstrap for derived base
+  queries. It registers the underlying engine subscriptions, rewrites their
+  events onto the public subscription id, and now keeps those bridge tasks
+  attached to the active subscription lifecycle instead of detaching them.
 - `convex/execution/`, `convex/http_actions/`, `convex/subscriptions/`, and `convex/handlers/` — Shared Convex support execution, HTTP route dispatch, and live subscription plumbing.
 - `convex/host_bridge/read_tracking/` — Runtime read-set tracking used by runtime-backed Convex support subscriptions for narrower-than-table-level invalidation.
 - `protocol.rs` — Request/response DTOs. `ClientMessage` (Subscribe/Unsubscribe) and `ServerMessage` (SubscriptionResult/Error).
@@ -326,12 +352,14 @@ sequenceDiagram
 
     Svc->>St: Materialize document + index changes
     Note over St: Ordered apply advances applied watermark
-    Svc->>Sub: affected tables after apply
-    Sub-->>Svc: matching subscriptions
+    Svc->>Sub: affected subscriptions for applied batch
+    Sub-->>Svc: matching subscription ids
+    Svc->>Svc: enqueue one coalesced bounded subscription work item
+    Svc-->>C: mutation returns
 
-    loop Each affected subscription
+    loop Background delivery worker
         Svc->>St: evaluate_with_index
-        Note over Svc,St: Reads wait for applied watermark,<br/>then use index scan or table scan
+        Note over Svc,St: Reads observe applied state only,<br/>then use index scan or table scan
         Svc-->>WS: SubscriptionUpdate Result
     end
 ```
@@ -643,7 +671,12 @@ small and lets the storage boundary control where blocking actually happens.
 **Why table-level subscription invalidation?** A write to any row in a table
 triggers re-evaluation of all subscriptions on that table — even if the
 subscription's filter would exclude the changed row. This is coarse but
-simple. Index-accelerated re-evaluation makes each re-evaluation fast.
+simple. Index-accelerated re-evaluation makes each re-evaluation fast, and the
+tenant-local delivery queue moves that work off the synchronous mutation return
+path while preserving per-subscription sequence monotonicity. Multi-record
+journal apply batches now reuse that same queue by coalescing repeated wakeups
+for the same subscription into one delivery unit whenever the visible result can
+be represented by the latest applied sequence plus current query output.
 Runtime-backed subscriptions use read-set tracking to narrow this: they track
 returned document IDs and visible-window boundaries so unrelated writes can be
 skipped. Full filter-level dependency tracking for non-runtime subscriptions

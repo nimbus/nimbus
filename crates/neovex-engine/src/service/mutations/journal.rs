@@ -10,6 +10,7 @@ use neovex_core::{
 };
 use tracing::warn;
 
+use crate::subscriptions::{QueuedSubscriptionWork, SubscriptionBatchCandidate};
 use crate::tenant::{QueuedMutationRequest, QueuedMutationResult, TenantRuntime};
 
 use super::{
@@ -65,14 +66,7 @@ impl Service {
 
             match batch_result {
                 Ok(Ok(batch_result)) => {
-                    for applied in batch_result.applied {
-                        self.process_commit(
-                            runtime.clone(),
-                            &applied.commit,
-                            &applied.candidate_documents,
-                            &applied.deleted_documents,
-                        );
-                    }
+                    self.process_applied_commit_batch(runtime.clone(), &batch_result.applied);
                 }
                 Ok(Err(error)) => {
                     warn!(error = %error, "mutation journal batch failed");
@@ -141,6 +135,50 @@ impl Service {
             }
             QueuedMutationResult::Scheduled(applied) => MutationExecutionResult::Scheduled(applied),
         })
+    }
+
+    fn process_applied_commit_batch(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        applied: &[AppliedQueuedMutation],
+    ) {
+        if applied.is_empty() {
+            return;
+        }
+
+        runtime.invalidate_document_cache_for_commits(applied.iter().map(|item| &item.commit));
+
+        let batch_candidates = applied
+            .iter()
+            .map(|item| SubscriptionBatchCandidate {
+                commit: &item.commit,
+                candidate_documents: &item.candidate_documents,
+            })
+            .collect::<Vec<_>>();
+        let affected = runtime
+            .subscriptions
+            .affected_subscription_ids_for_batch(&batch_candidates);
+        if affected.subscription_ids.is_empty() {
+            return;
+        }
+
+        if applied.len() > 1 {
+            runtime.record_subscription_coalesced_batch(
+                applied.len() as u64,
+                affected.merged_wakeup_count,
+            );
+        }
+
+        let latest = applied
+            .last()
+            .expect("non-empty applied batch should have a latest commit");
+        let work = QueuedSubscriptionWork::new_coalesced(
+            affected.subscription_ids,
+            latest.commit.sequence,
+            (applied.len() == 1).then(|| latest.commit.clone()),
+            merge_deleted_documents_for_batch(applied),
+        );
+        self.dispatch_or_enqueue_subscription_work(runtime, work);
     }
 }
 
@@ -438,6 +476,20 @@ fn plan_queued_mutation_request(
             }
         }
     }
+}
+
+fn merge_deleted_documents_for_batch(applied: &[AppliedQueuedMutation]) -> Vec<Document> {
+    let mut seen = HashSet::<(TableName, DocumentId)>::new();
+    let mut deleted_documents = Vec::new();
+    for item in applied {
+        for document in &item.deleted_documents {
+            let key = (document.table.clone(), document.id);
+            if seen.insert(key) {
+                deleted_documents.push(document.clone());
+            }
+        }
+    }
+    deleted_documents
 }
 
 fn load_batched_document(

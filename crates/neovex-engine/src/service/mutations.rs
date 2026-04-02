@@ -7,12 +7,11 @@ use neovex_core::{
     Result, Schema, TableName, TableSchema, TenantId,
 };
 use neovex_storage::TenantStore;
-use tracing::warn;
 
-use crate::subscriptions::SubscriptionUpdate;
+use crate::subscriptions::{QueuedSubscriptionWork, dispatch_subscription_work};
 use crate::tenant::TenantRuntime;
 
-use super::{Service, documents_to_json, queries::evaluate_with_index_cancellable_for_principal};
+use super::Service;
 
 #[derive(Clone)]
 enum MutationExecutionMode {
@@ -33,6 +32,21 @@ struct UpdateMutationRequest<'a> {
 }
 
 impl Service {
+    pub(crate) fn dispatch_or_enqueue_subscription_work(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        work: QueuedSubscriptionWork,
+    ) {
+        runtime.ensure_subscription_delivery_worker_started();
+        if runtime.enqueue_subscription_work(work.clone()) {
+            return;
+        }
+
+        runtime.record_subscription_overflow_sync_fallback();
+        let stats = dispatch_subscription_work(&runtime, &work);
+        runtime.record_subscription_dispatch_stats(stats);
+    }
+
     /// Inserts a document and fan-outs any resulting subscription updates.
     pub fn insert_document(
         &self,
@@ -435,52 +449,19 @@ impl Service {
         deleted_documents: &[Document],
     ) {
         runtime.invalidate_document_cache_for_commit(commit);
-        let affected = runtime.subscriptions.affected(commit, candidate_documents);
-        let mut failed = Vec::new();
-        for subscription in affected {
-            let mut check_cancel = || Ok(());
-            match evaluate_with_index_cancellable_for_principal(
-                &runtime,
-                &subscription.query,
-                &subscription.principal,
-                &mut check_cancel,
-            ) {
-                Ok(documents) => {
-                    let update = SubscriptionUpdate::Result {
-                        subscription_id: subscription.id,
-                        request_id: None,
-                        commit: Some(commit.clone()),
-                        deleted_documents: deleted_documents.to_vec(),
-                        data: documents_to_json(documents),
-                    };
-                    if subscription.sender.try_send(update).is_err() {
-                        failed.push(subscription.id);
-                    }
-                }
-                Err(error) => {
-                    warn!(
-                        subscription_id = subscription.id,
-                        error = %error,
-                        "subscription re-evaluation failed"
-                    );
-                    if subscription
-                        .sender
-                        .try_send(SubscriptionUpdate::Error {
-                            subscription_id: subscription.id,
-                            request_id: None,
-                            message: error.to_string(),
-                        })
-                        .is_err()
-                    {
-                        failed.push(subscription.id);
-                    }
-                }
-            }
+        let subscription_ids = runtime
+            .subscriptions
+            .affected_subscription_ids(commit, candidate_documents);
+        if subscription_ids.is_empty() {
+            return;
         }
 
-        for subscription_id in failed {
-            runtime.subscriptions.remove(subscription_id);
-        }
+        let work = QueuedSubscriptionWork::new_single(
+            subscription_ids,
+            commit.clone(),
+            deleted_documents.to_vec(),
+        );
+        self.dispatch_or_enqueue_subscription_work(runtime, work);
     }
 
     fn run_store_mutation<F>(

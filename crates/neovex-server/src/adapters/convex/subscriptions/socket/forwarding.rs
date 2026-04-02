@@ -1,15 +1,5 @@
 use super::*;
 
-pub(super) fn drop_active_subscriptions(
-    active_subscriptions: ActiveSubscriptions,
-    transforms: &RwLock<ConvexSubscriptionTransforms>,
-) {
-    for convex_subscription_id in active_subscriptions.keys().copied() {
-        remove_subscription_transform(transforms, convex_subscription_id);
-    }
-    drop(active_subscriptions);
-}
-
 pub(super) async fn unsubscribe_active_subscriptions(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
@@ -33,10 +23,11 @@ pub(super) async fn unsubscribe_active_subscriptions(
                     .await;
             }
         }
+        active_subscription.shutdown_and_drain().await;
     }
 }
 
-pub(super) fn spawn_subscription_forwarder(
+pub(super) async fn run_subscription_forwarder(
     subscription_rx: mpsc::Receiver<SubscriptionUpdate>,
     outbound_tx: mpsc::Sender<ServerMessage>,
     transforms: Arc<RwLock<ConvexSubscriptionTransforms>>,
@@ -44,75 +35,71 @@ pub(super) fn spawn_subscription_forwarder(
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     runtime_cancellation: HostCallCancellation,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut subscription_rx = subscription_rx;
-        while let Some(event) = subscription_rx.recv().await {
-            let message = match event {
-                SubscriptionUpdate::Result {
-                    subscription_id,
-                    request_id,
-                    commit,
-                    deleted_documents,
+) {
+    let mut subscription_rx = subscription_rx;
+    while let Some(event) = subscription_rx.recv().await {
+        let message = match event {
+            SubscriptionUpdate::Result {
+                subscription_id,
+                request_id,
+                commit,
+                deleted_documents,
+                data,
+            } => {
+                let request_id_for_transform = request_id.clone();
+                match apply_subscription_transform(
+                    &service,
+                    &registry,
+                    &tenant_id,
+                    &transforms,
+                    &runtime_cancellation,
+                    ConvexSubscriptionEvent {
+                        subscription_id,
+                        request_id: request_id_for_transform.as_deref(),
+                        commit: commit.as_ref(),
+                        deleted_documents: &deleted_documents,
+                    },
                     data,
-                } => {
-                    let request_id_for_transform = request_id.clone();
-                    match apply_subscription_transform(
-                        &service,
-                        &registry,
-                        &tenant_id,
-                        &transforms,
-                        &runtime_cancellation,
-                        ConvexSubscriptionEvent {
-                            subscription_id,
-                            request_id: request_id_for_transform.as_deref(),
-                            commit: commit.as_ref(),
-                            deleted_documents: &deleted_documents,
-                        },
+                )
+                .await
+                {
+                    Ok(Some(data)) => ServerMessage::SubscriptionResult {
+                        subscription_id,
+                        request_id,
                         data,
-                    )
-                    .await
-                    {
-                        Ok(Some(data)) => ServerMessage::SubscriptionResult {
-                            subscription_id,
-                            request_id,
-                            data,
-                        },
-                        Ok(None) => continue,
-                        Err(message) => ServerMessage::Error {
-                            request_id,
-                            message,
-                        },
-                    }
+                    },
+                    Ok(None) => continue,
+                    Err(message) => ServerMessage::Error {
+                        request_id,
+                        message,
+                    },
                 }
-                SubscriptionUpdate::Error {
-                    request_id,
-                    message,
-                    ..
-                } => ServerMessage::Error {
-                    request_id,
-                    message,
-                },
-            };
-            if outbound_tx.send(message).await.is_err() {
-                break;
             }
+            SubscriptionUpdate::Error {
+                request_id,
+                message,
+                ..
+            } => ServerMessage::Error {
+                request_id,
+                message,
+            },
+        };
+        if outbound_tx.send(message).await.is_err() {
+            break;
         }
-    })
+    }
 }
 
-pub(super) fn spawn_socket_sender(
+pub(super) async fn run_socket_sender(
     mut socket_tx: futures::stream::SplitSink<WebSocket, Message>,
     mut outbound_rx: mpsc::Receiver<ServerMessage>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        while let Some(message) = outbound_rx.recv().await {
-            let Ok(text) = serde_json::to_string(&message) else {
-                break;
-            };
-            if socket_tx.send(Message::Text(text.into())).await.is_err() {
-                break;
-            }
+) {
+    while let Some(message) = outbound_rx.recv().await {
+        let Ok(text) = serde_json::to_string(&message) else {
+            break;
+        };
+        if socket_tx.send(Message::Text(text.into())).await.is_err() {
+            break;
         }
-    })
+    }
 }
