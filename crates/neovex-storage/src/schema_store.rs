@@ -106,24 +106,7 @@ impl TenantWriteTransaction {
 impl TenantStore {
     /// Loads the tenant schema from storage.
     pub fn load_schema(&self) -> Result<Schema> {
-        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
-        let table_handle = match read_txn.open_table(SCHEMAS) {
-            Ok(table_handle) => table_handle,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Schema::default()),
-            Err(error) => return Err(map_redb_error(error)),
-        };
-
-        let mut schema = Schema::default();
-        for item in table_handle.iter().map_err(map_redb_error)? {
-            let (_, value) = item.map_err(map_redb_error)?;
-            let table_schema: TableSchema = rmp_serde::from_slice(value.value())
-                .map_err(|error| Error::Serialization(error.to_string()))?;
-            schema
-                .tables
-                .insert(table_schema.table.clone(), table_schema);
-        }
-
-        Ok(schema)
+        self.read_snapshot()?.load_schema()
     }
 
     /// Saves a single table schema.

@@ -1,4 +1,5 @@
-use neovex_core::Query;
+use neovex_core::{Document, DurableMutationRecord, Query, Schema};
+use neovex_engine::MaterializedJournalSnapshot;
 use neovex_runtime::RuntimeMetricsSnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -80,6 +81,52 @@ pub(crate) struct CommitLogRequest {
 pub(crate) struct CommitLogResponse {
     pub commits: Vec<neovex_core::CommitEntry>,
     pub latest_sequence: u64,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct JournalStreamRequest {
+    pub after: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct JournalStreamResponse {
+    pub records: Vec<DurableMutationRecord>,
+    pub next_cursor: u64,
+    pub latest_sequence: u64,
+    pub cursor_floor: u64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MaterializedJournalSnapshotResponse {
+    pub version: u16,
+    pub applied_sequence: u64,
+    pub durable_head: u64,
+    pub schema: Schema,
+    pub documents: Vec<Document>,
+    pub scheduled_execution_ids: Vec<String>,
+}
+
+impl From<MaterializedJournalSnapshot> for MaterializedJournalSnapshotResponse {
+    fn from(snapshot: MaterializedJournalSnapshot) -> Self {
+        Self {
+            version: snapshot.version,
+            applied_sequence: snapshot.applied_sequence.0,
+            durable_head: snapshot.durable_head.0,
+            schema: snapshot.schema,
+            documents: snapshot.documents,
+            scheduled_execution_ids: snapshot.scheduled_execution_ids,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct JournalBootstrapResponse {
+    pub snapshot: MaterializedJournalSnapshotResponse,
+    pub resume_after_sequence: u64,
+    pub bootstrap_cut_sequence: u64,
+    pub cursor_floor_sequence: u64,
 }
 
 #[derive(Debug, Serialize)]

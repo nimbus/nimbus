@@ -1,18 +1,28 @@
+mod journal_snapshot;
+mod journal_stream;
+
 use std::path::Path;
 use std::sync::Arc;
 
 use neovex_core::{
-    CommitEntry, Document, DocumentId, Error, IndexDefinition, JobId, Result, ScheduledJob,
-    SequenceNumber, TableName, Timestamp, WriteOp, WriteOpType,
+    CommitEntry, Document, DocumentId, DurableMutationRecord, Error, IndexDefinition, JobId,
+    Result, ScheduledJob, Schema, SequenceNumber, TableName, TableSchema, Timestamp, WriteOp,
+    WriteOpType,
 };
 use redb::backends::InMemoryBackend;
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, TableError};
 
-use crate::commit_log::{deserialize_commit, serialize_commit};
+use crate::commit_log::serialize_commit;
 use crate::index::{encode_index_value, index_key};
 use crate::keys::{document_key, prefix_end, table_prefix};
 use crate::scheduler::{cancel_scheduled_job_in_write_txn, insert_scheduled_job_in_write_txn};
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
+
+pub use journal_snapshot::MaterializedJournalSnapshot;
+pub use journal_stream::{
+    DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
+    MAX_DURABLE_JOURNAL_STREAM_LIMIT,
+};
 
 pub(crate) const DOCUMENTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("documents");
 pub(crate) const INDEXES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("indexes");
@@ -29,6 +39,7 @@ pub(crate) const CRON_JOBS: TableDefinition<&str, &[u8]> = TableDefinition::new(
 pub(crate) const COMMIT_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new("commit_log");
 pub(crate) const METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 const NEXT_SEQUENCE_KEY: &str = "next_sequence";
+const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
 const EMPTY_TABLE_VALUE: &[u8] = &[];
 
 /// Concrete redb-backed tenant store.
@@ -68,6 +79,12 @@ pub struct TenantReadSnapshot {
 pub struct TenantWriteCommit<T> {
     pub value: T,
     pub commit: Option<CommitEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalProgress {
+    pub durable_head: SequenceNumber,
+    pub applied_head: SequenceNumber,
 }
 
 pub struct TenantWriteTransaction {
@@ -533,6 +550,18 @@ impl TenantStore {
 
     /// Reads commit log entries from the provided starting sequence.
     pub fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
+        Ok(self
+            .read_durable_journal_from(sequence)?
+            .into_iter()
+            .map(|record| record.as_commit_entry())
+            .collect())
+    }
+
+    /// Reads durable mutation records from the provided starting sequence.
+    pub fn read_durable_journal_from(
+        &self,
+        sequence: SequenceNumber,
+    ) -> Result<Vec<DurableMutationRecord>> {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
         let table_handle = match read_txn.open_table(COMMIT_LOG) {
             Ok(table_handle) => table_handle,
@@ -543,9 +572,16 @@ impl TenantStore {
         let mut entries = Vec::new();
         for item in table_handle.range(sequence.0..).map_err(map_redb_error)? {
             let (_, value) = item.map_err(map_redb_error)?;
-            entries.push(deserialize_commit(value.value())?);
+            entries.push(crate::commit_log::deserialize_durable_record(
+                value.value(),
+            )?);
         }
         Ok(entries)
+    }
+
+    pub fn scheduled_execution_exists(&self, execution_id: &str) -> Result<bool> {
+        self.read_snapshot()?
+            .scheduled_execution_exists(execution_id)
     }
 
     /// Returns the latest committed sequence number.
@@ -553,7 +589,15 @@ impl TenantStore {
         self.read_snapshot()?.latest_sequence()
     }
 
-    pub(crate) fn now(&self) -> Timestamp {
+    pub fn applied_sequence(&self) -> Result<SequenceNumber> {
+        self.read_snapshot()?.applied_sequence()
+    }
+
+    pub fn journal_progress(&self) -> Result<JournalProgress> {
+        self.read_snapshot()?.journal_progress()
+    }
+
+    pub fn now(&self) -> Timestamp {
         self.clock.now()
     }
 
@@ -567,6 +611,10 @@ impl TenantStore {
 
     pub(crate) fn commit_write_txn(&self, write_txn: redb::WriteTransaction) -> Result<()> {
         commit_write_txn_cancellable(&*self.fault_injector, || Ok(()), write_txn)
+    }
+
+    pub fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        self.fault_injector.check(point)
     }
 
     pub fn apply_resolved_write_batch(&self, writes: &[ResolvedWrite]) -> Result<CommitEntry> {
@@ -764,9 +812,121 @@ impl TenantStore {
         self.commit_write_txn(write_txn)?;
         Ok(commit)
     }
+
+    pub fn append_durable_records_batch(
+        &self,
+        records: Vec<DurableMutationRecord>,
+    ) -> Result<Vec<DurableMutationRecord>> {
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+        {
+            let mut log = write_txn.open_table(COMMIT_LOG).map_err(map_redb_error)?;
+            let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+            let mut next = match metadata.get(NEXT_SEQUENCE_KEY).map_err(map_redb_error)? {
+                Some(value) => decode_u64(value.value())?,
+                None => 1,
+            };
+
+            for record in &records {
+                if record.sequence.0 != next {
+                    return Err(Error::Internal(format!(
+                        "durable journal append expected sequence {}, got {}",
+                        next, record.sequence.0
+                    )));
+                }
+                let payload = crate::commit_log::serialize_durable_record(record)?;
+                log.insert(next, payload.as_slice())
+                    .map_err(map_redb_error)?;
+                next = next.saturating_add(1);
+            }
+
+            metadata
+                .insert(NEXT_SEQUENCE_KEY, encode_u64(next).as_slice())
+                .map_err(map_redb_error)?;
+        }
+
+        commit_journal_txn(&*self.fault_injector, write_txn)?;
+        Ok(records)
+    }
+
+    pub fn apply_durable_records_batch(&self, records: &[DurableMutationRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+        let mut applied_head = self.applied_sequence()?.0;
+        for record in records {
+            if record.sequence.0 <= applied_head {
+                continue;
+            }
+            if record.sequence.0 != applied_head.saturating_add(1) {
+                return Err(Error::Internal(format!(
+                    "durable journal apply expected sequence {}, got {}",
+                    applied_head.saturating_add(1),
+                    record.sequence.0
+                )));
+            }
+            apply_durable_record_in_write_txn(&write_txn, record)?;
+            applied_head = record.sequence.0;
+        }
+
+        if applied_head >= records[0].sequence.0 {
+            write_applied_sequence(&write_txn, SequenceNumber(applied_head))?;
+        }
+        self.commit_write_txn(write_txn)?;
+        Ok(())
+    }
+
+    pub fn recover_durable_journal(&self) -> Result<JournalProgress> {
+        let progress = self.journal_progress()?;
+        if progress.applied_head.0 >= progress.durable_head.0 {
+            return Ok(progress);
+        }
+        let from = SequenceNumber(progress.applied_head.0.saturating_add(1));
+        let pending = self.read_durable_journal_from(from)?;
+        self.apply_durable_records_batch(&pending)?;
+        self.journal_progress()
+    }
 }
 
 impl TenantReadSnapshot {
+    pub fn load_schema(&self) -> Result<Schema> {
+        let table_handle = match self.read_txn.open_table(SCHEMAS) {
+            Ok(table_handle) => table_handle,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(Schema::default()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let mut schema = Schema::default();
+        for item in table_handle.iter().map_err(map_redb_error)? {
+            let (_, value) = item.map_err(map_redb_error)?;
+            let table_schema: TableSchema = rmp_serde::from_slice(value.value())
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            schema
+                .tables
+                .insert(table_schema.table.clone(), table_schema);
+        }
+
+        Ok(schema)
+    }
+
+    pub fn scheduled_execution_exists(&self, execution_id: &str) -> Result<bool> {
+        let table_handle = match self.read_txn.open_table(SCHEDULED_JOB_EXECUTIONS) {
+            Ok(table_handle) => table_handle,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(false),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        Ok(table_handle
+            .get(execution_id)
+            .map_err(map_redb_error)?
+            .is_some())
+    }
+
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         let table_handle = match self.read_txn.open_table(DOCUMENTS) {
             Ok(table_handle) => table_handle,
@@ -853,6 +1013,30 @@ impl TenantReadSnapshot {
         };
         Ok(SequenceNumber(next.saturating_sub(1)))
     }
+
+    pub fn applied_sequence(&self) -> Result<SequenceNumber> {
+        let table_handle = match self.read_txn.open_table(METADATA) {
+            Ok(table_handle) => table_handle,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(SequenceNumber(0)),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let applied = match table_handle
+            .get(APPLIED_SEQUENCE_KEY)
+            .map_err(map_redb_error)?
+        {
+            Some(value) => decode_u64(value.value())?,
+            None => 0,
+        };
+        Ok(SequenceNumber(applied))
+    }
+
+    pub fn journal_progress(&self) -> Result<JournalProgress> {
+        Ok(JournalProgress {
+            durable_head: self.latest_sequence()?,
+            applied_head: self.applied_sequence()?,
+        })
+    }
 }
 
 pub(crate) fn append_commit(
@@ -871,8 +1055,200 @@ pub(crate) fn append_commit(
     let payload = serialize_commit(&entry)?;
     log.insert(sequence, payload.as_slice())
         .map_err(map_redb_error)?;
+    write_applied_sequence(write_txn, entry.sequence)?;
 
     Ok(entry)
+}
+
+fn apply_durable_record_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+    record: &DurableMutationRecord,
+) -> Result<()> {
+    if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
+        let _ = begin_scheduled_execution(write_txn, Some(execution_id))?;
+    }
+
+    let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
+    for write in &record.writes {
+        match (&write.previous, &write.current) {
+            (None, Some(current)) => {
+                let key = document_key(&write.table, &write.doc_id);
+                let already_applied = {
+                    let existing = documents.get(key.as_slice()).map_err(map_redb_error)?;
+                    if let Some(existing) = existing {
+                        let existing = Document::from_msgpack(existing.value())
+                            .map_err(|error| Error::Serialization(error.to_string()))?;
+                        if existing != *current {
+                            return Err(Error::Conflict(format!(
+                                "durable journal insert replay found conflicting state for document {}",
+                                write.doc_id
+                            )));
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if !already_applied {
+                    let payload = current
+                        .to_msgpack()
+                        .map_err(|error| Error::Serialization(error.to_string()))?;
+                    documents
+                        .insert(key.as_slice(), payload.as_slice())
+                        .map_err(map_redb_error)?;
+                }
+            }
+            (Some(previous), Some(current)) => {
+                let key = document_key(&write.table, &write.doc_id);
+                let existing = {
+                    let existing = documents
+                        .get(key.as_slice())
+                        .map_err(map_redb_error)?
+                        .ok_or(Error::Conflict(format!(
+                            "durable journal update replay missing document {}",
+                            write.doc_id
+                        )))?;
+                    Document::from_msgpack(existing.value())
+                        .map_err(|error| Error::Serialization(error.to_string()))?
+                };
+                if existing == *current {
+                    continue;
+                }
+                if existing != *previous {
+                    return Err(Error::Conflict(format!(
+                        "durable journal update replay found conflicting state for document {}",
+                        write.doc_id
+                    )));
+                }
+                let payload = current
+                    .to_msgpack()
+                    .map_err(|error| Error::Serialization(error.to_string()))?;
+                documents
+                    .insert(key.as_slice(), payload.as_slice())
+                    .map_err(map_redb_error)?;
+            }
+            (Some(previous), None) => {
+                let key = document_key(&write.table, &write.doc_id);
+                match documents.remove(key.as_slice()).map_err(map_redb_error)? {
+                    Some(removed) => {
+                        let removed = Document::from_msgpack(removed.value())
+                            .map_err(|error| Error::Serialization(error.to_string()))?;
+                        if removed != *previous {
+                            return Err(Error::Conflict(format!(
+                                "durable journal delete replay found conflicting state for document {}",
+                                write.doc_id
+                            )));
+                        }
+                    }
+                    None => continue,
+                }
+            }
+            (None, None) => {
+                return Err(Error::Internal(
+                    "durable journal write must include a previous or current document".to_string(),
+                ));
+            }
+        }
+
+        // Rebuild index entries directly from the durable document snapshots so recovery does not
+        // depend on any ephemeral planner state.
+        rewrite_document_indexes_in_write_txn(
+            write_txn,
+            write.previous.as_ref(),
+            write.current.as_ref(),
+        )?;
+    }
+    Ok(())
+}
+
+fn rewrite_document_indexes_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+    previous: Option<&Document>,
+    current: Option<&Document>,
+) -> Result<()> {
+    let table = current
+        .map(|document| &document.table)
+        .or_else(|| previous.map(|document| &document.table))
+        .ok_or_else(|| {
+            Error::Internal(
+                "durable journal index rewrite requires a document snapshot".to_string(),
+            )
+        })?;
+    let Some(table_schema) = load_table_schema_in_write_txn(write_txn, table)? else {
+        return Ok(());
+    };
+
+    let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
+    if let Some(previous) = previous {
+        for key in durable_record_index_keys(previous, &table_schema)? {
+            index_table.remove(key.as_slice()).map_err(map_redb_error)?;
+        }
+    }
+    if let Some(current) = current {
+        for key in durable_record_index_keys(current, &table_schema)? {
+            index_table
+                .insert(key.as_slice(), EMPTY_TABLE_VALUE)
+                .map_err(map_redb_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn load_table_schema_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+    table: &TableName,
+) -> Result<Option<TableSchema>> {
+    let schema_table = match write_txn.open_table(SCHEMAS) {
+        Ok(schema_table) => schema_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+    let Some(value) = schema_table.get(table.as_str()).map_err(map_redb_error)? else {
+        return Ok(None);
+    };
+    let table_schema = rmp_serde::from_slice(value.value())
+        .map_err(|error| Error::Serialization(error.to_string()))?;
+    Ok(Some(table_schema))
+}
+
+fn durable_record_index_keys(
+    document: &Document,
+    table_schema: &TableSchema,
+) -> Result<Vec<Vec<u8>>> {
+    let mut keys = Vec::new();
+    for index in &table_schema.indexes {
+        if let Some(value) = document.get_field(&index.field) {
+            let encoded = encode_index_value(value)?;
+            keys.push(index_key(
+                &table_schema.table,
+                &index.name,
+                &encoded,
+                &document.id,
+            ));
+        }
+    }
+    Ok(keys)
+}
+
+fn write_applied_sequence(
+    write_txn: &redb::WriteTransaction,
+    sequence: SequenceNumber,
+) -> Result<()> {
+    let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+    metadata
+        .insert(APPLIED_SEQUENCE_KEY, encode_u64(sequence.0).as_slice())
+        .map_err(map_redb_error)?;
+    Ok(())
+}
+
+fn commit_journal_txn(
+    fault_injector: &dyn FaultInjector,
+    write_txn: redb::WriteTransaction,
+) -> Result<()> {
+    fault_injector.check(FaultPoint::JournalAppendBeforeDurableFlush)?;
+    write_txn.commit().map_err(map_redb_error)?;
+    fault_injector.check(FaultPoint::JournalFlushBeforeVisibility)?;
+    Ok(())
 }
 
 pub(crate) fn commit_write_txn_cancellable<Check>(

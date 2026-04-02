@@ -1,4 +1,5 @@
 use super::*;
+use neovex_engine::EmbeddedReplica;
 use std::sync::{Arc, Condvar, Mutex};
 
 use neovex_storage::{FaultInjector, FaultPoint, ManualClock};
@@ -172,6 +173,264 @@ async fn commit_log_route_returns_sequenced_commits() {
         .expect("commits should be an array");
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0]["sequence"], serde_json::json!(2));
+}
+
+#[tokio::test]
+async fn journal_route_returns_ordered_cursor_pages() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let first_insert = api
+        .insert_document("demo", "tasks", serde_json::json!({ "title": "first" }))
+        .await;
+    let first_document_id = first_insert
+        .json::<serde_json::Value>()
+        .await
+        .expect("first insert response should parse")["id"]
+        .as_str()
+        .expect("first document id should be a string")
+        .to_string();
+    assert_eq!(
+        api.update_document(
+            "demo",
+            "tasks",
+            &first_document_id,
+            serde_json::json!({ "title": "first-updated" }),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        api.insert_document("demo", "tasks", serde_json::json!({ "title": "second" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    let first_page = api
+        .journal("demo", Some(0), Some(1))
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("first journal page should parse");
+    assert_eq!(first_page["cursor_floor"], serde_json::json!(0));
+    assert_eq!(first_page["latest_sequence"], serde_json::json!(3));
+    assert_eq!(first_page["next_cursor"], serde_json::json!(1));
+    assert_eq!(first_page["has_more"], serde_json::json!(true));
+    assert_eq!(first_page["records"][0]["sequence"], serde_json::json!(1));
+
+    let second_page = api
+        .journal("demo", Some(1), Some(1))
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("second journal page should parse");
+    assert_eq!(second_page["next_cursor"], serde_json::json!(2));
+    assert_eq!(second_page["has_more"], serde_json::json!(true));
+    assert_eq!(second_page["records"][0]["sequence"], serde_json::json!(2));
+
+    let third_page = api
+        .journal("demo", Some(2), Some(1))
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("third journal page should parse");
+    assert_eq!(third_page["next_cursor"], serde_json::json!(3));
+    assert_eq!(third_page["has_more"], serde_json::json!(false));
+    assert_eq!(third_page["records"][0]["sequence"], serde_json::json!(3));
+}
+
+#[tokio::test]
+async fn journal_bootstrap_route_returns_snapshot_and_durable_cut() {
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let faults_for_builder = faults.clone();
+    let fixture = ServiceFixture::new(move |path| {
+        Service::new_with_simulation(
+            path,
+            Arc::new(ManualClock::new(neovex_core::Timestamp(40_000))),
+            faults_for_builder,
+        )
+    });
+    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let insert_task = tokio::spawn({
+        let client = server.client().clone();
+        let url = server.http_url("/api/tenants/demo/documents");
+        async move {
+            client
+                .post(url)
+                .json(&serde_json::json!({
+                    "table": "tasks",
+                    "fields": { "title": "bootstrap" }
+                }))
+                .send()
+                .await
+                .expect("bootstrap insert request should succeed")
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    let insert_response = timeout(Duration::from_secs(1), insert_task)
+        .await
+        .expect("insert should acknowledge while apply is blocked")
+        .expect("insert task should join");
+    assert_eq!(insert_response.status(), StatusCode::CREATED);
+
+    let bootstrap = api
+        .journal_bootstrap("demo")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("bootstrap response should parse");
+    assert_eq!(bootstrap["resume_after_sequence"], serde_json::json!(0));
+    assert_eq!(bootstrap["bootstrap_cut_sequence"], serde_json::json!(1));
+    assert_eq!(bootstrap["cursor_floor_sequence"], serde_json::json!(0));
+    assert_eq!(
+        bootstrap["snapshot"]["applied_sequence"],
+        serde_json::json!(0)
+    );
+    assert_eq!(bootstrap["snapshot"]["durable_head"], serde_json::json!(1));
+    assert_eq!(bootstrap["snapshot"]["documents"], serde_json::json!([]));
+
+    let tail = api
+        .journal("demo", Some(0), Some(10))
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("journal tail should parse");
+    assert_eq!(tail["records"][0]["sequence"], serde_json::json!(1));
+    assert_eq!(tail["next_cursor"], serde_json::json!(1));
+
+    faults.release();
+}
+
+#[tokio::test]
+async fn embedded_replica_matches_server_results_and_catches_up_after_http_writes() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router(service.clone())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    for (title, rank) in [("alpha", 1), ("beta", 2)] {
+        assert_eq!(
+            api.insert_document(
+                "demo",
+                "tasks",
+                serde_json::json!({ "title": title, "rank": rank }),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+        .await
+        .expect("replica should bootstrap");
+
+    let ordered_query = neovex_core::Query {
+        table: neovex_core::TableName::new("tasks").expect("table name should build"),
+        filters: Vec::new(),
+        order: Some(neovex_core::OrderBy {
+            field: "rank".to_string(),
+            direction: neovex_core::OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let server_query = api
+        .query_documents(
+            "demo",
+            serde_json::to_value(&ordered_query).expect("query should serialize"),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("server query should parse");
+    let replica_query = replica
+        .query_documents(&ordered_query)
+        .expect("replica query should succeed")
+        .into_iter()
+        .map(|document| document.to_json())
+        .collect::<Vec<_>>();
+    assert_eq!(server_query["data"], serde_json::json!(replica_query));
+
+    let paginated = neovex_core::PaginatedQuery {
+        query: ordered_query.clone(),
+        page_size: 1,
+        after: None,
+    };
+    let server_page = api
+        .query_documents_paginated(
+            "demo",
+            serde_json::to_value(&paginated).expect("page should serialize"),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("server page should parse");
+    let replica_page = replica
+        .paginate_documents(&paginated)
+        .expect("replica page should succeed");
+    assert_eq!(
+        server_page,
+        serde_json::to_value(&replica_page).expect("replica page should serialize")
+    );
+
+    assert_eq!(
+        api.insert_document(
+            "demo",
+            "tasks",
+            serde_json::json!({ "title": "gamma", "rank": 3 }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    replica
+        .catch_up(&service, 1)
+        .await
+        .expect("replica catch-up should succeed");
+
+    let updated_server_query = api
+        .query_documents(
+            "demo",
+            serde_json::to_value(&ordered_query).expect("query should serialize"),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("updated server query should parse");
+    let updated_replica_query = replica
+        .query_documents(&ordered_query)
+        .expect("updated replica query should succeed")
+        .into_iter()
+        .map(|document| document.to_json())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        updated_server_query["data"],
+        serde_json::json!(updated_replica_query)
+    );
 }
 
 #[tokio::test]

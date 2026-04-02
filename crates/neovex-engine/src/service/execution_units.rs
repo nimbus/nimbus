@@ -329,10 +329,12 @@ impl MutationExecutionUnit {
         self.ensure_schema_unchanged(&conflict_dependencies)?;
         self.ensure_no_conflicts(&conflict_dependencies)?;
 
-        let commit = self
-            .runtime
-            .store
-            .apply_execution_unit_batch(&writes, &schedule_ops)?;
+        let commit = {
+            let _sequence_guard = self.runtime.lock_mutation_sequence();
+            self.runtime
+                .store
+                .apply_execution_unit_batch(&writes, &schedule_ops)?
+        };
         let candidate_documents = writes
             .iter()
             .filter_map(|write| match write {
@@ -358,6 +360,8 @@ impl MutationExecutionUnit {
         drop(state);
 
         if let Some(commit) = &commit {
+            self.runtime.mark_durable_head(commit.sequence);
+            self.runtime.mark_applied_head(commit.sequence);
             self.service.process_commit(
                 self.runtime.clone(),
                 commit,

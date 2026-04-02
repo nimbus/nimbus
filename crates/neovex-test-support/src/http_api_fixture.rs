@@ -464,6 +464,44 @@ impl<'a> HttpApiFixture<'a> {
             .expect("commit log request should succeed")
     }
 
+    pub async fn journal(
+        &self,
+        tenant_id: &str,
+        after: Option<u64>,
+        limit: Option<usize>,
+    ) -> Response {
+        let mut path = format!("/api/tenants/{tenant_id}/journal");
+        let mut query = Vec::new();
+        if let Some(after) = after {
+            query.push(format!("after={after}"));
+        }
+        if let Some(limit) = limit {
+            query.push(format!("limit={limit}"));
+        }
+        if !query.is_empty() {
+            path.push('?');
+            path.push_str(&query.join("&"));
+        }
+        self.server
+            .client()
+            .get(self.server.http_url(&path))
+            .send()
+            .await
+            .expect("journal request should succeed")
+    }
+
+    pub async fn journal_bootstrap(&self, tenant_id: &str) -> Response {
+        self.server
+            .client()
+            .get(
+                self.server
+                    .http_url(&format!("/api/tenants/{tenant_id}/journal/bootstrap")),
+            )
+            .send()
+            .await
+            .expect("journal bootstrap request should succeed")
+    }
+
     pub async fn query_documents(&self, tenant_id: &str, query: Value) -> Response {
         self.server
             .client()

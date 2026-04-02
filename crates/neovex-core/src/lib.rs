@@ -17,11 +17,11 @@ pub use auth::{
 };
 pub use dependency::{
     DependencySet, IndexRangeDependency, PaginatedWindowDependency, PredicateDependency,
-    commit_intersects_dependency_set,
+    commit_intersects_dependency_set, durable_record_intersects_dependency_set,
 };
 pub use document::Document;
 pub use error::{Error, Result};
-pub use mutation::{CommitEntry, Mutation, WriteOp, WriteOpType};
+pub use mutation::{CommitEntry, DurableMutationRecord, Mutation, WriteOp, WriteOpType};
 pub use query::{Cursor, Filter, FilterOp, OrderBy, OrderDirection, Page, PaginatedQuery, Query};
 pub use scheduled::{
     CreateCronRequest, CronJob, CronSchedule, JobId, ScheduleRequest, ScheduledJob,
@@ -36,8 +36,8 @@ mod tests {
     use std::str::FromStr;
 
     use crate::{
-        CommitEntry, Document, DocumentId, OrderBy, OrderDirection, Query, SequenceNumber,
-        TableName, TenantId, Timestamp, WriteOp, WriteOpType,
+        CommitEntry, Document, DocumentId, DurableMutationRecord, OrderBy, OrderDirection, Query,
+        SequenceNumber, TableName, TenantId, Timestamp, WriteOp, WriteOpType,
     };
 
     #[test]
@@ -140,5 +140,34 @@ mod tests {
         assert_eq!(affected.len(), 2);
         assert!(affected.contains(&tasks));
         assert!(affected.contains(&users));
+    }
+
+    #[test]
+    fn durable_mutation_record_roundtrips_and_verifies_integrity() {
+        let record = DurableMutationRecord::new(
+            SequenceNumber(9),
+            Timestamp(42),
+            vec![WriteOp {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                op_type: WriteOpType::Insert,
+                doc_id: DocumentId::new(),
+                previous: None,
+                current: Some(Document::new(
+                    TableName::new("tasks").expect("table name should be valid"),
+                    serde_json::Map::from_iter([("title".to_string(), json!("Hello"))]),
+                )),
+            }],
+            Some("scheduled:demo".to_string()),
+        )
+        .expect("record should build");
+
+        let encoded = rmp_serde::to_vec(&record).expect("record should serialize");
+        let decoded: DurableMutationRecord =
+            rmp_serde::from_slice(&encoded).expect("record should deserialize");
+
+        decoded
+            .validate_integrity()
+            .expect("record integrity should verify");
+        assert_eq!(decoded.as_commit_entry().sequence, SequenceNumber(9));
     }
 }

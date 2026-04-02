@@ -13,13 +13,19 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
     match (mutation, cancellation) {
         (Mutation::Insert { table, fields }, Some(cancellation)) => {
             let check_cancellation = cancellation.clone();
+            let cancel_wait = {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancelled().await;
+                }
+            };
             let id = service
                 .insert_document_async_cancellable_with_principal(
                     tenant_id.clone(),
                     table,
                     fields,
                     principal,
-                    cancellation.cancelled(),
+                    cancel_wait,
                     move || check_host_cancellation(&check_cancellation),
                 )
                 .await?;
@@ -33,6 +39,12 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
         }
         (Mutation::Update { table, id, patch }, Some(cancellation)) => {
             let check_cancellation = cancellation.clone();
+            let cancel_wait = {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancelled().await;
+                }
+            };
             let id = service
                 .update_document_async_cancellable_with_principal(
                     tenant_id.clone(),
@@ -40,7 +52,7 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                     id,
                     patch,
                     principal,
-                    cancellation.cancelled(),
+                    cancel_wait,
                     move || check_host_cancellation(&check_cancellation),
                 )
                 .await?;
@@ -60,13 +72,19 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
         }
         (Mutation::Delete { table, id }, Some(cancellation)) => {
             let check_cancellation = cancellation.clone();
+            let cancel_wait = {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancelled().await;
+                }
+            };
             service
                 .delete_document_async_cancellable_with_principal(
                     tenant_id.clone(),
                     table,
                     id,
                     principal,
-                    cancellation.cancelled(),
+                    cancel_wait,
                     move || check_host_cancellation(&check_cancellation),
                 )
                 .await?;

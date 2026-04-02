@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 
 use neovex_core::{
-    CronJob, CronSchedule, Document, DocumentId, Error, FieldSchema, FieldType, IndexDefinition,
-    Mutation, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName,
-    TableSchema, Timestamp,
+    CronJob, CronSchedule, DependencySet, Document, DocumentId, DurableMutationRecord, Error,
+    FieldSchema, FieldType, IndexDefinition, IndexRangeDependency, Mutation, ScheduledJob,
+    ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName, TableSchema, Timestamp,
+    WriteOp, WriteOpType, durable_record_intersects_dependency_set,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -18,8 +19,8 @@ use crate::index::encode_index_value;
 use crate::keys::{document_key, prefix_end, table_prefix};
 use crate::{
     FaultInjector, FaultOccurrence, FaultPoint, ManualClock, RedbTenantStorage,
-    SeededFaultInjector, TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage,
-    UsageStore,
+    SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest,
+    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore,
 };
 
 fn sample_document(table: &str, title: &str) -> Document {
@@ -39,6 +40,11 @@ fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
         },
         created_at: Timestamp(1_000),
     }
+}
+
+fn next_seeded_u64(seed: &mut u64) -> u64 {
+    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+    *seed
 }
 
 struct BlockingReadGate {
@@ -292,6 +298,873 @@ fn commit_log_sequences_increment() {
         store.latest_sequence().expect("latest sequence"),
         SequenceNumber(2)
     );
+}
+
+#[test]
+fn durable_journal_serialization_preserves_payload_and_metadata() {
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let before = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+    );
+    let mut after = before.clone();
+    after.fields.insert("title".to_string(), json!("After"));
+
+    let record = DurableMutationRecord::new(
+        SequenceNumber(7),
+        Timestamp(42),
+        vec![WriteOp {
+            table: table.clone(),
+            op_type: WriteOpType::Update,
+            doc_id: before.id,
+            previous: Some(before.clone()),
+            current: Some(after.clone()),
+        }],
+        Some("scheduled:job-7".to_string()),
+    )
+    .expect("durable record should build");
+
+    let encoded =
+        crate::commit_log::serialize_durable_record(&record).expect("record should serialize");
+    let decoded =
+        crate::commit_log::deserialize_durable_record(&encoded).expect("record should deserialize");
+
+    assert_eq!(decoded, record);
+    assert_eq!(decoded.writes[0].table, table);
+    assert_eq!(decoded.writes[0].doc_id, before.id);
+    assert_eq!(
+        decoded.writes[0]
+            .current
+            .as_ref()
+            .and_then(|document| document.fields.get("title")),
+        Some(&json!("After"))
+    );
+    assert_eq!(
+        decoded.scheduled_execution_id.as_deref(),
+        Some("scheduled:job-7")
+    );
+}
+
+#[test]
+fn durable_journal_metadata_supports_dependency_intersection_checks() {
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let before = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("rank".to_string(), json!(3)),
+            ("status".to_string(), json!("open")),
+        ]),
+    );
+    let mut after = before.clone();
+    after.fields.insert("rank".to_string(), json!(8));
+
+    let record = DurableMutationRecord::new(
+        SequenceNumber(3),
+        Timestamp(12),
+        vec![WriteOp {
+            table: table.clone(),
+            op_type: WriteOpType::Update,
+            doc_id: before.id,
+            previous: Some(before.clone()),
+            current: Some(after.clone()),
+        }],
+        None,
+    )
+    .expect("durable record should build");
+    let mut document_dependency = DependencySet::default();
+    document_dependency.record_document(&table, before.id);
+    assert!(durable_record_intersects_dependency_set(
+        &record,
+        &document_dependency,
+        &[],
+        |_, _| Ok(None)
+    ));
+
+    let mut table_dependency = DependencySet::default();
+    table_dependency.record_table(&table);
+    assert!(durable_record_intersects_dependency_set(
+        &record,
+        &table_dependency,
+        &[],
+        |_, _| Ok(None)
+    ));
+
+    let mut index_range_dependency = DependencySet::default();
+    index_range_dependency.record_index_range(IndexRangeDependency {
+        table: table.clone(),
+        index_name: "by_rank".to_string(),
+        field: "rank".to_string(),
+        start: Some(json!(5)),
+        end: Some(json!(10)),
+        start_inclusive: true,
+        end_inclusive: true,
+    });
+    assert!(durable_record_intersects_dependency_set(
+        &record,
+        &index_range_dependency,
+        &[],
+        |_, _| Ok(None)
+    ));
+
+    let mut unrelated = DependencySet::default();
+    unrelated.record_table(&TableName::new("users").expect("table name should be valid"));
+    assert!(!durable_record_intersects_dependency_set(
+        &record,
+        &unrelated,
+        &[],
+        |_, _| Ok(None)
+    ));
+}
+
+#[test]
+fn durable_journal_batch_append_enforces_no_holes() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let first = DurableMutationRecord::new(
+        SequenceNumber(1),
+        Timestamp(10),
+        vec![WriteOp {
+            table: TableName::new("tasks").expect("table name should be valid"),
+            op_type: WriteOpType::Insert,
+            doc_id: DocumentId::new(),
+            previous: None,
+            current: Some(sample_document("tasks", "First")),
+        }],
+        None,
+    )
+    .expect("first durable record should build");
+    let second = DurableMutationRecord::new(
+        SequenceNumber(2),
+        Timestamp(11),
+        vec![WriteOp {
+            table: TableName::new("tasks").expect("table name should be valid"),
+            op_type: WriteOpType::Insert,
+            doc_id: DocumentId::new(),
+            previous: None,
+            current: Some(sample_document("tasks", "Second")),
+        }],
+        None,
+    )
+    .expect("second durable record should build");
+
+    store
+        .append_durable_records_batch(vec![first.clone(), second.clone()])
+        .expect("initial batch append should succeed");
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("journal progress should read"),
+        crate::JournalProgress {
+            durable_head: SequenceNumber(2),
+            applied_head: SequenceNumber(0),
+        }
+    );
+
+    let error = store
+        .append_durable_records_batch(vec![
+            DurableMutationRecord::new(
+                SequenceNumber(4),
+                Timestamp(12),
+                vec![WriteOp {
+                    table: TableName::new("tasks").expect("table name should be valid"),
+                    op_type: WriteOpType::Insert,
+                    doc_id: DocumentId::new(),
+                    previous: None,
+                    current: Some(sample_document("tasks", "Gap")),
+                }],
+                None,
+            )
+            .expect("gap record should build"),
+        ])
+        .expect_err("batch append should reject sequence holes");
+    assert!(
+        matches!(error, Error::Internal(message) if message.contains("expected sequence 3, got 4"))
+    );
+    assert_eq!(
+        store
+            .latest_sequence()
+            .expect("latest sequence should stay stable"),
+        SequenceNumber(2)
+    );
+    assert_eq!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .expect("durable journal should read")
+            .into_iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1), SequenceNumber(2)]
+    );
+}
+
+#[test]
+fn durable_journal_stream_uses_cursor_floor_after_retention_cut() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let first = sample_document("tasks", "first");
+    let second = sample_document("tasks", "second");
+    store.insert(&first).expect("first insert should succeed");
+    store.insert(&second).expect("second insert should succeed");
+
+    let write_txn = store.db.begin_write().expect("write txn should open");
+    {
+        let mut journal = write_txn
+            .open_table(crate::store::COMMIT_LOG)
+            .expect("commit log table should open");
+        journal
+            .remove(1)
+            .expect("first durable journal entry should be removable");
+    }
+    store
+        .commit_write_txn(write_txn)
+        .expect("retention-cut transaction should commit");
+
+    let error = store
+        .stream_durable_journal(SequenceNumber(0), 10)
+        .expect_err("cursor behind the retained floor should fail");
+    assert!(matches!(
+        error,
+        Error::InvalidInput(message)
+            if message.contains("behind the retention floor 1")
+    ));
+
+    let page = store
+        .stream_durable_journal(SequenceNumber(1), 10)
+        .expect("cursor at the retained floor should succeed");
+    assert_eq!(page.cursor_floor, SequenceNumber(1));
+    assert_eq!(page.latest_sequence, SequenceNumber(2));
+    assert_eq!(page.next_cursor, SequenceNumber(2));
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].sequence, SequenceNumber(2));
+}
+
+#[test]
+fn recovery_replays_durable_but_unapplied_records() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let first = sample_document("tasks", "First");
+    let second = sample_document("tasks", "Second");
+    let records = vec![
+        DurableMutationRecord::new(
+            SequenceNumber(1),
+            Timestamp(100),
+            vec![WriteOp {
+                table: first.table.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: first.id,
+                previous: None,
+                current: Some(first.clone()),
+            }],
+            None,
+        )
+        .expect("first durable record should build"),
+        DurableMutationRecord::new(
+            SequenceNumber(2),
+            Timestamp(101),
+            vec![WriteOp {
+                table: second.table.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: second.id,
+                previous: None,
+                current: Some(second.clone()),
+            }],
+            None,
+        )
+        .expect("second durable record should build"),
+    ];
+
+    store
+        .append_durable_records_batch(records)
+        .expect("durable append should succeed");
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("journal progress should read"),
+        crate::JournalProgress {
+            durable_head: SequenceNumber(2),
+            applied_head: SequenceNumber(0),
+        }
+    );
+    assert!(
+        store
+            .scan_table(&TableName::new("tasks").expect("table name should be valid"))
+            .expect("scan should succeed")
+            .is_empty(),
+        "unapplied durable records must not become visible through table scans"
+    );
+
+    let progress = store
+        .recover_durable_journal()
+        .expect("recovery should apply pending durable records");
+    assert_eq!(
+        progress,
+        crate::JournalProgress {
+            durable_head: SequenceNumber(2),
+            applied_head: SequenceNumber(2),
+        }
+    );
+
+    let documents = store
+        .scan_table(&TableName::new("tasks").expect("table name should be valid"))
+        .expect("scan should succeed after recovery");
+    assert_eq!(documents.len(), 2);
+    let mut titles = documents
+        .iter()
+        .map(|document| {
+            document
+                .fields
+                .get("title")
+                .and_then(|value| value.as_str())
+                .expect("recovered document title should exist")
+        })
+        .collect::<Vec<_>>();
+    titles.sort_unstable();
+    assert_eq!(titles, vec!["First", "Second"]);
+}
+
+#[test]
+fn materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let table_schema = TableSchema {
+        table: table.clone(),
+        fields: vec![FieldSchema {
+            name: "rank".to_string(),
+            field_type: FieldType::Number,
+            required: true,
+        }],
+        indexes: vec![IndexDefinition {
+            name: "by_rank".to_string(),
+            field: "rank".to_string(),
+        }],
+        access_policy: None,
+    };
+    live.replace_table_schema(&table_schema)
+        .expect("table schema should persist");
+
+    let first = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("title".to_string(), json!("First")),
+            ("rank".to_string(), json!(1)),
+        ]),
+    );
+    live.insert_with_indexes(&first, &table_schema.indexes)
+        .expect("first insert should succeed");
+    let snapshot = live
+        .export_materialized_journal_snapshot()
+        .expect("snapshot export should succeed");
+    assert_eq!(snapshot.version, 1);
+    assert_eq!(snapshot.applied_sequence, SequenceNumber(1));
+    assert_eq!(snapshot.durable_head, SequenceNumber(1));
+
+    let second = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("title".to_string(), json!("Second")),
+            ("rank".to_string(), json!(3)),
+        ]),
+    );
+    live.insert_with_indexes(&second, &table_schema.indexes)
+        .expect("second insert should succeed");
+    live.update_with_indexes(
+        &table,
+        &first.id,
+        &serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
+        &table_schema.indexes,
+    )
+    .expect("update should succeed");
+
+    let tail = live
+        .read_durable_journal_from(SequenceNumber(snapshot.applied_sequence.0 + 1))
+        .expect("journal tail should read");
+    let rebuilt = TenantStore::create_in_memory().expect("rebuilt store should open");
+    let progress = rebuilt
+        .rebuild_materialized_journal_from_snapshot(&snapshot, &tail, None)
+        .expect("snapshot plus tail rebuild should succeed");
+
+    assert_eq!(
+        progress,
+        live.journal_progress()
+            .expect("live journal progress should read")
+    );
+    assert_eq!(
+        rebuilt.load_schema().expect("rebuilt schema should load"),
+        live.load_schema().expect("live schema should load")
+    );
+    assert_eq!(
+        rebuilt
+            .scan_table(&table)
+            .expect("rebuilt scan should succeed"),
+        live.scan_table(&table).expect("live scan should succeed")
+    );
+    assert_eq!(
+        rebuilt
+            .index_scan_eq(&table, "by_rank", &json!(2))
+            .expect("rebuilt index scan should succeed"),
+        live.index_scan_eq(&table, "by_rank", &json!(2))
+            .expect("live index scan should succeed")
+    );
+    assert_eq!(
+        rebuilt
+            .index_scan_eq(&table, "by_rank", &json!(3))
+            .expect("rebuilt index scan should succeed"),
+        live.index_scan_eq(&table, "by_rank", &json!(3))
+            .expect("live index scan should succeed")
+    );
+}
+
+#[test]
+fn materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let table_schema = TableSchema {
+        table: table.clone(),
+        fields: vec![FieldSchema {
+            name: "rank".to_string(),
+            field_type: FieldType::Number,
+            required: true,
+        }],
+        indexes: vec![IndexDefinition {
+            name: "by_rank".to_string(),
+            field: "rank".to_string(),
+        }],
+        access_policy: None,
+    };
+    live.replace_table_schema(&table_schema)
+        .expect("table schema should persist");
+
+    let first = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("title".to_string(), json!("First")),
+            ("rank".to_string(), json!(1)),
+        ]),
+    );
+    live.insert_with_indexes(&first, &table_schema.indexes)
+        .expect("first insert should succeed");
+    let snapshot = live
+        .export_materialized_journal_snapshot()
+        .expect("snapshot export should succeed");
+    assert_eq!(snapshot.version, 1);
+    assert_eq!(snapshot.durable_head, SequenceNumber(1));
+
+    let second = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("title".to_string(), json!("Second")),
+            ("rank".to_string(), json!(3)),
+        ]),
+    );
+    live.insert_with_indexes(&second, &table_schema.indexes)
+        .expect("second insert should succeed");
+    live.update_with_indexes(
+        &table,
+        &first.id,
+        &serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
+        &table_schema.indexes,
+    )
+    .expect("update should succeed");
+
+    let tail = live
+        .read_durable_journal_from(SequenceNumber(snapshot.applied_sequence.0 + 1))
+        .expect("journal tail should read");
+    let rebuilt = TenantStore::create_in_memory().expect("rebuilt store should open");
+    let progress = rebuilt
+        .rebuild_materialized_journal_from_snapshot(&snapshot, &tail, Some(SequenceNumber(2)))
+        .expect("point-in-time rebuild should succeed");
+
+    assert_eq!(
+        progress,
+        crate::JournalProgress {
+            durable_head: SequenceNumber(2),
+            applied_head: SequenceNumber(2),
+        }
+    );
+    let documents = rebuilt
+        .scan_table(&table)
+        .expect("rebuilt point-in-time scan should succeed");
+    assert_eq!(documents.len(), 2);
+    let rebuilt_first = documents
+        .iter()
+        .find(|document| document.id == first.id)
+        .expect("first document should exist at point-in-time rebuild");
+    assert_eq!(rebuilt_first.fields.get("rank"), Some(&json!(1)));
+    assert_eq!(
+        rebuilt
+            .index_scan_eq(&table, "by_rank", &json!(1))
+            .expect("rank 1 index scan should succeed")
+            .len(),
+        1
+    );
+    assert_eq!(
+        rebuilt
+            .index_scan_eq(&table, "by_rank", &json!(2))
+            .expect("rank 2 index scan should succeed")
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn shadow_materializer_rebuild_from_checkpoint_and_journal_matches_live_state() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+
+    let first = sample_document("tasks", "first");
+    live.insert(&first).expect("first insert should succeed");
+    let checkpoint = live
+        .export_materialized_journal_snapshot()
+        .expect("checkpoint snapshot should export");
+
+    let second = sample_document("tasks", "second");
+    live.insert(&second).expect("second insert should succeed");
+    live.update(
+        &table,
+        &first.id,
+        &serde_json::Map::from_iter([("title".to_string(), json!("first-updated"))]),
+    )
+    .expect("update should succeed");
+
+    let journal_tail = live
+        .read_durable_journal_from(SequenceNumber(checkpoint.applied_sequence.0 + 1))
+        .expect("journal tail should read");
+    let materializer = ShadowMaterializer::from_checkpoint_and_journal(
+        checkpoint,
+        journal_tail,
+        ShadowMaterializerConfig {
+            compaction_threshold_records: 10,
+        },
+    )
+    .expect("shadow materializer should rebuild");
+
+    let live_snapshot = live
+        .export_materialized_journal_snapshot()
+        .expect("live snapshot should export");
+    assert_eq!(materializer.current_snapshot(), live_snapshot);
+}
+
+#[test]
+fn shadow_materializer_compaction_is_deterministic_for_same_input() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let checkpoint = live
+        .export_materialized_journal_snapshot()
+        .expect("checkpoint snapshot should export");
+    for title in ["alpha", "beta", "gamma"] {
+        live.insert(&sample_document("tasks", title))
+            .expect("insert should succeed");
+    }
+    let journal_tail = live
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("journal tail should read");
+    let config = ShadowMaterializerConfig {
+        compaction_threshold_records: 2,
+    };
+
+    let left = ShadowMaterializer::from_checkpoint_and_journal(
+        checkpoint.clone(),
+        journal_tail.clone(),
+        config,
+    )
+    .expect("left materializer should build");
+    let right = ShadowMaterializer::from_checkpoint_and_journal(checkpoint, journal_tail, config)
+        .expect("right materializer should build");
+
+    assert_eq!(left.current_snapshot(), right.current_snapshot());
+    assert_eq!(left.manifest(), right.manifest());
+}
+
+#[test]
+fn shadow_materializer_recovery_from_checkpoint_and_pending_journal_restores_same_state() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let checkpoint = live
+        .export_materialized_journal_snapshot()
+        .expect("checkpoint snapshot should export");
+    for title in ["alpha", "beta"] {
+        live.insert(&sample_document("tasks", title))
+            .expect("insert should succeed");
+    }
+    let journal_tail = live
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("journal tail should read");
+    let config = ShadowMaterializerConfig {
+        compaction_threshold_records: 10,
+    };
+    let materializer =
+        ShadowMaterializer::from_checkpoint_and_journal(checkpoint.clone(), journal_tail, config)
+            .expect("materializer should build");
+
+    let recovered = ShadowMaterializer::recover(
+        checkpoint,
+        materializer.pending_records().to_vec(),
+        materializer.manifest().clone(),
+        config,
+    )
+    .expect("materializer should recover");
+
+    assert_eq!(
+        recovered.current_snapshot(),
+        materializer.current_snapshot()
+    );
+    assert_eq!(recovered.manifest(), materializer.manifest());
+}
+
+#[test]
+fn shadow_materializer_recovery_after_interrupted_compaction_converges_to_clean_rebuild() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let first = sample_document("tasks", "alpha");
+    live.insert(&first).expect("first insert should succeed");
+    let checkpoint = live
+        .export_materialized_journal_snapshot()
+        .expect("checkpoint snapshot should export");
+
+    for title in ["beta", "gamma", "delta"] {
+        live.insert(&sample_document("tasks", title))
+            .expect("insert should succeed");
+    }
+
+    let journal_tail = live
+        .read_durable_journal_from(SequenceNumber(checkpoint.applied_sequence.0 + 1))
+        .expect("journal tail should read");
+    let config = ShadowMaterializerConfig {
+        compaction_threshold_records: 2,
+    };
+
+    let clean = ShadowMaterializer::from_checkpoint_and_journal(
+        checkpoint.clone(),
+        journal_tail.clone(),
+        config,
+    )
+    .expect("clean shadow materializer should rebuild");
+
+    let interrupted_manifest = ShadowMaterializerManifest {
+        version: 1,
+        checkpoint_sequence: checkpoint.applied_sequence,
+        current_sequence: SequenceNumber(4),
+        pending_record_count: journal_tail.len(),
+        compaction_runs: 0,
+        compaction_threshold_records: config.compaction_threshold_records,
+    };
+    let recovered =
+        ShadowMaterializer::recover(checkpoint, journal_tail, interrupted_manifest, config)
+            .expect("recovery after interrupted compaction should succeed");
+
+    assert_eq!(recovered.current_snapshot(), clean.current_snapshot());
+    assert_eq!(recovered.manifest(), clean.manifest());
+}
+
+#[test]
+fn shadow_materializer_rejects_corrupted_journal_input() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let first = sample_document("tasks", "alpha");
+    live.insert(&first).expect("first insert should succeed");
+    let checkpoint = live
+        .export_materialized_journal_snapshot()
+        .expect("checkpoint snapshot should export");
+    live.insert(&sample_document("tasks", "beta"))
+        .expect("second insert should succeed");
+
+    let mut journal_tail = live
+        .read_durable_journal_from(SequenceNumber(checkpoint.applied_sequence.0 + 1))
+        .expect("journal tail should read");
+    journal_tail[0].integrity_sha256[0] ^= 0xff;
+
+    let error = ShadowMaterializer::from_checkpoint_and_journal(
+        checkpoint,
+        journal_tail,
+        ShadowMaterializerConfig {
+            compaction_threshold_records: 4,
+        },
+    )
+    .expect_err("corrupted journal input should be rejected");
+    assert!(
+        matches!(error, Error::Internal(message) if message.contains("failed integrity verification"))
+    );
+}
+
+#[test]
+fn shadow_materializer_rejects_corrupted_manifest_recovery_input() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    let checkpoint = live
+        .export_materialized_journal_snapshot()
+        .expect("checkpoint snapshot should export");
+    live.insert(&sample_document("tasks", "alpha"))
+        .expect("insert should succeed");
+
+    let journal_tail = live
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("journal tail should read");
+    let config = ShadowMaterializerConfig {
+        compaction_threshold_records: 8,
+    };
+    let materializer = ShadowMaterializer::from_checkpoint_and_journal(
+        checkpoint.clone(),
+        journal_tail.clone(),
+        config,
+    )
+    .expect("materializer should rebuild");
+
+    let mut corrupted_manifest = materializer.manifest().clone();
+    corrupted_manifest.pending_record_count += 1;
+    let error = ShadowMaterializer::recover(checkpoint, journal_tail, corrupted_manifest, config)
+        .expect_err("corrupted manifest should be rejected");
+    assert!(matches!(error, Error::InvalidInput(message) if message.contains("pending count")));
+}
+
+#[test]
+fn shadow_materializer_seeded_rebuild_matches_live_state_across_operation_sequences() {
+    let table = TableName::new("tasks").expect("table name should be valid");
+
+    for initial_seed in [1_u64, 7, 13, 42] {
+        let live = TenantStore::create_in_memory().expect("store should open");
+        let mut seed = initial_seed;
+        let mut live_ids = Vec::new();
+        let snapshot_step = (next_seeded_u64(&mut seed) % 12 + 4) as usize;
+        let mut checkpoint = live
+            .export_materialized_journal_snapshot()
+            .expect("initial checkpoint should export");
+
+        for step in 0..24 {
+            let draw = next_seeded_u64(&mut seed);
+            let choice = if live_ids.is_empty() { 0 } else { draw % 3 };
+            match choice {
+                0 => {
+                    let document = Document::new(
+                        table.clone(),
+                        serde_json::Map::from_iter([
+                            (
+                                "title".to_string(),
+                                json!(format!("seed-{initial_seed}-insert-{step}")),
+                            ),
+                            ("rank".to_string(), json!((draw % 100) as i64)),
+                        ]),
+                    );
+                    live.insert(&document).expect("insert should succeed");
+                    live_ids.push(document.id);
+                }
+                1 => {
+                    let index = (draw as usize) % live_ids.len();
+                    let document_id = live_ids[index];
+                    live.update(
+                        &table,
+                        &document_id,
+                        &serde_json::Map::from_iter([
+                            (
+                                "title".to_string(),
+                                json!(format!("seed-{initial_seed}-update-{step}")),
+                            ),
+                            ("rank".to_string(), json!(((draw >> 8) % 100) as i64)),
+                        ]),
+                    )
+                    .expect("update should succeed");
+                }
+                _ => {
+                    let index = (draw as usize) % live_ids.len();
+                    let document_id = live_ids.swap_remove(index);
+                    live.delete(&table, &document_id)
+                        .expect("delete should succeed");
+                }
+            }
+
+            if step == snapshot_step {
+                checkpoint = live
+                    .export_materialized_journal_snapshot()
+                    .expect("mid-run checkpoint should export");
+            }
+        }
+
+        let journal_tail = live
+            .read_durable_journal_from(SequenceNumber(checkpoint.applied_sequence.0 + 1))
+            .expect("journal tail should read");
+        let config = ShadowMaterializerConfig {
+            compaction_threshold_records: ((initial_seed % 4) + 2) as usize,
+        };
+
+        let left = ShadowMaterializer::from_checkpoint_and_journal(
+            checkpoint.clone(),
+            journal_tail.clone(),
+            config,
+        )
+        .expect("left shadow materializer should rebuild");
+        let right =
+            ShadowMaterializer::from_checkpoint_and_journal(checkpoint, journal_tail, config)
+                .expect("right shadow materializer should rebuild");
+        let live_snapshot = live
+            .export_materialized_journal_snapshot()
+            .expect("live snapshot should export");
+
+        assert_eq!(
+            left.current_snapshot(),
+            live_snapshot,
+            "seed {initial_seed}"
+        );
+        assert_eq!(
+            left.current_snapshot(),
+            right.current_snapshot(),
+            "rebuild should be deterministic for seed {initial_seed}"
+        );
+        assert_eq!(
+            left.manifest(),
+            right.manifest(),
+            "manifest should be deterministic for seed {initial_seed}"
+        );
+    }
+}
+
+#[test]
+fn materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let document = Document::new(
+        TableName::new("tasks").expect("table name should be valid"),
+        serde_json::Map::from_iter([("title".to_string(), json!("durable-only"))]),
+    );
+    let record = DurableMutationRecord::new(
+        SequenceNumber(1),
+        Timestamp(100),
+        vec![WriteOp {
+            table: document.table.clone(),
+            op_type: WriteOpType::Insert,
+            doc_id: document.id,
+            previous: None,
+            current: Some(document.clone()),
+        }],
+        None,
+    )
+    .expect("durable record should build");
+    store
+        .append_durable_records_batch(vec![record.clone()])
+        .expect("durable append should succeed");
+
+    let snapshot = store
+        .export_materialized_journal_snapshot()
+        .expect("snapshot export should succeed");
+    assert_eq!(snapshot.version, 1);
+    assert_eq!(snapshot.applied_sequence, SequenceNumber(0));
+    assert_eq!(snapshot.durable_head, SequenceNumber(1));
+
+    let rebuilt = TenantStore::create_in_memory().expect("rebuilt store should open");
+    let error = rebuilt
+        .rebuild_materialized_journal_from_snapshot(&snapshot, &[], None)
+        .expect_err("rebuild should reject a missing journal tail when the snapshot saw apply lag");
+    assert!(matches!(
+        error,
+        Error::InvalidInput(message)
+            if message.contains("available head 0 is behind snapshot durable head 1")
+    ));
+
+    let rebuilt = TenantStore::create_in_memory().expect("rebuilt store should open");
+    let progress = rebuilt
+        .rebuild_materialized_journal_from_snapshot(&snapshot, &[record], None)
+        .expect("rebuild should succeed once the required tail is present");
+    assert_eq!(
+        progress,
+        crate::JournalProgress {
+            durable_head: SequenceNumber(1),
+            applied_head: SequenceNumber(1),
+        }
+    );
+    let documents = rebuilt
+        .scan_table(&document.table)
+        .expect("rebuilt scan should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, document.id);
 }
 
 #[test]
@@ -1257,6 +2130,7 @@ async fn canceled_async_write_before_commit_leaves_no_durable_state() {
         .await
         .expect("write should reach the pre-commit gate");
     cancel.notify_one();
+    tokio::time::sleep(Duration::from_millis(25)).await;
     gate.release();
 
     let outcome = timeout(Duration::from_secs(1), handle)

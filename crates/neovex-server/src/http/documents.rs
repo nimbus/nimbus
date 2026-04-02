@@ -12,12 +12,18 @@ pub(crate) async fn insert_document(
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
+    let cancel_wait = {
+        let cancellation = cancellation.clone();
+        async move {
+            cancellation.cancelled().await;
+        }
+    };
     let document_id = service
         .insert_document_async_cancellable(
             tenant_id,
             table,
             request.fields,
-            cancellation.cancelled(),
+            cancel_wait,
             move || {
                 if cancellation_check.is_cancelled() {
                     Err(Error::Cancelled)
@@ -49,13 +55,19 @@ pub(crate) async fn update_document(
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
+    let cancel_wait = {
+        let cancellation = cancellation.clone();
+        async move {
+            cancellation.cancelled().await;
+        }
+    };
     let document_id = service
         .update_document_async_cancellable(
             tenant_id,
             table,
             document_id,
             request.patch,
-            cancellation.cancelled(),
+            cancel_wait,
             move || {
                 if cancellation_check.is_cancelled() {
                     Err(Error::Cancelled)
@@ -83,20 +95,20 @@ pub(crate) async fn delete_document(
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
+    let cancel_wait = {
+        let cancellation = cancellation.clone();
+        async move {
+            cancellation.cancelled().await;
+        }
+    };
     service
-        .delete_document_async_cancellable(
-            tenant_id,
-            table,
-            document_id,
-            cancellation.cancelled(),
-            move || {
-                if cancellation_check.is_cancelled() {
-                    Err(Error::Cancelled)
-                } else {
-                    Ok(())
-                }
-            },
-        )
+        .delete_document_async_cancellable(tenant_id, table, document_id, cancel_wait, move || {
+            if cancellation_check.is_cancelled() {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
+        })
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
