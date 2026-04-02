@@ -8,6 +8,7 @@ use neovex_engine::{
 };
 use tokio::sync::mpsc;
 
+use crate::owned_tasks::OwnedTaskSet;
 use crate::protocol::{ClientMessage, ServerMessage};
 use crate::state::AppState;
 
@@ -23,8 +24,9 @@ pub(crate) async fn handle_socket_for_tenant(
     let (subscription_tx, mut subscription_rx) =
         mpsc::channel::<SubscriptionUpdate>(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
 
+    let mut tasks = OwnedTaskSet::new();
     let forward_tx = outbound_tx.clone();
-    let forward_task = tokio::spawn(async move {
+    tasks.spawn(async move {
         while let Some(event) = subscription_rx.recv().await {
             let message = match event {
                 SubscriptionUpdate::Result {
@@ -52,7 +54,7 @@ pub(crate) async fn handle_socket_for_tenant(
         }
     });
 
-    let send_task = tokio::spawn(async move {
+    tasks.spawn(async move {
         while let Some(message) = outbound_rx.recv().await {
             let Ok(text) = serde_json::to_string(&message) else {
                 break;
@@ -140,9 +142,14 @@ pub(crate) async fn handle_socket_for_tenant(
         }
     }
 
+    for subscription_id in active_subscriptions.keys().copied().collect::<Vec<_>>() {
+        let _ = state
+            .service
+            .unsubscribe_async(tenant_id.clone(), subscription_id)
+            .await;
+    }
     drop(active_subscriptions);
     drop(subscription_tx);
     drop(outbound_tx);
-    let _ = forward_task.await;
-    let _ = send_task.await;
+    tasks.shutdown_and_drain().await;
 }

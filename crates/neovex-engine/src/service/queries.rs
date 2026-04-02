@@ -820,6 +820,48 @@ impl Service {
         let _operation = runtime.enter_operation(tenant_id)?;
         Ok(runtime.mutation_journal_stats())
     }
+
+    #[cfg(test)]
+    pub(crate) fn subscription_delivery_stats_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::SubscriptionDeliveryStats> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        Ok(runtime.subscription_delivery_stats())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_subscription_delivery_queue_capacity_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        capacity: usize,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.set_subscription_delivery_queue_capacity_for_testing(capacity);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscription_delivery_pause_handle_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::SubscriptionDeliveryPauseHandle> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        Ok(runtime.subscription_delivery_pause_handle_for_testing())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mutation_journal_pause_handle_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::MutationJournalPauseHandle> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        Ok(runtime.mutation_journal_pause_handle_for_testing())
+    }
 }
 
 impl Service {
@@ -994,7 +1036,7 @@ fn wait_for_latest_applied_visibility_blocking(runtime: &TenantRuntime) {
     runtime.wait_for_applied_sequence_blocking(runtime.durable_head());
 }
 
-pub(super) fn evaluate_with_index_cancellable_for_principal(
+pub(crate) fn evaluate_with_index_cancellable_for_principal(
     runtime: &TenantRuntime,
     query: &Query,
     principal: &PrincipalContext,

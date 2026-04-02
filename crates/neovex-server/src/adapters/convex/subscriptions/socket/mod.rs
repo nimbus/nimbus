@@ -7,6 +7,7 @@ use super::types::{
     ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
 };
 use super::*;
+use crate::owned_tasks::OwnedTaskSet;
 use crate::runtime::subscriptions::subscribe_runtime_base_queries;
 use neovex_engine::{SubscriptionCleanupHandle, SubscriptionRegistration};
 
@@ -17,6 +18,7 @@ mod named_subscriptions;
 #[derive(Debug)]
 struct ActiveSubscription {
     cleanup_handles: Vec<SubscriptionCleanupHandle>,
+    bridge_tasks: Option<OwnedTaskSet>,
 }
 
 impl ActiveSubscription {
@@ -24,6 +26,7 @@ impl ActiveSubscription {
         let (_, cleanup_handle) = registration.into_parts();
         Self {
             cleanup_handles: vec![cleanup_handle],
+            bridge_tasks: None,
         }
     }
 
@@ -32,6 +35,7 @@ impl ActiveSubscription {
     ) -> Self {
         Self {
             cleanup_handles: handle.cleanup_handles,
+            bridge_tasks: Some(handle.bridge_tasks),
         }
     }
 
@@ -39,6 +43,13 @@ impl ActiveSubscription {
         self.cleanup_handles
             .iter()
             .map(SubscriptionCleanupHandle::subscription_id)
+    }
+
+    async fn shutdown_and_drain(self) {
+        drop(self.cleanup_handles);
+        if let Some(tasks) = self.bridge_tasks {
+            tasks.shutdown_and_drain().await;
+        }
     }
 }
 
@@ -81,7 +92,8 @@ pub(super) async fn handle_convex_socket_for_tenant(
         .clone()
         .expect("convex websocket route requires Convex support state");
 
-    let forward_task = forwarding::spawn_subscription_forwarder(
+    let mut tasks = OwnedTaskSet::new();
+    tasks.spawn(forwarding::run_subscription_forwarder(
         subscription_rx,
         outbound_tx.clone(),
         transforms.clone(),
@@ -89,8 +101,8 @@ pub(super) async fn handle_convex_socket_for_tenant(
         convex_registry.clone(),
         tenant_id.clone(),
         runtime_cancellation.clone(),
-    );
-    let send_task = forwarding::spawn_socket_sender(socket_tx, outbound_rx);
+    ));
+    tasks.spawn(forwarding::run_socket_sender(socket_tx, outbound_rx));
     let session_ctx = SocketSessionCtx {
         state: &state,
         tenant_id: &tenant_id,
@@ -121,10 +133,17 @@ pub(super) async fn handle_convex_socket_for_tenant(
         }
     }
 
-    forwarding::drop_active_subscriptions(active_subscriptions, &transforms);
     runtime_cancellation.cancel_due_to_disconnect();
+    forwarding::unsubscribe_active_subscriptions(
+        &state.service,
+        &tenant_id,
+        active_subscriptions,
+        &outbound_tx,
+        false,
+        &transforms,
+    )
+    .await;
     drop(subscription_tx);
     drop(outbound_tx);
-    let _ = forward_task.await;
-    let _ = send_task.await;
+    tasks.shutdown_and_drain().await;
 }

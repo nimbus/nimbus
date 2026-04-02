@@ -2,13 +2,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use neovex_core::{
-    CommitEntry, DependencySet, Document, PrincipalContext, PrincipalSnapshot, Query, TableName,
-    commit_intersects_dependency_set,
+    CommitEntry, DependencySet, Document, PrincipalContext, PrincipalSnapshot, Query,
+    SequenceNumber, TableName, commit_intersects_dependency_set,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
+
+use crate::service::evaluate_with_index_cancellable_for_principal;
+use crate::tenant::TenantRuntime;
 
 pub const DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY: usize = 256;
 
@@ -39,6 +43,7 @@ struct Subscription {
     principal_snapshot: PrincipalSnapshot,
     policy_revision: String,
     sender: mpsc::Sender<SubscriptionUpdate>,
+    last_delivered_sequence: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +52,89 @@ pub struct SubscriptionDelivery {
     pub query: Query,
     pub principal: PrincipalContext,
     pub sender: mpsc::Sender<SubscriptionUpdate>,
+    last_delivered_sequence: Arc<AtomicU64>,
+}
+
+impl SubscriptionDelivery {
+    fn is_stale_for_sequence(&self, sequence: SequenceNumber) -> bool {
+        self.last_delivered_sequence.load(Ordering::Acquire) >= sequence.0
+    }
+
+    fn mark_delivered(&self, sequence: SequenceNumber) {
+        let mut current = self.last_delivered_sequence.load(Ordering::Acquire);
+        while current < sequence.0 {
+            match self.last_delivered_sequence.compare_exchange_weak(
+                current,
+                sequence.0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct QueuedSubscriptionWork {
+    pub subscription_ids: Vec<u64>,
+    pub delivery_sequence: SequenceNumber,
+    pub commit: Option<CommitEntry>,
+    pub deleted_documents: Vec<Document>,
+    #[allow(dead_code)]
+    #[cfg(test)]
+    pub enqueued_at: Instant,
+}
+
+impl QueuedSubscriptionWork {
+    pub(crate) fn new_single(
+        subscription_ids: Vec<u64>,
+        commit: CommitEntry,
+        deleted_documents: Vec<Document>,
+    ) -> Self {
+        Self {
+            subscription_ids,
+            delivery_sequence: commit.sequence,
+            commit: Some(commit),
+            deleted_documents,
+            #[cfg(test)]
+            enqueued_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn new_coalesced(
+        subscription_ids: Vec<u64>,
+        delivery_sequence: SequenceNumber,
+        commit: Option<CommitEntry>,
+        deleted_documents: Vec<Document>,
+    ) -> Self {
+        Self {
+            subscription_ids,
+            delivery_sequence,
+            commit,
+            deleted_documents,
+            #[cfg(test)]
+            enqueued_at: Instant::now(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SubscriptionDispatchStats {
+    pub reevaluation_count: u64,
+    pub total_reevaluation_nanos: u64,
+    pub coalesced_work_count: u64,
+}
+
+pub(crate) struct SubscriptionBatchCandidate<'a> {
+    pub commit: &'a CommitEntry,
+    pub candidate_documents: &'a [Document],
+}
+
+pub(crate) struct BatchAffectedSubscriptions {
+    pub subscription_ids: Vec<u64>,
+    pub merged_wakeup_count: u64,
 }
 
 #[derive(Debug)]
@@ -146,6 +234,7 @@ impl SubscriptionRegistry {
             policy_revision,
             query,
             sender,
+            last_delivered_sequence: Arc::new(AtomicU64::new(0)),
         };
         self.state
             .subscriptions
@@ -182,12 +271,12 @@ impl SubscriptionRegistry {
         self.state.len()
     }
 
-    /// Returns the subscriptions affected by the provided commit.
-    pub fn affected(
+    /// Returns the ids of subscriptions affected by the provided commit.
+    pub fn affected_subscription_ids(
         &self,
         commit: &CommitEntry,
         candidate_documents: &[Document],
-    ) -> Vec<SubscriptionDelivery> {
+    ) -> Vec<u64> {
         self.state
             .subscriptions
             .read()
@@ -202,13 +291,61 @@ impl SubscriptionRegistry {
                     |_, _| Ok(None),
                 )
             })
-            .map(|subscription| SubscriptionDelivery {
-                id: subscription.id,
-                query: subscription.query.clone(),
-                principal: subscription.principal.clone(),
-                sender: subscription.sender.clone(),
-            })
+            .map(|subscription| subscription.id)
             .collect()
+    }
+
+    pub(crate) fn affected_subscription_ids_for_batch(
+        &self,
+        batch: &[SubscriptionBatchCandidate<'_>],
+    ) -> BatchAffectedSubscriptions {
+        let mut subscription_ids = Vec::new();
+        let mut merged_wakeup_count = 0_u64;
+        for subscription in self
+            .state
+            .subscriptions
+            .read()
+            .expect("subscription lock should not be poisoned")
+            .values()
+            .filter(|subscription| subscription.active)
+        {
+            let mut match_count = 0_u64;
+            for candidate in batch {
+                if commit_intersects_dependency_set(
+                    candidate.commit,
+                    &subscription.dependencies,
+                    candidate.candidate_documents,
+                    |_, _| Ok(None),
+                ) {
+                    match_count += 1;
+                }
+            }
+            if match_count != 0 {
+                subscription_ids.push(subscription.id);
+                merged_wakeup_count += match_count.saturating_sub(1);
+            }
+        }
+        BatchAffectedSubscriptions {
+            subscription_ids,
+            merged_wakeup_count,
+        }
+    }
+
+    pub(crate) fn delivery(&self, subscription_id: u64) -> Option<SubscriptionDelivery> {
+        let subscription = self
+            .state
+            .subscriptions
+            .read()
+            .expect("subscription lock should not be poisoned")
+            .get(&subscription_id)
+            .cloned()?;
+        subscription.active.then(|| SubscriptionDelivery {
+            id: subscription.id,
+            query: subscription.query,
+            principal: subscription.principal,
+            sender: subscription.sender,
+            last_delivered_sequence: subscription.last_delivered_sequence,
+        })
     }
 
     /// Sends a terminal error to subscriptions on the provided table that were
@@ -275,6 +412,80 @@ impl Default for SubscriptionRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub(crate) fn dispatch_subscription_work(
+    runtime: &Arc<TenantRuntime>,
+    work: &QueuedSubscriptionWork,
+) -> SubscriptionDispatchStats {
+    let sequence = work.delivery_sequence;
+    let mut stats = SubscriptionDispatchStats::default();
+
+    for subscription_id in &work.subscription_ids {
+        let Some(subscription) = runtime.subscriptions.delivery(*subscription_id) else {
+            continue;
+        };
+        if subscription.is_stale_for_sequence(sequence) {
+            stats.coalesced_work_count += 1;
+            continue;
+        }
+
+        let started_at = Instant::now();
+        let mut check_cancel = || -> neovex_core::Result<()> { Ok(()) };
+        let result = evaluate_with_index_cancellable_for_principal(
+            runtime,
+            &subscription.query,
+            &subscription.principal,
+            &mut check_cancel,
+        );
+        stats.reevaluation_count += 1;
+        let elapsed_nanos = started_at.elapsed().as_nanos();
+        stats.total_reevaluation_nanos += elapsed_nanos.min(u128::from(u64::MAX)) as u64;
+
+        if subscription.is_stale_for_sequence(sequence) {
+            stats.coalesced_work_count += 1;
+            continue;
+        }
+
+        match result {
+            Ok(documents) => {
+                let update = SubscriptionUpdate::Result {
+                    subscription_id: subscription.id,
+                    request_id: None,
+                    commit: work.commit.clone(),
+                    deleted_documents: work.deleted_documents.clone(),
+                    data: documents.into_iter().map(Document::into_json).collect(),
+                };
+                if subscription.sender.try_send(update).is_ok() {
+                    subscription.mark_delivered(sequence);
+                } else {
+                    runtime.subscriptions.remove(subscription.id);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    subscription_id = subscription.id,
+                    error = %error,
+                    "subscription re-evaluation failed"
+                );
+                if subscription
+                    .sender
+                    .try_send(SubscriptionUpdate::Error {
+                        subscription_id: subscription.id,
+                        request_id: None,
+                        message: error.to_string(),
+                    })
+                    .is_ok()
+                {
+                    subscription.mark_delivered(sequence);
+                } else {
+                    runtime.subscriptions.remove(subscription.id);
+                }
+            }
+        }
+    }
+
+    stats
 }
 
 #[cfg(test)]

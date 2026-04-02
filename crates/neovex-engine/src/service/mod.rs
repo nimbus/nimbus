@@ -23,12 +23,13 @@ use tokio::sync::{Mutex as AsyncMutex, Notify};
 use crate::tenant::TenantRuntime;
 
 pub use execution_units::MutationExecutionUnit;
+pub(crate) use queries::{
+    evaluate_with_index_cancellable_for_principal, paginate_documents_for_store_with_principal,
+    query_documents_for_store_with_principal,
+};
 #[cfg(test)]
 pub(crate) use queries::{
     paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
-};
-pub(crate) use queries::{
-    paginate_documents_for_store_with_principal, query_documents_for_store_with_principal,
 };
 
 /// Top-level Neovex engine service.

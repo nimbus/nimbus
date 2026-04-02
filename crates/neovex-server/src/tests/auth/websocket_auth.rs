@@ -92,6 +92,72 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
 }
 
 #[tokio::test]
+async fn convex_websocket_disconnect_releases_runtime_subscription_children() {
+    let _guard = auth_test_guard().await;
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([
+            {
+                "name": "auth:watchIdentity",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx) => ({ identity: await ctx.auth.getUserIdentity(), messages: await ctx.db.query(\"messages\").take(1) })"
+            }
+        ]),
+        json!([]),
+        Some(runtime_auth_subscription_bundle_source()),
+        None,
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
+    let api = HttpApiFixture::new(&server);
+    let tenant_id = neovex_core::TenantId::new("demo").expect("tenant id should be valid");
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        api.insert_document("demo", "messages", json!({ "body": "Hello" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    let mut socket = WebSocketFixture::connect_for_browser(&api.ws_url("/convex/demo/ws"), "demo")
+        .await
+        .expect("browser-style websocket connection should succeed");
+    socket
+        .subscribe_named("req-1", "auth:watchIdentity", json!({}))
+        .await;
+    let initial = socket.next_json().await;
+    assert_eq!(initial["type"], json!("subscription_result"));
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        1
+    );
+
+    drop(socket);
+
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if service
+                .active_subscription_count(&tenant_id)
+                .expect("subscription count should load")
+                == 0
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("disconnect should release runtime-backed websocket subscriptions");
+}
+
+#[tokio::test]
 async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed() {
     let _guard = auth_test_guard().await;
     let issuer = "https://issuer.example.com";
@@ -127,8 +193,10 @@ async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscri
         })),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
+    let tenant_id = neovex_core::TenantId::new("demo").expect("tenant id should be valid");
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
@@ -192,6 +260,20 @@ async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscri
             "is_authenticated": false
         })
     );
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if service
+                .active_subscription_count(&tenant_id)
+                .expect("subscription count should load")
+                == 0
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("auth changes should explicitly release active runtime subscriptions");
 
     assert_eq!(
         api.insert_document("demo", "messages", json!({ "body": "After auth change" }))
