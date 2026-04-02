@@ -1,15 +1,15 @@
-# Materialized Serving Hardening Plan
+# Archived Materialized Serving Hardening Plan
 
-This is the canonical execution roadmap for hardening the first promoted
-materialized-document serving path from `SA8` into something enterprise-safe,
-measurable, and extensible.
+This archived document was the canonical execution roadmap for hardening the
+first promoted materialized-document serving path from `SA8` into something
+enterprise-safe, measurable, and extensible.
 
 Reviewed against:
 
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- `docs/plans/scalability-and-architecture-follow-on-plan.md`
+- `docs/plans/archive/scalability-and-architecture-follow-on-plan.md`
 - `crates/neovex-engine/src/tenant.rs`
 - `crates/neovex-engine/src/service/queries.rs`
 - `crates/neovex-engine/src/service/mutations.rs`
@@ -178,9 +178,9 @@ mechanisms themselves.
 
 ## Relationship To Other Plans
 
-1. `docs/plans/scalability-and-architecture-follow-on-plan.md` remains the
-   canonical execution record for the `SA*` architecture cycle that produced
-   the first materialized-serving slice.
+1. `docs/plans/archive/scalability-and-architecture-follow-on-plan.md` is the
+   archived execution record for the `SA*` architecture cycle that produced the
+   first materialized-serving slice.
 2. This document owns the follow-on hardening needed to make that slice
    trustworthy as a long-lived architecture direction.
 3. If this plan changes architecture-level behavior, update `ARCHITECTURE.md`
@@ -594,7 +594,7 @@ The local reference posture comes from both sides:
 - `crates/neovex-engine/src/tests.rs`
 - `crates/neovex-server/tests/reactive_loop/socket/subscriptions.rs`
 - `crates/neovex-test-support/src/`
-- `docs/plans/verification-harness-plan.md` if shared harness seams need a
+- `docs/plans/archive/verification-harness-plan.md` if shared harness seams need a
   documented extension
 
 #### Acceptance criteria

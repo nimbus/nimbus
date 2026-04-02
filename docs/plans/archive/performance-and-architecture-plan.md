@@ -1,9 +1,8 @@
-# Performance And Architecture Master Plan
+# Archived Performance And Architecture Master Plan
 
-This is the canonical execution roadmap for the architecture and performance
-cycle it covers. It replaced the old split-plan setup as the single source of
-truth for that cycle's implementation sequencing, agent execution, and
-verification.
+This archived document was the canonical execution roadmap for the architecture
+and performance cycle it covers. It is now retained as the completed execution
+record for that cycle.
 
 Reviewed against:
 
@@ -38,20 +37,22 @@ Reviewed against:
 
 ## Purpose
 
-This document translates the research and architecture docs into a phased,
-implementation-ready roadmap for the current codebase.
+This document translated the research and architecture docs into a phased,
+implementation-ready roadmap for that architecture cycle.
 
 Use it as:
 
-- the execution roadmap for upcoming architecture work
-- the canonical sequencing guide when multiple agents are working in parallel
-- the verification contract for tests, metrics, and acceptance criteria
+- the historical execution record for that completed cycle
+- the sequencing and verification record for why those changes landed as they
+  did
+- historical context when later plans need to trace decisions back to the
+  original architecture cycle
 
 Dedicated follow-on verification-harness work now lives in
-`docs/plans/verification-harness-plan.md`, and dedicated follow-on scalability
+`docs/plans/archive/verification-harness-plan.md`, and dedicated follow-on scalability
 and architecture work from the April 2026 review now lives in
-`docs/plans/scalability-and-architecture-follow-on-plan.md`. This master
-roadmap remains the canonical execution record for the architecture cycle it
+`docs/plans/archive/scalability-and-architecture-follow-on-plan.md`. This archived
+roadmap remains the historical execution record for the architecture cycle it
 covered, while the newer plans own future deterministic simulation,
 generated-history, differential-testing, consistency-verifier, and remaining
 follow-on scalability work.
@@ -67,16 +68,17 @@ Every roadmap item below is written so an agent can:
 
 ## Canonical Plan Rules
 
-1. This document is the only canonical execution spec for the work it covers.
-   Follow-on verification-harness work is now owned by
-   `docs/plans/verification-harness-plan.md`, and follow-on scalability work is
-   now owned by `docs/plans/scalability-and-architecture-follow-on-plan.md`.
+1. While this cycle was active, this document was the only canonical execution
+   spec for the work it covered. Follow-on verification-harness work is now owned by
+   `docs/plans/archive/verification-harness-plan.md`, and follow-on scalability work is
+   now recorded at `docs/plans/archive/scalability-and-architecture-follow-on-plan.md`.
 
 2. `docs/plans/archive/async-storage-and-service-rewrite-plan.md` and
    `docs/plans/archive/runtime-http-cancellation-and-storage-plan.md` are
    historical context, not competing execution plans.
 
-3. When this roadmap and a historical plan disagree, this roadmap wins.
+3. For reconstructing this completed cycle, this roadmap wins over the older
+   split plans it absorbed.
 
 4. When a roadmap item changes architecture-level behavior, update
    `ARCHITECTURE.md` in the same PR.
@@ -209,10 +211,11 @@ The source of truth is not the prior chat transcript.
 
 ### Recommended autonomous prompt
 
-Use this exact loop for long-running Codex execution:
+This was the exact loop used for long-running Codex execution during the active
+life of this roadmap:
 
 ```text
-Use docs/plans/performance-and-architecture-plan.md as the control plane.
+Use docs/plans/archive/performance-and-architecture-plan.md as the control plane.
 Reread the Codex Execution Protocol, Roadmap Status Ledger, Execution Log,
 Dependency Graph, Recommended Delivery Order, and current git worktree state.
 If any item is in_progress, resume it first. Reconcile dirty worktree changes

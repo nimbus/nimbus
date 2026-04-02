@@ -1,16 +1,16 @@
-# Verification Harness Plan
+# Archived Verification Harness Plan
 
-This is the canonical execution roadmap for Neovex's next verification and
-reliability cycle. It takes the architecture review findings from the completed
-performance and architecture work and turns them into a dedicated plan for the
-testing harness that Neovex's native apps and supported Convex-compatible apps
-will rely on.
+This archived document was the canonical execution roadmap for Neovex's next
+verification and reliability cycle. It takes the architecture review findings
+from the completed performance and architecture work and records the dedicated
+plan that drove the testing harness Neovex's native apps and supported
+Convex-compatible apps rely on.
 
 Reviewed against:
 
 - `README.md`
 - `ARCHITECTURE.md`
-- `docs/plans/performance-and-architecture-plan.md`
+- `docs/plans/archive/performance-and-architecture-plan.md`
 - `docs/convex/compatibility.md`
 - `docs/research/reactive-database-research-guide.md`
 - `crates/neovex-test-support/src/simulation.rs`
@@ -51,7 +51,7 @@ This plan exists to close that gap by building:
 
 ## Relationship To Other Plans
 
-1. `docs/plans/performance-and-architecture-plan.md` remains the canonical
+1. `docs/plans/archive/performance-and-architecture-plan.md` is the archived
    execution record for the completed architecture cycle it covered.
 
 2. This document is the canonical execution plan for all new verification

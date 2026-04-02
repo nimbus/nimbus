@@ -9,8 +9,8 @@ Reviewed against:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- `docs/plans/performance-and-architecture-plan.md`
-- `docs/plans/verification-harness-plan.md`
+- `docs/plans/archive/performance-and-architecture-plan.md`
+- `docs/plans/archive/verification-harness-plan.md`
 - `crates/neovex-core/src/`
 - `crates/neovex-engine/src/`
 - `crates/neovex-server/src/`
@@ -44,11 +44,11 @@ fit the verification plan, so it gets its own execution control plane here.
 
 ## Relationship To Other Plans
 
-1. `docs/plans/performance-and-architecture-plan.md` remains the canonical
+1. `docs/plans/archive/performance-and-architecture-plan.md` is the archived
    execution record for the completed architecture cycle it covered.
-2. `docs/plans/verification-harness-plan.md` remains the canonical plan for
-   deterministic simulation, generated-history verification, differential
-   testing, and consistency verification.
+2. `docs/plans/archive/verification-harness-plan.md` is the archived
+   execution plan for deterministic simulation, generated-history
+   verification, differential testing, and consistency verification.
 3. This document owns the remaining follow-on performance, scalability, query,
    and task-lifecycle work from the April 2026 architecture review.
 4. When a change in this plan alters architecture-level behavior, update

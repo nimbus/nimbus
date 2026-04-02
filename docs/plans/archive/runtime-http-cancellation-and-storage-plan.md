@@ -9,7 +9,7 @@ As of 2026-04-01:
 - Workstream 1 is landed
 - Workstream 2 is landed in its intended first-pass form
 - the unfinished storage/service rewrite work from Workstream 3 now lives in
-  `docs/plans/performance-and-architecture-plan.md` Phase 5
+  `docs/plans/archive/performance-and-architecture-plan.md` Phase 5
 
 This document is kept for historical context around the original cancellation
 work. It is no longer the canonical source for the remaining async storage
@@ -32,7 +32,7 @@ This document was originally split into:
 3. the full storage/service rewrite required for true preemption
 
 The remaining item 3 work is now owned by
-`docs/plans/performance-and-architecture-plan.md`.
+`docs/plans/archive/performance-and-architecture-plan.md`.
 
 ## Cross-Cutting Constraints
 
@@ -363,9 +363,9 @@ Add direct-path server tests for:
 
 ## Workstream 3
 
-The unfinished storage and service rewrite work is now covered by the canonical
-master roadmap at `docs/plans/performance-and-architecture-plan.md`, especially
-Phase 5.
+The unfinished storage and service rewrite work was ultimately covered by the
+archived master roadmap at
+`docs/plans/archive/performance-and-architecture-plan.md`, especially Phase 5.
 
 The intermediate extracted rewrite document is retained only as archived context
 at `docs/plans/archive/async-storage-and-service-rewrite-plan.md`.

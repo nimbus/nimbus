@@ -6,10 +6,10 @@ Verified against repo state on 2026-04-01.
 
 As of 2026-04-01, this document is historical context only.
 
-The remaining async storage and service rewrite work now lives in the canonical
+The remaining async storage and service rewrite work now lives in the archived
 master roadmap:
 
-- `docs/plans/performance-and-architecture-plan.md`
+- `docs/plans/archive/performance-and-architecture-plan.md`
 
 Specifically, see:
 
@@ -46,5 +46,5 @@ from `docs/plans/archive/runtime-http-cancellation-and-storage-plan.md`:
 - rework tenant lifecycle around async handles
 - remove blocking engine and runtime host-call adapters
 
-That content has been preserved and expanded in the master roadmap so agents can
-execute against a single canonical plan.
+That content was preserved and expanded in the master roadmap that completed
+that architecture cycle.

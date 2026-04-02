@@ -1,7 +1,7 @@
 # Composite Index Design Note
 
 This note is the `SA4` design gate from
-`docs/plans/scalability-and-architecture-follow-on-plan.md`.
+`docs/plans/archive/scalability-and-architecture-follow-on-plan.md`.
 
 It describes the intended shape for composite indexes before broad
 implementation starts.

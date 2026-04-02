@@ -32,13 +32,13 @@ Use the repo docs for architecture and behavior details:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- `docs/plans/performance-and-architecture-plan.md` for active roadmap work
+- `docs/plans/README.md` to find the owning active execution plan
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
-- For active roadmap work, use `docs/plans/performance-and-architecture-plan.md` as the durable control plane. Reread its `Codex Execution Protocol`, `Roadmap Status Ledger`, and `Execution Log` before starting or resuming.
+- For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
 - Treat the roadmap plus the current git worktree as progress state. Do not rely on chat history to remember where work stopped.
 - If an item is already `in_progress` or the worktree is dirty, reconcile and resume that work before starting a new roadmap item.
 - Checkpoint roadmap state before stopping, handing off, or any likely context loss. Do not assume you will get an explicit compaction warning.
