@@ -121,6 +121,43 @@ impl TenantStore {
         Ok(())
     }
 
+    /// Replaces the full tenant schema and reconciles derived indexes in one pass.
+    pub fn replace_schema(&self, schema: &Schema) -> Result<()> {
+        let current = self.load_schema()?;
+        if current == *schema {
+            return Ok(());
+        }
+
+        let mut tables_to_remove = current
+            .tables
+            .keys()
+            .filter(|table| !schema.tables.contains_key(*table))
+            .cloned()
+            .collect::<Vec<_>>();
+        tables_to_remove.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+
+        let mut tables_to_replace = schema
+            .tables
+            .iter()
+            .filter_map(|(table, table_schema)| {
+                (current.tables.get(table) != Some(table_schema)).then_some(table_schema.clone())
+            })
+            .collect::<Vec<_>>();
+        tables_to_replace
+            .sort_unstable_by(|left, right| left.table.as_str().cmp(right.table.as_str()));
+
+        self.execute_write(move |transaction| {
+            for table in &tables_to_remove {
+                transaction.delete_table_schema(table)?;
+            }
+            for table_schema in &tables_to_replace {
+                transaction.replace_table_schema(table_schema)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Deletes only the persisted schema entry for a table.
     pub fn delete_table_schema_entry(&self, table: &TableName) -> Result<()> {
         self.execute_write(move |transaction| transaction.delete_table_schema_entry(table))?;

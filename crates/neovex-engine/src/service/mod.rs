@@ -23,6 +23,9 @@ use tokio::sync::{Mutex as AsyncMutex, Notify};
 use crate::tenant::TenantRuntime;
 
 pub use execution_units::MutationExecutionUnit;
+pub(crate) use queries::{
+    paginate_documents_for_store_with_principal, query_documents_for_store_with_principal,
+};
 
 /// Top-level Neovex engine service.
 pub struct Service {
