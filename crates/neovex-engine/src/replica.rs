@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
-use neovex_core::{Document, Page, PaginatedQuery, Query, Result, SequenceNumber, TenantId};
+use neovex_core::{
+    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TenantId,
+};
 use neovex_storage::{DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, TenantStore};
 
-use crate::{Service, evaluate_paginated, evaluate_query};
+use crate::Service;
+use crate::service::{
+    paginate_documents_for_store_with_principal, query_documents_for_store_with_principal,
+};
 
 /// A narrow read-only replica for one tenant backed by the authoritative journal.
 pub struct EmbeddedReplica {
@@ -53,17 +58,38 @@ impl EmbeddedReplica {
             .latest_sequence_async(self.tenant_id.clone())
             .await?;
         self.catch_up_to_sequence(service, latest, stream_limit)
-            .await
+            .await?;
+        self.refresh_schema(service).await
     }
 
     /// Evaluates a query locally against the replica store.
     pub fn query_documents(&self, query: &Query) -> Result<Vec<Document>> {
-        evaluate_query(&self.store, query)
+        self.query_documents_with_principal(query, &PrincipalContext::anonymous())
+    }
+
+    /// Evaluates a query locally against the replica store for the provided principal.
+    pub fn query_documents_with_principal(
+        &self,
+        query: &Query,
+        principal: &PrincipalContext,
+    ) -> Result<Vec<Document>> {
+        let schema = self.store.load_schema()?;
+        query_documents_for_store_with_principal(&self.store, &schema, query, principal)
     }
 
     /// Evaluates a paginated query locally against the replica store.
     pub fn paginate_documents(&self, query: &PaginatedQuery) -> Result<Page> {
-        evaluate_paginated(&self.store, query)
+        self.paginate_documents_with_principal(query, &PrincipalContext::anonymous())
+    }
+
+    /// Evaluates a paginated query locally against the replica store for the provided principal.
+    pub fn paginate_documents_with_principal(
+        &self,
+        query: &PaginatedQuery,
+        principal: &PrincipalContext,
+    ) -> Result<Page> {
+        let schema = self.store.load_schema()?;
+        paginate_documents_for_store_with_principal(&self.store, &schema, query, principal)
     }
 
     pub fn sequence_cursor(&self) -> SequenceNumber {
@@ -102,5 +128,10 @@ impl EmbeddedReplica {
             self.sequence_cursor = progress.applied_head;
         }
         Ok(())
+    }
+
+    async fn refresh_schema(&self, service: &Arc<Service>) -> Result<()> {
+        let schema = service.get_schema_async(self.tenant_id.clone()).await?;
+        self.store.replace_schema(&schema)
     }
 }

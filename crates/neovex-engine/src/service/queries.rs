@@ -5,8 +5,8 @@ use std::cmp::Ordering;
 
 use neovex_core::{
     AccessAction, AccessRule, CommitEntry, Document, DocumentId, DurableMutationRecord, Error,
-    Filter, FilterOp, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber,
-    TableName, TableSchema, TenantId, policy_revision_id,
+    Filter, FilterOp, Page, PaginatedQuery, PrincipalContext, Query, Result, Schema,
+    SequenceNumber, TableName, TableSchema, TenantId, policy_revision_id,
 };
 use neovex_storage::index::encode_index_value;
 use neovex_storage::{
@@ -748,6 +748,38 @@ fn commit_entries_from_durable_records(records: Vec<DurableMutationRecord>) -> V
         .into_iter()
         .map(|record| record.as_commit_entry())
         .collect()
+}
+
+pub(crate) fn query_documents_for_store_with_principal(
+    store: &TenantStore,
+    schema: &Schema,
+    query: &Query,
+    principal: &PrincipalContext,
+) -> Result<Vec<Document>> {
+    let mut check_cancel = || Ok(());
+    query_documents_for_store_and_principal_cancellable(
+        store,
+        query,
+        schema.get_table(&query.table),
+        principal,
+        &mut check_cancel,
+    )
+}
+
+pub(crate) fn paginate_documents_for_store_with_principal(
+    store: &TenantStore,
+    schema: &Schema,
+    query: &PaginatedQuery,
+    principal: &PrincipalContext,
+) -> Result<Page> {
+    let mut check_cancel = || Ok(());
+    paginate_documents_for_store_and_principal(
+        store,
+        query,
+        schema.get_table(&query.query.table),
+        principal,
+        &mut check_cancel,
+    )
 }
 
 pub(super) fn evaluate_with_index_cancellable_for_principal(

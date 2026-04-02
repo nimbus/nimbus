@@ -3320,6 +3320,156 @@ async fn embedded_replica_catches_up_after_reconnection() {
 }
 
 #[tokio::test]
+async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let table = messages_table("messages_replica_policy");
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let principal = principal_with_subject("user-123");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("authorized fixture insert should succeed");
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-456")),
+                ("body".to_string(), json!("Grace")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+        .await
+        .expect("replica should bootstrap");
+    assert_eq!(replica.sequence_cursor(), SequenceNumber(2));
+
+    service
+        .set_table_schema(
+            &tenant_id,
+            messages_schema(
+                "messages_replica_policy",
+                Vec::new(),
+                Some(read_only_owner_policy()),
+            ),
+        )
+        .expect("schema should save");
+
+    replica
+        .catch_up(&service, 1)
+        .await
+        .expect("replica catch-up should refresh schema even without new journal records");
+    assert_eq!(replica.sequence_cursor(), SequenceNumber(2));
+
+    let live_documents = service
+        .query_documents_with_principal(&tenant_id, &query, &principal)
+        .expect("live principal query should succeed");
+    let replica_documents = replica
+        .query_documents_with_principal(&query, &principal)
+        .expect("replica principal query should succeed");
+    assert_eq!(document_bodies(&replica_documents), vec!["Ada"]);
+    assert_eq!(replica_documents, live_documents);
+
+    let live_anonymous = service
+        .query_documents(&tenant_id, &query)
+        .expect("live anonymous query should succeed");
+    let replica_anonymous = replica
+        .query_documents(&query)
+        .expect("replica anonymous query should succeed");
+    assert!(live_anonymous.is_empty());
+    assert_eq!(replica_anonymous, live_anonymous);
+}
+
+#[tokio::test]
+async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    for rank in [1, 2, 3] {
+        service
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+            )
+            .await
+            .expect("seed insert should succeed");
+    }
+
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+        .await
+        .expect("replica should bootstrap");
+
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![FieldSchema {
+                    name: "rank".to_string(),
+                    field_type: FieldType::Number,
+                    required: false,
+                }],
+                indexes: vec![IndexDefinition {
+                    name: "by_rank".to_string(),
+                    field: "rank".to_string(),
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("schema should save");
+
+    replica
+        .catch_up(&service, 1)
+        .await
+        .expect("replica catch-up should refresh schema and indexes");
+
+    let query = Query {
+        table: tasks_table(),
+        filters: vec![filter("rank", FilterOp::Eq, json!(2))],
+        order: Some(OrderBy {
+            field: "rank".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let live_documents = service
+        .query_documents(&tenant_id, &query)
+        .expect("live indexed query should succeed");
+    let replica_documents = replica
+        .query_documents(&query)
+        .expect("replica indexed query should succeed");
+    assert_eq!(replica_documents, live_documents);
+    assert_eq!(replica_documents.len(), 1);
+    assert_eq!(replica_documents[0].fields.get("rank"), Some(&json!(2)));
+}
+
+#[tokio::test]
 async fn shadow_materializer_queries_match_live_service_path() {
     let data_dir = tempdir().expect("service tempdir should build");
     let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));

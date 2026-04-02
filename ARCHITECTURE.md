@@ -505,6 +505,13 @@ pagination locally against that store. This is an architectural proof point for
 edge and embedded read offload, not a change to write authority or subscription
 fan-out.
 
+**Replica catch-up synchronizes schema state as well as journal state.** Schema
+changes still live outside the durable mutation journal, so replica catch-up
+must refresh local schema state even when there are no new durable mutation
+records to apply. Replica-local query and pagination evaluation now reuses the
+same schema- and principal-aware planning helpers as the live service rather
+than treating local replayed documents as sufficient on their own.
+
 **Server-side re-evaluation remains the near-term production path.** The main
 server still owns writes, subscription re-evaluation, and pushed results. The
 embedded replica work proves that local read evaluation can stay consistent
