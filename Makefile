@@ -1,5 +1,7 @@
 .PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness-pr verify-harness-nightly verify-harness-repro
 
+SINGLE_FLIGHT = bash scripts/single-flight.sh
+
 # Default target
 all: check
 
@@ -13,7 +15,7 @@ release:
 
 # Check compilation without producing artifacts
 check:
-	cargo check --workspace
+	$(SINGLE_FLIGHT) --key cargo-check-workspace -- cargo check --workspace
 
 # Format all Rust code
 fmt:
@@ -25,11 +27,11 @@ fmt-check:
 
 # Run clippy lints
 clippy:
-	cargo clippy --workspace --all-targets -- -D warnings
+	$(SINGLE_FLIGHT) --key cargo-clippy-workspace -- cargo clippy --workspace --all-targets -- -D warnings
 
 # Run Rust tests
 test:
-	cargo test --workspace
+	$(SINGLE_FLIGHT) --key cargo-test-workspace -- cargo test --workspace
 
 # Build JS packages
 build-js:
@@ -44,7 +46,7 @@ lint: fmt-check clippy
 
 # Dependency audit (licenses + vulnerabilities)
 deny:
-	cargo deny check
+	$(SINGLE_FLIGHT) --key cargo-deny-check -- cargo deny check
 
 # Focused verification harness slice for PRs
 verify-harness-pr:

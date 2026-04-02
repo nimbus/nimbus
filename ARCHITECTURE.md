@@ -307,7 +307,10 @@ architecture discussion.
    after validating shared dependency metadata against commits that landed
    after the same applied snapshot sequence they actually read. Repeated
    writes to the same document must collapse to the final logical write before
-   commit instead of manufacturing intermediate conflicts.
+   commit instead of manufacturing intermediate conflicts. Execution units are
+   single-use: once `commit()` is attempted, the unit is finalized whether the
+   attempt succeeds, conflicts, or becomes a no-op, and later reads, writes,
+   or repeat commits are rejected.
 
 6. **The evaluator is pure.** `evaluate_query` and `evaluate_paginated` take
    data in, return data out. No I/O, no state, no side effects. The service
@@ -615,6 +618,144 @@ results against the existing redb-backed service path. Any future serving
 promotion should build on that shadow-parity evidence rather than bypassing the
 authoritative journal or weakening the redb correctness path.
 
+**Measured read-format guidance: promote materialized reads before inventing a
+new binary format.** The `SA8` evaluation compared release-mode fallback scans
+over redb-backed MessagePack rows, the `SA5` partial-decode pushdown path, and
+queries over already-materialized `Document` values on the same 20,000-row
+dataset with 1 KiB payloads. Pushdown improved the selective scan by about
+`1.59x`, but already-materialized reads were roughly `50x` faster on the
+selective workload and `84x` faster on a broad scan. The current decision is
+to keep zero-copy format work deferred: if Neovex needs another major read-path
+gain, it should first promote selected serving paths onto existing
+materialized-document surfaces such as the shadow materializer or embedded
+replica. A new on-disk or zero-copy format should only be revisited if that
+promotion still leaves MessagePack decode as the dominant measured cost.
+
+That decision now has a first concrete serving-path implementation behind it.
+The engine keeps a tenant-local materialized table surface for warmed
+full-scan tables and reuses it for full-scan query reads, full-scan paginated
+reads, warmed `get_document` lookups, and subscription re-evaluation on those
+same shapes. On the current release-mode service benchmark
+(`3` tables, `2,000` rows per table, `1 KiB` payloads, `keep_every=97`), cold
+full-scan service queries averaged `6.530611 ms` while warm materialized-
+surface reads averaged `1.485014 ms`, a measured `4.40x` improvement
+(`-77.26%` change). The implementation also tightened the causal visibility
+contract around that surface: local warmed read state is updated before the
+applied watermark advances, and subscription bootstrap now evaluates against a
+consistent storage snapshot, carries the exact covered apply sequence of that
+result through activation, and enqueues one catch-up re-evaluation if newer
+applied commits landed while the subscription was still inactive during
+bootstrap. That closes both sides of the bootstrap/live handoff: reconnects
+that begin during apply lag neither duplicate a commit already covered by the
+bootstrap snapshot nor miss one that landed after the snapshot but before live
+delivery began. Warmed tables themselves now publish as explicit
+`{generation, covered_sequence, documents}` state instead of being inserted
+and then caught up in place: readers sample the sequence they already waited
+for, reuse a warmed table only if its published `covered_sequence` meets that
+requirement, and otherwise rebuild privately and publish atomically once the
+table is caught up. After publication, commit apply advances both the table
+contents and the covered sequence together, so readers never observe a
+partially caught-up first load. The surface is now bounded and observable as a
+subsystem rather than an unbounded cache: each tenant has table-count and
+byte-budget limits, eviction is deterministic at table granularity using an
+LRU access order, and the engine tracks resident tables/documents/bytes,
+earliest/latest covered sequence, load count, query/paginated/get reuse hits,
+coverage bypasses, evictions, and in-flight warm loads. The adversarial
+verification pass now covers the remaining high-risk race boundaries too:
+engine regressions prove repeated warm/load, eviction, invalidation, and
+rewarm cycles at exact coverage frontiers, while the reactive-loop suite proves
+that a generic `/ws` client disconnecting after the initial bootstrap result
+but before activation cancels the pending subscription promptly and can
+reconnect cleanly. Supporting that transport race required one small ownership
+fix in the server: pending generic-websocket subscription bootstraps now run as
+session-owned tasks instead of being awaited inline in the socket read loop, so
+connection teardown can cancel them before activation. The engine also now
+guards subscription-delivery shutdown against self-joining the worker thread
+during teardown.
+
+**The canonical next serving abstraction is a versioned snapshot manager, not a
+bigger cache.** After hardening the first promoted materialized-serving slice,
+the next architecture step should be a tenant-local `ServingSnapshotManager`
+that publishes immutable serving snapshots at exact covered sequences, lets
+readers pin a serving handle to one published frontier, retains only a bounded
+version window, and exposes lag, retention, waiters, and bypass reasons as
+first-class metrics. The current warmed-table surface should be treated as the
+first backend for that abstraction, not the abstraction itself. For the main
+server path, the preferred longer-term backend is a shadow-materializer-backed
+serving surface that reuses the same serving contract. A serving replica or
+embedded replica remains a later optional backend for offloaded or local-first
+reads, not the first server-side promotion target. The implementation-grade
+north-star for this direction is
+`docs/research/versioned-serving-snapshot-design-note.md`.
+
+The first implementation slice of that direction is now in place on the
+promoted full-scan read shapes. Query, pagination, and warmed `get_document`
+paths no longer rely on direct access to the warmed-table map; they acquire an
+explicit internal serving snapshot assembled from published table versions. The
+current backend is still the tenant-local warmed-table surface, but published
+table documents are now `Arc`-backed and updated with clone-on-write semantics,
+so later applies can advance the current publication without mutating a
+snapshot that was already pinned by an in-flight reader. That freezes the
+serving seam before a later move to retained multiversion snapshots or a
+shadow-materializer-backed serving backend.
+
+The next retained-version slice is also now in place inside that same backend.
+Each loaded table keeps a bounded history of older published versions, and
+serving-snapshot assembly now chooses the oldest published table version that
+still covers the required frontier instead of always collapsing to the newest
+one. That means retained versions win when they exist, while first-load
+publication can still satisfy an older reader safely if no earlier retained
+version exists for that table yet. This gives Neovex a real historical
+publication concept for the currently promoted full-scan shapes while keeping
+the implementation narrow: the reader-facing API is now tenant-scoped, but
+retention is still table-scoped inside the in-memory backend rather than the
+full tenant-level `ServingSnapshotManager` described in the design note.
+
+The next manager slice is now in place above that backend. Neovex now retains a
+bounded tenant-level window of published serving snapshots, wakes exact-frontier
+waiters when newer snapshots are published, and only prunes old tenant
+snapshots once they fall outside the retained window and no reader still pins
+them. Promoted full-scan `get`, query, and pagination paths now acquire the
+earliest tenant snapshot that safely covers their required frontier for the
+target table, which means retained exact-frontier snapshots win when they
+exist, while first-load publication can still satisfy an older reader safely if
+the table had not been warmed yet. The remaining gap to the north-star
+`ServingSnapshotManager` is backend maturity: the manager is real now, but it
+still rebuilds tenant snapshots from the current in-memory per-table
+publication backend rather than from a dedicated serving materializer.
+
+The next backend slice now removes one of the remaining waste paths in that
+in-memory implementation. Concurrent readers no longer rebuild the same table
+independently while a warm load is already in flight; they wait behind one
+shared load and then acquire the published tenant snapshot it produces. The
+loader itself also rechecks the applied frontier immediately before publish and
+catches up again if newer commits landed meanwhile, so the first load no longer
+intentionally publishes a stale table image that the next reader must bypass.
+
+The next reader-adoption slice now extends that same contract to subscriptions
+for promoted full-scan shapes. Subscription bootstrap and later
+re-evaluation no longer bypass the serving layer and go straight to storage for
+those shapes; they reuse the same serving snapshots as `get`, query, and
+pagination. The important semantic constraint remains intact: bootstrap still
+pins the current applied frontier rather than waiting for the latest durable
+head, so durable-but-unapplied writes continue to flow through the existing
+bootstrap-to-live catch-up handoff instead of silently changing what the
+initial result means.
+
+The runtime and scheduler closeout for this slice is now explicit too. Read-only
+runtime host operations on the promoted full-scan shapes already inherit the
+same serving contract because they flow through the public `Service` read APIs:
+server regressions now prove that runtime-only full-scan query, warmed
+`ctx.db.get`, and runtime paginated full-scan query paths all warm and reuse
+the serving layer rather than bypassing it. Runtime mutation reads remain a
+deliberate exception because they must preserve OCC snapshot semantics plus
+staged writes inside `MutationExecutionUnit`; a dedicated regression now proves
+they still read their own writes even when a serving snapshot is already warm
+for the same table. There is also still no separate scheduler-side runtime read
+surface today: schedulable Convex mutations resolve manifest `Mutation` plans,
+so runtime-only handlers are rejected at schedule time instead of being run by
+the scheduler through a second serving path.
+
 **Shadow parity now covers planner-aware, schema-aware external behavior.** The
 engine's shadow-query harness routes replayed documents through the same
 schema-, principal-, and planner-aware evaluation helpers as the live service,
@@ -681,6 +822,14 @@ Runtime-backed subscriptions use read-set tracking to narrow this: they track
 returned document IDs and visible-window boundaries so unrelated writes can be
 skipped. Full filter-level dependency tracking for non-runtime subscriptions
 is a future optimization.
+
+Runtime-backed subscriptions now also retain their last emitted runtime value
+and suppress duplicate pushes when an approximate wakeup or delayed catch-up
+re-evaluation computes the same externally visible result. That keeps the
+transport contract aligned with the database contract: Neovex may bootstrap at
+an older applied frontier and then catch up, but it should not spam clients
+with duplicate payloads just because the runtime subscription wakeup path is a
+conservative approximation.
 
 **Why no `Running` state for scheduled jobs?** The scheduler uses a two-phase
 pattern: pending (SCHEDULED_JOBS) and running (RUNNING_SCHEDULED_JOBS). If
@@ -854,6 +1003,59 @@ through `NEOVEX_VERIFY_CASE`. CI now runs the focused PR corpus separately from
 the heavier scheduled nightly corpus, and local entrypoints live in
 `scripts/verification-harness.sh` plus the matching `make verify-harness-*`
 targets.
+
+The first composite-index slice is also in place behind that verification
+discipline. Table schemas now treat indexes as `IndexDefinition { name, fields
+}` so single-field and multi-field indexes share one canonical shape, storage
+builds tuple-ordered composite keys during normal writes and schema backfill,
+and missing indexed fields suppress the whole index entry instead of encoding
+partial tuples. The planner still intentionally treats composite indexes as
+opaque metadata for now, so Stage A widens schema and storage semantics without
+quietly changing query, cursor, or dependency behavior before the next planner
+slice is fully tested.
+
+The next verified slice now makes a narrower planner promise on top of that
+storage base: ordinary query reads can use composite indexes for the longest
+exact equality prefix, and for one additional range on the next indexed field.
+That is enough to accelerate shapes like `status == "open"` or
+`status == "open" AND rank >= 10` against an index on `["status", "rank"]`,
+and the planner prefers the composite candidate when it also satisfies the
+requested `ORDER BY` field better than a weaker single-field alternative.
+Paginated reads can now use that same composite narrowing when the engine still
+sorts and pages on the user-visible order field after loading candidate
+documents. In other words, the current slice treats the composite index as a
+better prefilter, not as a new externally visible pagination order contract.
+The follow-through slice therefore generalizes cursor payloads and dependency
+boundary payloads to tuple-capable vectors while still populating one visible
+order slot today, which removes the old single-slot assumption from execution-
+unit dependencies and runtime read tracking without changing the current client
+contract. The tenant runtime also records query-plan stats that distinguish
+composite-index selections from single-field index and full-scan fallback
+paths, so deterministic service tests can verify the composite planner is
+actually being exercised instead of silently falling back.
+
+Fallback table scans now also have their first conservative raw-value pushdown
+slice. `neovex-storage` can probe just the targeted MessagePack field values
+for simple `Eq/Gt/Gte/Lt/Lte` filters, reject rows that are definite
+non-matches before building a full `Document`, and expose scan stats that
+differentiate scanned rows, decoded rows, and pushdown-rejected rows in tests.
+`neovex-engine` only uses that seam as a reject-fast prefilter: unsupported
+operators, unsupported value domains, and anything the probe cannot decide all
+fall back to the full decode-and-evaluate path so query, pagination, and error
+semantics stay unchanged.
+
+The follow-on hot-path clone cleanup now tightens two more steady-state seams
+without changing the external contract. Owned Convex execution-unit reads use
+`Document::into_json()` all the way through the remaining direct host-bridge
+path, so staged runtime reads stop cloning full field maps just to add `_id`
+and `_creationTime`. The durable journal path also now keeps only minimal
+queued-request state after planning, borrows one durable-record slice across
+append and apply, and derives subscription deleted-document payloads from
+committed writes instead of carrying duplicate owned vectors through the batch.
+One subtle semantic rule is still intentional: insert invalidation uses the new
+document as its candidate, delete invalidation uses the removed document as its
+candidate, and update invalidation stays conservative by providing no candidate
+document so maybe-affected filtered subscriptions still get re-evaluated.
 
 **Serialization.** MessagePack (via `rmp-serde`) for storage. JSON (via
 `serde_json`) for HTTP and WebSocket wire format. Documents carry both

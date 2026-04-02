@@ -192,11 +192,11 @@ For planner or storage-read changes, also run:
 | SA1 | completed | Moved subscription re-evaluation onto a tenant-local async delivery worker with bounded queueing, monotonic sequence guards, and explicit overflow fallback metrics | SA0 |
 | SA2 | completed | Coalesce cache invalidation and subscription fanout across durable-apply batches, with explicit merged-batch delivery semantics and observability | SA1 |
 | SA3 | completed | Retrofit owned task lifetimes across the remaining Convex socket, subscription forwarder, and runtime bridge flows | SA0 |
-| SA4 | in_progress | Add composite indexes and planner support for multi-field query shapes behind a design-note gate | none |
-| SA5 | todo | Add scan-time predicate pushdown before full document deserialization | none |
-| SA6 | todo | Opportunistically reduce remaining hot-path cloning in journal planning and owned runtime responses | none |
-| SA7 | todo | Harden `MutationExecutionUnit` lifecycle constraints | none |
-| SA8 | deferred | Evaluate zero-copy or materializer-native read formats after nearer-term wins land | SA4, SA5 |
+| SA4 | completed | Add composite indexes and planner support for multi-field query shapes behind a design-note gate, including tuple-capable pagination payloads and observable composite-vs-fallback plan stats | none |
+| SA5 | completed | Add conservative scan-time predicate pushdown before full document deserialization, with observable pushdown-vs-decode scan stats | none |
+| SA6 | completed | Reduced remaining obvious owned-path cloning in journal planning and direct Convex execution-unit reads while preserving existing subscription invalidation semantics | none |
+| SA7 | completed | Hardened `MutationExecutionUnit` into a single-use API that rejects reads, writes, and repeat commits after any commit attempt finalizes the unit | none |
+| SA8 | completed | Measured the current read formats, kept zero-copy deferred, and landed the first serving-path promotion onto tenant-local materialized documents for warmed full-scan reads | SA4, SA5 |
 
 ---
 
@@ -439,10 +439,21 @@ instead of forcing residual in-memory filtering and sorting.
 
 #### Current verified state
 
-- planner still chooses only:
-  - exact single-field index scan
-  - single-field range scan
-  - full table scan
+- composite indexes are now first-class schema objects with
+  `IndexDefinition { name, fields }`
+- storage maintenance and schema backfill understand composite index keys and
+  only emit entries when every indexed field is present
+- non-paginated query planning now supports:
+  - longest exact-prefix composite scans
+  - exact-prefix plus one-range-on-the-next-field composite scans
+  - preferring the composite plan when it satisfies the requested order better
+- paginated reads now reuse the same composite exact-prefix planning shapes
+  when the existing user-visible cursor semantics remain sufficient
+- cursor payloads and dependency boundary payloads now use tuple-capable
+  vector payloads while the current evaluator still populates one visible
+  order slot today
+- query planning stats now distinguish composite-index selections from
+  single-field and full-scan fallback plans in deterministic service tests
 
 #### Design-note gate
 
@@ -503,8 +514,14 @@ non-matches before building full document objects.
 
 #### Current verified state
 
-- scan and fallback-query paths still deserialize full MessagePack documents
-  before many simple filters can reject them
+- fallback table scans now compile a conservative pushdown subset for
+  `Eq/Gt/Gte/Lt/Lte` filters over scalar values
+- storage probes only the needed MessagePack field values and rejects definite
+  non-matches before full `Document` deserialization
+- unsupported filters or unsupported field-value domains defer to the full
+  decode-and-evaluate path with unchanged semantics
+- storage scan stats now expose scanned row count, decoded row count, and
+  pushdown-rejected row count so deterministic tests can measure pushdown hits
 
 #### Coordination note
 
@@ -551,9 +568,12 @@ largest obvious JSON-clone issue is already fixed.
 
 #### Current verified state
 
-- `Document::into_json()` is in place and used on many owned response paths
-- journal planning still clones documents and tables more than necessary when
-  constructing planned writes
+- `Document::into_json()` is now used across the remaining direct Convex
+  execution-unit read path, not just the earlier HTTP and query helpers
+- journal planning now keeps only the minimal queued-request state needed after
+  planning, borrows durable-record batches across append and apply, and derives
+  subscription deleted-document payloads from committed writes instead of
+  carrying duplicate owned vectors through the batch pipeline
 
 #### Delivery note
 
@@ -598,8 +618,11 @@ construction, reducing the surface for future correctness regressions.
 
 #### Current verified state
 
-- execution-unit correctness is much stronger than before, but lifecycle rules
-  are still enforced mostly by convention and runtime sequencing
+- execution units are now single-use: once `commit()` is attempted, the unit is
+  finalized whether the commit succeeds, conflicts, or becomes a no-op
+- post-finalization reads, writes, scheduler calls, dependency recording, and
+  repeat commits now fail clearly instead of silently reusing stale state
+- focused runtime bridge regressions and the full workspace suite both pass
 
 #### Implementation plan
 
@@ -628,7 +651,7 @@ construction, reducing the surface for future correctness regressions.
 
 ### SA8. Evaluate zero-copy or materializer-native read formats
 
-**Priority:** deferred  
+**Priority:** completed  
 **Expected impact:** potentially large read-path gains, but only after the
 nearer-term planner and scan work is complete and measured.
 
@@ -636,6 +659,53 @@ nearer-term planner and scan work is complete and measured.
 
 Do not start this item until `SA4` and `SA5` are done and their measured impact
 is recorded. This item is intentionally deferred.
+
+#### Current verified state
+
+- a release-mode measurement prototype now exists at
+  `crates/neovex-storage/examples/read_format_evaluation.rs`
+- the first concrete serving-path promotion now also exists at
+  `crates/neovex-engine/examples/materialized_surface_evaluation.rs`
+- the engine now keeps a tenant-local materialized table surface for warmed
+  full-scan tables and reuses it for:
+  - full-scan query reads
+  - full-scan paginated reads
+  - warmed `get_document` lookups on already-loaded tables
+  - subscription re-evaluation for those same query shapes
+- the local materialized read surface is now updated before the applied
+  watermark advances, so "applied-visible" reads cannot observe stale warmed
+  tables after a mutation acknowledgement
+- subscription activation now records the bootstrap floor sequence it already
+  covered, so reconnects that begin during apply lag do not replay the same
+  commit twice once the initial catch-up result arrives
+- on a 20,000-row dataset with 1 KiB payloads:
+  - selective fallback full-deserialize scan averaged about `16.50 ms`
+  - selective `SA5` pushdown averaged about `10.36 ms` (`1.59x` faster)
+  - selective materialized-document reads averaged about `0.33 ms`
+    (`50.39x` faster)
+  - broad full-deserialize scan averaged about `17.58 ms`
+  - broad materialized-document reads averaged about `0.21 ms`
+    (`84.52x` faster)
+- on the first promoted service-level serving path
+  (`3` warmed tables, `2,000` rows per table, `1 KiB` payloads, `keep_every=97`):
+  - cold full-scan service query averaged `6.530611 ms`
+  - warm materialized-surface service query averaged `1.485014 ms`
+    (`4.40x` faster, `-77.26%` change)
+- the dominant remaining win is "query already-materialized documents" rather
+  than "teach redb-backed MessagePack rows a new zero-copy format"
+
+#### Decision
+
+Keep zero-copy or materializer-native format work deferred for now. If Neovex
+needs another major read-latency step after `SA4` and `SA5`, the next promoted
+investment should continue serving selected read classes from already-
+materialized documents first. The first tenant-local warmed full-scan
+promotion already validated that direction with a measured `4.40x` service-
+level improvement, so future work should keep climbing that ladder through
+shadow-materializer or embedded-replica serving surfaces before inventing a
+new binary format inside the redb-backed store. Only revisit a new binary
+format if those higher-leverage serving-path moves still leave MessagePack
+decode as the dominant cost.
 
 #### Implementation plan
 
@@ -664,3 +734,12 @@ is recorded. This item is intentionally deferred.
 | 2026-04-02 | SA2 | completed | The durable-journal worker now processes applied batches through one batch-aware post-apply path instead of replaying `process_commit()` once per record. Cache invalidation runs once per batch, the subscription registry scans active subscriptions once across the whole applied batch, repeated wakeups for the same subscription are merged into a single queued delivery unit, and merged batches intentionally omit per-commit metadata in subscriber payloads while retaining the latest applied sequence for monotonic delivery. The queue now records coalesced batch count, merged commit count, and merged wakeup count, and the deterministic journal pause seam was made async-friendly so batch regressions do not block the Tokio runtime. Verified with `cargo test -p neovex-engine journal_batch_coalesces_subscription_delivery_into_one_update -- --nocapture`, `cargo test -p neovex-engine`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
 | 2026-04-02 | SA3 | completed | Migrated the remaining Convex WebSocket child tasks and runtime subscription bridge tasks onto `OwnedTaskSet`, so the session now explicitly owns its forwarder and sender loops and each runtime-backed active subscription owns the bridge tasks that rewrite underlying engine subscription events. Disconnect, auth-change, unsubscribe, and end-of-session teardown now explicitly unsubscribe active subscriptions and drain owned child tasks instead of relying on detached `JoinHandle`s or dropped cleanup handles. Added a small `OwnedTaskSet` debug count to make task ownership easier to inspect in tests. Verified with `cargo test -p neovex-server websocket_disconnect_drops_subscription_without_explicit_unsubscribe -- --nocapture`, `cargo test -p neovex-server convex_websocket_disconnect_releases_runtime_subscription_children -- --nocapture`, `cargo test -p neovex-server convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed -- --nocapture`, `cargo test -p neovex-server`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
 | 2026-04-02 | SA4 | design gate created | Added `docs/research/composite-index-design-note.md` to pin the first composite-index slice before broad implementation. The note covers the proposed schema shape (`IndexDefinition { name, fields }`), composite key encoding, missing-field semantics, transactional backfill behavior, supported planner shapes, tuple-based cursor generalization, and the decision to keep dependency tracking conservative while planner support lands. Verified the current baseline against the imported review carry-over with `cargo test -p neovex-engine waiting_for_applied_visibility -- --nocapture`, `cargo test -p neovex-core durable_mutation_record_roundtrips_and_verifies_integrity -- --nocapture`, and `cargo test -p neovex-engine mutation_execution_unit_ -- --nocapture` before starting `SA4`. |
+| 2026-04-02 | SA4 | Stage A completed | Landed the schema and storage half of composite-index support without yet widening planner behavior. `IndexDefinition` now uses `fields`, validation rejects empty or duplicate field lists, the storage layer builds and backfills composite keys only when every indexed field is present, and Stage A keeps the query planner conservative by ignoring composite indexes until the next slice proves planner semantics, cursors, and dependency tracking. Updated HTTP and reactive-loop schema fixtures to the new canonical `indexes[].fields` payload shape instead of preserving the removed single-field compatibility format. Verified with `cargo check -p neovex-core -p neovex-storage -p neovex-engine -p neovex-server`, `cargo test -p neovex-core schema_rejects_index -- --nocapture`, `cargo test -p neovex-storage composite_index_ -- --nocapture`, `cargo test -p neovex-engine composite_indexes -- --nocapture`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
+| 2026-04-02 | SA4 | Stage B slice 1 completed | Added the first planner-visible composite-index support without widening cursor semantics yet. Non-paginated query paths now choose longest exact-prefix composite scans and exact-prefix-plus-one-range composite scans, prefer the composite candidate when it satisfies the requested order better, and strip exact-prefix plus satisfied range filters from the residual query. Storage now exposes explicit composite prefix scans and exact-prefix plus one-range scans, and the planner keeps paginated reads on the single-field-only path until Stage C lands the cursor and dependency follow-through. Verified with `cargo test -p neovex-storage composite_index_ -- --nocapture`, `cargo test -p neovex-engine service::queries::tests::plan_ -- --nocapture`, `cargo test -p neovex-engine`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
+| 2026-04-02 | SA4 | Stage C slice 1 completed | Lifted the conservative paginated-planner restriction for the already-supported composite exact-prefix shapes. Paginated reads now reuse the composite planner when it is only narrowing candidate documents and the existing cursor semantics still page on the user-visible order field after in-memory sorting, so no tuple-cursor rewrite was required for this slice. Added targeted planner and service regressions to prove second-page cursor progress on a composite index while keeping the cursor and dependency payload shapes unchanged. Verified with `cargo test -p neovex-engine service::queries::tests::plan_ -- --nocapture`, `cargo test -p neovex-engine paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progress -- --nocapture`, `cargo test -p neovex-engine`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
+| 2026-04-02 | SA4 | Stage C slice 2 completed | Finished the cursor/dependency and observability follow-through for the supported composite pagination shapes. Pagination cursors, execution-unit dependency boundaries, runtime read-tracking boundaries, and Convex pagination helpers now all use tuple-capable sort-value vectors while preserving the current one-visible-order-slot comparison semantics. The engine also now records query-plan stats that distinguish composite-index selections from single-field index and full-scan fallback paths, so deterministic service tests can prove the planner is actually choosing the composite path. Verified with `cargo test -p neovex-engine service::queries::tests::plan_ -- --nocapture`, `cargo test -p neovex-engine paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progress -- --nocapture`, `cargo test -p neovex-engine query_planning_stats_distinguish_composite_single_field_and_fallback_paths -- --nocapture`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
+| 2026-04-02 | SA5 | completed | Added the first conservative scan-time predicate pushdown slice for fallback table scans. `neovex-storage` now probes only the targeted MessagePack field values for supported `Eq/Gt/Gte/Lt/Lte` filters, rejects definite non-matches before full `Document` deserialization, and records scan stats that expose scanned rows, decoded rows, and pushdown-rejected rows. `neovex-engine` routes fallback query and paginated scan paths through that filtered storage seam, while unsupported filters and unsupported value domains still defer to the full decode-and-evaluate path so externally visible semantics stay unchanged. Verified with `cargo test -p neovex-storage scan_pushdown_rejects_selective_rows_before_full_decode -- --nocapture`, `cargo test -p neovex-storage range_scan_pushdown_rejects_out_of_range_rows_before_full_decode -- --nocapture`, `cargo test -p neovex-storage unsupported_scan_filters_fall_back_to_full_decode -- --nocapture`, `cargo test -p neovex-engine fallback_query_filters_during_scan_for_selective_match -- --nocapture`, `cargo test -p neovex-engine paginated_fallback_scan_preserves_cursor_and_ordering -- --nocapture`, `cargo test -p neovex-engine evaluator_range_filter_on_unsupported_field_type_still_errors_after_pushdown_defers -- --nocapture`, `cargo test --workspace`, `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. |
+| 2026-04-02 | SA6 | completed | Removed the remaining obvious owned-path clone seams without widening the public semantics surface. The Convex direct execution-unit read path now uses `Document::into_json()` anywhere it already owns `Document` values, so staged runtime reads no longer deep-clone field maps just to add system fields. The journal mutation path now keeps only minimal post-plan request state, borrows one durable-record batch across append and apply instead of cloning the record vector, and derives inserted/deleted subscription payload inputs from `CommitEntry` writes rather than carrying duplicate candidate/deleted document vectors through the batch. The follow-up regression also pinned the intended invalidation contract: inserts keep the inserted document as a candidate, deletes keep the deleted document as a candidate, and updates intentionally stay conservative by carrying no candidate document so maybe-affected filtered subscriptions still wake up. Verified with `cargo test -p neovex-engine journal_batch_ -- --nocapture`, `cargo test -p neovex-engine service_delete_only_notifies_filtered_subscriptions_for_matching_documents -- --nocapture`, `cargo test -p neovex-engine service_updates_remain_conservative_for_filtered_subscriptions -- --nocapture`, `cargo test -p neovex-server runtime_mutation_bridge_stages_writes_until_commit_and_reads_its_own_writes -- --nocapture`, `cargo fmt --all --check`, `make clippy`, and `git diff --check`. `make test` remains partially blocked in this sandbox because many `neovex-server` tests bind loopback listeners and fail here with `Operation not permitted`; the focused server path above passed locally inside the sandbox, and the bind failures are environmental rather than caused by this slice. |
+| 2026-04-02 | SA7 | completed | Hardened `MutationExecutionUnit` with a smaller single-use lifecycle restriction instead of a full type-state rewrite. Once `commit()` is attempted, the unit transitions out of the active phase permanently: successful, conflicting, and no-op commit attempts all finalize the unit, and any later reads, writes, scheduler staging, dependency recording, or repeat commits now return a clear invalid-input error instead of reusing stale state. This closes the easy-to-misuse reuse seam without widening the public API surface or disturbing existing OCC and bridge semantics. Verified with `cargo test -p neovex-engine mutation_execution_unit_ -- --nocapture`, `cargo test -p neovex-server runtime_mutation_bridge_ -- --nocapture`, `cargo fmt --all --check`, `make clippy`, `make test`, and `git diff --check`. |
+| 2026-04-02 | SA8 | completed | Added a release-mode read-format measurement prototype at `crates/neovex-storage/examples/read_format_evaluation.rs` and used it to compare three concrete paths on the same 20,000-row synthetic workload with 1 KiB payloads: redb-backed fallback full MessagePack deserialization, the `SA5` selective pushdown path, and queries over already-materialized `Document` values. The measured shape was decisive: pushdown improved the selective scan by about `1.59x`, but materialized-document reads were about `50.39x` faster on the selective workload and `84.52x` faster on the broad scan. The chosen design decision is therefore to keep zero-copy format work deferred and spend the next major read-path effort on promoting selected serving paths onto already-materialized documents instead of inventing a new binary format inside the current redb-backed store. Verified with `cargo run -p neovex-storage --example read_format_evaluation --release`, `cargo test -p neovex-storage`, `cargo clippy -p neovex-storage --all-targets -- -D warnings`, and `cargo fmt --all --check`. |
+| 2026-04-02 | SA8 | refined | Landed the first concrete serving-path promotion onto already-materialized documents instead of starting a zero-copy format project. The engine now maintains a tenant-local warmed table surface for full-scan tables, reuses it for full-scan query and pagination reads, warmed `get_document` lookups, and subscription re-evaluation, and updates that local read state before advancing the applied watermark so warmed reads stay causally aligned with mutation visibility. Subscription activation also now stamps the bootstrap floor sequence it already covered so reconnects that begin during apply lag do not receive a duplicate replay of the same catch-up commit. The release-mode service example at `crates/neovex-engine/examples/materialized_surface_evaluation.rs` measured the resulting service-level win on `3` tables with `2,000` rows each and `1 KiB` payloads: cold full-scan queries averaged `6.530611 ms`, while warm materialized-surface queries averaged `1.485014 ms` (`4.40x` faster, `-77.26%` change). Verified with `cargo test -p neovex-engine async_paginated_full_scans_reuse_and_refresh_materialized_surface_after_async_writes -- --nocapture`, `cargo test -p neovex-server convex_mutation_dispatches_existing_document_operations -- --nocapture`, `cargo test -p neovex-server convex_named_unique_query_returns_document_null_or_error -- --nocapture`, `cargo test -p neovex-server convex_named_mutation_dispatches_compiled_patch_and_delete -- --nocapture`, `cargo test -p neovex-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`, `cargo test -p neovex-server --test reactive_loop websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keeps_pushing -- --nocapture`, `make test`, and `cargo run -p neovex-engine --example materialized_surface_evaluation --release`. |

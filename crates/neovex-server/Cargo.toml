@@ -12,7 +12,7 @@ axum.workspace = true
 base64.workspace = true
 neovex-runtime = { path = "../neovex-runtime" }
 neovex-core = { path = "../neovex-core" }
-neovex-engine = { path = "../neovex-engine" }
+neovex-engine = { path = "../neovex-engine", features = ["test-hooks"] }
 futures.workspace = true
 http.workspace = true
 reqwest.workspace = true

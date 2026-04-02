@@ -55,7 +55,7 @@ async fn convex_named_indexed_filter_unique_query_resolves_exact_match() {
             { "name": "body", "field_type": "string", "required": true }
         ],
         "indexes": [
-            { "name": "by_author", "field": "author" }
+            { "name": "by_author", "fields": ["author"] }
         ]
     });
     assert_eq!(

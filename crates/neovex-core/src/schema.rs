@@ -37,11 +37,11 @@ pub enum FieldType {
     Any,
 }
 
-/// Definition of a single-field index.
+/// Definition of a secondary index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexDefinition {
     pub name: String,
-    pub field: String,
+    pub fields: Vec<String>,
 }
 
 /// Tenant-level schema containing all table schemas.
@@ -99,24 +99,41 @@ impl TableSchema {
                 )));
             }
 
-            let field = self
-                .fields
-                .iter()
-                .find(|field| field.name == index.field)
-                .ok_or_else(|| {
-                    Error::SchemaValidation(format!(
-                        "index '{}' refers to unknown field '{}'",
-                        index.name, index.field
-                    ))
-                })?;
+            if index.fields.is_empty() {
+                return Err(Error::SchemaValidation(format!(
+                    "index '{}' must include at least one field",
+                    index.name
+                )));
+            }
 
-            match field.field_type {
-                FieldType::String | FieldType::Number | FieldType::Boolean => {}
-                _ => {
+            let mut seen_fields = HashSet::new();
+            for field_name in &index.fields {
+                if !seen_fields.insert(field_name.clone()) {
                     return Err(Error::SchemaValidation(format!(
-                        "index '{}' requires a scalar field type, got {:?}",
-                        index.name, field.field_type
+                        "index '{}' includes duplicate field '{}'",
+                        index.name, field_name
                     )));
+                }
+
+                let field = self
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *field_name)
+                    .ok_or_else(|| {
+                        Error::SchemaValidation(format!(
+                            "index '{}' refers to unknown field '{}'",
+                            index.name, field_name
+                        ))
+                    })?;
+
+                match field.field_type {
+                    FieldType::String | FieldType::Number | FieldType::Boolean => {}
+                    _ => {
+                        return Err(Error::SchemaValidation(format!(
+                            "index '{}' requires a scalar field type, got {:?}",
+                            index.name, field.field_type
+                        )));
+                    }
                 }
             }
         }
@@ -149,6 +166,13 @@ impl FieldType {
             Self::Object => value.is_object(),
             Self::Any => true,
         }
+    }
+}
+
+impl IndexDefinition {
+    /// Returns the indexed field when this is still a single-field index.
+    pub fn single_field(&self) -> Option<&str> {
+        (self.fields.len() == 1).then(|| self.fields[0].as_str())
     }
 }
 
@@ -252,7 +276,7 @@ mod tests {
         let mut schema = users_schema();
         schema.indexes = vec![IndexDefinition {
             name: "by_missing".to_string(),
-            field: "missing".to_string(),
+            fields: vec!["missing".to_string()],
         }];
 
         let unknown_error = schema
@@ -262,7 +286,7 @@ mod tests {
 
         schema.indexes = vec![IndexDefinition {
             name: "by_anything".to_string(),
-            field: "anything".to_string(),
+            fields: vec!["anything".to_string()],
         }];
 
         let non_scalar_error = schema
@@ -276,12 +300,44 @@ mod tests {
         let mut schema = users_schema();
         schema.indexes = vec![IndexDefinition {
             name: "bad\0name".to_string(),
-            field: "name".to_string(),
+            fields: vec!["name".to_string()],
         }];
 
         let error = schema
             .validate_indexes()
             .expect_err("index validation should fail");
         assert!(error.to_string().contains("index name"));
+    }
+
+    #[test]
+    fn schema_rejects_index_without_fields() {
+        let mut schema = users_schema();
+        schema.indexes = vec![IndexDefinition {
+            name: "empty".to_string(),
+            fields: Vec::new(),
+        }];
+
+        let error = schema
+            .validate_indexes()
+            .expect_err("index validation should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("must include at least one field")
+        );
+    }
+
+    #[test]
+    fn schema_rejects_duplicate_fields_within_one_index() {
+        let mut schema = users_schema();
+        schema.indexes = vec![IndexDefinition {
+            name: "by_age_twice".to_string(),
+            fields: vec!["age".to_string(), "age".to_string()],
+        }];
+
+        let error = schema
+            .validate_indexes()
+            .expect_err("index validation should fail");
+        assert!(error.to_string().contains("includes duplicate field 'age'"));
     }
 }

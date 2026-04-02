@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 
 #[derive(Debug, Clone)]
@@ -13,6 +15,7 @@ pub(in crate::adapters::convex) enum ConvexSubscriptionTransform {
         args: Value,
         auth: Option<InvocationAuth>,
         read_set: Option<RuntimeReadSet>,
+        last_value: Option<Arc<Value>>,
     },
     RuntimeNamedPaginatedQuery {
         name: String,
@@ -21,6 +24,7 @@ pub(in crate::adapters::convex) enum ConvexSubscriptionTransform {
         cursor: Option<String>,
         auth: Option<InvocationAuth>,
         read_set: Option<RuntimeReadSet>,
+        last_value: Option<Arc<Value>>,
     },
 }
 
@@ -61,4 +65,43 @@ pub(in crate::adapters::convex) enum ConvexClientMessage {
     Unsubscribe {
         subscription_id: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::ConvexSubscriptionTransform;
+
+    #[test]
+    fn runtime_transform_clone_reuses_last_value_arc() {
+        let last_value = Arc::new(json!({
+            "runtime": true,
+            "value": ["large", "payload"],
+        }));
+        let transform = ConvexSubscriptionTransform::RuntimeNamedQuery {
+            name: "messages:list".to_string(),
+            args: json!({}),
+            auth: None,
+            read_set: None,
+            last_value: Some(last_value.clone()),
+        };
+
+        let cloned = transform.clone();
+
+        let ConvexSubscriptionTransform::RuntimeNamedQuery {
+            last_value: Some(cloned_last_value),
+            ..
+        } = cloned
+        else {
+            panic!("cloned transform should stay a runtime named query");
+        };
+
+        assert!(
+            Arc::ptr_eq(&last_value, &cloned_last_value),
+            "cloning the transform should retain the same shared payload pointer",
+        );
+    }
 }

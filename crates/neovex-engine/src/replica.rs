@@ -112,7 +112,7 @@ impl EmbeddedReplica {
     ) -> Result<Self> {
         store.restore_materialized_journal_from_snapshot(&bootstrap.snapshot)?;
         if !records.is_empty() {
-            store.append_durable_records_batch(records)?;
+            store.append_durable_records_batch(&records)?;
             let progress = store.recover_durable_journal()?;
             return Ok(Self {
                 tenant_id,
@@ -155,7 +155,7 @@ impl EmbeddedReplica {
                 )));
             }
 
-            self.store.append_durable_records_batch(records)?;
+            self.store.append_durable_records_batch(&records)?;
             let progress = self.store.recover_durable_journal()?;
             self.sequence_cursor = progress.applied_head;
         }

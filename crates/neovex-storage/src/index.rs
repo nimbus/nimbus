@@ -3,11 +3,13 @@ use std::cmp::Ordering;
 use neovex_core::{
     CommitEntry, Document, DocumentId, IndexDefinition, Result, TableName, WriteOp, WriteOpType,
 };
-use redb::{ReadableTable, TableError};
+use redb::{ReadTransaction, ReadableTable, TableError};
 use serde_json::Value;
 
 use crate::keys::prefix_end;
-use crate::store::{DOCUMENTS, INDEXES, TenantStore, TenantWriteTransaction, map_redb_error};
+use crate::store::{
+    DOCUMENTS, INDEXES, TenantReadSnapshot, TenantStore, TenantWriteTransaction, map_redb_error,
+};
 
 const EMPTY_INDEX_VALUE: &[u8] = &[];
 
@@ -51,6 +53,15 @@ pub fn encode_index_value(value: &Value) -> Result<Vec<u8>> {
     }
 }
 
+/// Encodes an ordered tuple of scalar JSON values for composite index scans.
+pub fn encode_index_tuple(values: &[Value]) -> Result<Vec<u8>> {
+    let mut encoded = Vec::new();
+    for value in values {
+        encoded.extend_from_slice(&encode_index_value(value)?);
+    }
+    Ok(encoded)
+}
+
 /// Builds a full index key for a specific value and document.
 pub fn index_key(
     table: &TableName,
@@ -62,6 +73,30 @@ pub fn index_key(
     key.extend_from_slice(encoded_value);
     key.extend_from_slice(&doc_id.to_bytes());
     key
+}
+
+/// Builds the encoded tuple payload for one document and index definition.
+pub fn encoded_index_key_for_document(
+    document: &Document,
+    index: &IndexDefinition,
+) -> Result<Option<Vec<u8>>> {
+    let mut encoded = Vec::new();
+    for field in &index.fields {
+        let Some(value) = document.get_field(field) else {
+            return Ok(None);
+        };
+        encoded.extend_from_slice(&encode_index_value(value)?);
+    }
+    Ok(Some(encoded))
+}
+
+/// Builds the full index key for one document and index definition.
+pub fn index_key_for_document(
+    document: &Document,
+    index: &IndexDefinition,
+) -> Result<Option<Vec<u8>>> {
+    Ok(encoded_index_key_for_document(document, index)?
+        .map(|encoded| index_key(&document.table, &index.name, &encoded, &document.id)))
 }
 
 /// Builds the prefix for all entries of an index.
@@ -131,6 +166,271 @@ fn collect_index_keys_for_prefix(store: &TenantStore, prefix: &[u8]) -> Result<V
     Ok(keys)
 }
 
+fn scan_documents_for_index_key_bounds_in_read_txn(
+    read_txn: &ReadTransaction,
+    table: &TableName,
+    match_prefix: &[u8],
+    start_key: &[u8],
+    end_key: Option<&[u8]>,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Vec<Document>> {
+    let index_table = match read_txn.open_table(INDEXES) {
+        Ok(index_table) => index_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+    let documents_table = match read_txn.open_table(DOCUMENTS) {
+        Ok(documents_table) => documents_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+
+    let mut documents = Vec::new();
+    if let Some(end_key) = end_key {
+        for item in index_table
+            .range(start_key..end_key)
+            .map_err(map_redb_error)?
+        {
+            check_cancel()?;
+            let (key, _) = item.map_err(map_redb_error)?;
+            if !key.value().starts_with(match_prefix) {
+                break;
+            }
+            let doc_id = doc_id_from_index_key(key.value());
+            let doc_key = crate::keys::document_key(table, &doc_id);
+            if let Some(value) = documents_table
+                .get(doc_key.as_slice())
+                .map_err(map_redb_error)?
+            {
+                documents.push(
+                    Document::from_msgpack(value.value())
+                        .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?,
+                );
+            }
+        }
+    } else {
+        for item in index_table.range(start_key..).map_err(map_redb_error)? {
+            check_cancel()?;
+            let (key, _) = item.map_err(map_redb_error)?;
+            if !key.value().starts_with(match_prefix) {
+                break;
+            }
+            let doc_id = doc_id_from_index_key(key.value());
+            let doc_key = crate::keys::document_key(table, &doc_id);
+            if let Some(value) = documents_table
+                .get(doc_key.as_slice())
+                .map_err(map_redb_error)?
+            {
+                documents.push(
+                    Document::from_msgpack(value.value())
+                        .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?,
+                );
+            }
+        }
+    }
+    Ok(documents)
+}
+
+fn scan_documents_for_index_key_bounds(
+    store: &TenantStore,
+    table: &TableName,
+    match_prefix: &[u8],
+    start_key: &[u8],
+    end_key: Option<&[u8]>,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Vec<Document>> {
+    let read_txn = store.db.begin_read().map_err(map_redb_error)?;
+    scan_documents_for_index_key_bounds_in_read_txn(
+        &read_txn,
+        table,
+        match_prefix,
+        start_key,
+        end_key,
+        check_cancel,
+    )
+}
+
+fn index_scan_eq_in_read_txn(
+    read_txn: &ReadTransaction,
+    table: &TableName,
+    index_name: &str,
+    value: &Value,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Vec<Document>> {
+    let index_table = match read_txn.open_table(INDEXES) {
+        Ok(index_table) => index_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+    let documents_table = match read_txn.open_table(DOCUMENTS) {
+        Ok(documents_table) => documents_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+
+    let encoded = encode_index_value(value)?;
+    let prefix = index_value_prefix(table, index_name, &encoded);
+    let mut documents = Vec::new();
+    match prefix_end(&prefix) {
+        Some(end) => {
+            for item in index_table
+                .range(prefix.as_slice()..end.as_slice())
+                .map_err(map_redb_error)?
+            {
+                check_cancel()?;
+                let (key, _) = item.map_err(map_redb_error)?;
+                let doc_id = doc_id_from_index_key(key.value());
+                let doc_key = crate::keys::document_key(table, &doc_id);
+                if let Some(value) = documents_table
+                    .get(doc_key.as_slice())
+                    .map_err(map_redb_error)?
+                {
+                    documents.push(
+                        Document::from_msgpack(value.value()).map_err(|error| {
+                            neovex_core::Error::Serialization(error.to_string())
+                        })?,
+                    );
+                }
+            }
+        }
+        None => {
+            for item in index_table
+                .range(prefix.as_slice()..)
+                .map_err(map_redb_error)?
+            {
+                check_cancel()?;
+                let (key, _) = item.map_err(map_redb_error)?;
+                if !key.value().starts_with(&prefix) {
+                    break;
+                }
+                let doc_id = doc_id_from_index_key(key.value());
+                let doc_key = crate::keys::document_key(table, &doc_id);
+                if let Some(value) = documents_table
+                    .get(doc_key.as_slice())
+                    .map_err(map_redb_error)?
+                {
+                    documents.push(
+                        Document::from_msgpack(value.value()).map_err(|error| {
+                            neovex_core::Error::Serialization(error.to_string())
+                        })?,
+                    );
+                }
+            }
+        }
+    }
+    Ok(documents)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn index_scan_range_in_read_txn(
+    read_txn: &ReadTransaction,
+    table: &TableName,
+    index_name: &str,
+    start: Option<&Value>,
+    end: Option<&Value>,
+    start_inclusive: bool,
+    end_inclusive: bool,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Vec<Document>> {
+    let index_table = match read_txn.open_table(INDEXES) {
+        Ok(index_table) => index_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+    let documents_table = match read_txn.open_table(DOCUMENTS) {
+        Ok(documents_table) => documents_table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+
+    let prefix = index_prefix(table, index_name);
+    let prefix_len = prefix.len();
+    let start = start.map(encode_index_value).transpose()?;
+    let end = end.map(encode_index_value).transpose()?;
+
+    let mut documents = Vec::new();
+    for item in index_table
+        .range(prefix.as_slice()..)
+        .map_err(map_redb_error)?
+    {
+        check_cancel()?;
+        let (key, _) = item.map_err(map_redb_error)?;
+        if !key.value().starts_with(&prefix) {
+            break;
+        }
+        let encoded_value = encoded_value_from_index_key(key.value(), prefix_len);
+        if let Some(start) = start.as_ref() {
+            match encoded_value.cmp(start.as_slice()) {
+                Ordering::Less => continue,
+                Ordering::Equal if !start_inclusive => continue,
+                Ordering::Equal | Ordering::Greater => {}
+            }
+        }
+        if let Some(end) = end.as_ref() {
+            match encoded_value.cmp(end.as_slice()) {
+                Ordering::Greater => continue,
+                Ordering::Equal if !end_inclusive => continue,
+                Ordering::Equal | Ordering::Less => {}
+            }
+        }
+
+        let doc_id = doc_id_from_index_key(key.value());
+        let doc_key = crate::keys::document_key(table, &doc_id);
+        if let Some(value) = documents_table
+            .get(doc_key.as_slice())
+            .map_err(map_redb_error)?
+        {
+            documents.push(
+                Document::from_msgpack(value.value())
+                    .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?,
+            );
+        }
+    }
+    Ok(documents)
+}
+
+type CompositeRangeScanBounds = (Vec<u8>, Vec<u8>, Option<Vec<u8>>);
+
+fn composite_range_scan_bounds(
+    table: &TableName,
+    index_name: &str,
+    exact_prefix: &[Value],
+    start: Option<&Value>,
+    end: Option<&Value>,
+    start_inclusive: bool,
+    end_inclusive: bool,
+) -> Result<CompositeRangeScanBounds> {
+    let encoded_prefix = encode_index_tuple(exact_prefix)?;
+    let match_prefix = index_value_prefix(table, index_name, &encoded_prefix);
+    let start_key = if let Some(start) = start {
+        let mut start_key = match_prefix.clone();
+        start_key.extend_from_slice(&encode_index_value(start)?);
+        if start_inclusive {
+            start_key
+        } else {
+            let Some(next_key) = prefix_end(&start_key) else {
+                return Ok((match_prefix, Vec::new(), Some(Vec::new())));
+            };
+            next_key
+        }
+    } else {
+        match_prefix.clone()
+    };
+    let end_key = if let Some(end) = end {
+        let mut end_key = match_prefix.clone();
+        end_key.extend_from_slice(&encode_index_value(end)?);
+        if end_inclusive {
+            prefix_end(&end_key)
+        } else {
+            Some(end_key)
+        }
+    } else {
+        prefix_end(&match_prefix)
+    };
+
+    Ok((match_prefix, start_key, end_key))
+}
+
 impl TenantWriteTransaction {
     pub fn insert_document_with_indexes(
         &mut self,
@@ -144,9 +444,7 @@ impl TenantWriteTransaction {
             .open_table(INDEXES)
             .map_err(map_redb_error)?;
         for index in indexes {
-            if let Some(value) = document.get_field(&index.field) {
-                let encoded = encode_index_value(value)?;
-                let key = index_key(&document.table, &index.name, &encoded, &document.id);
+            if let Some(key) = index_key_for_document(document, index)? {
                 index_table
                     .insert(key.as_slice(), EMPTY_INDEX_VALUE)
                     .map_err(map_redb_error)?;
@@ -210,16 +508,8 @@ impl TenantWriteTransaction {
                 .open_table(INDEXES)
                 .map_err(map_redb_error)?;
             for index in indexes {
-                let old_key = old_document
-                    .get_field(&index.field)
-                    .map(encode_index_value)
-                    .transpose()?
-                    .map(|encoded| index_key(table, &index.name, &encoded, id));
-                let new_key = new_document
-                    .get_field(&index.field)
-                    .map(encode_index_value)
-                    .transpose()?
-                    .map(|encoded| index_key(table, &index.name, &encoded, id));
+                let old_key = index_key_for_document(&old_document, index)?;
+                let new_key = index_key_for_document(&new_document, index)?;
 
                 if old_key == new_key {
                     continue;
@@ -278,9 +568,7 @@ impl TenantWriteTransaction {
                 .open_table(INDEXES)
                 .map_err(map_redb_error)?;
             for index in indexes {
-                if let Some(value) = old_document.get_field(&index.field) {
-                    let encoded = encode_index_value(value)?;
-                    let key = index_key(table, &index.name, &encoded, id);
+                if let Some(key) = index_key_for_document(&old_document, index)? {
                     index_table.remove(key.as_slice()).map_err(map_redb_error)?;
                 }
             }
@@ -509,64 +797,7 @@ impl TenantStore {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
-        let index_table = match read_txn.open_table(INDEXES) {
-            Ok(index_table) => index_table,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-            Err(error) => return Err(map_redb_error(error)),
-        };
-        let documents_table = match read_txn.open_table(DOCUMENTS) {
-            Ok(documents_table) => documents_table,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-            Err(error) => return Err(map_redb_error(error)),
-        };
-
-        let encoded = encode_index_value(value)?;
-        let prefix = index_value_prefix(table, index_name, &encoded);
-        let mut documents = Vec::new();
-        match prefix_end(&prefix) {
-            Some(end) => {
-                for item in index_table
-                    .range(prefix.as_slice()..end.as_slice())
-                    .map_err(map_redb_error)?
-                {
-                    check_cancel()?;
-                    let (key, _) = item.map_err(map_redb_error)?;
-                    let doc_id = doc_id_from_index_key(key.value());
-                    let doc_key = crate::keys::document_key(table, &doc_id);
-                    if let Some(value) = documents_table
-                        .get(doc_key.as_slice())
-                        .map_err(map_redb_error)?
-                    {
-                        documents.push(Document::from_msgpack(value.value()).map_err(|error| {
-                            neovex_core::Error::Serialization(error.to_string())
-                        })?);
-                    }
-                }
-            }
-            None => {
-                for item in index_table
-                    .range(prefix.as_slice()..)
-                    .map_err(map_redb_error)?
-                {
-                    check_cancel()?;
-                    let (key, _) = item.map_err(map_redb_error)?;
-                    if !key.value().starts_with(&prefix) {
-                        break;
-                    }
-                    let doc_id = doc_id_from_index_key(key.value());
-                    let doc_key = crate::keys::document_key(table, &doc_id);
-                    if let Some(value) = documents_table
-                        .get(doc_key.as_slice())
-                        .map_err(map_redb_error)?
-                    {
-                        documents.push(Document::from_msgpack(value.value()).map_err(|error| {
-                            neovex_core::Error::Serialization(error.to_string())
-                        })?);
-                    }
-                }
-            }
-        }
-        Ok(documents)
+        index_scan_eq_in_read_txn(&read_txn, table, index_name, value, check_cancel)
     }
 
     /// Returns documents whose indexed field falls within the provided range.
@@ -603,61 +834,107 @@ impl TenantStore {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
-        let index_table = match read_txn.open_table(INDEXES) {
-            Ok(index_table) => index_table,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-            Err(error) => return Err(map_redb_error(error)),
-        };
-        let documents_table = match read_txn.open_table(DOCUMENTS) {
-            Ok(documents_table) => documents_table,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-            Err(error) => return Err(map_redb_error(error)),
-        };
+        index_scan_range_in_read_txn(
+            &read_txn,
+            table,
+            index_name,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+            check_cancel,
+        )
+    }
 
-        let prefix = index_prefix(table, index_name);
-        let prefix_len = prefix.len();
-        let start = start.map(encode_index_value).transpose()?;
-        let end = end.map(encode_index_value).transpose()?;
+    /// Returns documents whose indexed tuple matches the provided exact leading prefix.
+    pub fn index_scan_prefix(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        prefix_values: &[Value],
+    ) -> Result<Vec<Document>> {
+        self.index_scan_prefix_cancellable(table, index_name, prefix_values, &mut || Ok(()))
+    }
 
-        let mut documents = Vec::new();
-        for item in index_table
-            .range(prefix.as_slice()..)
-            .map_err(map_redb_error)?
-        {
-            check_cancel()?;
-            let (key, _) = item.map_err(map_redb_error)?;
-            if !key.value().starts_with(&prefix) {
-                break;
-            }
-            let encoded_value = encoded_value_from_index_key(key.value(), prefix_len);
-            if let Some(start) = start.as_ref() {
-                match encoded_value.cmp(start.as_slice()) {
-                    Ordering::Less => continue,
-                    Ordering::Equal if !start_inclusive => continue,
-                    Ordering::Equal | Ordering::Greater => {}
-                }
-            }
-            if let Some(end) = end.as_ref() {
-                match encoded_value.cmp(end.as_slice()) {
-                    Ordering::Greater => continue,
-                    Ordering::Equal if !end_inclusive => continue,
-                    Ordering::Equal | Ordering::Less => {}
-                }
-            }
+    /// Returns documents whose indexed tuple matches the provided exact leading prefix, checking for cancellation between rows.
+    pub fn index_scan_prefix_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        prefix_values: &[Value],
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let encoded_prefix = encode_index_tuple(prefix_values)?;
+        let match_prefix = index_value_prefix(table, index_name, &encoded_prefix);
+        let end_key = prefix_end(&match_prefix);
+        scan_documents_for_index_key_bounds(
+            self,
+            table,
+            &match_prefix,
+            &match_prefix,
+            end_key.as_deref(),
+            check_cancel,
+        )
+    }
 
-            let doc_id = doc_id_from_index_key(key.value());
-            let doc_key = crate::keys::document_key(table, &doc_id);
-            if let Some(value) = documents_table
-                .get(doc_key.as_slice())
-                .map_err(map_redb_error)?
-            {
-                documents.push(
-                    Document::from_msgpack(value.value())
-                        .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?,
-                );
-            }
+    /// Returns documents whose composite index matches an exact leading prefix and one range on the next field.
+    #[allow(clippy::too_many_arguments)]
+    pub fn index_scan_composite_range(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        exact_prefix: &[Value],
+        start: Option<&Value>,
+        end: Option<&Value>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+    ) -> Result<Vec<Document>> {
+        self.index_scan_composite_range_cancellable(
+            table,
+            index_name,
+            exact_prefix,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+            &mut || Ok(()),
+        )
+    }
+
+    /// Returns documents whose composite index matches an exact leading prefix and one range on the next field, checking for cancellation between rows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn index_scan_composite_range_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        exact_prefix: &[Value],
+        start: Option<&Value>,
+        end: Option<&Value>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let (match_prefix, start_key, end_key) = composite_range_scan_bounds(
+            table,
+            index_name,
+            exact_prefix,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+        )?;
+        if start_key.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(documents)
+
+        scan_documents_for_index_key_bounds(
+            self,
+            table,
+            &match_prefix,
+            &start_key,
+            end_key.as_deref(),
+            check_cancel,
+        )
     }
 
     /// Clears all index entries for a table.
@@ -696,9 +973,7 @@ impl TenantStore {
             let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
             for document in documents {
                 for index in indexes {
-                    if let Some(value) = document.get_field(&index.field) {
-                        let encoded = encode_index_value(value)?;
-                        let key = index_key(table, &index.name, &encoded, &document.id);
+                    if let Some(key) = index_key_for_document(&document, index)? {
                         index_table
                             .insert(key.as_slice(), EMPTY_INDEX_VALUE)
                             .map_err(map_redb_error)?;
@@ -708,5 +983,95 @@ impl TenantStore {
         }
         self.commit_write_txn(write_txn)?;
         Ok(())
+    }
+}
+
+impl TenantReadSnapshot {
+    pub fn index_scan_eq_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        value: &Value,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        index_scan_eq_in_read_txn(&self.read_txn, table, index_name, value, check_cancel)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn index_scan_range_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        start: Option<&Value>,
+        end: Option<&Value>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        index_scan_range_in_read_txn(
+            &self.read_txn,
+            table,
+            index_name,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+            check_cancel,
+        )
+    }
+
+    pub fn index_scan_prefix_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        prefix_values: &[Value],
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let encoded_prefix = encode_index_tuple(prefix_values)?;
+        let match_prefix = index_value_prefix(table, index_name, &encoded_prefix);
+        let end_key = prefix_end(&match_prefix);
+        scan_documents_for_index_key_bounds_in_read_txn(
+            &self.read_txn,
+            table,
+            &match_prefix,
+            &match_prefix,
+            end_key.as_deref(),
+            check_cancel,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn index_scan_composite_range_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        exact_prefix: &[Value],
+        start: Option<&Value>,
+        end: Option<&Value>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let (match_prefix, start_key, end_key) = composite_range_scan_bounds(
+            table,
+            index_name,
+            exact_prefix,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+        )?;
+        if start_key.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        scan_documents_for_index_key_bounds_in_read_txn(
+            &self.read_txn,
+            table,
+            &match_prefix,
+            &start_key,
+            end_key.as_deref(),
+            check_cancel,
+        )
     }
 }

@@ -17,7 +17,7 @@ async fn query_endpoint_returns_range_filtered_results_with_indexed_schema() {
             { "name": "rank", "field_type": "number", "required": false }
         ],
         "indexes": [
-            { "name": "by_rank", "field": "rank" }
+            { "name": "by_rank", "fields": ["rank"] }
         ]
     });
     assert_eq!(

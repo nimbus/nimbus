@@ -11,7 +11,7 @@ pub(in crate::adapters::convex) fn synthesize_runtime_paginate_cursor(
         return Ok(());
     }
 
-    let Some((sort_value, document_id)) = page
+    let Some((sort_values, document_id)) = page
         .data
         .last()
         .and_then(|value| extract_runtime_paginate_boundary(query, value))
@@ -19,14 +19,14 @@ pub(in crate::adapters::convex) fn synthesize_runtime_paginate_cursor(
         return Ok(());
     };
 
-    page.next_cursor = Some(encode_cursor(sort_value.as_ref(), &document_id, query)?);
+    page.next_cursor = Some(encode_cursor(&sort_values, &document_id, query)?);
     Ok(())
 }
 
 fn extract_runtime_paginate_boundary(
     query: &Query,
     value: &Value,
-) -> Option<(Option<Value>, DocumentId)> {
+) -> Option<(Vec<Option<Value>>, DocumentId)> {
     let Value::Object(object) = value else {
         return None;
     };
@@ -34,9 +34,9 @@ fn extract_runtime_paginate_boundary(
         .get("_id")
         .and_then(Value::as_str)
         .and_then(|value| value.parse().ok())?;
-    let sort_value = query
-        .order
-        .as_ref()
-        .and_then(|order| object.get(&order.field).cloned());
-    Some((sort_value, document_id))
+    let sort_values = match query.order.as_ref() {
+        Some(order) => vec![object.get(&order.field).cloned()],
+        None => Vec::new(),
+    };
+    Some((sort_values, document_id))
 }

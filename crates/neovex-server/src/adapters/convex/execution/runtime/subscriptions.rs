@@ -37,21 +37,27 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
     .await?;
     let base_queries = synthesize_runtime_subscription_base_queries(&read_set)?;
     match kind {
-        InvocationKind::Query => Ok(ConvexRuntimeSubscriptionSetup {
-            initial_value: value,
-            base_queries,
-            transform: ConvexSubscriptionTransform::RuntimeNamedQuery {
-                name: name.to_string(),
-                args: args.clone(),
-                auth,
-                read_set: Some(read_set),
-            },
-        }),
+        InvocationKind::Query => {
+            let last_value = std::sync::Arc::new(value.clone());
+            Ok(ConvexRuntimeSubscriptionSetup {
+                initial_value: value,
+                base_queries,
+                transform: ConvexSubscriptionTransform::RuntimeNamedQuery {
+                    name: name.to_string(),
+                    args: args.clone(),
+                    auth,
+                    read_set: Some(read_set),
+                    last_value: Some(last_value),
+                },
+            })
+        }
         InvocationKind::PaginatedQuery => {
             let page: neovex_core::Page = serde_json::from_value(value)
                 .map_err(|error| Error::Serialization(error.to_string()))?;
+            let initial_value = Value::Array(page.data);
+            let last_value = std::sync::Arc::new(initial_value.clone());
             Ok(ConvexRuntimeSubscriptionSetup {
-                initial_value: Value::Array(page.data),
+                initial_value,
                 base_queries,
                 transform: ConvexSubscriptionTransform::RuntimeNamedPaginatedQuery {
                     name: name.to_string(),
@@ -61,6 +67,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
                     cursor,
                     auth,
                     read_set: Some(read_set),
+                    last_value: Some(last_value),
                 },
             })
         }

@@ -1,5 +1,6 @@
 use super::*;
 use neovex_core::{Filter, FilterOp, Query, TableName, commit_intersects_dependency_set};
+use neovex_engine::encode_cursor;
 use serde_json::{Value, json};
 
 #[test]
@@ -159,4 +160,46 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
         &[],
         |_, _| Ok(None),
     ));
+}
+
+#[test]
+fn runtime_read_set_preserves_tuple_capable_paginated_window_boundaries() {
+    let table = TableName::new("messages").expect("table should be valid");
+    let query = Query {
+        table: table.clone(),
+        filters: vec![Filter {
+            field: "author".to_string(),
+            op: FilterOp::Eq,
+            value: json!("Ada"),
+        }],
+        order: Some(neovex_core::OrderBy {
+            field: "rank".to_string(),
+            direction: neovex_core::OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let start_doc_id = neovex_core::DocumentId::new();
+    let end_doc_id = neovex_core::DocumentId::new();
+    let after =
+        encode_cursor(&[Some(json!(1))], &start_doc_id, &query).expect("cursor should encode");
+    let page = neovex_core::Page {
+        data: vec![json!({
+            "_id": end_doc_id.to_string(),
+            "author": "Ada",
+            "rank": 2,
+        })],
+        next_cursor: None,
+        has_more: false,
+    };
+
+    let mut read_set = RuntimeReadSet::default();
+    read_set.record_paginated_window(&query, 1, Some(&after), &page);
+
+    let dependencies = read_set.dependency_set();
+    assert_eq!(dependencies.paginated_windows.len(), 1);
+    let dependency = &dependencies.paginated_windows[0];
+    assert_eq!(dependency.start_sort_values, vec![Some(json!(1))]);
+    assert_eq!(dependency.start_doc_id, Some(start_doc_id));
+    assert_eq!(dependency.end_sort_values, vec![Some(json!(2))]);
+    assert_eq!(dependency.end_doc_id, Some(end_doc_id));
 }

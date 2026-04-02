@@ -137,6 +137,241 @@ export {};
 }
 
 #[tokio::test]
+async fn convex_runtime_only_full_scan_query_warms_and_reuses_materialized_serving_snapshot() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "messages:listAll",
+                "kind": "query",
+                "plan": null,
+                "runtime_handler": "async (ctx) => await ctx.db.query(\"messages\").take(20)"
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+globalThis.__neovexInvoke = async function(request) {
+  try {
+    return {
+      status: "ok",
+      value: await (async () => {
+        const ctx = globalThis.__neovexCreateContext({
+          sessionId: `${request.kind}:${request.function_name}`,
+        });
+        return await ctx.db.query("messages").take(20);
+      })(),
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "neovexHostError" in error) {
+      return { status: "error", error: error.neovexHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#,
+        ),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
+    let api = HttpApiFixture::new(&server);
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let table = TableName::new("messages").expect("table name should build");
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    for body in ["alpha", "beta"] {
+        service
+            .insert_document(
+                &tenant_id,
+                table.clone(),
+                json!({ "body": body })
+                    .as_object()
+                    .expect("document should be an object")
+                    .clone(),
+            )
+            .expect("fixture insert should succeed");
+    }
+
+    let first = api
+        .convex_named_query("demo", "messages:listAll", json!({}))
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body = first
+        .json::<serde_json::Value>()
+        .await
+        .expect("first runtime-only full scan should parse");
+    assert_eq!(first_body.as_array().map(Vec::len), Some(2));
+
+    let first_surface = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(first_surface.loaded_table_count, 1);
+    assert_eq!(first_surface.table_load_count, 1);
+    assert_eq!(first_surface.evaluation_count, 1);
+    let first_snapshots = service
+        .serving_snapshot_manager_stats_for_testing(&tenant_id)
+        .expect("serving snapshot stats should load");
+    assert!(
+        first_snapshots.retained_snapshot_count >= 1,
+        "runtime full-scan query should publish a retained serving snapshot"
+    );
+
+    let second = api
+        .convex_named_query("demo", "messages:listAll", json!({}))
+        .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second_body = second
+        .json::<serde_json::Value>()
+        .await
+        .expect("second runtime-only full scan should parse");
+    assert_eq!(second_body.as_array().map(Vec::len), Some(2));
+
+    let second_surface = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should reload");
+    assert_eq!(
+        second_surface.table_load_count, 1,
+        "second runtime full-scan query should reuse the warmed table"
+    );
+    assert_eq!(second_surface.evaluation_count, 2);
+}
+
+#[tokio::test]
+async fn convex_runtime_only_get_reuses_materialized_serving_snapshot_after_full_scan_warmup() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "messages:warm",
+                "kind": "query",
+                "plan": null,
+                "runtime_handler": "async (ctx) => await ctx.db.query(\"messages\").take(1)"
+            },
+            {
+                "name": "messages:getOne",
+                "kind": "query",
+                "plan": null,
+                "runtime_handler": "async (ctx, { id }) => await ctx.db.get(\"messages\", id)"
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+const definitions = new Map([
+  ["messages:warm", async (ctx) => await ctx.db.query("messages").take(1)],
+  ["messages:getOne", async (ctx, { id }) => await ctx.db.get("messages", id)],
+]);
+
+globalThis.__neovexInvoke = async function(request) {
+  try {
+    const handler = definitions.get(request.function_name);
+    return {
+      status: "ok",
+      value: await handler(
+        globalThis.__neovexCreateContext({
+          sessionId: `${request.kind}:${request.function_name}`,
+        }),
+        request.args ?? {},
+      ),
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "neovexHostError" in error) {
+      return { status: "error", error: error.neovexHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#,
+        ),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
+    let api = HttpApiFixture::new(&server);
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let table = TableName::new("messages").expect("table name should build");
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    let first_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            json!({ "body": "first" })
+                .as_object()
+                .expect("document should be an object")
+                .clone(),
+        )
+        .expect("fixture insert should succeed");
+    let second_id = service
+        .insert_document(
+            &tenant_id,
+            table,
+            json!({ "body": "second" })
+                .as_object()
+                .expect("document should be an object")
+                .clone(),
+        )
+        .expect("fixture insert should succeed");
+
+    let warm = api
+        .convex_named_query("demo", "messages:warm", json!({}))
+        .await;
+    assert_eq!(warm.status(), StatusCode::OK);
+    let warm_body = warm
+        .json::<serde_json::Value>()
+        .await
+        .expect("warm query should parse");
+    let warmed_id = warm_body[0]["_id"]
+        .as_str()
+        .expect("warm query should return a document id");
+    let uncached_id = if warmed_id == first_id.to_string() {
+        second_id
+    } else {
+        first_id
+    };
+
+    let before_get = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(before_get.get_hit_count, 0);
+
+    let response = api
+        .convex_named_query(
+            "demo",
+            "messages:getOne",
+            json!({ "id": uncached_id.to_string() }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("runtime-only get should parse");
+    assert!(
+        body["body"] == json!("first") || body["body"] == json!("second"),
+        "{body}"
+    );
+
+    let after_get = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should reload");
+    assert_eq!(after_get.table_load_count, 1);
+    assert_eq!(
+        after_get.get_hit_count, 1,
+        "runtime ctx.db.get should reuse the warmed materialized serving snapshot"
+    );
+}
+
+#[tokio::test]
 async fn convex_runtime_only_query_paginate_keeps_continuation_cursor_for_full_terminal_page() {
     let registry = convex_registry_with_routes_and_bundle(
         json!([

@@ -6,9 +6,9 @@ use std::sync::{Condvar, Mutex};
 
 use neovex_core::{
     CronJob, CronSchedule, DependencySet, Document, DocumentId, DurableMutationRecord, Error,
-    FieldSchema, FieldType, IndexDefinition, IndexRangeDependency, Mutation, ScheduledJob,
-    ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName, TableSchema, Timestamp,
-    WriteOp, WriteOpType, durable_record_intersects_dependency_set,
+    FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, IndexRangeDependency, Mutation,
+    ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName, TableSchema,
+    Timestamp, WriteOp, WriteOpType, durable_record_intersects_dependency_set,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -43,6 +43,14 @@ fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
             fields: serde_json::Map::from_iter([("title".to_string(), json!(title))]),
         },
         created_at: Timestamp(1_000),
+    }
+}
+
+fn filter(field: &str, op: FilterOp, value: serde_json::Value) -> Filter {
+    Filter {
+        field: field.to_string(),
+        op,
+        value,
     }
 }
 
@@ -474,6 +482,130 @@ fn scan_table_is_logically_isolated() {
 }
 
 #[test]
+fn scan_pushdown_rejects_selective_rows_before_full_decode() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    for rank in 0..512 {
+        let status = if rank % 97 == 0 { "keep" } else { "skip" };
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("rank".to_string(), json!(rank)),
+                ("status".to_string(), json!(status)),
+            ]),
+        );
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let documents = store
+        .scan_table_matching_with_filters_cancellable(
+            &table,
+            &[filter("status", FilterOp::Eq, json!("keep"))],
+            &mut || Ok(()),
+            |_document| Ok(true),
+        )
+        .expect("pushdown scan should succeed");
+    let stats = store.scan_stats();
+
+    assert_eq!(documents.len(), 6);
+    assert_eq!(stats.scanned_rows, 512);
+    assert_eq!(stats.decoded_rows, 6);
+    assert_eq!(stats.pushdown_rejected_rows, 506);
+}
+
+#[test]
+fn unsupported_scan_filters_fall_back_to_full_decode() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    for title in ["a", "b", "c"] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!(title))]),
+        );
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let documents = store
+        .scan_table_matching_with_filters_cancellable(
+            &table,
+            &[filter("title", FilterOp::Neq, json!("b"))],
+            &mut || Ok(()),
+            |document| Ok(document.get_field("title") != Some(&json!("b"))),
+        )
+        .expect("fallback scan should succeed");
+    let stats = store.scan_stats();
+
+    assert_eq!(documents.len(), 2);
+    assert_eq!(stats.scanned_rows, 3);
+    assert_eq!(stats.decoded_rows, 3);
+    assert_eq!(stats.pushdown_rejected_rows, 0);
+}
+
+#[test]
+fn range_scan_pushdown_rejects_out_of_range_rows_before_full_decode() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    for rank in 0..100 {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+        );
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let documents = store
+        .scan_table_matching_with_filters_cancellable(
+            &table,
+            &[filter("rank", FilterOp::Gte, json!(90))],
+            &mut || Ok(()),
+            |_document| Ok(true),
+        )
+        .expect("range pushdown scan should succeed");
+    let stats = store.scan_stats();
+
+    assert_eq!(documents.len(), 10);
+    assert_eq!(stats.scanned_rows, 100);
+    assert_eq!(stats.decoded_rows, 10);
+    assert_eq!(stats.pushdown_rejected_rows, 90);
+}
+
+#[test]
+fn multiple_pushdown_filters_reject_rows_before_full_decode() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    for rank in 0..100 {
+        let status = if rank % 25 == 0 { "keep" } else { "skip" };
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("rank".to_string(), json!(rank)),
+                ("status".to_string(), json!(status)),
+            ]),
+        );
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let documents = store
+        .scan_table_matching_with_filters_cancellable(
+            &table,
+            &[
+                filter("status", FilterOp::Eq, json!("keep")),
+                filter("rank", FilterOp::Gte, json!(50)),
+                filter("rank", FilterOp::Lt, json!(80)),
+            ],
+            &mut || Ok(()),
+            |_document| Ok(true),
+        )
+        .expect("multi-filter pushdown scan should succeed");
+    let stats = store.scan_stats();
+
+    assert_eq!(documents.len(), 2);
+    assert_eq!(stats.scanned_rows, 100);
+    assert_eq!(stats.decoded_rows, 2);
+    assert_eq!(stats.pushdown_rejected_rows, 98);
+}
+
+#[test]
 fn commit_log_sequences_increment() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let first = sample_document("tasks", "First");
@@ -641,7 +773,7 @@ fn durable_journal_batch_append_enforces_no_holes() {
     .expect("second durable record should build");
 
     store
-        .append_durable_records_batch(vec![first.clone(), second.clone()])
+        .append_durable_records_batch(&[first.clone(), second.clone()])
         .expect("initial batch append should succeed");
     assert_eq!(
         store
@@ -654,21 +786,19 @@ fn durable_journal_batch_append_enforces_no_holes() {
     );
 
     let error = store
-        .append_durable_records_batch(vec![
-            DurableMutationRecord::new(
-                SequenceNumber(4),
-                Timestamp(12),
-                vec![WriteOp {
-                    table: TableName::new("tasks").expect("table name should be valid"),
-                    op_type: WriteOpType::Insert,
-                    doc_id: DocumentId::new(),
-                    previous: None,
-                    current: Some(sample_document("tasks", "Gap")),
-                }],
-                None,
-            )
-            .expect("gap record should build"),
-        ])
+        .append_durable_records_batch(&[DurableMutationRecord::new(
+            SequenceNumber(4),
+            Timestamp(12),
+            vec![WriteOp {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                op_type: WriteOpType::Insert,
+                doc_id: DocumentId::new(),
+                previous: None,
+                current: Some(sample_document("tasks", "Gap")),
+            }],
+            None,
+        )
+        .expect("gap record should build")])
         .expect_err("batch append should reject sequence holes");
     assert!(
         matches!(error, Error::Internal(message) if message.contains("expected sequence 3, got 4"))
@@ -765,7 +895,7 @@ fn recovery_replays_durable_but_unapplied_records() {
     ];
 
     store
-        .append_durable_records_batch(records)
+        .append_durable_records_batch(&records)
         .expect("durable append should succeed");
     assert_eq!(
         store
@@ -826,7 +956,7 @@ fn materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
         }],
         indexes: vec![IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -918,7 +1048,7 @@ fn materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence() {
         }],
         indexes: vec![IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -1392,7 +1522,7 @@ fn generated_recovery_campaign_replays_durable_journal_across_repeated_restarts_
             &mut durable_documents_by_slot,
         );
         store
-            .append_durable_records_batch(vec![record])
+            .append_durable_records_batch(&[record])
             .unwrap_or_else(|error| {
                 panic!(
                     "{}: {error}",
@@ -1509,7 +1639,7 @@ fn materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() 
     )
     .expect("durable record should build");
     store
-        .append_durable_records_batch(vec![record.clone()])
+        .append_durable_records_batch(std::slice::from_ref(&record))
         .expect("durable append should succeed");
 
     let snapshot = store
@@ -1723,7 +1853,7 @@ fn replace_table_schema_rebuilds_indexes_and_persists_schema() {
         }],
         indexes: vec![IndexDefinition {
             name: "by_email".to_string(),
-            field: "email".to_string(),
+            fields: vec!["email".to_string()],
         }],
         access_policy: None,
     };
@@ -1760,7 +1890,7 @@ fn delete_table_schema_clears_schema_and_indexes() {
         }],
         indexes: vec![IndexDefinition {
             name: "by_email".to_string(),
-            field: "email".to_string(),
+            fields: vec!["email".to_string()],
         }],
         access_policy: None,
     };
@@ -1786,7 +1916,7 @@ fn update_with_indexes_validated_maintains_entries() {
     let table = TableName::new("users").expect("table name should be valid");
     let index = IndexDefinition {
         name: "by_email".to_string(),
-        field: "email".to_string(),
+        fields: vec!["email".to_string()],
     };
     let document = Document::new(
         table.clone(),
@@ -1880,7 +2010,7 @@ fn index_insert_and_eq_scan() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let index = IndexDefinition {
         name: "by_email".to_string(),
-        field: "email".to_string(),
+        fields: vec!["email".to_string()],
     };
     for email in ["a@test.com", "b@test.com", "c@test.com"] {
         let document = Document::new(
@@ -1920,7 +2050,7 @@ fn index_update_maintains_entries() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let index = IndexDefinition {
         name: "by_email".to_string(),
-        field: "email".to_string(),
+        fields: vec!["email".to_string()],
     };
     let document = Document::new(
         TableName::new("users").expect("table name should be valid"),
@@ -1959,7 +2089,7 @@ fn index_delete_removes_entries() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let index = IndexDefinition {
         name: "by_email".to_string(),
-        field: "email".to_string(),
+        fields: vec!["email".to_string()],
     };
     let document = Document::new(
         TableName::new("users").expect("table name should be valid"),
@@ -1984,7 +2114,7 @@ fn index_scan_range_on_numbers() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let index = IndexDefinition {
         name: "by_age".to_string(),
-        field: "age".to_string(),
+        fields: vec!["age".to_string()],
     };
     for age in [20, 30, 40, 50] {
         let document = Document::new(
@@ -2020,6 +2150,243 @@ fn index_scan_range_on_numbers() {
         .expect("range scan should succeed");
     assert_eq!(between.len(), 1);
     assert_eq!(between[0].fields.get("age"), Some(&json!(30)));
+}
+
+#[test]
+fn composite_index_entries_appear_only_after_all_fields_exist_and_delete_cleanly() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let index = IndexDefinition {
+        name: "by_status_rank".to_string(),
+        fields: vec!["status".to_string(), "rank".to_string()],
+    };
+    let document = Document::new(
+        TableName::new("tasks").expect("table name should be valid"),
+        serde_json::Map::from_iter([("status".to_string(), json!("open"))]),
+    );
+    store
+        .insert_with_indexes(&document, std::slice::from_ref(&index))
+        .expect("insert should succeed");
+
+    assert!(
+        store
+            .index_scan_eq(&document.table, "by_status_rank", &json!("open"))
+            .expect("composite prefix scan should succeed")
+            .is_empty(),
+        "documents missing any indexed field should not get a composite index entry"
+    );
+
+    store
+        .update_with_indexes(
+            &document.table,
+            &document.id,
+            &serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+            std::slice::from_ref(&index),
+        )
+        .expect("update should succeed");
+
+    let indexed = store
+        .index_scan_eq(&document.table, "by_status_rank", &json!("open"))
+        .expect("composite prefix scan should succeed");
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[0].id, document.id);
+
+    store
+        .update_with_indexes(
+            &document.table,
+            &document.id,
+            &serde_json::Map::from_iter([("rank".to_string(), json!(null))]),
+            std::slice::from_ref(&index),
+        )
+        .expect("update should succeed");
+
+    let indexed = store
+        .index_scan_eq(&document.table, "by_status_rank", &json!("open"))
+        .expect("composite prefix scan should succeed");
+    assert_eq!(indexed.len(), 1, "explicit null should stay indexable");
+    assert_eq!(indexed[0].id, document.id);
+
+    store
+        .delete_with_indexes(&document.table, &document.id, std::slice::from_ref(&index))
+        .expect("delete should succeed");
+    assert!(
+        store
+            .index_scan_eq(&document.table, "by_status_rank", &json!("open"))
+            .expect("composite prefix scan should succeed")
+            .is_empty(),
+        "delete should remove the composite index entry"
+    );
+}
+
+#[test]
+fn composite_index_backfill_indexes_only_documents_with_all_indexed_fields() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+
+    let complete = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([
+            ("status".to_string(), json!("open")),
+            ("rank".to_string(), json!(1)),
+        ]),
+    );
+    let missing_rank = Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([("status".to_string(), json!("open"))]),
+    );
+    store.insert(&complete).expect("insert should succeed");
+    store.insert(&missing_rank).expect("insert should succeed");
+
+    let table_schema = TableSchema {
+        table: table.clone(),
+        fields: vec![
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ],
+        indexes: vec![IndexDefinition {
+            name: "by_status_rank".to_string(),
+            fields: vec!["status".to_string(), "rank".to_string()],
+        }],
+        access_policy: None,
+    };
+    store
+        .replace_table_schema(&table_schema)
+        .expect("schema replacement should rebuild indexes");
+
+    let indexed = store
+        .index_scan_eq(&table, "by_status_rank", &json!("open"))
+        .expect("composite prefix scan should succeed");
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[0].id, complete.id);
+}
+
+#[test]
+fn composite_index_prefix_scan_matches_all_leading_fields() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let index = IndexDefinition {
+        name: "by_status_rank".to_string(),
+        fields: vec!["status".to_string(), "rank".to_string()],
+    };
+
+    for (status, rank) in [("open", 1), ("open", 2), ("done", 2)] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!(status)),
+                ("rank".to_string(), json!(rank)),
+            ]),
+        );
+        store
+            .insert_with_indexes(&document, std::slice::from_ref(&index))
+            .expect("insert should succeed");
+    }
+
+    let indexed = store
+        .index_scan_prefix(&table, "by_status_rank", &[json!("open"), json!(2)])
+        .expect("composite prefix scan should succeed");
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[0].fields.get("status"), Some(&json!("open")));
+    assert_eq!(indexed[0].fields.get("rank"), Some(&json!(2)));
+}
+
+#[test]
+fn composite_index_range_scan_respects_exact_prefix_on_leading_fields() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let index = IndexDefinition {
+        name: "by_status_rank".to_string(),
+        fields: vec!["status".to_string(), "rank".to_string()],
+    };
+
+    for (status, rank) in [("open", 1), ("open", 2), ("open", 4), ("done", 2)] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!(status)),
+                ("rank".to_string(), json!(rank)),
+            ]),
+        );
+        store
+            .insert_with_indexes(&document, std::slice::from_ref(&index))
+            .expect("insert should succeed");
+    }
+
+    let indexed = store
+        .index_scan_composite_range(
+            &table,
+            "by_status_rank",
+            &[json!("open")],
+            Some(&json!(2)),
+            Some(&json!(4)),
+            true,
+            false,
+        )
+        .expect("composite range scan should succeed");
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[0].fields.get("status"), Some(&json!("open")));
+    assert_eq!(indexed[0].fields.get("rank"), Some(&json!(2)));
+}
+
+#[test]
+fn composite_index_three_field_range_scan_respects_two_field_prefix() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let index = IndexDefinition {
+        name: "by_team_status_rank".to_string(),
+        fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
+    };
+
+    for (team, status, rank) in [
+        ("alpha", "open", 1),
+        ("alpha", "open", 2),
+        ("alpha", "open", 3),
+        ("alpha", "done", 2),
+        ("beta", "open", 2),
+    ] {
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("team".to_string(), json!(team)),
+                ("status".to_string(), json!(status)),
+                ("rank".to_string(), json!(rank)),
+            ]),
+        );
+        store
+            .insert_with_indexes(&document, std::slice::from_ref(&index))
+            .expect("insert should succeed");
+    }
+
+    let prefixed = store
+        .index_scan_prefix(
+            &table,
+            "by_team_status_rank",
+            &[json!("alpha"), json!("open")],
+        )
+        .expect("three-field prefix scan should succeed");
+    assert_eq!(prefixed.len(), 3);
+
+    let ranged = store
+        .index_scan_composite_range(
+            &table,
+            "by_team_status_rank",
+            &[json!("alpha"), json!("open")],
+            Some(&json!(2)),
+            Some(&json!(4)),
+            true,
+            false,
+        )
+        .expect("three-field composite range scan should succeed");
+    assert_eq!(ranged.len(), 2);
+    assert_eq!(ranged[0].fields.get("rank"), Some(&json!(2)));
+    assert_eq!(ranged[1].fields.get("rank"), Some(&json!(3)));
 }
 
 #[test]
@@ -2480,7 +2847,7 @@ async fn canceled_async_write_before_commit_leaves_no_durable_state() {
     );
     let indexes = vec![IndexDefinition {
         name: "by_rank".to_string(),
-        field: "rank".to_string(),
+        fields: vec!["rank".to_string()],
     }];
     let gate = BlockingReadGate::new();
     let gate_for_task = gate.clone();
@@ -2557,7 +2924,7 @@ async fn canceled_async_write_after_commit_still_reports_committed() {
     );
     let indexes = vec![IndexDefinition {
         name: "by_rank".to_string(),
-        field: "rank".to_string(),
+        fields: vec!["rank".to_string()],
     }];
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();

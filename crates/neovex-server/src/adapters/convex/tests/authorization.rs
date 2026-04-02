@@ -63,7 +63,7 @@ fn schema_with_owner_policy(access_policy: TableAccessPolicy) -> TableSchema {
         ],
         indexes: vec![IndexDefinition {
             name: "by_owner".to_string(),
-            field: "owner".to_string(),
+            fields: vec!["owner".to_string()],
         }],
         access_policy: Some(access_policy),
     }
@@ -373,6 +373,77 @@ fn runtime_mutation_bridge_stages_writes_until_commit_and_reads_its_own_writes()
             .get_field("body"),
         Some(&json!("Hello from tx"))
     );
+}
+
+#[test]
+fn runtime_mutation_bridge_reads_own_writes_even_when_materialized_serving_snapshot_is_warmed() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let table = messages_table();
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Already committed")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+    let warmed = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+        )
+        .expect("warm query should succeed");
+    assert_eq!(warmed.len(), 1);
+    let surface_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(surface_stats.loaded_table_count, 1);
+
+    let bridge = mutation_bridge(
+        service.clone(),
+        Arc::new(ConvexRegistry::empty()),
+        tenant_id.clone(),
+        neovex_core::PrincipalContext::anonymous(),
+    );
+    let inserted = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_insert(json!({
+                "table": table,
+                "fields": {
+                    "owner": "user-123",
+                    "body": "Hello from staged tx"
+                }
+            }))
+            .expect("staged insert should encode"),
+    )
+    .expect("staged insert should succeed");
+    let document_id = inserted
+        .as_str()
+        .expect("insert should return a document id")
+        .parse::<neovex_core::DocumentId>()
+        .expect("document id should parse");
+
+    let read_back = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_get(json!({
+                "table": table,
+                "id": document_id
+            }))
+            .expect("staged get should encode"),
+    )
+    .expect("staged get should succeed");
+    assert_eq!(read_back["body"], json!("Hello from staged tx"));
+    assert!(matches!(
+        service.get_document(&tenant_id, &table, document_id),
+        Err(Error::DocumentNotFound(_))
+    ));
 }
 
 #[test]

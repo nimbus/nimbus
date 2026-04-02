@@ -30,3 +30,6 @@ dist
 .claude/settings.local.json
 .neovex
 **/.neovex
+
+# Private docs (pricing, strategy, competitive research)
+docs/private

@@ -31,6 +31,27 @@ struct UpdateMutationRequest<'a> {
     principal: &'a PrincipalContext,
 }
 
+fn candidate_documents_for_commit(commit: &CommitEntry) -> Vec<Document> {
+    commit
+        .writes
+        .iter()
+        .filter_map(|write| match write.op_type {
+            neovex_core::WriteOpType::Insert => write.current.clone(),
+            neovex_core::WriteOpType::Update => None,
+            neovex_core::WriteOpType::Delete => write.previous.clone(),
+        })
+        .collect()
+}
+
+fn deleted_documents_for_commit(commit: &CommitEntry) -> Vec<Document> {
+    commit
+        .writes
+        .iter()
+        .filter(|write| matches!(write.op_type, neovex_core::WriteOpType::Delete))
+        .filter_map(|write| write.previous.clone())
+        .collect()
+}
+
 impl Service {
     pub(crate) fn dispatch_or_enqueue_subscription_work(
         &self,
@@ -38,9 +59,10 @@ impl Service {
         work: QueuedSubscriptionWork,
     ) {
         runtime.ensure_subscription_delivery_worker_started();
-        if runtime.enqueue_subscription_work(work.clone()) {
-            return;
-        }
+        let work = match runtime.enqueue_subscription_work(work) {
+            Ok(()) => return,
+            Err(work) => work,
+        };
 
         runtime.record_subscription_overflow_sync_fallback();
         let stats = dispatch_subscription_work(&runtime, &work);
@@ -441,17 +463,11 @@ impl Service {
         }
     }
 
-    pub(crate) fn process_commit(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        commit: &CommitEntry,
-        candidate_documents: &[Document],
-        deleted_documents: &[Document],
-    ) {
-        runtime.invalidate_document_cache_for_commit(commit);
+    pub(crate) fn process_commit(&self, runtime: Arc<TenantRuntime>, commit: &CommitEntry) {
+        let candidate_documents = candidate_documents_for_commit(commit);
         let subscription_ids = runtime
             .subscriptions
-            .affected_subscription_ids(commit, candidate_documents);
+            .affected_subscription_ids(commit, &candidate_documents);
         if subscription_ids.is_empty() {
             return;
         }
@@ -459,17 +475,12 @@ impl Service {
         let work = QueuedSubscriptionWork::new_single(
             subscription_ids,
             commit.clone(),
-            deleted_documents.to_vec(),
+            deleted_documents_for_commit(commit),
         );
         self.dispatch_or_enqueue_subscription_work(runtime, work);
     }
 
-    fn run_store_mutation<F>(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        candidate_documents: &[Document],
-        mutate: F,
-    ) -> Result<CommitEntry>
+    fn run_store_mutation<F>(&self, runtime: Arc<TenantRuntime>, mutate: F) -> Result<CommitEntry>
     where
         F: FnOnce(&TenantStore) -> Result<CommitEntry>,
     {
@@ -478,17 +489,13 @@ impl Service {
             mutate(&runtime.store)?
         };
         runtime.mark_durable_head(commit.sequence);
+        runtime.invalidate_document_cache_for_commit(&commit);
         runtime.mark_applied_head(commit.sequence);
-        self.process_commit(runtime, &commit, candidate_documents, &[]);
+        self.process_commit(runtime, &commit);
         Ok(commit)
     }
 
-    fn run_store_mutation_once<F>(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        candidate_documents: &[Document],
-        mutate: F,
-    ) -> Result<bool>
+    fn run_store_mutation_once<F>(&self, runtime: Arc<TenantRuntime>, mutate: F) -> Result<bool>
     where
         F: FnOnce(&TenantStore) -> Result<Option<CommitEntry>>,
     {
@@ -500,8 +507,9 @@ impl Service {
             return Ok(false);
         };
         runtime.mark_durable_head(commit.sequence);
+        runtime.invalidate_document_cache_for_commit(&commit);
         runtime.mark_applied_head(commit.sequence);
-        self.process_commit(runtime, &commit, candidate_documents, &[]);
+        self.process_commit(runtime, &commit);
         Ok(true)
     }
 
@@ -513,18 +521,14 @@ impl Service {
     where
         F: FnOnce(&TenantStore) -> Result<(CommitEntry, Document)>,
     {
-        let (commit, deleted_document) = {
+        let (commit, _deleted_document) = {
             let _sequence_guard = runtime.lock_mutation_sequence();
             mutate(&runtime.store)?
         };
         runtime.mark_durable_head(commit.sequence);
+        runtime.invalidate_document_cache_for_commit(&commit);
         runtime.mark_applied_head(commit.sequence);
-        self.process_commit(
-            runtime,
-            &commit,
-            std::slice::from_ref(&deleted_document),
-            std::slice::from_ref(&deleted_document),
-        );
+        self.process_commit(runtime, &commit);
         Ok(commit)
     }
 
@@ -540,17 +544,13 @@ impl Service {
             let _sequence_guard = runtime.lock_mutation_sequence();
             mutate(&runtime.store)?
         };
-        let Some((commit, deleted_document)) = commit else {
+        let Some((commit, _deleted_document)) = commit else {
             return Ok(false);
         };
         runtime.mark_durable_head(commit.sequence);
+        runtime.invalidate_document_cache_for_commit(&commit);
         runtime.mark_applied_head(commit.sequence);
-        self.process_commit(
-            runtime,
-            &commit,
-            std::slice::from_ref(&deleted_document),
-            std::slice::from_ref(&deleted_document),
-        );
+        self.process_commit(runtime, &commit);
         Ok(true)
     }
 
@@ -684,11 +684,9 @@ impl Service {
         match mode {
             MutationExecutionMode::Immediate => {
                 if indexes.is_empty() {
-                    self.run_store_mutation(runtime, std::slice::from_ref(&document), |store| {
-                        store.insert(&document)
-                    })?;
+                    self.run_store_mutation(runtime, |store| store.insert(&document))?;
                 } else {
-                    self.run_store_mutation(runtime, std::slice::from_ref(&document), |store| {
+                    self.run_store_mutation(runtime, |store| {
                         store.insert_with_indexes(&document, &indexes)
                     })?;
                 }
@@ -696,23 +694,17 @@ impl Service {
             }
             MutationExecutionMode::Scheduled { execution_id } => {
                 let applied = if indexes.is_empty() {
-                    self.run_store_mutation_once(
-                        runtime,
-                        std::slice::from_ref(&document),
-                        |store| store.insert_once(&document, Some(execution_id.as_str())),
-                    )?
+                    self.run_store_mutation_once(runtime, |store| {
+                        store.insert_once(&document, Some(execution_id.as_str()))
+                    })?
                 } else {
-                    self.run_store_mutation_once(
-                        runtime,
-                        std::slice::from_ref(&document),
-                        |store| {
-                            store.insert_with_indexes_once(
-                                &document,
-                                &indexes,
-                                Some(execution_id.as_str()),
-                            )
-                        },
-                    )?
+                    self.run_store_mutation_once(runtime, |store| {
+                        store.insert_with_indexes_once(
+                            &document,
+                            &indexes,
+                            Some(execution_id.as_str()),
+                        )
+                    })?
                 };
                 Ok(MutationExecutionResult::Scheduled(applied))
             }
@@ -737,7 +729,7 @@ impl Service {
                 MutationExecutionMode::Immediate => {
                     let authorization_schema = table_schema.clone();
                     let principal = principal.clone();
-                    self.run_store_mutation(runtime, &[], move |store| {
+                    self.run_store_mutation(runtime, move |store| {
                         store.update_validated(&table, &id, &patch, |existing, document| {
                             table_schema.validate(&document.fields)?;
                             enforce_mutation_authorization(
@@ -754,7 +746,7 @@ impl Service {
                 MutationExecutionMode::Scheduled { execution_id } => {
                     let authorization_schema = table_schema.clone();
                     let principal = principal.clone();
-                    let applied = self.run_store_mutation_once(runtime, &[], move |store| {
+                    let applied = self.run_store_mutation_once(runtime, move |store| {
                         store.update_validated_once(
                             &table,
                             &id,
@@ -781,7 +773,7 @@ impl Service {
                     MutationExecutionMode::Immediate => {
                         let authorization_schema = table_schema.clone();
                         let principal = principal.clone();
-                        self.run_store_mutation(runtime, &[], move |store| {
+                        self.run_store_mutation(runtime, move |store| {
                             store.update_with_indexes_validated(
                                 &table,
                                 &id,
@@ -804,7 +796,7 @@ impl Service {
                     MutationExecutionMode::Scheduled { execution_id } => {
                         let authorization_schema = table_schema.clone();
                         let principal = principal.clone();
-                        let applied = self.run_store_mutation_once(runtime, &[], move |store| {
+                        let applied = self.run_store_mutation_once(runtime, move |store| {
                             store.update_with_indexes_validated_once(
                                 &table,
                                 &id,
@@ -830,7 +822,7 @@ impl Service {
             None => match mode {
                 MutationExecutionMode::Immediate => {
                     let principal = principal.clone();
-                    self.run_store_mutation(runtime, &[], move |store| {
+                    self.run_store_mutation(runtime, move |store| {
                         store.update_validated(&table, &id, &patch, |existing, document| {
                             enforce_mutation_authorization(
                                 None,
@@ -845,7 +837,7 @@ impl Service {
                 }
                 MutationExecutionMode::Scheduled { execution_id } => {
                     let principal = principal.clone();
-                    let applied = self.run_store_mutation_once(runtime, &[], move |store| {
+                    let applied = self.run_store_mutation_once(runtime, move |store| {
                         store.update_validated_once(
                             &table,
                             &id,

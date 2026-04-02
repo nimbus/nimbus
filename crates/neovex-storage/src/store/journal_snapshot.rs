@@ -153,7 +153,7 @@ impl TenantStore {
             })
             .cloned()
             .collect::<Vec<_>>();
-        self.append_durable_records_batch(tail)?;
+        self.append_durable_records_batch(&tail)?;
         self.recover_durable_journal()
     }
 

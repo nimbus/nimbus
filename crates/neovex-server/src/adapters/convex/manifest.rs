@@ -204,7 +204,7 @@ impl ConvexSchemaIndexDefinition {
 
         Ok(IndexDefinition {
             name: self.name,
-            field: field.clone(),
+            fields: vec![field.clone()],
         })
     }
 }

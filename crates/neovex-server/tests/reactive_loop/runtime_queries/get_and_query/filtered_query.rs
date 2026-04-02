@@ -66,8 +66,18 @@ export {};
     let initial = socket.next_json().await;
     assert_eq!(initial["type"], json!("subscription_result"));
     assert_eq!(initial["request_id"], json!("convex-runtime-filter"));
-    assert_eq!(initial["data"]["runtime"], json!(true));
-    assert_eq!(initial["data"]["value"][0]["body"], json!("Tracked Ada"));
+    let current = if initial["data"]["value"]
+        .as_array()
+        .is_some_and(|documents| documents.is_empty())
+    {
+        let caught_up = socket.next_json().await;
+        assert_eq!(caught_up["type"], json!("subscription_result"));
+        caught_up
+    } else {
+        initial
+    };
+    assert_eq!(current["data"]["runtime"], json!(true));
+    assert_eq!(current["data"]["value"][0]["body"], json!("Tracked Ada"));
 
     let ignored = api
         .insert_document(

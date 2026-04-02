@@ -16,14 +16,14 @@ impl ConvexHostBridge {
                         Value::Array(
                             documents
                                 .into_iter()
-                                .map(|document| document.to_json())
+                                .map(|document| document.into_json())
                                 .collect(),
                         )
                     }),
                 ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
                     execution_unit.get_document(&table, id).map(|document| {
                         document
-                            .map(|document| document.to_json())
+                            .map(|document| document.into_json())
                             .unwrap_or(Value::Null)
                     })
                 }
@@ -33,7 +33,7 @@ impl ConvexHostBridge {
                     Ok(documents
                         .drain(..)
                         .next()
-                        .map(|document| document.to_json())
+                        .map(|document| document.into_json())
                         .unwrap_or(Value::Null))
                 }
                 ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
@@ -47,7 +47,7 @@ impl ConvexHostBridge {
                     Ok(documents
                         .drain(..)
                         .next()
-                        .map(|document| document.to_json())
+                        .map(|document| document.into_json())
                         .unwrap_or(Value::Null))
                 }
             };
@@ -78,14 +78,14 @@ impl ConvexHostBridge {
                         Value::Array(
                             documents
                                 .into_iter()
-                                .map(|document| document.to_json())
+                                .map(|document| document.into_json())
                                 .collect(),
                         )
                     }),
                 ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
                     execution_unit.get_document(&table, id).map(|document| {
                         document
-                            .map(|document| document.to_json())
+                            .map(|document| document.into_json())
                             .unwrap_or(Value::Null)
                     })
                 }
@@ -95,7 +95,7 @@ impl ConvexHostBridge {
                     Ok(documents
                         .drain(..)
                         .next()
-                        .map(|document| document.to_json())
+                        .map(|document| document.into_json())
                         .unwrap_or(Value::Null))
                 }
                 ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
@@ -109,7 +109,7 @@ impl ConvexHostBridge {
                     Ok(documents
                         .drain(..)
                         .next()
-                        .map(|document| document.to_json())
+                        .map(|document| document.into_json())
                         .unwrap_or(Value::Null))
                 }
             };

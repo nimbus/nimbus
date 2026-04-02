@@ -59,7 +59,17 @@ async fn subscribe_update_and_delete_and_receive_reactive_pushes() {
     let initial = socket.next_json().await;
     assert_eq!(initial["type"], json!("subscription_result"));
     assert_eq!(initial["request_id"], json!("2"));
-    assert_eq!(initial["data"][0]["title"], json!("Before"));
+    let current = if initial["data"]
+        .as_array()
+        .is_some_and(|documents| documents.is_empty())
+    {
+        let caught_up = socket.next_json().await;
+        assert_eq!(caught_up["type"], json!("subscription_result"));
+        caught_up
+    } else {
+        initial
+    };
+    assert_eq!(current["data"][0]["title"], json!("Before"));
 
     let update_response = api
         .update_document("demo", "tasks", &document_id, json!({ "title": "After" }))

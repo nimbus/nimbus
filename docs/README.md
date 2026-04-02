@@ -18,6 +18,9 @@ and where to go next.
   server flags and runtime-limit defaults
 - [Convex compatibility](convex/compatibility.md):
   current Convex-surface scope, limits, and demo entrypoints
+- [Versioned serving snapshot design note](research/versioned-serving-snapshot-design-note.md):
+  implementation-grade north-star for the next server-side read-surface
+  promotion after the `SA8` materialized-serving slice
 - [Demos](../demos/README.md):
   demo layout and run commands
 - [Plans](plans/README.md):
@@ -41,6 +44,11 @@ The deterministic verification harness now has explicit local and CI modes:
   runs the heavier adversarial named-seed corpus
 - `bash scripts/verification-harness.sh repro <storage|engine|server> <pr|nightly> <case-id>`
   reruns one exact failing seed from the corpus
+
+These harness entrypoints and the main `make check`, `make test`, and
+`make clippy` targets are single-flight guarded locally, so an accidental
+duplicate invocation exits quickly instead of starting a second overlapping
+verification session.
 
 Named seeds live in `neovex-storage::simulation` and flow through
 `neovex-test-support`. New historically valuable bug-finding seeds should be

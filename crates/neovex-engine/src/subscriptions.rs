@@ -255,7 +255,7 @@ impl SubscriptionRegistry {
         self.state.remove(id);
     }
 
-    pub fn activate(&self, id: u64) {
+    pub fn activate(&self, id: u64, delivered_sequence: SequenceNumber) {
         if let Some(subscription) = self
             .state
             .subscriptions
@@ -264,6 +264,9 @@ impl SubscriptionRegistry {
             .get_mut(&id)
         {
             subscription.active = true;
+            subscription
+                .last_delivered_sequence
+                .store(delivered_sequence.0, Ordering::Release);
         }
     }
 
@@ -436,6 +439,7 @@ pub(crate) fn dispatch_subscription_work(
             runtime,
             &subscription.query,
             &subscription.principal,
+            sequence,
             &mut check_cancel,
         );
         stats.reevaluation_count += 1;
@@ -555,5 +559,34 @@ mod tests {
 
         assert!(stored.tables.contains(&query.table));
         assert!(stored.predicates.is_empty());
+    }
+
+    #[test]
+    fn activation_marks_bootstrap_sequence_as_already_delivered() {
+        let registry = SubscriptionRegistry::new();
+        let (tx, _rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+        let registration = registry.register(
+            Query {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            PrincipalContext::anonymous(),
+            PrincipalContext::anonymous()
+                .snapshot()
+                .expect("anonymous principal should snapshot"),
+            "policy-v1".to_string(),
+            tx,
+            false,
+        );
+
+        registry.activate(registration.id(), SequenceNumber(7));
+
+        let delivery = registry
+            .delivery(registration.id())
+            .expect("activated subscription should be available for delivery");
+        assert!(delivery.is_stale_for_sequence(SequenceNumber(7)));
+        assert!(!delivery.is_stale_for_sequence(SequenceNumber(8)));
     }
 }

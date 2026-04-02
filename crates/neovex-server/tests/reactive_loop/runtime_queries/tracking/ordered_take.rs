@@ -49,7 +49,7 @@ export {};
                     { "name": "priority", "field_type": "number", "required": false }
                 ],
                 "indexes": [
-                    { "name": "by_priority", "field": "priority" }
+                    { "name": "by_priority", "fields": ["priority"] }
                 ]
             }),
         )

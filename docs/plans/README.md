@@ -14,6 +14,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/scalability-and-architecture-follow-on-plan.md`
   - canonical execution plan for the remaining follow-on scalability, query,
     reactivity, and task-lifecycle architecture work from the April 2026 review
+- `docs/plans/materialized-serving-hardening-plan.md`
+  - canonical execution plan for hardening the first `SA8` materialized-serving
+    slice into an explicit, bounded, sequence-stamped serving subsystem
+- `docs/plans/encryption-at-rest-plan.md`
+  - canonical execution plan for per-tenant encryption at rest via redb
+    `StorageBackend` trait
 
 ## Archived plans
 
@@ -32,6 +38,9 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - For remaining follow-on scalability, subscription-delivery, planner, scan,
   and task-lifecycle work, start with
   `scalability-and-architecture-follow-on-plan.md`.
+- For hardening the tenant-local materialized-serving slice from `SA8`, start
+  with `materialized-serving-hardening-plan.md`.
+- For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
   before starting a new roadmap item inside the owning plan.
 - Use archived plans only for historical rationale or earlier exploration.

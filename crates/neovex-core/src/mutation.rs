@@ -127,6 +127,14 @@ impl DurableMutationRecord {
         }
     }
 
+    pub fn into_commit_entry(self) -> CommitEntry {
+        CommitEntry {
+            sequence: self.sequence,
+            timestamp: self.timestamp,
+            writes: self.writes,
+        }
+    }
+
     fn compute_integrity(&self) -> Result<[u8; 32]> {
         let payload = DurableMutationRecordHashPayload {
             version: self.version,
