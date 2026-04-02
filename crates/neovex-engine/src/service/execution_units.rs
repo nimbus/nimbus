@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use neovex_core::{
@@ -47,7 +47,7 @@ pub struct MutationExecutionUnit {
     runtime: Arc<TenantRuntime>,
     tenant_id: neovex_core::TenantId,
     principal: PrincipalContext,
-    schema_snapshot: Schema,
+    schema_snapshot: Arc<Schema>,
     snapshot: TenantReadSnapshot,
     snapshot_sequence: SequenceNumber,
     state: Mutex<MutationExecutionUnitState>,
@@ -61,7 +61,7 @@ impl Service {
     ) -> Result<Arc<MutationExecutionUnit>> {
         let runtime = self.get_existing_tenant(&tenant_id)?;
         let snapshot = runtime.store.read_snapshot()?;
-        let snapshot_sequence = snapshot.latest_sequence()?;
+        let snapshot_sequence = snapshot.applied_sequence()?;
         let schema_snapshot = runtime.schema();
         Ok(Arc::new(MutationExecutionUnit {
             service: self.clone(),
@@ -406,11 +406,20 @@ impl MutationExecutionUnit {
             .state
             .lock()
             .expect("mutation execution unit lock should not be poisoned");
-        for ((entry_table, document_id), entry) in &state.staged_writes {
+        let staged_ids = state
+            .staged_writes
+            .iter()
+            .filter_map(|((entry_table, document_id), _)| {
+                (entry_table == table).then_some(*document_id)
+            })
+            .collect::<HashSet<_>>();
+        if !staged_ids.is_empty() {
+            documents.retain(|document| !staged_ids.contains(&document.id));
+        }
+        for ((entry_table, _document_id), entry) in &state.staged_writes {
             if entry_table != table {
                 continue;
             }
-            documents.retain(|document| document.id != *document_id);
             if let Some(document) = entry.current.clone() {
                 documents.push(document);
             }
@@ -443,14 +452,12 @@ impl MutationExecutionUnit {
                 current: None,
                 indexes: indexes.clone(),
             });
-        if entry.original.is_none() {
-            entry.original = original;
-        }
         entry.current = current;
         entry.indexes = indexes;
 
         if entry.original == entry.current {
             state.staged_writes.remove(&key);
+            state.write_order.retain(|existing| existing != &key);
         } else {
             state
                 .write_dependencies

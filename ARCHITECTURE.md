@@ -264,7 +264,10 @@ architecture discussion.
    acknowledged only after its durable journal record is appended in commit
    order. Read visibility, cache publication, and subscription fan-out happen
    only after ordered materialization updates document and index state and
-   advances the applied watermark.
+   advances the applied watermark. Both async and sync serving reads wait for
+   that applied watermark before consulting the materialized document or index
+   state, and async waits remain cancellable while they are blocked on that
+   visibility boundary.
 
 4. **Every mutation — whether from HTTP, WebSocket, the scheduler, or the
    runtime — flows through `Service::apply_mutation`.** There is no separate
@@ -276,7 +279,9 @@ architecture discussion.
    direct `ctx.runQuery` or `ctx.runMutation` calls inside a mutation execute
    against a stable read snapshot, stage their writes locally, and commit once
    after validating shared dependency metadata against commits that landed
-   after the snapshot.
+   after the same applied snapshot sequence they actually read. Repeated
+   writes to the same document must collapse to the final logical write before
+   commit instead of manufacturing intermediate conflicts.
 
 6. **The evaluator is pure.** `evaluate_query` and `evaluate_paginated` take
    data in, return data out. No I/O, no state, no side effects. The service
@@ -531,6 +536,12 @@ inventing a second serving read path. That keeps visibility rules explicit,
 preserves one serving read path, and avoids introducing a second
 correctness-critical overlay engine too early.
 
+**Durable journal integrity hashes use a canonical payload shape.** Journal
+records are now hashed over a stable serialized representation that keeps
+optional fields explicit, so a normal serde or MessagePack round-trip cannot
+change the integrity payload shape and falsely mark an untampered durable
+record as corrupt.
+
 **What should guide the durable journal design?** Use external systems as
 reference implementations, not as accidental architecture replacements. The
 current direction is:
@@ -575,6 +586,13 @@ replay authoritative `DurableMutationRecord`s and compare query or pagination
 results against the existing redb-backed service path. Any future serving
 promotion should build on that shadow-parity evidence rather than bypassing the
 authoritative journal or weakening the redb correctness path.
+
+**Shadow parity now covers planner-aware, schema-aware external behavior.** The
+engine's shadow-query harness routes replayed documents through the same
+schema-, principal-, and planner-aware evaluation helpers as the live service,
+including residual-query cursor semantics for indexed pagination. That keeps the
+shadow evidence focused on externally visible behavior rather than only matching
+raw document sets.
 
 **Serving promotion now requires a robustness harness, not just parity on clean
 inputs.** The current shadow-materializer bar includes replay after interrupted
@@ -726,6 +744,83 @@ accept deterministic implementations, storage commit visibility exposes a
 named fault point, and engine scheduler tests can advance time without
 wall-clock sleeps. Later journal, checkpoint, and compaction work should
 extend these same seam types instead of inventing parallel harness APIs.
+
+The shared `DeterministicHarness` now also lives on that same seam layer rather
+than in a higher-level test-only island. It carries explicit scenario metadata
+(`name`, `seed`), supports scripted or seeded fault schedules, and exposes
+named cancellation, disconnect, and restart markers so storage, engine, and
+server tests can share one reproducible scenario vocabulary. `ServiceFixture`
+also has a `new_with_harness(...)` helper so higher layers can consume the same
+deterministic harness without re-specifying clock and fault plumbing in every
+test.
+
+That same simulation layer now also owns the first generated-history oracle
+slice. `GeneratedTaskHistory` models logical-slot insert/update/delete
+workloads, exposes canonical filtered query and paginated-query builders, and
+ships sync plus async replay helpers so higher layers do not have to rewrite
+scenario logic per surface. The current verification pass replays the same
+seeded history across `TenantStore`, engine `Service`, native HTTP,
+shadow-materializer query evaluation, and embedded-replica reads, then checks
+final state plus query/pagination behavior against one local model. This is
+still only the first workload family, but it moves Neovex from hand-authored
+parity examples toward seed-reproducible multi-surface properties.
+
+The same module now also carries recovery-oriented restart scheduling via
+`ScriptedRestartSchedule`, `RestartBoundary`, and `RestartPoint`. Those types
+give storage and engine tests one shared way to describe restart boundaries
+such as durable-append-before-apply, scheduler claim, and scheduler completion.
+The current recovery slice uses that vocabulary for repeated journal recovery
+campaigns that verify authoritative convergence plus shadow rebuild parity
+after restarts, and for scheduler campaigns that verify claimed work is
+recovered without double-applying completed jobs across repeated service
+reloads.
+
+`neovex-test-support` now complements that shared scenario vocabulary with a
+reusable `BlockingFaultInjector` for adversarial server tests. The current
+transport/runtime liveness slice uses it to pause the authoritative write path
+after durable append but before apply, drop and re-establish a WebSocket
+subscription under that lag, and then prove the reconnected subscription both
+catches up and resumes reactive pushes once the fault is released. The same
+verification pass also stamps runtime cancellation campaigns with shared
+scenario metadata and proves queued plus in-flight request drops recover into
+fresh exactly-once work once isolate pressure clears.
+
+The first external Convex semantic oracle now lives in
+`packages/convex/src/differential.mjs`. It reuses one shared messages fixture
+app, can start an official local Convex deployment automatically from a nearby
+`convex-backend` checkout, and compares Neovex against the supported Convex
+subset across mutations, queries, manual pagination, and subscriptions. The
+runner compares named semantic slices independently so one mismatch does not
+hide the rest of the corpus.
+
+Closing that external differential loop also tightened the Convex adapter
+itself. `@neovex/codegen` now treats imported server validators such as
+`paginationOptsValidator` as real parse-time bindings, Convex app schema
+manifests bootstrap Neovex table schemas when new tenants are created under a
+Convex app, and runtime `ctx.db.query(...).paginate(...)` preserves the
+official manual-pagination contract where a full non-empty terminal page still
+returns a continuation cursor until the next call proves exhaustion.
+
+Neovex now also has its first online trust-but-verify path for authoritative
+and derived state. `Service::verify_consistency_async(...)` captures one
+durable bootstrap cut, rebuilds an authoritative in-memory projection from the
+raw materialized snapshot plus journal suffix, then compares that projection
+against a shadow-materializer replay and an embedded replica built from the
+same inputs. The report fingerprints each surface canonically and records the
+first deterministic diff path per failed comparison instead of relying on
+opaque deep-equality errors. Raw bootstrap metadata is checked separately so
+applied-lag snapshots are validated as metadata invariants rather than being
+misreported as divergence. Operators can request that report through
+`GET /debug/tenants/{tenant_id}/consistency`.
+
+The harness also now has an operational seed corpus rather than only ad hoc
+scenario constructors. `neovex-storage::simulation` defines named generated-
+history seeds for explicit `pr` and `nightly` modes, and the failure context
+for those corpus runs prints a one-command repro that pins the exact named case
+through `NEOVEX_VERIFY_CASE`. CI now runs the focused PR corpus separately from
+the heavier scheduled nightly corpus, and local entrypoints live in
+`scripts/verification-harness.sh` plus the matching `make verify-harness-*`
+targets.
 
 **Serialization.** MessagePack (via `rmp-serde`) for storage. JSON (via
 `serde_json`) for HTTP and WebSocket wire format. Documents carry both

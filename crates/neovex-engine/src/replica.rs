@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
 use neovex_core::{
-    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TenantId,
+    Document, DurableMutationRecord, Page, PaginatedQuery, PrincipalContext, Query, Result,
+    SequenceNumber, TenantId,
 };
-use neovex_storage::{DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, TenantStore};
+use neovex_storage::{
+    DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, MaterializedJournalSnapshot,
+    TenantStore,
+};
 
 use crate::Service;
 use crate::service::{
@@ -94,6 +98,34 @@ impl EmbeddedReplica {
 
     pub fn sequence_cursor(&self) -> SequenceNumber {
         self.sequence_cursor
+    }
+
+    pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
+        self.store.export_materialized_journal_snapshot()
+    }
+
+    pub(crate) fn bootstrap_from_bootstrap(
+        tenant_id: TenantId,
+        store: TenantStore,
+        bootstrap: DurableJournalBootstrap,
+        records: Vec<DurableMutationRecord>,
+    ) -> Result<Self> {
+        store.restore_materialized_journal_from_snapshot(&bootstrap.snapshot)?;
+        if !records.is_empty() {
+            store.append_durable_records_batch(records)?;
+            let progress = store.recover_durable_journal()?;
+            return Ok(Self {
+                tenant_id,
+                store,
+                sequence_cursor: progress.applied_head,
+            });
+        }
+
+        Ok(Self {
+            tenant_id,
+            store,
+            sequence_cursor: bootstrap.resume_after,
+        })
     }
 
     async fn catch_up_to_sequence(

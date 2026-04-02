@@ -14,7 +14,7 @@ pub(super) async fn unsubscribe_active_subscriptions(
     service: &Arc<neovex_engine::Service>,
     tenant_id: &TenantId,
     active_subscriptions: ActiveSubscriptions,
-    outbound_tx: &mpsc::UnboundedSender<ServerMessage>,
+    outbound_tx: &mpsc::Sender<ServerMessage>,
     emit_errors: bool,
     transforms: &RwLock<ConvexSubscriptionTransforms>,
 ) {
@@ -25,18 +25,20 @@ pub(super) async fn unsubscribe_active_subscriptions(
                 .unsubscribe_async(tenant_id.clone(), underlying_subscription_id)
                 .await;
             if emit_errors && let Err(error) = result {
-                let _ = outbound_tx.send(ServerMessage::Error {
-                    request_id: None,
-                    message: error.to_string(),
-                });
+                let _ = outbound_tx
+                    .send(ServerMessage::Error {
+                        request_id: None,
+                        message: error.to_string(),
+                    })
+                    .await;
             }
         }
     }
 }
 
 pub(super) fn spawn_subscription_forwarder(
-    subscription_rx: mpsc::UnboundedReceiver<SubscriptionUpdate>,
-    outbound_tx: mpsc::UnboundedSender<ServerMessage>,
+    subscription_rx: mpsc::Receiver<SubscriptionUpdate>,
+    outbound_tx: mpsc::Sender<ServerMessage>,
     transforms: Arc<RwLock<ConvexSubscriptionTransforms>>,
     service: Arc<neovex_engine::Service>,
     registry: Arc<ConvexRegistry>,
@@ -92,14 +94,16 @@ pub(super) fn spawn_subscription_forwarder(
                     message,
                 },
             };
-            let _ = outbound_tx.send(message);
+            if outbound_tx.send(message).await.is_err() {
+                break;
+            }
         }
     })
 }
 
 pub(super) fn spawn_socket_sender(
     mut socket_tx: futures::stream::SplitSink<WebSocket, Message>,
-    mut outbound_rx: mpsc::UnboundedReceiver<ServerMessage>,
+    mut outbound_rx: mpsc::Receiver<ServerMessage>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(message) = outbound_rx.recv().await {

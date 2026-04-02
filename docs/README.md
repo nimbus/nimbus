@@ -30,3 +30,18 @@ and where to go next.
 - `plans/`: active roadmap plus archived execution plans
 - `research/`: background research and north-star direction, not the execution
   control plane
+
+## Verification Harness
+
+The deterministic verification harness now has explicit local and CI modes:
+
+- `bash scripts/verification-harness.sh pr`
+  runs the focused named-seed corpus for storage, engine, and native HTTP
+- `bash scripts/verification-harness.sh nightly`
+  runs the heavier adversarial named-seed corpus
+- `bash scripts/verification-harness.sh repro <storage|engine|server> <pr|nightly> <case-id>`
+  reruns one exact failing seed from the corpus
+
+Named seeds live in `neovex-storage::simulation` and flow through
+`neovex-test-support`. New historically valuable bug-finding seeds should be
+checked in there with stable case ids so failure output stays reproducible.

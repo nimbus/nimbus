@@ -29,7 +29,9 @@ mod tenants;
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };
-pub(crate) use metadata::{demos_redirect, health, license_status, runtime_diagnostics};
+pub(crate) use metadata::{
+    demos_redirect, health, license_status, runtime_diagnostics, tenant_consistency_report,
+};
 pub(crate) use queries::{
     bootstrap_journal, query_documents, query_documents_paginated, read_commit_log, read_journal,
 };

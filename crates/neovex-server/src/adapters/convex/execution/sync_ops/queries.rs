@@ -64,13 +64,13 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
             Ok(Value::Array(
                 documents
                     .into_iter()
-                    .map(|document| document.to_json())
+                    .map(neovex_core::Document::into_json)
                     .collect(),
             ))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
             match service.get_document_with_principal(tenant_id, &table, id, &principal) {
-                Ok(document) => Ok(document.to_json()),
+                Ok(document) => Ok(document.into_json()),
                 Err(Error::DocumentNotFound(_)) => Ok(Value::Null),
                 Err(error) => Err(error),
             }
@@ -85,7 +85,7 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
             Ok(documents
                 .drain(..)
                 .next()
-                .map(|document| document.to_json())
+                .map(neovex_core::Document::into_json)
                 .unwrap_or(Value::Null))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
@@ -103,7 +103,7 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
             Ok(documents
                 .drain(..)
                 .next()
-                .map(|document| document.to_json())
+                .map(neovex_core::Document::into_json)
                 .unwrap_or(Value::Null))
         }
     }

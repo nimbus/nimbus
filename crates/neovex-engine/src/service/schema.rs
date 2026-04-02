@@ -25,7 +25,9 @@ impl Service {
             .schema
             .write()
             .expect("schema lock should not be poisoned");
-        schema.tables.insert(table.clone(), table_schema);
+        Arc::make_mut(&mut schema)
+            .tables
+            .insert(table.clone(), table_schema);
         drop(schema);
 
         if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
@@ -69,7 +71,9 @@ impl Service {
             .schema
             .write()
             .expect("schema lock should not be poisoned");
-        schema.tables.insert(table.clone(), table_schema);
+        Arc::make_mut(&mut schema)
+            .tables
+            .insert(table.clone(), table_schema);
         drop(schema);
 
         if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
@@ -87,14 +91,14 @@ impl Service {
     pub fn get_schema(&self, tenant_id: &TenantId) -> Result<Schema> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        Ok(runtime.schema())
+        Ok(runtime.schema().as_ref().clone())
     }
 
     /// Returns the full tenant schema asynchronously.
     pub async fn get_schema_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<Schema> {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let _operation = runtime.enter_operation(&tenant_id)?;
-        Ok(runtime.schema())
+        Ok(runtime.schema().as_ref().clone())
     }
 
     /// Returns a single table schema for a tenant.
@@ -133,12 +137,12 @@ impl Service {
             .map(TableSchema::access_policy_revision)
             .transpose()?;
         runtime.store.delete_table_schema(table)?;
-        runtime
+        let mut schema = runtime
             .schema
             .write()
-            .expect("schema lock should not be poisoned")
-            .tables
-            .remove(table);
+            .expect("schema lock should not be poisoned");
+        Arc::make_mut(&mut schema).tables.remove(table);
+        drop(schema);
         let removed_policy_revision = neovex_core::policy_revision_id(None)?;
         if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
             runtime.clear_document_cache();
@@ -173,12 +177,12 @@ impl Service {
                 transaction.delete_table_schema(&table_for_task)
             })
             .await?;
-        runtime
+        let mut schema = runtime
             .schema
             .write()
-            .expect("schema lock should not be poisoned")
-            .tables
-            .remove(&table);
+            .expect("schema lock should not be poisoned");
+        Arc::make_mut(&mut schema).tables.remove(&table);
+        drop(schema);
         let removed_policy_revision = neovex_core::policy_revision_id(None)?;
         if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
             runtime.clear_document_cache();

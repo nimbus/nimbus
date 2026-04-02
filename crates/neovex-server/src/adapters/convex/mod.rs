@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, Method};
 use futures::{SinkExt, StreamExt};
 use neovex_core::{
     CommitEntry, Cursor, DocumentId, Error, Filter, FilterOp, Mutation, OrderBy, OrderDirection,
-    PaginatedQuery, Query, ScheduleRequest, TableName, TenantId, Timestamp,
+    PaginatedQuery, Query, ScheduleRequest, Schema, TableName, TenantId, Timestamp,
 };
 use neovex_engine::SubscriptionUpdate;
 use neovex_runtime::{
@@ -55,6 +55,7 @@ use crate::state::{AppError, AppState};
 pub struct ConvexRegistry {
     functions: HashMap<String, ConvexFunctionDefinition>,
     http_routes: Vec<ConvexHttpRouteDefinition>,
+    schema: Option<Schema>,
     runtime_bundle: Option<RuntimeBundle>,
     auth_verifier: Arc<auth::ConvexAuthVerifier>,
     runtime_policy: Arc<RuntimePolicy>,
@@ -68,6 +69,7 @@ impl Default for ConvexRegistry {
         Self {
             functions: HashMap::new(),
             http_routes: Vec::new(),
+            schema: None,
             runtime_bundle: None,
             auth_verifier: Arc::new(auth::ConvexAuthVerifier::empty()),
             runtime_policy,

@@ -135,3 +135,135 @@ export {};
     assert_eq!(metrics.fallback_cross_isolate_dispatches, 1);
     assert_eq!(metrics.worker_dispatched_invocations, 2);
 }
+
+#[tokio::test]
+async fn convex_runtime_only_query_paginate_keeps_continuation_cursor_for_full_terminal_page() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "messages:listPage",
+                "kind": "query",
+                "plan": null,
+                "runtime_handler": "async (ctx, { author, paginationOpts }) => await ctx.db.query(\"messages\").filter((q) => q.eq(q.field(\"author\"), author)).paginate(paginationOpts)"
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+const definitions = new Map([
+  ["messages:listPage", {
+    name: "messages:listPage",
+    kind: "query",
+    plan: null,
+    runtime_handler: "async (ctx, { author, paginationOpts }) => await ctx.db.query(\"messages\").filter((q) => q.eq(q.field(\"author\"), author)).paginate(paginationOpts)",
+  }],
+]);
+
+function compileRuntimeHandler(definition) {
+  return new Function(
+    "ctx",
+    "args",
+    "request",
+    "return (" + definition.runtime_handler + ")(ctx, args, request);",
+  );
+}
+
+const handlers = new Map(
+  [...definitions.values()].map((definition) => [
+    definition.name,
+    compileRuntimeHandler(definition),
+  ]),
+);
+
+globalThis.__neovexInvoke = async function(request) {
+  try {
+    const handler = handlers.get(request.function_name);
+    return {
+      status: "ok",
+      value: await handler(
+        globalThis.__neovexCreateContext({
+          sessionId: `${request.kind}:${request.function_name}`,
+        }),
+        request.args ?? {},
+        request,
+      ),
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "neovexHostError" in error) {
+      return { status: "error", error: error.neovexHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#,
+        ),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    for body in ["alpha", "beta"] {
+        assert_eq!(
+            api.insert_document(
+                "demo",
+                "messages",
+                json!({ "author": "Ada", "body": body, "rank": 1 })
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    let first_page = api
+        .convex_named_query(
+            "demo",
+            "messages:listPage",
+            json!({
+                "author": "Ada",
+                "paginationOpts": { "numItems": 1, "cursor": null }
+            }),
+        )
+        .await;
+    assert_eq!(first_page.status(), StatusCode::OK);
+    let first_body = first_page
+        .json::<serde_json::Value>()
+        .await
+        .expect("first runtime paginate response should parse");
+    let first_cursor = first_body["continueCursor"]
+        .as_str()
+        .expect("first runtime paginate response should include a cursor")
+        .to_string();
+    assert_eq!(first_body["isDone"], json!(false));
+
+    let second_page = api
+        .convex_named_query(
+            "demo",
+            "messages:listPage",
+            json!({
+                "author": "Ada",
+                "paginationOpts": { "numItems": 1, "cursor": first_cursor }
+            }),
+        )
+        .await;
+    assert_eq!(second_page.status(), StatusCode::OK);
+    let second_body = second_page
+        .json::<serde_json::Value>()
+        .await
+        .expect("second runtime paginate response should parse");
+    assert_eq!(second_body["page"].as_array().map(Vec::len), Some(1));
+    assert_eq!(second_body["page"][0]["body"], json!("beta"));
+    assert_eq!(second_body["isDone"], json!(false));
+    assert!(
+        second_body["continueCursor"]
+            .as_str()
+            .is_some_and(|cursor| !cursor.is_empty()),
+        "second runtime paginate response should retain a continuation cursor for the final full page"
+    );
+}

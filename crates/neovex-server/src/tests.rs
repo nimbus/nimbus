@@ -10,7 +10,12 @@ use base64::Engine;
 use neovex_core::{TableName, TenantId};
 use neovex_engine::{Service, run_scheduler};
 use neovex_runtime::{RuntimeBundle, RuntimeLimits};
-use neovex_test_support::{HttpApiFixture, ServerFixture, ServiceFixture, WebSocketFixture};
+pub(crate) use neovex_test_support::{
+    DeterministicHarness, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
+    GeneratedTaskPageExpectation, GeneratedTaskRecord, HttpApiFixture, ScenarioMetadata,
+    ServerFixture, ServiceFixture, VerificationHarnessMode, WebSocketFixture,
+    replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
+};
 use reqwest::StatusCode;
 use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair};
@@ -59,7 +64,7 @@ fn convex_registry_with_routes(
     functions: serde_json::Value,
     routes: serde_json::Value,
 ) -> ConvexRegistry {
-    convex_registry_with_routes_and_bundle_and_auth(functions, routes, None, None)
+    convex_registry_with_routes_and_bundle_and_auth_and_schema(functions, routes, None, None, None)
 }
 
 fn convex_registry_with_routes_and_bundle(
@@ -67,7 +72,9 @@ fn convex_registry_with_routes_and_bundle(
     routes: serde_json::Value,
     bundle: Option<&str>,
 ) -> ConvexRegistry {
-    convex_registry_with_routes_and_bundle_and_auth(functions, routes, bundle, None)
+    convex_registry_with_routes_and_bundle_and_auth_and_schema(
+        functions, routes, bundle, None, None,
+    )
 }
 
 fn convex_registry_with_routes_and_bundle_and_auth(
@@ -75,6 +82,22 @@ fn convex_registry_with_routes_and_bundle_and_auth(
     routes: serde_json::Value,
     bundle: Option<&str>,
     auth_config: Option<serde_json::Value>,
+) -> ConvexRegistry {
+    convex_registry_with_routes_and_bundle_and_auth_and_schema(
+        functions,
+        routes,
+        bundle,
+        auth_config,
+        None,
+    )
+}
+
+fn convex_registry_with_routes_and_bundle_and_auth_and_schema(
+    functions: serde_json::Value,
+    routes: serde_json::Value,
+    bundle: Option<&str>,
+    auth_config: Option<serde_json::Value>,
+    schema: Option<serde_json::Value>,
 ) -> ConvexRegistry {
     let tempdir = tempdir().expect("convex manifest tempdir should build");
     let convex_dir = tempdir.path().join(".neovex").join("convex");
@@ -97,6 +120,13 @@ fn convex_registry_with_routes_and_bundle_and_auth(
             serde_json::to_vec_pretty(&auth_config).expect("convex auth json should serialize"),
         )
         .expect("convex auth config should write");
+    }
+    if let Some(schema) = schema {
+        fs::write(
+            convex_dir.join("schema.json"),
+            serde_json::to_vec_pretty(&schema).expect("convex schema json should serialize"),
+        )
+        .expect("convex schema manifest should write");
     }
     if let Some(bundle) = bundle {
         let bundle_path = convex_dir.join("bundle.mjs");

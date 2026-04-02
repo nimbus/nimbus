@@ -104,12 +104,7 @@ impl Service {
     {
         let operation = runtime.enter_operation(tenant_id)?;
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cancelled_for_task = cancelled.clone();
-        tokio::spawn(async move {
-            cancel_wait.await;
-            cancelled_for_task.store(true, std::sync::atomic::Ordering::Release);
-        });
-
+        let request_cancelled = cancelled.clone();
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let should_start_worker = runtime
             .enqueue_mutation_request(QueuedMutationRequest {
@@ -119,7 +114,7 @@ impl Service {
                     MutationExecutionMode::Immediate => None,
                     MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
                 },
-                cancelled,
+                cancelled: request_cancelled,
                 _operation: operation,
                 response: response_tx,
             })
@@ -128,9 +123,18 @@ impl Service {
             self.spawn_journal_mutation_worker(runtime.clone());
         }
 
-        let result = response_rx.await.map_err(|_| {
-            Error::Internal("mutation journal worker dropped response".to_string())
-        })??;
+        tokio::pin!(cancel_wait);
+        let mut response_rx = response_rx;
+        let result = tokio::select! {
+            result = &mut response_rx => {
+                result
+            }
+            _ = &mut cancel_wait => {
+                cancelled.store(true, std::sync::atomic::Ordering::Release);
+                (&mut response_rx).await
+            }
+        }
+        .map_err(|_| Error::Internal("mutation journal worker dropped response".to_string()))??;
         Ok(match result {
             QueuedMutationResult::Immediate(document_id) => {
                 MutationExecutionResult::Immediate(document_id)

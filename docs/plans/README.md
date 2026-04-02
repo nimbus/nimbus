@@ -1,12 +1,19 @@
 # Plans
 
-This directory uses a single active-roadmap model.
+This directory prefers a small-number-of-plans model with clear ownership.
 
-## Canonical roadmap
+## Active execution plans
 
 - `docs/plans/performance-and-architecture-plan.md`
-  - the only active execution roadmap
-  - owns sequencing, dependencies, test expectations, and acceptance criteria
+  - canonical execution record for the completed architecture and performance
+    cycle it covered
+  - still owns any remaining work explicitly tracked inside that roadmap
+- `docs/plans/verification-harness-plan.md`
+  - canonical execution plan for the follow-on verification, simulation,
+    differential-testing, and consistency-verifier workstream
+- `docs/plans/scalability-and-architecture-follow-on-plan.md`
+  - canonical execution plan for the remaining follow-on scalability, query,
+    reactivity, and task-lifecycle architecture work from the April 2026 review
 
 ## Archived plans
 
@@ -17,12 +24,16 @@ This directory uses a single active-roadmap model.
 
 ## How To Use This Folder
 
-- Start with `performance-and-architecture-plan.md` for any implementation work.
-- For autonomous Codex runs, reread the `Codex Execution Protocol`,
-  `Roadmap Status Ledger`, and `Execution Log` near the top of the master plan
-  before coding.
+- Start with the plan that owns your workstream.
+- For architecture-cycle work, start with
+  `performance-and-architecture-plan.md`.
+- For harness, simulation, adversarial-testing, and differential-verification
+  work, start with `verification-harness-plan.md`.
+- For remaining follow-on scalability, subscription-delivery, planner, scan,
+  and task-lifecycle work, start with
+  `scalability-and-architecture-follow-on-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
-  before starting a new roadmap item.
+  before starting a new roadmap item inside the owning plan.
 - Use archived plans only for historical rationale or earlier exploration.
 - Use `docs/research/` for north-star architecture and background research, not
   execution sequencing.

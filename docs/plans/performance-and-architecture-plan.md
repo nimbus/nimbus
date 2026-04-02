@@ -1,8 +1,9 @@
 # Performance And Architecture Master Plan
 
-This is the canonical execution roadmap for the next architecture and
-performance cycle. It replaces the old split-plan setup as the single source of
-truth for implementation sequencing, agent execution, and verification.
+This is the canonical execution roadmap for the architecture and performance
+cycle it covers. It replaced the old split-plan setup as the single source of
+truth for that cycle's implementation sequencing, agent execution, and
+verification.
 
 Reviewed against:
 
@@ -46,6 +47,15 @@ Use it as:
 - the canonical sequencing guide when multiple agents are working in parallel
 - the verification contract for tests, metrics, and acceptance criteria
 
+Dedicated follow-on verification-harness work now lives in
+`docs/plans/verification-harness-plan.md`, and dedicated follow-on scalability
+and architecture work from the April 2026 review now lives in
+`docs/plans/scalability-and-architecture-follow-on-plan.md`. This master
+roadmap remains the canonical execution record for the architecture cycle it
+covered, while the newer plans own future deterministic simulation,
+generated-history, differential-testing, consistency-verifier, and remaining
+follow-on scalability work.
+
 Every roadmap item below is written so an agent can:
 
 1. find the right code quickly
@@ -58,6 +68,9 @@ Every roadmap item below is written so an agent can:
 ## Canonical Plan Rules
 
 1. This document is the only canonical execution spec for the work it covers.
+   Follow-on verification-harness work is now owned by
+   `docs/plans/verification-harness-plan.md`, and follow-on scalability work is
+   now owned by `docs/plans/scalability-and-architecture-follow-on-plan.md`.
 
 2. `docs/plans/archive/async-storage-and-service-rewrite-plan.md` and
    `docs/plans/archive/runtime-http-cancellation-and-storage-plan.md` are
@@ -288,6 +301,10 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | 3F | refined | TDD-hardened `MutationExecutionUnit` after review: OCC now records the applied snapshot sequence rather than the durable head, and repeated writes to the same document preserve insert semantics, collapse insert-then-delete to a no-op, and clear stale write ordering so restaged writes commit exactly once. Added regressions for insert-update, insert-delete, revert-restage, and durable-but-unapplied conflict detection under apply lag. | `cargo test -p neovex-engine mutation_execution_unit_insert_then_update_commits_as_single_insert -- --nocapture`; `cargo test -p neovex-engine mutation_execution_unit_insert_then_delete_commits_as_noop -- --nocapture`; `cargo test -p neovex-engine mutation_execution_unit_restage_after_revert_commits_once -- --nocapture`; `cargo test -p neovex-engine mutation_execution_unit_conflicts_with_durable_unapplied_write -- --nocapture`; `cargo fmt --all --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | keep execution-unit reads, snapshot sequencing, and conflict baselines anchored to the same applied view |
+| 2026-04-01 | 6A | refined | TDD-hardened the durable-journal and applied-visibility boundary after review: `DurableMutationRecord` now hashes a canonical payload shape that survives generic serde or MessagePack round-trips, and async get, query, and paginate calls now remain cancellable while waiting for the applied watermark instead of only after blocking storage work begins. Added regressions for journal records with and without scheduled execution ids plus apply-lag cancellation on all async read entrypoints. | `cargo test -p neovex-core durable_mutation_record_roundtrips_and_verifies_integrity -- --nocapture`; `cargo test -p neovex-core durable_mutation_record_without_scheduler_id_roundtrips_and_verifies_integrity -- --nocapture`; `cargo test -p neovex-engine get_document_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo test -p neovex-engine query_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo test -p neovex-engine paginate_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo fmt --all --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | keep durable-record encoding canonical and applied-watermark waits cancellation-aware on every async read path |
+| 2026-04-01 | 9B | refined | Extended the shadow-materializer parity harness to use the same schema- and principal-aware planning helpers plus planner-residual pagination semantics as the live service, so indexed or policy-filtered shadow queries now compare full page results and cursors against the redb-backed oracle instead of only matching raw document sets. | `cargo test -p neovex-engine shadow_materializer_queries_match_live_service_path -- --nocapture`; `cargo test -p neovex-engine shadow_materializer_schema_aware_queries_match_live_service_path -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep shadow parity anchored to live planner semantics before any serving-path promotion |
+| 2026-04-01 | 6A | refined | Verified and fixed two post-review Phase 6 gaps: journaled async mutations no longer leave behind detached cancellation-watcher tasks on non-cancelable paths, and sync point reads, queries, and pagination now wait for the same applied watermark as async reads before consulting materialized state. | `cargo test -p neovex-engine mutation_async_non_cancelable_call_drops_unused_cancellation_future_after_completion -- --nocapture`; `cargo test -p neovex-engine sync_query_waits_for_applied_journal_visibility_and_records_wait_metrics -- --nocapture`; `cargo test -p neovex-engine sync_get_document_waits_for_applied_journal_visibility -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep sync and async serving reads behind the same applied-watermark contract |
 | 2026-04-01 | 8B | refined | Verified and fixed the post-review embedded-replica drift: replica catch-up now refreshes schema state even when there are no new durable mutation records, replica-local query and pagination evaluation now reuse the same schema- and principal-aware planning helpers as the live service, and new regressions cover schema-only policy changes plus index rebuild changes after bootstrap. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-engine embedded_replica_ -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep the embedded replica aligned with live-service read semantics until any future serving promotion has stronger evidence |
 | 2026-04-01 | 9B | done | Added a TigerBeetle-inspired robustness harness around the shadow materializer and durable-journal replay path. The storage test matrix now proves replay convergence after interrupted compaction, rejection of corrupted journal and manifest inputs, and deterministic seeded rebuild parity against the redb-backed oracle across multiple generated histories; recovery bookkeeping also now preserves compaction counts monotonically when replay itself performs a compaction. Existing engine shadow-parity coverage remains in the verification matrix so redb stays the correctness oracle until any future serving promotion is explicitly justified. | `cargo test -p neovex-storage shadow_materializer_ -- --nocapture`; `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine shadow_materializer -- --nocapture`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | no further non-deferred roadmap items remain; only deferred or blocked items are left |
 | 2026-04-01 | 9B | checkpointed | Promoted 9B after completing 9A. The current implementation slice is focused on TigerBeetle-style robustness testing rather than new serving behavior: deterministic replay after interrupted materialization and interrupted compaction, corruption detection for journal or manifest inputs, and a seeded property-style rebuild harness that repeatedly compares shadow materialization against the authoritative redb-backed state. | document and code review | add the new storage-first robustness tests, extend shadow parity coverage where helpful, run targeted verification plus the crate-level suites, then mark 9B done |

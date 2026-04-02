@@ -48,8 +48,8 @@ pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) tenant_id: &'a TenantId,
     pub(super) convex_registry: &'a Arc<ConvexRegistry>,
-    pub(super) subscription_tx: &'a mpsc::UnboundedSender<SubscriptionUpdate>,
-    pub(super) outbound_tx: &'a mpsc::UnboundedSender<ServerMessage>,
+    pub(super) subscription_tx: &'a mpsc::Sender<SubscriptionUpdate>,
+    pub(super) outbound_tx: &'a mpsc::Sender<ServerMessage>,
     pub(super) transforms: &'a Arc<RwLock<ConvexSubscriptionTransforms>>,
     pub(super) runtime_cancellation: &'a HostCallCancellation,
 }
@@ -68,9 +68,12 @@ pub(super) async fn handle_convex_socket_for_tenant(
     tenant_id: TenantId,
     initial_auth: Option<InvocationAuth>,
 ) {
+    const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
+
     let (socket_tx, mut socket_rx) = socket.split();
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<ServerMessage>();
-    let (subscription_tx, subscription_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (outbound_tx, outbound_rx) = mpsc::channel::<ServerMessage>(OUTBOUND_CHANNEL_CAPACITY);
+    let (subscription_tx, subscription_rx) =
+        mpsc::channel::<SubscriptionUpdate>(neovex_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
     let transforms = Arc::new(RwLock::new(ConvexSubscriptionTransforms::default()));
     let runtime_cancellation = HostCallCancellation::default();
     let convex_registry = state

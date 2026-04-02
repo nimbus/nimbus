@@ -4,6 +4,7 @@ import {
   createAppFixture,
   readConvexFile,
   readConvexJson,
+  readGeneratedFile,
   runCli,
 } from "./helpers.mjs";
 
@@ -11,6 +12,7 @@ async function runRuntimeFixtures() {
   await testUnsupportedMultiOperationFixture();
   await testRuntimeOnlyQueryFixture();
   await testRuntimeOnlyPaginatedQueryFixture();
+  await testImportedServerValidatorsFixture();
   await testUnsupportedPatchWithoutIdValidatorFixture();
 }
 
@@ -118,6 +120,44 @@ export const listPage = paginatedQuery({
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /op_neovex_ctx_query_paginate/);
   assert.match(runtimeBundle, /__builderId/);
+}
+
+async function testImportedServerValidatorsFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { query } from "./_generated/server";
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
+import { v } from "convex/values";
+
+export const listPage = query({
+  args: {
+    author: v.string(),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(
+    v.object({
+      author: v.string(),
+      body: v.string(),
+    }),
+  ),
+  handler: async (_ctx, { author }) => ({
+    page: [{ author, body: "hello" }],
+    continueCursor: "",
+    isDone: true,
+    splitCursor: null,
+    pageStatus: null,
+  }),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const apiFile = await readGeneratedFile(appDir, "api.ts");
+  assert.match(apiFile, /paginationOpts/);
+  assert.match(apiFile, /"continueCursor": string/);
+  assert.match(apiFile, /"page": \(\{/);
 }
 
 async function testUnsupportedPatchWithoutIdValidatorFixture() {

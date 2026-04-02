@@ -47,6 +47,50 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+  harness-pr:
+    name: Verification Harness (PR / ${{ matrix.surface }})
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        surface: [storage, engine, server]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run PR verification harness corpus
+        run: bash scripts/verification-harness.sh pr ${{ matrix.surface }}
+
+  harness-nightly:
+    name: Verification Harness (Nightly / ${{ matrix.surface }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        surface: [storage, engine, server]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run nightly verification harness corpus
+        run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
+
   deny:
     name: Dependency audit
     runs-on: ubuntu-latest

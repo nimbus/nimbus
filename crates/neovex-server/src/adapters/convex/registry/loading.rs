@@ -44,6 +44,13 @@ impl ConvexRegistry {
             Some(path) => read_http_route_manifest(path.as_ref())?,
             None => Vec::new(),
         };
+        let schema = path
+            .parent()
+            .map(|directory| directory.join("schema.json"))
+            .as_deref()
+            .map(read_schema_manifest)
+            .transpose()?
+            .flatten();
         let runtime_bundle = path
             .parent()
             .map(|directory| directory.join("bundle.mjs"))
@@ -64,6 +71,7 @@ impl ConvexRegistry {
         Ok(Self {
             functions,
             http_routes,
+            schema,
             runtime_bundle,
             auth_verifier,
             runtime_policy,
@@ -113,4 +121,25 @@ fn load_runtime_bundle(bundle_path: &Path) -> Result<RuntimeBundle, Error> {
             bundle_path.display()
         ))
     })
+}
+
+fn read_schema_manifest(path: &Path) -> Result<Option<Schema>, Error> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(Error::InvalidInput(format!(
+                "failed to read convex schema manifest {}: {error}",
+                path.display()
+            )));
+        }
+    };
+
+    let manifest: ConvexSchemaManifest = serde_json::from_str(&contents).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to parse convex schema manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    manifest.into_schema()
 }

@@ -47,6 +47,68 @@ useful subset cleanly rather than claim blanket Convex parity.
   `usePaginatedQuery` still throw into React error boundaries
 - runtime diagnostics are available at `GET /debug/runtime/metrics`
 
+## Differential Verification
+
+The supported Convex subset now has a first external differential harness in
+`packages/convex/src/differential.mjs`.
+
+This first slice is intentionally narrow and explicit:
+
+- mutations
+- queries
+- paginated queries
+- subscriptions
+
+The shared fixture app lives in
+`packages/convex/fixtures/differential_app/convex/` and defines one stable
+messages workload used for both targets.
+
+The runner compares:
+
+- Neovex plus the in-repo `packages/convex` client
+- an external Convex deployment plus the official Convex browser client source
+
+Result normalization is limited to documented transport-shape differences such
+as pagination envelope fields. Unsupported surfaces are rejected explicitly so
+the differential contract stays aligned with the documented supported subset.
+The runner now compares named semantic slices independently and reports every
+mismatch it finds in one pass instead of stopping at the first structural diff.
+
+From the repo root:
+
+```bash
+npm run test:differential --workspace convex -- --neovex-only
+```
+
+To export the shared fixture app for external provisioning:
+
+```bash
+npm run test:differential --workspace convex -- --emit-fixture-dir /tmp/neovex-convex-differential-app
+```
+
+To run the full external comparison after provisioning that fixture app on a
+Convex deployment:
+
+```bash
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210 \
+npm run test:differential --workspace convex -- --require-external
+```
+
+If a nearby `convex-backend` checkout is available, the runner can also start
+an official local Convex deployment automatically and compare against that
+local oracle directly:
+
+```bash
+npm run test:differential --workspace convex -- --require-external
+```
+
+If the official Convex browser source is not available in a nearby
+`convex-backend` checkout, set
+`NEOVEX_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY=/absolute/path/to/npm-packages/convex/src/browser/index.ts`.
+
+Scheduling and supported auth-shape differential cases are planned follow-on
+coverage for this suite rather than part of the first landed slice.
+
 ## Demo Entry Points
 
 From the repo root:

@@ -1,0 +1,8 @@
+{
+  "name": "neovex-convex-differential-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "convex": "*"
+  }
+}

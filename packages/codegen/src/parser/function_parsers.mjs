@@ -51,7 +51,7 @@ async function parseServerCall(
     };
   }
 
-  const definition = parseServerDefinition(args[0].trim(), filePath);
+  const definition = parseServerDefinition(args[0].trim(), filePath, compileBindings);
   let plan;
   let runtimeHandler;
   try {

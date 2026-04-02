@@ -22,7 +22,7 @@ impl ConvexHostBridge {
             Some(result) => match result {
                 Ok(document) => {
                     self.record_document_read(&payload.table, &payload.id);
-                    ConvexRuntimeResponseEnvelope::ok(document.to_json())
+                    ConvexRuntimeResponseEnvelope::ok(document.into_json())
                 }
                 Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
                 Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
@@ -43,7 +43,7 @@ impl ConvexHostBridge {
                 {
                     Ok(document) => {
                         self.record_document_read(&payload.table, &payload.id);
-                        ConvexRuntimeResponseEnvelope::ok(document.to_json())
+                        ConvexRuntimeResponseEnvelope::ok(document.into_json())
                     }
                     Err(Error::DocumentNotFound(_)) => {
                         ConvexRuntimeResponseEnvelope::ok(Value::Null)
@@ -88,7 +88,7 @@ impl ConvexHostBridge {
         ) {
             Ok(document) => {
                 self.record_document_read(&payload.table, &payload.id);
-                ConvexRuntimeResponseEnvelope::ok(document.to_json())
+                ConvexRuntimeResponseEnvelope::ok(document.into_json())
             }
             Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
             Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),

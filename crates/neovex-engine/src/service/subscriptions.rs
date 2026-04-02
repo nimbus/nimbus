@@ -11,6 +11,17 @@ use super::{
     queries::{evaluate_with_index_cancellable_for_principal, table_policy_revision},
 };
 
+fn subscription_send_failure(error: mpsc::error::TrySendError<SubscriptionUpdate>) -> Error {
+    match error {
+        mpsc::error::TrySendError::Full(_) => {
+            Error::Internal("subscription channel full".to_string())
+        }
+        mpsc::error::TrySendError::Closed(_) => {
+            Error::Internal("subscription channel closed".to_string())
+        }
+    }
+}
+
 impl Service {
     /// Registers a new subscription, sends the initial result, and returns the
     /// stable id plus a cleanup handle owned by the caller.
@@ -19,7 +30,7 @@ impl Service {
         tenant_id: &TenantId,
         query: Query,
         request_id: String,
-        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+        sender: mpsc::Sender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
         self.subscribe_with_principal(
             tenant_id,
@@ -38,7 +49,7 @@ impl Service {
         query: Query,
         principal: &PrincipalContext,
         request_id: String,
-        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+        sender: mpsc::Sender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
@@ -69,9 +80,9 @@ impl Service {
                     deleted_documents: Vec::new(),
                     data: documents_to_json(documents),
                 };
-                if sender.send(update).is_err() {
+                if let Err(error) = sender.try_send(update) {
                     runtime.subscriptions.remove(subscription_id);
-                    return Err(Error::Internal("subscription channel closed".to_string()));
+                    return Err(subscription_send_failure(error));
                 }
                 runtime.subscriptions.activate(subscription_id);
                 Ok(registration)
@@ -90,7 +101,7 @@ impl Service {
         tenant_id: TenantId,
         query: Query,
         request_id: String,
-        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+        sender: mpsc::Sender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
         self.subscribe_async_with_principal(
             tenant_id,
@@ -109,7 +120,7 @@ impl Service {
         query: Query,
         principal: PrincipalContext,
         request_id: String,
-        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+        sender: mpsc::Sender<SubscriptionUpdate>,
     ) -> Result<SubscriptionRegistration> {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let schema = runtime.schema();
@@ -140,9 +151,9 @@ impl Service {
             deleted_documents: Vec::new(),
             data: documents_to_json(documents),
         };
-        if sender.send(update).is_err() {
+        if let Err(error) = sender.try_send(update) {
             runtime.subscriptions.remove(subscription_id);
-            return Err(Error::Internal("subscription channel closed".to_string()));
+            return Err(subscription_send_failure(error));
         }
         runtime.subscriptions.activate(subscription_id);
         Ok(registration)

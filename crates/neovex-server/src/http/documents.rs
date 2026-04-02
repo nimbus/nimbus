@@ -136,7 +136,7 @@ pub(crate) async fn list_documents(
     Ok(Json(DataResponse {
         data: documents
             .into_iter()
-            .map(|document| document.to_json())
+            .map(neovex_core::Document::into_json)
             .collect(),
     }))
 }
@@ -169,6 +169,6 @@ pub(crate) async fn get_document(
         )
         .await?;
     Ok(Json(DocumentDataResponse {
-        document: document.to_json(),
+        document: document.into_json(),
     }))
 }

@@ -75,7 +75,8 @@ impl ConvexHostBridge {
                     cancellation,
                 )
                 .await
-                .and_then(|page| {
+                .and_then(|mut page| {
+                    synthesize_runtime_paginate_cursor(&query, payload.page_size, &mut page)?;
                     self.record_paginated_window_read(
                         &query,
                         payload.page_size,
@@ -119,7 +120,8 @@ impl ConvexHostBridge {
                 &self.principal,
                 cancellation,
             )
-            .and_then(|page| {
+            .and_then(|mut page| {
+                synthesize_runtime_paginate_cursor(&query, payload.page_size, &mut page)?;
                 self.record_paginated_window_read(&query, payload.page_size, after.as_ref(), &page);
                 let value = serde_json::to_value(page)
                     .map_err(|error| Error::Serialization(error.to_string()))?;

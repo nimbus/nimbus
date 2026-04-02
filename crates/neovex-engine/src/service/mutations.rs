@@ -453,7 +453,7 @@ impl Service {
                         deleted_documents: deleted_documents.to_vec(),
                         data: documents_to_json(documents),
                     };
-                    if subscription.sender.send(update).is_err() {
+                    if subscription.sender.try_send(update).is_err() {
                         failed.push(subscription.id);
                     }
                 }
@@ -465,7 +465,7 @@ impl Service {
                     );
                     if subscription
                         .sender
-                        .send(SubscriptionUpdate::Error {
+                        .try_send(SubscriptionUpdate::Error {
                             subscription_id: subscription.id,
                             request_id: None,
                             message: error.to_string(),

@@ -78,7 +78,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
             Ok(Value::Array(
                 documents
                     .into_iter()
-                    .map(|document| document.to_json())
+                    .map(neovex_core::Document::into_json)
                     .collect(),
             ))
         }
@@ -88,7 +88,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                 .get_document_async_with_principal(tenant_id.clone(), table, id, principal)
                 .await
             {
-                Ok(document) => Ok(document.to_json()),
+                Ok(document) => Ok(document.into_json()),
                 Err(Error::DocumentNotFound(_)) => Ok(Value::Null),
                 Err(error) => Err(error),
             }
@@ -105,7 +105,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
             Ok(documents
                 .drain(..)
                 .next()
-                .map(|document| document.to_json())
+                .map(neovex_core::Document::into_json)
                 .unwrap_or(Value::Null))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
@@ -125,7 +125,7 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
             Ok(documents
                 .drain(..)
                 .next()
-                .map(|document| document.to_json())
+                .map(neovex_core::Document::into_json)
                 .unwrap_or(Value::Null))
         }
     }
