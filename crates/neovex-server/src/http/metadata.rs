@@ -41,6 +41,20 @@ pub(crate) async fn runtime_diagnostics(
     })
 }
 
+/// Runs the on-demand tenant consistency verifier and returns the diagnostic report.
+pub(crate) async fn tenant_consistency_report(
+    State(state): State<Arc<AppState>>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<neovex_engine::ConsistencyVerificationReport>, AppError> {
+    let tenant_id = TenantId::new(tenant_id)?;
+    let report = state
+        .service
+        .clone()
+        .verify_consistency_async(tenant_id)
+        .await?;
+    Ok(Json(report))
+}
+
 /// Redirects to the repo-hosted demos index.
 pub(crate) async fn demos_redirect() -> Redirect {
     Redirect::permanent("/demos/")

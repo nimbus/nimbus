@@ -10,6 +10,8 @@ use neovex_core::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+pub const DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY: usize = 256;
+
 /// A subscription event emitted by the engine.
 #[derive(Debug, Clone)]
 pub enum SubscriptionUpdate {
@@ -36,7 +38,7 @@ struct Subscription {
     principal: PrincipalContext,
     principal_snapshot: PrincipalSnapshot,
     policy_revision: String,
-    sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+    sender: mpsc::Sender<SubscriptionUpdate>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +46,7 @@ pub struct SubscriptionDelivery {
     pub id: u64,
     pub query: Query,
     pub principal: PrincipalContext,
-    pub sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+    pub sender: mpsc::Sender<SubscriptionUpdate>,
 }
 
 #[derive(Debug)]
@@ -131,7 +133,7 @@ impl SubscriptionRegistry {
         principal: PrincipalContext,
         principal_snapshot: PrincipalSnapshot,
         policy_revision: String,
-        sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+        sender: mpsc::Sender<SubscriptionUpdate>,
         active: bool,
     ) -> SubscriptionRegistration {
         let id = self.state.next_id.fetch_add(1, Ordering::SeqCst);
@@ -240,7 +242,7 @@ impl SubscriptionRegistry {
         }
 
         for (subscription_id, _principal_snapshot, sender) in removed {
-            let _ = sender.send(SubscriptionUpdate::Error {
+            let _ = sender.try_send(SubscriptionUpdate::Error {
                 subscription_id,
                 request_id: None,
                 message: message.clone(),
@@ -260,7 +262,7 @@ impl SubscriptionRegistry {
         );
 
         for subscription in subscriptions.into_values() {
-            let _ = subscription.sender.send(SubscriptionUpdate::Error {
+            let _ = subscription.sender.try_send(SubscriptionUpdate::Error {
                 subscription_id: subscription.id,
                 request_id: None,
                 message: message.clone(),
@@ -284,7 +286,7 @@ mod tests {
     #[test]
     fn dropping_registration_unregisters_subscription() {
         let registry = SubscriptionRegistry::new();
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let registration = registry.register(
             Query {
                 table: TableName::new("tasks").expect("table name should be valid"),
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn unfiltered_registrations_store_coarse_table_dependencies() {
         let registry = SubscriptionRegistry::new();
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let query = Query {
             table: TableName::new("tasks").expect("table name should be valid"),
             filters: Vec::new(),

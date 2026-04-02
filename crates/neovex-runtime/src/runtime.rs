@@ -744,6 +744,38 @@ function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
         session_id: sessionId,
       });
     },
+    async paginate(paginationOpts) {
+      if (!paginationOpts || typeof paginationOpts !== "object") {
+        throw new Error("ctx.db.query(...).paginate(...) requires pagination options");
+      }
+      if (typeof paginationOpts.numItems !== "number") {
+        throw new Error("ctx.db.query(...).paginate(...) requires paginationOpts.numItems");
+      }
+      const cursor =
+        typeof paginationOpts.cursor === "string" ? paginationOpts.cursor : null;
+      const page = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
+        builder_id: builderId,
+        page_size: paginationOpts.numItems,
+        cursor,
+        session_id: sessionId,
+      });
+      const pageItems = Array.isArray(page?.data) ? page.data : [];
+      const hasContinuation =
+        typeof page?.next_cursor === "string" &&
+        pageItems.length === paginationOpts.numItems &&
+        pageItems.length > 0;
+      const continueCursor =
+        page && typeof page.next_cursor === "string"
+          ? page.next_cursor
+          : cursor ?? "";
+      return {
+        page: pageItems,
+        isDone: page?.has_more === true ? false : !hasContinuation,
+        continueCursor,
+        splitCursor: null,
+        pageStatus: null,
+      };
+    },
     first() {
       return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_first", {
         builder_id: builderId,
@@ -1830,6 +1862,87 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct PaginateHost {
+        sync_calls: Mutex<Vec<HostCallRequest>>,
+        async_calls: Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl HostBridge for PaginateHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            self.sync_calls
+                .lock()
+                .expect("paginate host sync lock should not be poisoned")
+                .push(request.clone());
+            let value = match request.operation.as_str() {
+                "convex.ctx.db.query.start" => Value::String("builder-1".to_string()),
+                _ => Value::Null,
+            };
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": value,
+            }))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.async_calls
+                .lock()
+                .expect("paginate host async lock should not be poisoned")
+                .push(request.clone());
+            Box::pin(async move {
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "data": [
+                            { "body": "hello" }
+                        ],
+                        "has_more": false,
+                        "next_cursor": Value::Null,
+                    },
+                }))
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct PaginateContinuationHost;
+
+    impl HostBridge for PaginateContinuationHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            let value = match request.operation.as_str() {
+                "convex.ctx.db.query.start" => Value::String("builder-1".to_string()),
+                _ => Value::Null,
+            };
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": value,
+            }))
+        }
+
+        fn call_async(
+            &self,
+            _request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            Box::pin(async move {
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "data": [
+                            { "body": "beta" }
+                        ],
+                        "has_more": false,
+                        "next_cursor": "after-beta",
+                    },
+                }))
+            })
+        }
+    }
+
+    #[derive(Default)]
     struct SyncOnlyHost {
         calls: Mutex<Vec<HostCallRequest>>,
     }
@@ -2754,6 +2867,134 @@ export {};
                         "session_id": "session-1",
                     }
                 }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_query_paginate_uses_async_host_bridge_and_returns_official_shape() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function () {
+  const ctx = globalThis.__neovexCreateContext();
+  return await ctx.db.query("messages").paginate({
+    numItems: 2,
+    cursor: null,
+    maximumRowsRead: 32,
+  });
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let host = Arc::new(PaginateHost::default());
+        let runtime = NeovexRuntime::new(host.clone());
+        let result = runtime
+            .invoke_bundle(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:listPage".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                },
+            )
+            .await
+            .expect("paginate query should succeed");
+
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "page": [
+                    { "body": "hello" }
+                ],
+                "isDone": true,
+                "continueCursor": "",
+                "splitCursor": null,
+                "pageStatus": null,
+            })
+        );
+
+        let sync_calls = host
+            .sync_calls
+            .lock()
+            .expect("paginate host sync lock should not be poisoned")
+            .clone();
+        assert_eq!(sync_calls.len(), 1);
+        assert_eq!(sync_calls[0].operation, "convex.ctx.db.query.start");
+
+        let async_calls = host
+            .async_calls
+            .lock()
+            .expect("paginate host async lock should not be poisoned")
+            .clone();
+        assert_eq!(async_calls.len(), 1);
+        assert_eq!(async_calls[0].operation, "convex.ctx.db.query.paginate");
+        assert_eq!(
+            async_calls[0].payload,
+            serde_json::json!({
+                "builder_id": "builder-1",
+                "page_size": 2,
+                "cursor": Value::Null,
+                "session_id": "session-1",
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_query_paginate_treats_full_page_with_cursor_as_not_done() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function () {
+  const ctx = globalThis.__neovexCreateContext();
+  return await ctx.db.query("messages").paginate({
+    numItems: 1,
+    cursor: "after-alpha",
+  });
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let host = Arc::new(PaginateContinuationHost);
+        let runtime = NeovexRuntime::new(host);
+        let result = runtime
+            .invoke_bundle(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:listPage".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                },
+            )
+            .await
+            .expect("paginate query should succeed");
+
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "page": [
+                    { "body": "beta" }
+                ],
+                "isDone": false,
+                "continueCursor": "after-beta",
+                "splitCursor": null,
+                "pageStatus": null,
             })
         );
     }

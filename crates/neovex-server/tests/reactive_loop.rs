@@ -3,7 +3,10 @@ use std::fs;
 use neovex_engine::{Service, run_scheduler};
 use neovex_runtime::RuntimeBundle;
 use neovex_server::{ConvexRegistry, build_router, build_router_with_convex};
-use neovex_test_support::{HttpApiFixture, ServerFixture, ServiceFixture, WebSocketFixture};
+use neovex_test_support::{
+    BlockingFaultInjector, DeterministicHarness, HttpApiFixture, ScenarioMetadata, ServerFixture,
+    ServiceFixture, WebSocketFixture,
+};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::sync::watch;

@@ -38,13 +38,30 @@ impl Document {
         rmp_serde::from_slice(bytes)
     }
 
-    /// Converts the document into the external JSON representation.
-    pub fn to_json(&self) -> Value {
-        let mut map = self.fields.clone();
+    /// Converts the document into the external JSON representation by moving its fields.
+    pub fn into_json(self) -> Value {
+        let mut map = serde_json::Map::with_capacity(self.fields.len() + 2);
         map.insert("_id".to_string(), Value::String(self.id.to_string()));
         map.insert(
             "_creationTime".to_string(),
             Value::Number(serde_json::Number::from(self.creation_time.0)),
+        );
+        map.extend(self.fields);
+        Value::Object(map)
+    }
+
+    /// Converts the document into the external JSON representation.
+    pub fn to_json(&self) -> Value {
+        let mut map = serde_json::Map::with_capacity(self.fields.len() + 2);
+        map.insert("_id".to_string(), Value::String(self.id.to_string()));
+        map.insert(
+            "_creationTime".to_string(),
+            Value::Number(serde_json::Number::from(self.creation_time.0)),
+        );
+        map.extend(
+            self.fields
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
         );
         Value::Object(map)
     }

@@ -1,4 +1,8 @@
 use super::*;
+use neovex_storage::{FaultPoint, ManualClock};
+use reqwest::StatusCode;
+use std::sync::Arc;
+use tokio::time::timeout;
 
 #[tokio::test]
 async fn websocket_unsubscribe_stops_receiving_updates() {
@@ -105,4 +109,121 @@ async fn websocket_disconnect_drops_subscription_without_explicit_unsubscribe() 
     })
     .await
     .expect("connection teardown should release subscription handles");
+}
+
+#[tokio::test]
+async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keeps_pushing() {
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let harness = DeterministicHarness::with_fault_injector(
+        ScenarioMetadata::new("websocket-reconnect-resubscribe", 74),
+        Arc::new(ManualClock::new(neovex_core::Timestamp(74_000))),
+        faults.clone(),
+    );
+    let fixture = ServiceFixture::new_with_harness(harness.clone(), |path, harness| {
+        Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
+    });
+    let service = fixture.service();
+    let server = ServerFixture::start(build_router(service.clone())).await;
+    let api = HttpApiFixture::new(&server);
+    let tenant_id = neovex_core::TenantId::new("demo").expect("tenant id should be valid");
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let mut socket = WebSocketFixture::connect(&api.ws_url("/ws"), "demo").await;
+    socket.subscribe_all("initial", "tasks").await;
+    let initial = socket.next_json().await;
+    assert_eq!(initial["type"], json!("subscription_result"));
+    assert_eq!(initial["request_id"], json!("initial"));
+    assert_eq!(initial["data"], json!([]));
+
+    let insert_task = tokio::spawn({
+        let client = server.client().clone();
+        let url = server.http_url("/api/tenants/demo/documents");
+        async move {
+            client
+                .post(url)
+                .json(&json!({
+                    "table": "tasks",
+                    "fields": { "title": "during-lag" }
+                }))
+                .send()
+                .await
+                .expect("lagged insert request should succeed")
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("write should block after durable append but before apply");
+    let insert_response = timeout(Duration::from_secs(1), insert_task)
+        .await
+        .expect("insert should acknowledge while apply is blocked")
+        .expect("insert task should join");
+    assert_eq!(insert_response.status(), StatusCode::CREATED);
+
+    drop(socket);
+
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if service
+                .active_subscription_count(&tenant_id)
+                .expect("subscription count should load")
+                == 0
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("disconnect should release the original subscription");
+
+    let mut reconnected = WebSocketFixture::connect(&api.ws_url("/ws"), "demo").await;
+    reconnected.subscribe_all("reconnected", "tasks").await;
+    assert!(
+        reconnected
+            .next_json_with_timeout(Duration::from_millis(150))
+            .await
+            .is_none(),
+        "resubscribe should wait for applied visibility while apply is still blocked"
+    );
+
+    faults.release();
+
+    let caught_up = reconnected
+        .next_json_with_timeout(Duration::from_secs(2))
+        .await
+        .expect("reconnected subscription should catch up after apply resumes");
+    assert_eq!(caught_up["type"], json!("subscription_result"));
+    assert_eq!(caught_up["request_id"], json!("reconnected"));
+    assert_eq!(caught_up["data"][0]["title"], json!("during-lag"));
+
+    assert_eq!(
+        api.insert_document("demo", "tasks", json!({ "title": "after-reconnect" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    let pushed = reconnected
+        .next_json_with_timeout(Duration::from_secs(2))
+        .await
+        .expect("reconnected subscription should continue receiving pushes");
+    assert_eq!(pushed["type"], json!("subscription_result"));
+    assert!(pushed.get("request_id").is_none());
+    let titles = pushed["data"]
+        .as_array()
+        .expect("reactive payload should be an array")
+        .iter()
+        .map(|document| {
+            document["title"]
+                .as_str()
+                .expect("title should be a string")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(titles, vec!["during-lag", "after-reconnect"]);
 }

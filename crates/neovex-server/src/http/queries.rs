@@ -23,7 +23,7 @@ pub(crate) async fn query_documents(
     Ok(Json(DataResponse {
         data: documents
             .into_iter()
-            .map(|document| document.to_json())
+            .map(neovex_core::Document::into_json)
             .collect(),
     }))
 }

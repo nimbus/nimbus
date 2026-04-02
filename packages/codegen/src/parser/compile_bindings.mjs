@@ -1,3 +1,5 @@
+import { convexValidators } from "../schema.mjs";
+
 function createCompileBindings(source) {
   const bindings = {};
   const importPattern = /import\s*\{([\s\S]*?)\}\s*from\s*["']([^"']+)["'];?/g;
@@ -21,6 +23,14 @@ function createCompileBindings(source) {
 }
 
 function createKnownImportBinding(sourcePath, importedName) {
+  if (sourcePath === "convex/server" || sourcePath === "neovex/server") {
+    if (importedName === "paginationOptsValidator") {
+      return createPaginationOptionsValidator();
+    }
+    if (importedName === "paginationResultValidator") {
+      return createPaginationResultValidator;
+    }
+  }
   if (sourcePath.endsWith("/_generated/api")) {
     if (importedName === "api") {
       return createGeneratedReferenceTree({ visibility: "public" });
@@ -44,6 +54,37 @@ function createKnownImportBinding(sourcePath, importedName) {
     }
   }
   return undefined;
+}
+
+function createPaginationOptionsValidator() {
+  return convexValidators.object({
+    numItems: convexValidators.number(),
+    cursor: convexValidators.union(convexValidators.string(), convexValidators.null()),
+    endCursor: convexValidators.optional(
+      convexValidators.union(convexValidators.string(), convexValidators.null()),
+    ),
+    id: convexValidators.optional(convexValidators.number()),
+    maximumRowsRead: convexValidators.optional(convexValidators.number()),
+    maximumBytesRead: convexValidators.optional(convexValidators.number()),
+  });
+}
+
+function createPaginationResultValidator(itemValidator) {
+  return convexValidators.object({
+    page: convexValidators.array(itemValidator),
+    continueCursor: convexValidators.string(),
+    isDone: convexValidators.boolean(),
+    splitCursor: convexValidators.optional(
+      convexValidators.union(convexValidators.string(), convexValidators.null()),
+    ),
+    pageStatus: convexValidators.optional(
+      convexValidators.union(
+        convexValidators.literal("SplitRecommended"),
+        convexValidators.literal("SplitRequired"),
+        convexValidators.null(),
+      ),
+    ),
+  });
 }
 
 function createGeneratedReferenceTree(config, pathParts = []) {

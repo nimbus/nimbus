@@ -5,7 +5,8 @@
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
-    "test": "node ./src/selftest.mjs"
+    "test": "node ./src/selftest.mjs",
+    "test:differential": "node ./src/differential.mjs"
   },
   "bin": {
     "convex": "./src/cli.mjs"
@@ -18,7 +19,11 @@
   },
   "dependencies": {
     "@neovex/codegen": "0.1.0",
+    "esbuild": "^0.25.0",
     "neovex": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

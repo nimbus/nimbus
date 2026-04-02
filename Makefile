@@ -1,4 +1,4 @@
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness-pr verify-harness-nightly verify-harness-repro
 
 # Default target
 all: check
@@ -45,6 +45,21 @@ lint: fmt-check clippy
 # Dependency audit (licenses + vulnerabilities)
 deny:
 	cargo deny check
+
+# Focused verification harness slice for PRs
+verify-harness-pr:
+	bash scripts/verification-harness.sh pr
+
+# Heavier adversarial verification harness slice for scheduled runs
+verify-harness-nightly:
+	bash scripts/verification-harness.sh nightly
+
+# Re-run one exact verification harness case
+verify-harness-repro:
+	@test -n "$(SURFACE)" || (echo "set SURFACE=storage|engine|server" && exit 1)
+	@test -n "$(MODE)" || (echo "set MODE=pr|nightly" && exit 1)
+	@test -n "$(CASE)" || (echo "set CASE=<named-seed-case>" && exit 1)
+	bash scripts/verification-harness.sh repro "$(SURFACE)" "$(MODE)" "$(CASE)"
 
 # Full CI check (runs locally what CI runs remotely)
 ci: lint deny test build-js test-js

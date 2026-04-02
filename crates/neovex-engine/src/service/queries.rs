@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use std::cmp::Ordering;
 
+use futures::FutureExt;
 use neovex_core::{
     AccessAction, AccessRule, CommitEntry, Document, DocumentId, DurableMutationRecord, Error,
     Filter, FilterOp, Page, PaginatedQuery, PrincipalContext, Query, Result, Schema,
@@ -15,12 +16,20 @@ use neovex_storage::{
 };
 use serde_json::Value;
 
+use crate::EmbeddedReplica;
+#[cfg(test)]
+use crate::evaluator::matches_filters;
 use crate::evaluator::{
     evaluate_paginated_cancellable_with_predicate,
     evaluate_paginated_with_docs_cancellable_and_predicate,
     evaluate_query_cancellable_with_predicate, evaluate_query_with_docs_cancellable_and_predicate,
 };
 use crate::tenant::TenantRuntime;
+use crate::verification::{
+    ConsistencyScope, ConsistencyVerificationReport, bootstrap_fingerprint,
+    collect_durable_journal_bootstrap_mismatches, compare_materialized_journal_snapshots,
+    snapshot_fingerprint,
+};
 
 use super::Service;
 
@@ -156,6 +165,7 @@ impl Service {
         principal: &PrincipalContext,
     ) -> Result<Document> {
         let runtime = self.get_existing_tenant(tenant_id)?;
+        wait_for_latest_applied_visibility_blocking(&runtime);
         let _operation = runtime.enter_operation(tenant_id)?;
         let schema = runtime.schema();
         let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
@@ -256,10 +266,11 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        let cancel_wait = cancel_wait.shared();
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         runtime
-            .wait_for_applied_sequence(runtime.durable_head())
-            .await;
+            .wait_for_applied_sequence_cancellable(runtime.durable_head(), cancel_wait.clone())
+            .await?;
         let schema = runtime.schema();
         let authorization = ReadAuthorization::for_table(schema.get_table(&table), &principal)?;
         if authorization.impossible {
@@ -267,6 +278,9 @@ impl Service {
         }
 
         if let Some(document) = runtime.get_cached_document(&table, document_id) {
+            if cancel_wait.clone().now_or_never().is_some() {
+                return Err(Error::Cancelled);
+            }
             check_cancel()?;
             let _operation = runtime.enter_operation(&tenant_id)?;
             if !authorization.allows_document(&principal, &document)? {
@@ -376,10 +390,11 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        let cancel_wait = cancel_wait.shared();
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         runtime
-            .wait_for_applied_sequence(runtime.durable_head())
-            .await;
+            .wait_for_applied_sequence_cancellable(runtime.durable_head(), cancel_wait.clone())
+            .await?;
         evaluate_with_index_async_for_principal(
             runtime,
             tenant_id,
@@ -415,6 +430,7 @@ impl Service {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let runtime = self.get_existing_tenant(tenant_id)?;
+        wait_for_latest_applied_visibility_blocking(&runtime);
         let _operation = runtime.enter_operation(tenant_id)?;
         evaluate_with_index_cancellable_for_principal(&runtime, query, principal, check_cancel)
     }
@@ -503,10 +519,11 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        let cancel_wait = cancel_wait.shared();
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         runtime
-            .wait_for_applied_sequence(runtime.durable_head())
-            .await;
+            .wait_for_applied_sequence_cancellable(runtime.durable_head(), cancel_wait.clone())
+            .await?;
         paginate_with_index_async_for_principal(
             runtime,
             tenant_id,
@@ -542,6 +559,7 @@ impl Service {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Page> {
         let runtime = self.get_existing_tenant(tenant_id)?;
+        wait_for_latest_applied_visibility_blocking(&runtime);
         let _operation = runtime.enter_operation(tenant_id)?;
         let schema = runtime.schema();
         paginate_documents_for_store_and_principal(
@@ -674,6 +692,67 @@ impl Service {
         ShadowMaterializer::from_checkpoint_and_journal(bootstrap.snapshot, tail, config)
     }
 
+    /// Verifies authoritative and derived tenant state against one bootstrap cut.
+    pub async fn verify_consistency_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<ConsistencyVerificationReport> {
+        let bootstrap = self
+            .export_durable_journal_bootstrap_async(tenant_id.clone())
+            .await?;
+        let journal_tail = self
+            .read_durable_journal_suffix_to_sequence_async(&tenant_id, &bootstrap)
+            .await?;
+        let authoritative_snapshot = rebuild_authoritative_snapshot(&bootstrap, &journal_tail)?;
+
+        let shadow = ShadowMaterializer::from_checkpoint_and_journal(
+            bootstrap.snapshot.clone(),
+            journal_tail.clone(),
+            ShadowMaterializerConfig::default(),
+        )?;
+        let shadow_snapshot = shadow.current_snapshot();
+
+        let replica = EmbeddedReplica::bootstrap_from_bootstrap(
+            tenant_id.clone(),
+            TenantStore::create_in_memory()?,
+            bootstrap.clone(),
+            journal_tail,
+        )?;
+        let replica_snapshot = replica.export_materialized_journal_snapshot()?;
+
+        let mut mismatches = Vec::new();
+        if let Some(mismatch) = compare_materialized_journal_snapshots(
+            ConsistencyScope::AuthoritativeSnapshot,
+            &authoritative_snapshot,
+            ConsistencyScope::ShadowMaterializer,
+            &shadow_snapshot,
+        ) {
+            mismatches.push(mismatch);
+        }
+        if let Some(mismatch) = compare_materialized_journal_snapshots(
+            ConsistencyScope::AuthoritativeSnapshot,
+            &authoritative_snapshot,
+            ConsistencyScope::EmbeddedReplica,
+            &replica_snapshot,
+        ) {
+            mismatches.push(mismatch);
+        }
+        mismatches.extend(collect_durable_journal_bootstrap_mismatches(
+            &bootstrap.snapshot,
+            &bootstrap,
+        ));
+
+        Ok(ConsistencyVerificationReport {
+            tenant_id: tenant_id.to_string(),
+            ok: mismatches.is_empty(),
+            authoritative: snapshot_fingerprint(&authoritative_snapshot)?,
+            shadow: snapshot_fingerprint(&shadow_snapshot)?,
+            embedded_replica: snapshot_fingerprint(&replica_snapshot)?,
+            bootstrap: bootstrap_fingerprint(&bootstrap)?,
+            mismatches,
+        })
+    }
+
     /// Reads commit log entries committed after the provided sequence number.
     /// This is a compatibility wrapper over the authoritative durable journal.
     pub fn read_commit_log(
@@ -743,11 +822,54 @@ impl Service {
     }
 }
 
+impl Service {
+    async fn read_durable_journal_suffix_to_sequence_async(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+        bootstrap: &DurableJournalBootstrap,
+    ) -> Result<Vec<DurableMutationRecord>> {
+        let mut after = bootstrap.resume_after;
+        let mut tail = Vec::new();
+        while after.0 < bootstrap.bootstrap_cut.0 {
+            let page = self
+                .stream_durable_journal_async(tenant_id.clone(), after, 256)
+                .await?;
+            let page_records = page
+                .records
+                .into_iter()
+                .take_while(|record| record.sequence.0 <= bootstrap.bootstrap_cut.0)
+                .collect::<Vec<_>>();
+            let Some(last_record) = page_records.last() else {
+                return Err(Error::Internal(format!(
+                    "journal stream made no progress while verifying consistency for tenant {} up to sequence {} from {}",
+                    tenant_id, bootstrap.bootstrap_cut.0, after.0
+                )));
+            };
+            after = last_record.sequence;
+            tail.extend(page_records);
+        }
+        Ok(tail)
+    }
+}
+
 fn commit_entries_from_durable_records(records: Vec<DurableMutationRecord>) -> Vec<CommitEntry> {
     records
         .into_iter()
         .map(|record| record.as_commit_entry())
         .collect()
+}
+
+fn rebuild_authoritative_snapshot(
+    bootstrap: &DurableJournalBootstrap,
+    journal_tail: &[DurableMutationRecord],
+) -> Result<crate::MaterializedJournalSnapshot> {
+    let store = TenantStore::create_in_memory()?;
+    store.rebuild_materialized_journal_from_snapshot(
+        &bootstrap.snapshot,
+        journal_tail,
+        Some(bootstrap.bootstrap_cut),
+    )?;
+    store.export_materialized_journal_snapshot()
 }
 
 pub(crate) fn query_documents_for_store_with_principal(
@@ -766,6 +888,43 @@ pub(crate) fn query_documents_for_store_with_principal(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn query_documents_for_docs_with_principal(
+    documents: Vec<Document>,
+    schema: &Schema,
+    query: &Query,
+    principal: &PrincipalContext,
+) -> Result<Vec<Document>> {
+    let table_schema = schema.get_table(&query.table);
+    let authorization = ReadAuthorization::for_table(table_schema, principal)?;
+    if authorization.impossible {
+        return Ok(Vec::new());
+    }
+
+    let planned_query = authorization.merge_query(query);
+    let plan = plan_query(&planned_query, table_schema)?;
+    let mut check_cancel = || Ok(());
+    let mut include_document =
+        |document: &Document| authorization.allows_document(principal, document);
+    if let Some(index_docs) = load_query_plan_documents_from_docs(&documents, table_schema, &plan)?
+    {
+        let residual_query = plan.residual_query(&planned_query);
+        evaluate_query_with_docs_cancellable_and_predicate(
+            index_docs,
+            &residual_query,
+            &mut check_cancel,
+            &mut include_document,
+        )
+    } else {
+        evaluate_query_with_docs_cancellable_and_predicate(
+            documents,
+            &planned_query,
+            &mut check_cancel,
+            &mut include_document,
+        )
+    }
+}
+
 pub(crate) fn paginate_documents_for_store_with_principal(
     store: &TenantStore,
     schema: &Schema,
@@ -780,6 +939,59 @@ pub(crate) fn paginate_documents_for_store_with_principal(
         principal,
         &mut check_cancel,
     )
+}
+
+#[cfg(test)]
+pub(crate) fn paginate_documents_for_docs_with_principal(
+    documents: Vec<Document>,
+    schema: &Schema,
+    query: &PaginatedQuery,
+    principal: &PrincipalContext,
+) -> Result<Page> {
+    let table_schema = schema.get_table(&query.query.table);
+    let authorization = ReadAuthorization::for_table(table_schema, principal)?;
+    if authorization.impossible {
+        return Ok(Page {
+            data: Vec::new(),
+            next_cursor: None,
+            has_more: false,
+        });
+    }
+
+    let planned_paginated = PaginatedQuery {
+        query: authorization.merge_query(&query.query),
+        page_size: query.page_size,
+        after: query.after.clone(),
+    };
+    let plan = plan_query(&planned_paginated.query, table_schema)?;
+    let mut check_cancel = || Ok(());
+    let mut include_document =
+        |document: &Document| authorization.allows_document(principal, document);
+    if let Some(index_docs) = load_query_plan_documents_from_docs(&documents, table_schema, &plan)?
+    {
+        let residual_paginated = PaginatedQuery {
+            query: plan.residual_query(&planned_paginated.query),
+            page_size: planned_paginated.page_size,
+            after: planned_paginated.after.clone(),
+        };
+        evaluate_paginated_with_docs_cancellable_and_predicate(
+            index_docs,
+            &residual_paginated,
+            &mut check_cancel,
+            &mut include_document,
+        )
+    } else {
+        evaluate_paginated_with_docs_cancellable_and_predicate(
+            documents,
+            &planned_paginated,
+            &mut check_cancel,
+            &mut include_document,
+        )
+    }
+}
+
+fn wait_for_latest_applied_visibility_blocking(runtime: &TenantRuntime) {
+    runtime.wait_for_applied_sequence_blocking(runtime.durable_head());
 }
 
 pub(super) fn evaluate_with_index_cancellable_for_principal(
@@ -1173,6 +1385,92 @@ fn load_query_plan_documents_cancellable(
             check_cancel,
         )?)),
     }
+}
+
+#[cfg(test)]
+fn load_query_plan_documents_from_docs(
+    documents: &[Document],
+    table_schema: Option<&TableSchema>,
+    plan: &QueryPlan,
+) -> Result<Option<Vec<Document>>> {
+    let Some(table_schema) = table_schema else {
+        return Ok(None);
+    };
+
+    let filtered = match plan {
+        QueryPlan::FullScan => return Ok(None),
+        QueryPlan::ExactIndex {
+            index_name, value, ..
+        } => {
+            let field = index_field_for_plan(table_schema, index_name)?;
+            documents
+                .iter()
+                .filter(|document| document.get_field(field) == Some(value))
+                .cloned()
+                .collect()
+        }
+        QueryPlan::RangeIndex {
+            index_name,
+            lower,
+            upper,
+            ..
+        } => {
+            let field = index_field_for_plan(table_schema, index_name)?;
+            let mut filtered = Vec::new();
+            for document in documents {
+                if document_matches_range_bounds(document, field, lower.as_ref(), upper.as_ref())? {
+                    filtered.push(document.clone());
+                }
+            }
+            filtered
+        }
+    };
+    Ok(Some(filtered))
+}
+
+#[cfg(test)]
+fn index_field_for_plan<'a>(table_schema: &'a TableSchema, index_name: &str) -> Result<&'a str> {
+    table_schema
+        .indexes
+        .iter()
+        .find(|index| index.name == index_name)
+        .map(|index| index.field.as_str())
+        .ok_or_else(|| {
+            Error::Internal(format!("query plan referenced missing index: {index_name}"))
+        })
+}
+
+#[cfg(test)]
+fn document_matches_range_bounds(
+    document: &Document,
+    field: &str,
+    lower: Option<&PlannedRangeBound>,
+    upper: Option<&PlannedRangeBound>,
+) -> Result<bool> {
+    let mut filters = Vec::new();
+    if let Some(lower) = lower {
+        filters.push(Filter {
+            field: field.to_string(),
+            op: if lower.inclusive {
+                FilterOp::Gte
+            } else {
+                FilterOp::Gt
+            },
+            value: lower.value.clone(),
+        });
+    }
+    if let Some(upper) = upper {
+        filters.push(Filter {
+            field: field.to_string(),
+            op: if upper.inclusive {
+                FilterOp::Lte
+            } else {
+                FilterOp::Lt
+            },
+            value: upper.value.clone(),
+        });
+    }
+    matches_filters(document, &filters)
 }
 
 fn is_scalar_index_value(value: &Value) -> bool {

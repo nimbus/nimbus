@@ -61,6 +61,19 @@ mod tests {
     }
 
     #[test]
+    fn document_into_json_matches_borrowed_conversion() {
+        let document = Document::new(
+            TableName::new("tasks").expect("table name should be valid"),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Hello")),
+                ("done".to_string(), json!(true)),
+            ]),
+        );
+
+        assert_eq!(document.clone().into_json(), document.to_json());
+    }
+
+    #[test]
     fn query_serialization_roundtrip() {
         let query = Query {
             table: TableName::new("tasks").expect("table name should be valid"),
@@ -169,5 +182,37 @@ mod tests {
             .validate_integrity()
             .expect("record integrity should verify");
         assert_eq!(decoded.as_commit_entry().sequence, SequenceNumber(9));
+    }
+
+    #[test]
+    fn durable_mutation_record_without_scheduler_id_roundtrips_and_verifies_integrity() {
+        let record = DurableMutationRecord::new(
+            SequenceNumber(10),
+            Timestamp(43),
+            vec![WriteOp {
+                table: TableName::new("tasks").expect("table name should be valid"),
+                op_type: WriteOpType::Update,
+                doc_id: DocumentId::new(),
+                previous: Some(Document::new(
+                    TableName::new("tasks").expect("table name should be valid"),
+                    serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+                )),
+                current: Some(Document::new(
+                    TableName::new("tasks").expect("table name should be valid"),
+                    serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+                )),
+            }],
+            None,
+        )
+        .expect("record should build");
+
+        let encoded = rmp_serde::to_vec(&record).expect("record should serialize");
+        let decoded: DurableMutationRecord =
+            rmp_serde::from_slice(&encoded).expect("record should deserialize");
+
+        decoded
+            .validate_integrity()
+            .expect("record integrity should verify");
+        assert_eq!(decoded.as_commit_entry().sequence, SequenceNumber(10));
     }
 }

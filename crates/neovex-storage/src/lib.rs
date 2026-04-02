@@ -17,8 +17,15 @@ pub use async_storage::{
 };
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
 pub use simulation::{
-    Clock, FaultInjector, FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector,
-    ScriptedFaultInjector, SeededFaultInjector, SystemClock,
+    Clock, DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
+    GeneratedTaskHistoryModel, GeneratedTaskHistorySeedCase, GeneratedTaskHistoryStep,
+    GeneratedTaskPageExpectation, GeneratedTaskRecord, ManualClock, NoopFaultInjector,
+    RestartBoundary, RestartPoint, ScenarioMetadata, ScenarioSignal, ScenarioSignalKind,
+    ScriptedFaultInjector, ScriptedRestartSchedule, SeededFaultInjector, SystemClock,
+    VERIFICATION_CASE_FILTER_ENV, VerificationHarnessMode,
+    filter_generated_task_history_seed_corpus, generated_task_history_seed_corpus,
+    replay_generated_task_history, replay_generated_task_history_async,
+    selected_generated_task_history_seed_corpus,
 };
 pub use store::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,

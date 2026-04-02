@@ -29,9 +29,12 @@ async fn handle_text_message(
         Ok(ConvexClientMessage::ClearAuth) => {
             reset_active_subscriptions_for_auth_change(ctx, active_subscriptions).await;
             *current_auth = None;
-            let _ = ctx.outbound_tx.send(ServerMessage::Authenticated {
-                is_authenticated: false,
-            });
+            let _ = ctx
+                .outbound_tx
+                .send(ServerMessage::Authenticated {
+                    is_authenticated: false,
+                })
+                .await;
         }
         Ok(ConvexClientMessage::Subscribe { request_id, query }) => {
             handle_plain_subscription(ctx, current_auth, active_subscriptions, request_id, query)
@@ -62,10 +65,13 @@ async fn handle_text_message(
             handle_unsubscribe(ctx, active_subscriptions, subscription_id).await;
         }
         Err(error) => {
-            let _ = ctx.outbound_tx.send(ServerMessage::Error {
-                request_id: None,
-                message: format!("invalid websocket message: {error}"),
-            });
+            let _ = ctx
+                .outbound_tx
+                .send(ServerMessage::Error {
+                    request_id: None,
+                    message: format!("invalid websocket message: {error}"),
+                })
+                .await;
         }
     }
 }
@@ -81,14 +87,20 @@ async fn handle_authenticate(
             reset_active_subscriptions_for_auth_change(ctx, active_subscriptions).await;
             *current_auth = Some(auth);
             crate::state::record_authenticated_usage(ctx.state, current_auth.as_ref()).await;
-            let _ = ctx.outbound_tx.send(ServerMessage::Authenticated {
-                is_authenticated: true,
-            });
+            let _ = ctx
+                .outbound_tx
+                .send(ServerMessage::Authenticated {
+                    is_authenticated: true,
+                })
+                .await;
         }
         Err(error) => {
-            let _ = ctx.outbound_tx.send(ServerMessage::AuthError {
-                message: error.to_string(),
-            });
+            let _ = ctx
+                .outbound_tx
+                .send(ServerMessage::AuthError {
+                    message: error.to_string(),
+                })
+                .await;
         }
     }
 }
@@ -129,10 +141,13 @@ async fn handle_plain_subscription(
         }
         Err(error) => {
             clear_pending_transform(ctx.transforms, &request_id);
-            let _ = ctx.outbound_tx.send(ServerMessage::Error {
-                request_id: Some(request_id),
-                message: error.to_string(),
-            });
+            let _ = ctx
+                .outbound_tx
+                .send(ServerMessage::Error {
+                    request_id: Some(request_id),
+                    message: error.to_string(),
+                })
+                .await;
         }
     }
 }
@@ -155,10 +170,13 @@ async fn reset_active_subscriptions_for_auth_change(
         ctx.transforms,
     )
     .await;
-    let _ = ctx.outbound_tx.send(ServerMessage::Error {
-        request_id: None,
-        message: "authentication context changed; resubscribe active subscriptions".to_string(),
-    });
+    let _ = ctx
+        .outbound_tx
+        .send(ServerMessage::Error {
+            request_id: None,
+            message: "authentication context changed; resubscribe active subscriptions".to_string(),
+        })
+        .await;
 }
 
 async fn handle_unsubscribe(

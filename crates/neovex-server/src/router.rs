@@ -50,6 +50,10 @@ fn build_core_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(http::health))
         .route("/debug/license/status", get(http::license_status))
+        .route(
+            "/debug/tenants/{tenant_id}/consistency",
+            get(http::tenant_consistency_report),
+        )
         .route("/demos", get(http::demos_redirect))
         .nest_service("/demos/", demos)
         .route(

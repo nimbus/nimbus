@@ -40,9 +40,9 @@ pub struct WriteOp {
     pub table: TableName,
     pub op_type: WriteOpType,
     pub doc_id: DocumentId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub previous: Option<Document>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub current: Option<Document>,
 }
 
@@ -72,7 +72,7 @@ struct DurableMutationRecordHashPayload<'a> {
     sequence: SequenceNumber,
     timestamp: Timestamp,
     writes: &'a [WriteOp],
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     scheduled_execution_id: Option<&'a str>,
 }
 
@@ -83,7 +83,7 @@ pub struct DurableMutationRecord {
     pub sequence: SequenceNumber,
     pub timestamp: Timestamp,
     pub writes: Vec<WriteOp>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub scheduled_execution_id: Option<String>,
     pub integrity_sha256: [u8; 32],
 }

@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
-use neovex_engine::{SubscriptionCleanupHandle, SubscriptionUpdate};
+use neovex_engine::{
+    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionUpdate,
+};
 use tokio::sync::mpsc;
 
 use crate::protocol::{ClientMessage, ServerMessage};
@@ -14,9 +16,12 @@ pub(crate) async fn handle_socket_for_tenant(
     state: Arc<AppState>,
     tenant_id: neovex_core::TenantId,
 ) {
+    const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
+
     let (mut socket_tx, mut socket_rx) = socket.split();
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<ServerMessage>();
-    let (subscription_tx, mut subscription_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerMessage>(OUTBOUND_CHANNEL_CAPACITY);
+    let (subscription_tx, mut subscription_rx) =
+        mpsc::channel::<SubscriptionUpdate>(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
 
     let forward_tx = outbound_tx.clone();
     let forward_task = tokio::spawn(async move {
@@ -41,7 +46,9 @@ pub(crate) async fn handle_socket_for_tenant(
                     message,
                 },
             };
-            let _ = forward_tx.send(message);
+            if forward_tx.send(message).await.is_err() {
+                break;
+            }
         }
     });
 
@@ -66,15 +73,20 @@ pub(crate) async fn handle_socket_for_tenant(
         match message {
             Message::Text(text) => match serde_json::from_str::<ClientMessage>(&text) {
                 Ok(ClientMessage::Authenticate { .. }) => {
-                    let _ = outbound_tx.send(ServerMessage::AuthError {
-                        message: "authentication is not supported on the generic websocket route"
-                            .to_string(),
-                    });
+                    let _ = outbound_tx
+                        .send(ServerMessage::AuthError {
+                            message:
+                                "authentication is not supported on the generic websocket route"
+                                    .to_string(),
+                        })
+                        .await;
                 }
                 Ok(ClientMessage::ClearAuth) => {
-                    let _ = outbound_tx.send(ServerMessage::Authenticated {
-                        is_authenticated: false,
-                    });
+                    let _ = outbound_tx
+                        .send(ServerMessage::Authenticated {
+                            is_authenticated: false,
+                        })
+                        .await;
                 }
                 Ok(ClientMessage::Subscribe { request_id, query }) => {
                     let request_id_for_worker = request_id.clone();
@@ -90,10 +102,12 @@ pub(crate) async fn handle_socket_for_tenant(
                             active_subscriptions.insert(subscription_id, cleanup_handle);
                         }
                         Err(error) => {
-                            let _ = outbound_tx.send(ServerMessage::Error {
-                                request_id: Some(request_id),
-                                message: error.to_string(),
-                            });
+                            let _ = outbound_tx
+                                .send(ServerMessage::Error {
+                                    request_id: Some(request_id),
+                                    message: error.to_string(),
+                                })
+                                .await;
                         }
                     }
                 }
@@ -103,18 +117,22 @@ pub(crate) async fn handle_socket_for_tenant(
                     let tenant_id = tenant_id.clone();
                     if let Err(error) = service.unsubscribe_async(tenant_id, subscription_id).await
                     {
-                        let _ = outbound_tx.send(ServerMessage::Error {
-                            request_id: None,
-                            message: error.to_string(),
-                        });
+                        let _ = outbound_tx
+                            .send(ServerMessage::Error {
+                                request_id: None,
+                                message: error.to_string(),
+                            })
+                            .await;
                     }
                     drop(cleanup_handle);
                 }
                 Err(error) => {
-                    let _ = outbound_tx.send(ServerMessage::Error {
-                        request_id: None,
-                        message: format!("invalid websocket message: {error}"),
-                    });
+                    let _ = outbound_tx
+                        .send(ServerMessage::Error {
+                            request_id: None,
+                            message: format!("invalid websocket message: {error}"),
+                        })
+                        .await;
                 }
             },
             Message::Close(_) => break,

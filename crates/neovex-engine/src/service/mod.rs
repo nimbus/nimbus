@@ -23,6 +23,10 @@ use tokio::sync::{Mutex as AsyncMutex, Notify};
 use crate::tenant::TenantRuntime;
 
 pub use execution_units::MutationExecutionUnit;
+#[cfg(test)]
+pub(crate) use queries::{
+    paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
+};
 pub(crate) use queries::{
     paginate_documents_for_store_with_principal, query_documents_for_store_with_principal,
 };
@@ -117,8 +121,5 @@ impl Service {
 }
 
 fn documents_to_json(documents: Vec<Document>) -> Vec<serde_json::Value> {
-    documents
-        .into_iter()
-        .map(|document| document.to_json())
-        .collect()
+    documents.into_iter().map(Document::into_json).collect()
 }

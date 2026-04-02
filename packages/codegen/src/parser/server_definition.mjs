@@ -6,7 +6,7 @@ import {
 } from "../syntax.mjs";
 import { unsupportedError } from "../errors.mjs";
 
-function parseServerDefinition(definitionText, filePath) {
+function parseServerDefinition(definitionText, filePath, compileBindings = {}) {
   if (!definitionText.startsWith("{") || !definitionText.endsWith("}")) {
     throw unsupportedError(filePath, "server function definition object");
   }
@@ -26,22 +26,22 @@ function parseServerDefinition(definitionText, filePath) {
 
   return {
     handlerExpression,
-    argsSchema: parseArgsSchema(properties.args, filePath),
-    returnsSchema: parseReturnsSchema(properties.returns, filePath),
+    argsSchema: parseArgsSchema(properties.args, filePath, compileBindings),
+    returnsSchema: parseReturnsSchema(properties.returns, filePath, compileBindings),
   };
 }
 
-function parseArgsSchema(argsExpression, filePath) {
+function parseArgsSchema(argsExpression, filePath, compileBindings) {
   if (argsExpression === undefined) {
     return {};
   }
 
-  let argsDefinition;
-  try {
-    argsDefinition = new Function("v", `return (${argsExpression});`)(convexValidators);
-  } catch (error) {
-    throw unsupportedError(filePath, `args parsing (${error.message})`);
-  }
+  const argsDefinition = evaluateValidatorExpression(
+    argsExpression,
+    filePath,
+    compileBindings,
+    "args",
+  );
 
   if (
     !argsDefinition ||
@@ -58,19 +58,30 @@ function parseArgsSchema(argsExpression, filePath) {
   return sanitized;
 }
 
-function parseReturnsSchema(returnsExpression, filePath) {
+function parseReturnsSchema(returnsExpression, filePath, compileBindings) {
   if (returnsExpression === undefined) {
     return undefined;
   }
 
-  let returnsDefinition;
-  try {
-    returnsDefinition = new Function("v", `return (${returnsExpression});`)(convexValidators);
-  } catch (error) {
-    throw unsupportedError(filePath, `returns parsing (${error.message})`);
-  }
+  return sanitizeValidator(
+    evaluateValidatorExpression(returnsExpression, filePath, compileBindings, "returns"),
+    filePath,
+  );
+}
 
-  return sanitizeValidator(returnsDefinition, filePath);
+function evaluateValidatorExpression(expression, filePath, compileBindings, label) {
+  const bindings = {
+    v: convexValidators,
+    ...compileBindings,
+  };
+  const bindingNames = Object.keys(bindings);
+  const bindingValues = bindingNames.map((name) => bindings[name]);
+
+  try {
+    return new Function(...bindingNames, `return (${expression});`)(...bindingValues);
+  } catch (error) {
+    throw unsupportedError(filePath, `${label} parsing (${error.message})`);
+  }
 }
 
 export { parseServerDefinition };

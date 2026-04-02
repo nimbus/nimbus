@@ -14,7 +14,7 @@ import {
   makePaginatedQueryReference,
   makeQueryReference,
 } from "./internal/shared";
-import type { GenericId, Infer, Validator } from "./values";
+import { v, type GenericId, type Infer, type Validator } from "./values";
 
 export type DefaultFunctionArgs = Record<string, unknown>;
 
@@ -197,6 +197,54 @@ export type SchemaDefinition<Tables extends Record<string, TableDefinition<any>>
   readonly tables: Tables;
 };
 
+export type Cursor = string;
+
+export type PaginationStatus = "SplitRecommended" | "SplitRequired" | null;
+
+export type PaginationOptions = {
+  numItems: number;
+  cursor: Cursor | null;
+  endCursor?: Cursor | null;
+  maximumRowsRead?: number;
+  maximumBytesRead?: number;
+  id?: number;
+};
+
+export type PaginationResult<Item> = {
+  page: Item[];
+  isDone: boolean;
+  continueCursor: Cursor;
+  splitCursor?: Cursor | null;
+  pageStatus?: PaginationStatus;
+};
+
+export const paginationOptsValidator: Validator<PaginationOptions> = v.object({
+  numItems: v.number(),
+  cursor: v.union(v.string(), v.null()),
+  endCursor: v.optional(v.union(v.string(), v.null())),
+  id: v.optional(v.number()),
+  maximumRowsRead: v.optional(v.number()),
+  maximumBytesRead: v.optional(v.number()),
+});
+
+export function paginationResultValidator<Item>(
+  itemValidator: Validator<Item>,
+): Validator<PaginationResult<Item>> {
+  return v.object({
+    page: v.array(itemValidator),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+    splitCursor: v.optional(v.union(v.string(), v.null())),
+    pageStatus: v.optional(
+      v.union(
+        v.literal("SplitRecommended"),
+        v.literal("SplitRequired"),
+        v.null(),
+      ),
+    ),
+  }) as Validator<PaginationResult<Item>>;
+}
+
 export type FunctionReference<Args extends DefaultFunctionArgs, Returns> =
   | ConvexQueryReference<Args, Returns>
   | ConvexMutationReference<Args, Returns>
@@ -239,6 +287,7 @@ export type QueryBuilder = {
   order(direction: QueryOrder): QueryBuilder;
   collect(): Promise<unknown[]>;
   take(limit: number): Promise<unknown[]>;
+  paginate(options: PaginationOptions): Promise<PaginationResult<unknown>>;
   first(): Promise<unknown | null>;
   unique(): Promise<unknown | null>;
 };

@@ -8,13 +8,29 @@ use crate::{
     Result, TableName, WriteOpType,
 };
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DependencySet {
     pub tables: HashSet<TableName>,
     pub documents: HashSet<(TableName, DocumentId)>,
     pub index_ranges: Vec<IndexRangeDependency>,
     pub predicates: Vec<PredicateDependency>,
     pub paginated_windows: Vec<PaginatedWindowDependency>,
+    #[serde(skip, default)]
+    index_range_set: HashSet<IndexRangeDependency>,
+    #[serde(skip, default)]
+    predicate_set: HashSet<PredicateDependency>,
+    #[serde(skip, default)]
+    paginated_window_set: HashSet<PaginatedWindowDependency>,
+}
+
+impl PartialEq for DependencySet {
+    fn eq(&self, other: &Self) -> bool {
+        self.tables == other.tables
+            && self.documents == other.documents
+            && self.index_ranges == other.index_ranges
+            && self.predicates == other.predicates
+            && self.paginated_windows == other.paginated_windows
+    }
 }
 
 impl DependencySet {
@@ -40,11 +56,8 @@ impl DependencySet {
     }
 
     pub fn record_index_range(&mut self, dependency: IndexRangeDependency) {
-        if !self
-            .index_ranges
-            .iter()
-            .any(|existing| existing == &dependency)
-        {
+        self.rebuild_index_range_set_if_needed();
+        if self.index_range_set.insert(dependency.clone()) {
             self.index_ranges.push(dependency);
         }
     }
@@ -53,21 +66,15 @@ impl DependencySet {
         if dependency.filters.is_empty() {
             return;
         }
-        if !self
-            .predicates
-            .iter()
-            .any(|existing| existing == &dependency)
-        {
+        self.rebuild_predicate_set_if_needed();
+        if self.predicate_set.insert(dependency.clone()) {
             self.predicates.push(dependency);
         }
     }
 
     pub fn record_paginated_window(&mut self, dependency: PaginatedWindowDependency) {
-        if !self
-            .paginated_windows
-            .iter()
-            .any(|existing| existing == &dependency)
-        {
+        self.rebuild_paginated_window_set_if_needed();
+        if self.paginated_window_set.insert(dependency.clone()) {
             self.paginated_windows.push(dependency);
         }
     }
@@ -97,9 +104,30 @@ impl DependencySet {
             && self.predicates.is_empty()
             && self.paginated_windows.is_empty()
     }
+
+    fn rebuild_index_range_set_if_needed(&mut self) {
+        if self.index_range_set.len() == self.index_ranges.len() {
+            return;
+        }
+        self.index_range_set = self.index_ranges.iter().cloned().collect();
+    }
+
+    fn rebuild_predicate_set_if_needed(&mut self) {
+        if self.predicate_set.len() == self.predicates.len() {
+            return;
+        }
+        self.predicate_set = self.predicates.iter().cloned().collect();
+    }
+
+    fn rebuild_paginated_window_set_if_needed(&mut self) {
+        if self.paginated_window_set.len() == self.paginated_windows.len() {
+            return;
+        }
+        self.paginated_window_set = self.paginated_windows.iter().cloned().collect();
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct IndexRangeDependency {
     pub table: TableName,
     pub index_name: String,
@@ -110,13 +138,13 @@ pub struct IndexRangeDependency {
     pub end_inclusive: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PredicateDependency {
     pub table: TableName,
     pub filters: Vec<Filter>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaginatedWindowDependency {
     pub table: TableName,
     pub filters: Vec<Filter>,
@@ -619,5 +647,56 @@ mod tests {
             &[matching],
             |_, _| Ok(None),
         ));
+    }
+
+    #[test]
+    fn dependency_set_roundtrip_rebuilds_hash_backed_dedup_state() {
+        let table = tasks_table();
+        let index_dependency = IndexRangeDependency {
+            table: table.clone(),
+            index_name: "by_rank".to_string(),
+            field: "rank".to_string(),
+            start: Some(json!(1)),
+            end: Some(json!(3)),
+            start_inclusive: true,
+            end_inclusive: true,
+        };
+        let predicate_dependency = PredicateDependency {
+            table: table.clone(),
+            filters: vec![Filter {
+                field: "status".to_string(),
+                op: crate::FilterOp::Eq,
+                value: json!("active"),
+            }],
+        };
+        let paginated_dependency = PaginatedWindowDependency {
+            table,
+            filters: predicate_dependency.filters.clone(),
+            order: None,
+            start_sort_value: None,
+            start_doc_id: None,
+            end_sort_value: None,
+            end_doc_id: None,
+            result_count: 1,
+            page_size: 10,
+        };
+
+        let mut dependencies = DependencySet::default();
+        dependencies.record_index_range(index_dependency.clone());
+        dependencies.record_predicate(predicate_dependency.clone());
+        dependencies.record_paginated_window(paginated_dependency.clone());
+
+        let serialized =
+            serde_json::to_string(&dependencies).expect("dependency set should serialize");
+        let mut decoded: DependencySet =
+            serde_json::from_str(&serialized).expect("dependency set should deserialize");
+
+        decoded.record_index_range(index_dependency);
+        decoded.record_predicate(predicate_dependency);
+        decoded.record_paginated_window(paginated_dependency);
+
+        assert_eq!(decoded.index_ranges.len(), 1);
+        assert_eq!(decoded.predicates.len(), 1);
+        assert_eq!(decoded.paginated_windows.len(), 1);
     }
 }

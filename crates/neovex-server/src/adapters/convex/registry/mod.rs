@@ -14,5 +14,6 @@ use super::*;
 mod http_routes;
 mod loading;
 mod resolution;
+mod schema;
 
 pub(in crate::adapters::convex) use http_routes::validate_runtime_http_route;

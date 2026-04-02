@@ -6,6 +6,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
+import {
+  assertSupportedDifferentialSurface,
+  collectDifferentialMismatches,
+  emitDifferentialFixture,
+  formatDifferentialMismatchReport,
+  normalizeDifferentialPage,
+} from "./differential.mjs";
 
 const cliPath = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -16,6 +23,10 @@ const tscPath = fileURLToPath(
 async function main() {
   await testConvexCliCodegenSmoke();
   await typecheckConvexSurface();
+  await testDifferentialSurfaceGuardrails();
+  await testDifferentialPageNormalization();
+  await testDifferentialMismatchAggregation();
+  await testDifferentialFixtureEmission();
   const browserModule = await loadBundledBrowserModule();
   await testHttpClientAuthFetcherRetriesUnauthorized(browserModule);
   await testSocketAuthenticatesBeforeSubscriptions(browserModule);
@@ -116,8 +127,10 @@ import {
 import {
   action,
   httpAction,
+  paginationOptsValidator,
   query,
   type Auth,
+  type PaginationResult,
   type UserIdentity,
 } from "convex/server";
 import { v } from "convex/values";
@@ -164,6 +177,18 @@ export const identityHttp = httpAction(async (ctx) => {
   const user = await ctx.auth.getUserIdentity();
   return new Response(user?.tokenIdentifier ?? "anonymous");
 });
+
+export const paginatedWhoami = query({
+  args: {
+    id: v.string(),
+    paginationOpts: paginationOptsValidator,
+  },
+  async handler(ctx, args) {
+    const page = await ctx.db.query("messages").paginate(args.paginationOpts);
+    const _page: PaginationResult<unknown> = page;
+    return page;
+  },
+});
 `,
     "utf8",
   );
@@ -187,6 +212,132 @@ async function loadBundledBrowserModule() {
     logLevel: "silent",
   });
   return import(pathToFileURL(outfile).href);
+}
+
+async function testDifferentialSurfaceGuardrails() {
+  assert.doesNotThrow(() => assertSupportedDifferentialSurface("query"));
+  assert.throws(
+    () => assertSupportedDifferentialSurface("action"),
+    /outside the documented supported differential subset/,
+  );
+}
+
+async function testDifferentialPageNormalization() {
+  const expected = {
+    data: [
+      { author: "Ada", body: "alpha", rank: 1 },
+      { author: "Ada", body: "beta", rank: 2 },
+    ],
+    has_more: true,
+    cursor_present: true,
+  };
+
+  assert.deepEqual(
+    normalizeDifferentialPage({
+      data: [
+        { _id: "m1", author: "Ada", body: "alpha", rank: 1 },
+        { _id: "m2", author: "Ada", body: "beta", rank: 2 },
+      ],
+      has_more: true,
+      next_cursor: "cursor-1",
+    }),
+    expected,
+  );
+
+  assert.deepEqual(
+    normalizeDifferentialPage({
+      page: [
+        { _id: "m1", author: "Ada", body: "alpha", rank: 1 },
+        { _id: "m2", author: "Ada", body: "beta", rank: 2 },
+      ],
+      isDone: false,
+      continueCursor: "cursor-1",
+    }),
+    expected,
+  );
+}
+
+async function testDifferentialMismatchAggregation() {
+  const actual = {
+    query: [{ author: "Ada", body: "alpha", rank: 1 }],
+    paginated: {
+      first: {
+        data: [{ author: "Ada", body: "alpha", rank: 1 }],
+        has_more: true,
+        cursor_present: true,
+      },
+      second: {
+        data: [{ author: "Ada", body: "beta", rank: 2 }],
+        has_more: false,
+        cursor_present: false,
+      },
+    },
+    subscription: {
+      initial: [{ author: "Ada", body: "alpha", rank: 1 }],
+      after_mutation: [
+        { author: "Ada", body: "alpha", rank: 1 },
+        { author: "Ada", body: "beta", rank: 2 },
+      ],
+    },
+  };
+  const expected = {
+    query: [{ author: "Ada", body: "omega", rank: 1 }],
+    paginated: {
+      first: {
+        data: [{ author: "Ada", body: "alpha", rank: 1 }],
+        has_more: true,
+        cursor_present: true,
+      },
+      second: {
+        data: [{ author: "Ada", body: "beta", rank: 2 }],
+        has_more: true,
+        cursor_present: true,
+      },
+    },
+    subscription: {
+      initial: [{ author: "Ada", body: "alpha", rank: 1 }],
+      after_mutation: [
+        { author: "Ada", body: "alpha", rank: 1 },
+        { author: "Ada", body: "beta", rank: 2 },
+        { author: "Ada", body: "gamma", rank: 3 },
+      ],
+    },
+  };
+
+  const mismatches = collectDifferentialMismatches(actual, expected);
+  assert.deepEqual(
+    mismatches.map((mismatch) => mismatch.path),
+    ["query", "paginated.second", "subscription.after_mutation"],
+  );
+
+  const report = formatDifferentialMismatchReport(mismatches);
+  assert.match(report, /\[query\]/);
+  assert.match(report, /\[paginated\.second\]/);
+  assert.match(report, /\[subscription\.after_mutation\]/);
+}
+
+async function testDifferentialFixtureEmission() {
+  const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "convex-differential-fixture-"));
+  await emitDifferentialFixture(fixtureDir);
+
+  const messagesSource = await fs.readFile(
+    path.join(fixtureDir, "convex", "messages.ts"),
+    "utf8",
+  );
+  const schemaSource = await fs.readFile(
+    path.join(fixtureDir, "convex", "schema.ts"),
+    "utf8",
+  );
+
+  assert.match(messagesSource, /export const byAuthor = query/);
+  assert.match(messagesSource, /paginationOptsValidator/);
+  assert.match(messagesSource, /export const listPage = query/);
+  assert.match(messagesSource, /\.paginate\(paginationOpts\)/);
+  assert.match(messagesSource, /export const send = mutation/);
+  const packageJson = await fs.readFile(path.join(fixtureDir, "package.json"), "utf8");
+  assert.match(packageJson, /"convex": "\*"/);
+  assert.match(schemaSource, /\.index\("by_rank", \["rank"\]\)/);
+  assert.match(schemaSource, /from "convex\/server"/);
 }
 
 async function testReconnectResubscribesActiveQueries(browserModule) {

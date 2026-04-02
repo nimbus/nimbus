@@ -45,7 +45,7 @@ pub(super) async fn handle_named_subscription(
             {
                 Ok(result) => result,
                 Err(error) => {
-                    send_request_error(ctx.outbound_tx, request_id, error.to_string());
+                    send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
                     return;
                 }
             }
@@ -62,7 +62,7 @@ pub(super) async fn handle_named_subscription(
         {
             Ok(handle) => handle,
             Err(error) => {
-                send_request_error(ctx.outbound_tx, request_id, error.to_string());
+                send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
                 return;
             }
         };
@@ -73,11 +73,14 @@ pub(super) async fn handle_named_subscription(
             primary_subscription_id,
             ActiveSubscription::from_runtime_handle(handle),
         );
-        let _ = ctx.outbound_tx.send(ServerMessage::SubscriptionResult {
-            subscription_id: primary_subscription_id,
-            request_id: Some(request_id),
-            data: setup.initial_value,
-        });
+        let _ = ctx
+            .outbound_tx
+            .send(ServerMessage::SubscriptionResult {
+                subscription_id: primary_subscription_id,
+                request_id: Some(request_id),
+                data: setup.initial_value,
+            })
+            .await;
         return;
     }
 
@@ -85,7 +88,7 @@ pub(super) async fn handle_named_subscription(
         let query = match ctx.convex_registry.resolve_subscription_query(&name, &args) {
             Ok(query) => query,
             Err(error) => {
-                send_request_error(ctx.outbound_tx, request_id, error.to_string());
+                send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
                 return;
             }
         };
@@ -125,18 +128,20 @@ pub(super) async fn handle_named_subscription(
         }
         Err(error) => {
             clear_pending_transform(ctx.transforms, &request_id);
-            send_request_error(ctx.outbound_tx, request_id, error.to_string());
+            send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
         }
     }
 }
 
-fn send_request_error(
-    outbound_tx: &mpsc::UnboundedSender<ServerMessage>,
+async fn send_request_error(
+    outbound_tx: &mpsc::Sender<ServerMessage>,
     request_id: String,
     message: String,
 ) {
-    let _ = outbound_tx.send(ServerMessage::Error {
-        request_id: Some(request_id),
-        message,
-    });
+    let _ = outbound_tx
+        .send(ServerMessage::Error {
+            request_id: Some(request_id),
+            message,
+        })
+        .await;
 }

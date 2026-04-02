@@ -19,10 +19,12 @@ mod async_bridge;
 mod bridge;
 mod db_ops;
 mod function_ops;
+mod pagination;
 mod payloads;
 mod read_tracking;
 mod responses;
 
 pub(in crate::adapters::convex) use bridge::ConvexHostBridge;
+pub(in crate::adapters::convex) use pagination::synthesize_runtime_paginate_cursor;
 pub(in crate::adapters::convex) use payloads::*;
 pub(in crate::adapters::convex) use responses::*;

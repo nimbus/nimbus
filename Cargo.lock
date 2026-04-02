@@ -1463,12 +1463,14 @@ name = "neovex-engine"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "futures",
  "neovex-core",
  "neovex-storage",
  "neovex-test-support",
  "proptest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tracing",

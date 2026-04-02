@@ -1,17 +1,25 @@
 use neovex_core::{
-    AccessOperator, AccessPredicate, AccessRule, AccessValue, CreateCronRequest, Error,
+    AccessOperator, AccessPredicate, AccessRule, AccessValue, CreateCronRequest, DocumentId, Error,
     FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, Mutation, OrderBy, OrderDirection,
-    PaginatedQuery, PrincipalClaimSource, PrincipalContext, Query, ScheduleRequest,
-    ScheduledJobOutcome, SequenceNumber, TableAccessPolicy, TableName, TableSchema, TenantId,
-    Timestamp,
+    Page, PaginatedQuery, PrincipalClaimSource, PrincipalContext, Query, ScheduleRequest,
+    ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableAccessPolicy, TableName,
+    TableSchema, TenantId, Timestamp,
 };
-use neovex_test_support::{DeterministicHarness, ServiceFixture};
+use neovex_test_support::{
+    DeterministicHarness, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
+    GeneratedTaskPageExpectation, GeneratedTaskRecord, RestartBoundary, RestartPoint,
+    ScenarioMetadata, ScriptedRestartSchedule, ServiceFixture, VerificationHarnessMode,
+    replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
+};
 use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
+use std::task::{Context, Poll};
 use tempfile::tempdir;
 use tokio::sync::{Notify, mpsc, watch};
 use tokio::time::{Duration, timeout};
@@ -19,8 +27,18 @@ use tokio::time::{Duration, timeout};
 use crate::evaluator::{
     evaluate_paginated, evaluate_paginated_cancellable, evaluate_query, evaluate_query_cancellable,
 };
+use crate::service::{
+    paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
+};
+use crate::tenant::DOCUMENT_CACHE_CAPACITY;
+use crate::verification::{
+    ConsistencyScope, collect_durable_journal_bootstrap_mismatches,
+    compare_materialized_journal_snapshots,
+};
 use crate::{EmbeddedReplica, Service, ShadowMaterializerConfig, SubscriptionUpdate};
-use neovex_storage::{FaultInjector, FaultPoint, ManualClock, TenantStore};
+use neovex_storage::{
+    DurableJournalBootstrap, FaultInjector, FaultPoint, ManualClock, TenantStore,
+};
 
 fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
@@ -33,6 +51,13 @@ fn query_for(table: &str) -> Query {
         order: None,
         limit: None,
     }
+}
+
+fn subscription_channel() -> (
+    mpsc::Sender<SubscriptionUpdate>,
+    mpsc::Receiver<SubscriptionUpdate>,
+) {
+    mpsc::channel(16)
 }
 
 fn filter(field: &str, op: FilterOp, value: serde_json::Value) -> Filter {
@@ -48,6 +73,19 @@ fn rank_document(rank: i64) -> neovex_core::Document {
         tasks_table(),
         serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
     )
+}
+
+fn materialized_snapshot_with_documents(
+    documents: Vec<neovex_core::Document>,
+) -> crate::MaterializedJournalSnapshot {
+    crate::MaterializedJournalSnapshot {
+        version: 1,
+        applied_sequence: SequenceNumber(1),
+        durable_head: SequenceNumber(1),
+        schema: neovex_core::Schema::default(),
+        documents,
+        scheduled_execution_ids: Vec::new(),
+    }
 }
 
 fn users_schema() -> TableSchema {
@@ -137,6 +175,216 @@ fn owner_read_write_policy() -> TableAccessPolicy {
     }
 }
 
+async fn assert_generated_task_history_matches_model_across_surfaces(
+    history: &GeneratedTaskHistory,
+    case: Option<GeneratedTaskHistorySeedCase>,
+    test_name: &str,
+) {
+    let context = |invariant: &str| {
+        case.map(|case| case.failure_context("neovex-engine", test_name, invariant))
+            .unwrap_or_else(|| history.failure_context(invariant, None))
+    };
+
+    let model = history.model();
+    let expected_query = model.query_result();
+    assert!(
+        expected_query.len() > history.page_size(),
+        "history seed should produce at least two query pages: {}",
+        context("generated-history seed should produce at least two query pages")
+    );
+
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let table = TableName::new(history.table()).expect("generated task table should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    replay_generated_task_history_async(
+        history,
+        {
+            let service = Arc::clone(&service);
+            let tenant_id = tenant_id.clone();
+            let table = table.clone();
+            move |_slot, record| {
+                let service = Arc::clone(&service);
+                let tenant_id = tenant_id.clone();
+                let table = table.clone();
+                let fields = record.fields();
+                async move {
+                    service
+                        .insert_document_async(tenant_id, table, fields)
+                        .await
+                }
+            }
+        },
+        {
+            let service = Arc::clone(&service);
+            let tenant_id = tenant_id.clone();
+            let table = table.clone();
+            move |_slot, document_id, record| {
+                let service = Arc::clone(&service);
+                let tenant_id = tenant_id.clone();
+                let table = table.clone();
+                let fields = record.fields();
+                async move {
+                    service
+                        .update_document_async(tenant_id, table, document_id, fields)
+                        .await
+                        .map(|_| ())
+                }
+            }
+        },
+        {
+            let service = Arc::clone(&service);
+            let tenant_id = tenant_id.clone();
+            let table = table.clone();
+            move |_slot, document_id| {
+                let service = Arc::clone(&service);
+                let tenant_id = tenant_id.clone();
+                let table = table.clone();
+                async move {
+                    service
+                        .delete_document_async(tenant_id, table, document_id)
+                        .await
+                }
+            }
+        },
+    )
+    .await
+    .expect("generated history replay should succeed");
+
+    let live_documents = normalize_generated_task_documents(
+        service
+            .list_documents(&tenant_id, &table)
+            .expect("live list should succeed"),
+    );
+    assert_eq!(
+        live_documents,
+        model.final_documents(),
+        "{}",
+        context("live final state should match the generated-history oracle")
+    );
+
+    let ordered_query = history.ordered_query();
+    let live_query = normalize_generated_task_documents(
+        service
+            .query_documents_async(tenant_id.clone(), ordered_query.clone())
+            .await
+            .expect("live query should succeed"),
+    );
+    assert_eq!(
+        live_query,
+        expected_query,
+        "{}",
+        context("live query should match the generated-history oracle")
+    );
+
+    let live_first_page = service
+        .paginate_documents_async(tenant_id.clone(), history.paginated_query(None))
+        .await
+        .expect("live first page should succeed");
+    assert_generated_task_page_matches(
+        &live_first_page,
+        &model.first_page(),
+        &context("live first page should match the generated-history oracle"),
+    );
+    let live_second_page = service
+        .paginate_documents_async(
+            tenant_id.clone(),
+            history.paginated_query(live_first_page.next_cursor.clone()),
+        )
+        .await
+        .expect("live second page should succeed");
+    assert_generated_task_page_matches(
+        &live_second_page,
+        &model.second_page(),
+        &context("live second page should match the generated-history oracle"),
+    );
+
+    let shadow = service
+        .build_shadow_materializer_async(
+            tenant_id.clone(),
+            ShadowMaterializerConfig {
+                compaction_threshold_records: 2,
+            },
+        )
+        .await
+        .expect("shadow materializer should build");
+    let snapshot = shadow.current_snapshot();
+    let shadow_query = normalize_generated_task_documents(
+        query_documents_for_docs_with_principal(
+            snapshot.documents.clone(),
+            &snapshot.schema,
+            &ordered_query,
+            &PrincipalContext::anonymous(),
+        )
+        .expect("shadow query should succeed"),
+    );
+    assert_eq!(
+        shadow_query,
+        expected_query,
+        "{}",
+        context("shadow query should match the generated-history oracle")
+    );
+    let shadow_first_page = paginate_documents_for_docs_with_principal(
+        snapshot.documents.clone(),
+        &snapshot.schema,
+        &history.paginated_query(None),
+        &PrincipalContext::anonymous(),
+    )
+    .expect("shadow first page should succeed");
+    assert_generated_task_page_matches(
+        &shadow_first_page,
+        &model.first_page(),
+        &context("shadow first page should match the generated-history oracle"),
+    );
+    let shadow_second_page = paginate_documents_for_docs_with_principal(
+        snapshot.documents.clone(),
+        &snapshot.schema,
+        &history.paginated_query(shadow_first_page.next_cursor.clone()),
+        &PrincipalContext::anonymous(),
+    )
+    .expect("shadow second page should succeed");
+    assert_generated_task_page_matches(
+        &shadow_second_page,
+        &model.second_page(),
+        &context("shadow second page should match the generated-history oracle"),
+    );
+
+    let replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+        .await
+        .expect("embedded replica should bootstrap");
+    let replica_query = normalize_generated_task_documents(
+        replica
+            .query_documents(&ordered_query)
+            .expect("replica query should succeed"),
+    );
+    assert_eq!(
+        replica_query,
+        expected_query,
+        "{}",
+        context("replica query should match the generated-history oracle")
+    );
+    let replica_first_page = replica
+        .paginate_documents(&history.paginated_query(None))
+        .expect("replica first page should succeed");
+    assert_generated_task_page_matches(
+        &replica_first_page,
+        &model.first_page(),
+        &context("replica first page should match the generated-history oracle"),
+    );
+    let replica_second_page = replica
+        .paginate_documents(&history.paginated_query(replica_first_page.next_cursor.clone()))
+        .expect("replica second page should succeed");
+    assert_generated_task_page_matches(
+        &replica_second_page,
+        &model.second_page(),
+        &context("replica second page should match the generated-history oracle"),
+    );
+}
+
 fn messages_schema(
     table: &str,
     indexes: Vec<IndexDefinition>,
@@ -190,6 +438,57 @@ fn insert_task_mutation(title: &str) -> Mutation {
     }
 }
 
+fn normalize_generated_task_documents(
+    documents: Vec<neovex_core::Document>,
+) -> Vec<GeneratedTaskRecord> {
+    let mut records = documents
+        .into_iter()
+        .map(|document| GeneratedTaskRecord::from_json(&document.to_json()))
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        left.title
+            .cmp(&right.title)
+            .then_with(|| left.rank.cmp(&right.rank))
+            .then_with(|| left.status.cmp(&right.status))
+    });
+    records
+}
+
+fn normalize_generated_task_values(values: Vec<serde_json::Value>) -> Vec<GeneratedTaskRecord> {
+    let mut records = values
+        .iter()
+        .map(GeneratedTaskRecord::from_json)
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        left.title
+            .cmp(&right.title)
+            .then_with(|| left.rank.cmp(&right.rank))
+            .then_with(|| left.status.cmp(&right.status))
+    });
+    records
+}
+
+fn assert_generated_task_page_matches(
+    page: &Page,
+    expected: &GeneratedTaskPageExpectation,
+    context: &str,
+) {
+    assert_eq!(
+        normalize_generated_task_values(page.data.clone()),
+        expected.data,
+        "{context}: page data should match the generated-history oracle",
+    );
+    assert_eq!(
+        page.has_more, expected.has_more,
+        "{context}: has_more should match the generated-history oracle",
+    );
+    assert_eq!(
+        page.next_cursor.is_some(),
+        expected.has_more,
+        "{context}: next_cursor presence should track has_more",
+    );
+}
+
 async fn spawn_scheduler(
     service: Arc<Service>,
     interval: Duration,
@@ -213,6 +512,10 @@ struct BlockingFaultInjector {
     point: FaultPoint,
     entered: Notify,
     release_gate: (Mutex<bool>, Condvar),
+}
+
+struct DropAwarePendingCancellation {
+    dropped: Arc<AtomicBool>,
 }
 
 impl BlockingFaultInjector {
@@ -254,6 +557,20 @@ impl FaultInjector for BlockingFaultInjector {
                 .expect("blocking fault injector should wait for release");
         }
         Ok(())
+    }
+}
+
+impl Future for DropAwarePendingCancellation {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Pending
+    }
+}
+
+impl Drop for DropAwarePendingCancellation {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
     }
 }
 
@@ -312,6 +629,57 @@ impl BlockingCancellationProbe {
             }
         }
     }
+}
+
+async fn create_service_with_durable_unapplied_task(
+    timestamp_ms: u64,
+    title: &str,
+) -> (
+    Arc<Service>,
+    TenantId,
+    Arc<BlockingFaultInjector>,
+    DocumentId,
+) {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(timestamp_ms))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let insert_handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let title = title.to_string();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!(title))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    let document_id = timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should acknowledge after durable append")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
+
+    (service, tenant_id, faults, document_id)
 }
 
 #[test]
@@ -739,7 +1107,7 @@ async fn service_insert_drives_subscription_updates() {
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let query = Query {
         table: TableName::new("tasks").expect("table name should be valid"),
         filters: Vec::new(),
@@ -805,7 +1173,7 @@ async fn service_update_and_delete_drive_subscription_updates() {
         )
         .expect("insert should succeed");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let query = Query {
         table: TableName::new("tasks").expect("table name should be valid"),
         filters: Vec::new(),
@@ -909,6 +1277,63 @@ async fn repeated_get_document_calls_record_document_cache_hits() {
 }
 
 #[tokio::test]
+async fn document_cache_evicts_least_recently_used_entries_when_capacity_is_exceeded() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_ids = (0..=DOCUMENT_CACHE_CAPACITY)
+        .map(|index| {
+            service
+                .insert_document(
+                    &tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([(
+                        "title".to_string(),
+                        json!(format!("Task {index}")),
+                    )]),
+                )
+                .expect("insert should succeed")
+        })
+        .collect::<Vec<_>>();
+
+    for document_id in &document_ids {
+        service
+            .get_document(&tenant_id, &tasks_table(), *document_id)
+            .expect("get should succeed");
+    }
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 0);
+    assert_eq!(stats.misses, DOCUMENT_CACHE_CAPACITY + 1);
+    assert_eq!(stats.entries, DOCUMENT_CACHE_CAPACITY);
+    assert_eq!(stats.evictions, 1);
+
+    service
+        .get_document(&tenant_id, &tasks_table(), document_ids[0])
+        .expect("evicted document should still load from storage");
+    service
+        .get_document(
+            &tenant_id,
+            &tasks_table(),
+            *document_ids
+                .last()
+                .expect("cache population should include a last document"),
+        )
+        .expect("most recent document should stay cached");
+
+    let stats = service
+        .document_cache_stats_for_testing(&tenant_id)
+        .expect("cache stats should load");
+    assert_eq!(stats.hits, 1);
+    assert_eq!(stats.misses, DOCUMENT_CACHE_CAPACITY + 2);
+    assert_eq!(stats.entries, DOCUMENT_CACHE_CAPACITY);
+    assert_eq!(stats.evictions, 2);
+}
+
+#[tokio::test]
 async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -988,7 +1413,7 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
         )
         .expect("insert should succeed");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let _subscription = service
         .subscribe(&tenant_id, query_for("tasks"), "cache-sub".to_string(), tx)
         .expect("subscribe should succeed");
@@ -1044,13 +1469,73 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
 }
 
 #[tokio::test]
+async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+        )
+        .expect("insert should succeed");
+
+    let (tx, mut rx) = mpsc::channel::<SubscriptionUpdate>(1);
+    let _subscription = service
+        .subscribe(&tenant_id, query_for("tasks"), "slow-sub".to_string(), tx)
+        .expect("subscribe should succeed");
+
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        1
+    );
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+        )
+        .expect("update should succeed");
+
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        0
+    );
+
+    let initial = rx
+        .recv()
+        .await
+        .expect("initial update should still be buffered");
+    match initial {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("Before"));
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+    ));
+}
+
+#[tokio::test]
 async fn service_only_notifies_subscriptions_for_affected_tables() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
-    let (tasks_tx, mut tasks_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let (users_tx, mut users_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tasks_tx, mut tasks_rx) = subscription_channel();
+    let (users_tx, mut users_rx) = subscription_channel();
     let tasks_query = Query {
         table: TableName::new("tasks").expect("table name should be valid"),
         filters: Vec::new(),
@@ -1110,8 +1595,8 @@ async fn service_insert_only_notifies_filtered_subscriptions_for_matching_docume
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
-    let (active_tx, mut active_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (active_tx, mut active_rx) = subscription_channel();
+    let (done_tx, mut done_rx) = subscription_channel();
     let active_query = Query {
         table: tasks_table(),
         filters: vec![filter("status", FilterOp::Eq, json!("active"))],
@@ -1195,8 +1680,8 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
         )
         .expect("done seed insert should succeed");
 
-    let (active_tx, mut active_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (active_tx, mut active_rx) = subscription_channel();
+    let (done_tx, mut done_rx) = subscription_channel();
     let active_query = Query {
         table: tasks_table(),
         filters: vec![filter("status", FilterOp::Eq, json!("active"))],
@@ -1279,8 +1764,8 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
         )
         .expect("seed insert should succeed");
 
-    let (active_tx, mut active_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (active_tx, mut active_rx) = subscription_channel();
+    let (done_tx, mut done_rx) = subscription_channel();
     let active_query = Query {
         table: tasks_table(),
         filters: vec![filter("status", FilterOp::Eq, json!("active"))],
@@ -1359,7 +1844,7 @@ async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluatio
         )
         .expect("seed insert should succeed");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let query = Query {
         table: TableName::new("tasks").expect("table name should be valid"),
         filters: Vec::new(),
@@ -1423,7 +1908,7 @@ async fn service_delete_tenant_tears_down_active_subscriptions() {
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let query = Query {
         table: TableName::new("tasks").expect("table name should be valid"),
         filters: Vec::new(),
@@ -1662,7 +2147,7 @@ async fn service_unsubscribe_stops_notifications() {
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let subscription = service
         .subscribe(&tenant_id, query_for("tasks"), "req-unsub".to_string(), tx)
         .expect("subscribe should succeed");
@@ -1864,7 +2349,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
             .expect("insert should succeed");
     }
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let subscription = service
         .subscribe(
             &tenant_id,
@@ -2093,7 +2578,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         )
         .expect("seed insert should succeed");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let _subscription = service
         .subscribe(
             &tenant_id,
@@ -2670,6 +3155,43 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
 }
 
 #[tokio::test]
+async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_after_completion() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let dropped = Arc::new(AtomicBool::new(false));
+
+    let document_id = service
+        .insert_document_async_cancellable_with_principal(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("drop-cancel-future"))]),
+            PrincipalContext::anonymous(),
+            DropAwarePendingCancellation {
+                dropped: dropped.clone(),
+            },
+            || Ok(()),
+        )
+        .await
+        .expect("mutation should succeed");
+
+    tokio::task::yield_now().await;
+
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "unused cancellation futures should be dropped once the mutation completes"
+    );
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &tasks_table(), document_id)
+            .expect("inserted document should remain visible")
+            .fields
+            .get("title"),
+        Some(&json!("drop-cancel-future"))
+    );
+}
+
+#[tokio::test]
 async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibility() {
     let data_dir = tempdir().expect("service tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
@@ -2738,6 +3260,85 @@ async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibil
     assert_eq!(
         documents[0].fields.get("title"),
         Some(&json!("durable-first"))
+    );
+}
+
+#[tokio::test]
+async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(35_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let insert_handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("sync-wait"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should acknowledge after durable append")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
+
+    let (query_tx, mut query_rx) = mpsc::unbounded_channel();
+    tokio::task::spawn_blocking({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            let _ = query_tx.send(service.query_documents(&tenant_id, &query_for("tasks")));
+        }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), query_rx.recv())
+            .await
+            .is_err(),
+        "sync query should wait for the applied watermark while journaled data is not yet materialized"
+    );
+
+    faults.release();
+
+    let documents = timeout(Duration::from_secs(1), query_rx.recv())
+        .await
+        .expect("sync query should resolve after apply")
+        .expect("sync query result should be sent")
+        .expect("sync query should succeed");
+    assert_eq!(
+        documents[0].fields.get("title"),
+        Some(&json!("sync-wait")),
+        "sync query should observe the applied task after the journal worker resumes"
+    );
+
+    let stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should read after sync wait");
+    assert_eq!(stats.read_wait_count, 1);
+    assert!(
+        stats.total_read_wait_nanos > 0,
+        "sync read waits should contribute to read wait metrics"
     );
 }
 
@@ -2835,6 +3436,205 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
 }
 
 #[tokio::test]
+async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility() {
+    let (service, tenant_id, faults, document_id) =
+        create_service_with_durable_unapplied_task(44_000, "async-get-cancel").await;
+    let probe = BlockingCancellationProbe::new();
+
+    let mut handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let probe_for_wait = probe.clone();
+        async move {
+            service
+                .get_document_async_cancellable(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    probe_for_wait.cancel_wait(),
+                    || Ok(()),
+                )
+                .await
+        }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), &mut handle)
+            .await
+            .is_err(),
+        "point read should still be waiting for applied visibility before cancellation"
+    );
+
+    probe.trigger_cancel();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async point read should resolve promptly after cancellation")
+        .expect("point read task should join successfully")
+        .expect_err("point read should cancel while waiting for apply");
+    assert!(matches!(error, Error::Cancelled));
+
+    faults.release();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[tokio::test]
+async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility()
+{
+    let (service, tenant_id, faults, _) =
+        create_service_with_durable_unapplied_task(44_500, "async-query-cancel").await;
+    let probe = BlockingCancellationProbe::new();
+
+    let mut handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let probe_for_wait = probe.clone();
+        async move {
+            service
+                .query_documents_async_cancellable(
+                    tenant_id,
+                    query_for("tasks"),
+                    probe_for_wait.cancel_wait(),
+                    || Ok(()),
+                )
+                .await
+        }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), &mut handle)
+            .await
+            .is_err(),
+        "query should still be waiting for applied visibility before cancellation"
+    );
+
+    probe.trigger_cancel();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async query should resolve promptly after cancellation")
+        .expect("query task should join successfully")
+        .expect_err("query should cancel while waiting for apply");
+    assert!(matches!(error, Error::Cancelled));
+
+    faults.release();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[tokio::test]
+async fn paginate_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility()
+ {
+    let (service, tenant_id, faults, _) =
+        create_service_with_durable_unapplied_task(44_750, "async-page-cancel").await;
+    let probe = BlockingCancellationProbe::new();
+
+    let mut handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let probe_for_wait = probe.clone();
+        async move {
+            service
+                .paginate_documents_async_cancellable(
+                    tenant_id,
+                    PaginatedQuery {
+                        query: query_for("tasks"),
+                        page_size: 1,
+                        after: None,
+                    },
+                    probe_for_wait.cancel_wait(),
+                    || Ok(()),
+                )
+                .await
+        }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), &mut handle)
+            .await
+            .is_err(),
+        "pagination should still be waiting for applied visibility before cancellation"
+    );
+
+    probe.trigger_cancel();
+
+    let error = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async pagination should resolve promptly after cancellation")
+        .expect("pagination task should join successfully")
+        .expect_err("pagination should cancel while waiting for apply");
+    assert!(matches!(error, Error::Cancelled));
+
+    faults.release();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+}
+
+#[tokio::test]
+async fn sync_get_document_waits_for_applied_journal_visibility() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(45_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let insert_handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("sync-get"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    let document_id = timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should acknowledge after durable append")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
+
+    let (get_tx, mut get_rx) = mpsc::unbounded_channel();
+    tokio::task::spawn_blocking({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            let _ = get_tx.send(service.get_document(&tenant_id, &tasks_table(), document_id));
+        }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), get_rx.recv())
+            .await
+            .is_err(),
+        "sync point reads should wait for applied visibility instead of returning stale not-found results"
+    );
+
+    faults.release();
+
+    let document = timeout(Duration::from_secs(1), get_rx.recv())
+        .await
+        .expect("sync point read should resolve after apply")
+        .expect("sync point read result should be sent")
+        .expect("sync point read should succeed");
+    assert_eq!(document.fields.get("title"), Some(&json!("sync-get")));
+}
+
+#[tokio::test]
 async fn subscription_updates_publish_only_after_journal_apply() {
     let data_dir = tempdir().expect("service tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
@@ -2851,7 +3651,7 @@ async fn subscription_updates_publish_only_after_journal_apply() {
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let subscription = service
         .subscribe(
             &tenant_id,
@@ -3506,6 +4306,7 @@ async fn shadow_materializer_queries_match_live_service_path() {
         shadow.current_snapshot().applied_sequence,
         SequenceNumber(3)
     );
+    let snapshot = shadow.current_snapshot();
 
     let ordered_query = Query {
         table: tasks_table(),
@@ -3520,8 +4321,13 @@ async fn shadow_materializer_queries_match_live_service_path() {
         .query_documents_async(tenant_id.clone(), ordered_query.clone())
         .await
         .expect("live query should succeed");
-    let shadow_query = crate::evaluate_query_with_docs(shadow.current_documents(), &ordered_query)
-        .expect("shadow query should succeed");
+    let shadow_query = query_documents_for_docs_with_principal(
+        snapshot.documents.clone(),
+        &snapshot.schema,
+        &ordered_query,
+        &PrincipalContext::anonymous(),
+    )
+    .expect("shadow query should succeed");
     assert_eq!(shadow_query, live_query);
 
     let paginated = PaginatedQuery {
@@ -3533,9 +4339,285 @@ async fn shadow_materializer_queries_match_live_service_path() {
         .paginate_documents_async(tenant_id, paginated.clone())
         .await
         .expect("live page should succeed");
-    let shadow_page = crate::evaluate_paginated_with_docs(shadow.current_documents(), &paginated)
-        .expect("shadow page should succeed");
+    let shadow_page = paginate_documents_for_docs_with_principal(
+        snapshot.documents.clone(),
+        &snapshot.schema,
+        &paginated,
+        &PrincipalContext::anonymous(),
+    )
+    .expect("shadow page should succeed");
     assert_eq!(shadow_page, live_page);
+}
+
+#[tokio::test]
+async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let table = messages_table("messages_shadow_schema");
+    let principal = principal_with_subject("user-123");
+    let hidden_owner = principal_with_subject("user-456");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    service
+        .set_table_schema(
+            &tenant_id,
+            messages_schema(
+                "messages_shadow_schema",
+                vec![IndexDefinition {
+                    name: "by_owner".to_string(),
+                    field: "owner".to_string(),
+                }],
+                Some(read_only_owner_policy()),
+            ),
+        )
+        .expect("schema should save");
+
+    for (owner, body) in [
+        ("user-123", "Ada"),
+        ("user-123", "Beta"),
+        ("user-456", "Hidden"),
+    ] {
+        let principal = if owner == "user-123" {
+            principal.clone()
+        } else {
+            hidden_owner.clone()
+        };
+        service
+            .insert_document_with_principal(
+                &tenant_id,
+                table.clone(),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!(owner)),
+                    ("body".to_string(), json!(body)),
+                ]),
+                &principal,
+            )
+            .expect("seed insert should succeed");
+    }
+
+    let shadow = service
+        .build_shadow_materializer_async(
+            tenant_id.clone(),
+            ShadowMaterializerConfig {
+                compaction_threshold_records: 2,
+            },
+        )
+        .await
+        .expect("shadow materializer should build");
+    let snapshot = shadow.current_snapshot();
+
+    let indexed_query = Query {
+        table: table.clone(),
+        filters: vec![filter("owner", FilterOp::Eq, json!("user-123"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let live_query = service
+        .query_documents_async_with_principal(
+            tenant_id.clone(),
+            indexed_query.clone(),
+            principal.clone(),
+        )
+        .await
+        .expect("live schema-aware query should succeed");
+    let shadow_query = query_documents_for_docs_with_principal(
+        snapshot.documents.clone(),
+        &snapshot.schema,
+        &indexed_query,
+        &principal,
+    )
+    .expect("shadow schema-aware query should succeed");
+    assert_eq!(document_bodies(&shadow_query), vec!["Ada", "Beta"]);
+    assert_eq!(shadow_query, live_query);
+
+    let paginated = PaginatedQuery {
+        query: Query {
+            table,
+            filters: Vec::new(),
+            order: Some(OrderBy {
+                field: "body".to_string(),
+                direction: OrderDirection::Asc,
+            }),
+            limit: None,
+        },
+        page_size: 1,
+        after: None,
+    };
+    let live_page = service
+        .paginate_documents_async_with_principal(tenant_id, paginated.clone(), principal.clone())
+        .await
+        .expect("live schema-aware page should succeed");
+    let shadow_page = paginate_documents_for_docs_with_principal(
+        snapshot.documents,
+        &snapshot.schema,
+        &paginated,
+        &principal,
+    )
+    .expect("shadow schema-aware page should succeed");
+    assert_eq!(subscription_bodies(&shadow_page.data), vec!["Ada"]);
+    assert_eq!(shadow_page, live_page);
+}
+
+#[tokio::test]
+async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_state() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![FieldSchema {
+                    name: "rank".to_string(),
+                    field_type: FieldType::Number,
+                    required: false,
+                }],
+                indexes: vec![IndexDefinition {
+                    name: "by_rank".to_string(),
+                    field: "rank".to_string(),
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("schema should save");
+
+    for rank in [1, 2, 3] {
+        service
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+            )
+            .await
+            .expect("seed insert should succeed");
+    }
+
+    let report = service
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("consistency verification should succeed");
+    assert!(report.ok, "{report:#?}");
+    assert!(report.mismatches.is_empty());
+    assert_eq!(report.authoritative.document_count, 3);
+    assert_eq!(report.authoritative.schema_table_count, 1);
+    assert_eq!(
+        report.authoritative.applied_sequence,
+        report.authoritative.durable_head
+    );
+    assert_eq!(report.authoritative.digest, report.shadow.digest);
+    assert_eq!(report.authoritative.digest, report.embedded_replica.digest);
+    assert!(report.bootstrap.resume_after_sequence <= report.bootstrap.bootstrap_cut_sequence);
+    assert_eq!(
+        report.bootstrap.bootstrap_cut_sequence,
+        report.authoritative.durable_head
+    );
+    assert!(!report.bootstrap.snapshot_digest.is_empty());
+}
+
+#[test]
+fn snapshot_comparison_reports_document_field_differences_with_identifier() {
+    let document = neovex_core::Document::new(
+        tasks_table(),
+        serde_json::Map::from_iter([("title".to_string(), json!("alpha"))]),
+    );
+    let left = materialized_snapshot_with_documents(vec![document.clone()]);
+    let mut changed_document = document.clone();
+    changed_document
+        .fields
+        .insert("title".to_string(), json!("beta"));
+    let right = materialized_snapshot_with_documents(vec![changed_document]);
+
+    let mismatch = compare_materialized_journal_snapshots(
+        ConsistencyScope::AuthoritativeSnapshot,
+        &left,
+        ConsistencyScope::ShadowMaterializer,
+        &right,
+    )
+    .expect("document mismatch should be reported");
+
+    assert_eq!(mismatch.invariant, "materialized_snapshot_match");
+    assert_eq!(mismatch.path, format!("documents.tasks/{}", document.id));
+    assert_eq!(mismatch.left_scope, ConsistencyScope::AuthoritativeSnapshot);
+    assert_eq!(mismatch.right_scope, ConsistencyScope::ShadowMaterializer);
+    assert!(mismatch.left_description.contains("alpha"));
+    assert!(mismatch.right_description.contains("beta"));
+}
+
+#[test]
+fn durable_journal_bootstrap_verifier_reports_resume_after_mismatch() {
+    let snapshot = materialized_snapshot_with_documents(Vec::new());
+    let bootstrap = DurableJournalBootstrap {
+        snapshot: snapshot.clone(),
+        resume_after: SequenceNumber(4),
+        bootstrap_cut: snapshot.durable_head,
+        cursor_floor: SequenceNumber(0),
+    };
+
+    let mismatches = collect_durable_journal_bootstrap_mismatches(&snapshot, &bootstrap);
+    let resume_after = mismatches
+        .iter()
+        .find(|mismatch| mismatch.path == "bootstrap.resume_after_sequence")
+        .expect("resume_after mismatch should be reported");
+    assert_eq!(resume_after.invariant, "bootstrap_metadata_match");
+    assert_eq!(
+        resume_after.left_scope,
+        ConsistencyScope::AuthoritativeSnapshot
+    );
+    assert_eq!(resume_after.right_scope, ConsistencyScope::JournalBootstrap);
+    assert!(resume_after.left_description.contains('1'));
+    assert!(resume_after.right_description.contains('4'));
+}
+
+#[tokio::test]
+async fn generated_task_history_matches_model_across_live_shadow_and_embedded_replica_surfaces() {
+    let history = GeneratedTaskHistory::seeded("engine-generated-history", 41, 48);
+    assert_generated_task_history_matches_model_across_surfaces(
+        &history,
+        None,
+        "generated_task_history_matches_model_across_live_shadow_and_embedded_replica_surfaces",
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "run through verification harness pr mode"]
+async fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
+    for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest)
+        .expect("pull-request corpus should resolve")
+    {
+        let history = case.history("engine-generated-history");
+        assert_generated_task_history_matches_model_across_surfaces(
+            &history,
+            Some(case),
+            "verification_harness_pr_generated_history_seed_corpus_matches_model",
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "run through verification harness nightly mode"]
+async fn verification_harness_nightly_generated_history_seed_corpus_matches_model() {
+    for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::Nightly)
+        .expect("nightly corpus should resolve")
+    {
+        let history = case.history("engine-generated-history");
+        assert_generated_task_history_matches_model_across_surfaces(
+            &history,
+            Some(case),
+            "verification_harness_nightly_generated_history_seed_corpus_matches_model",
+        )
+        .await;
+    }
 }
 
 #[tokio::test]
@@ -3686,7 +4768,7 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
     let (shutdown_tx, scheduler_handle) =
         spawn_scheduler(service.clone(), Duration::from_millis(25)).await;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let subscription = service
         .subscribe(&tenant_id, query_for("tasks"), "sched-1".to_string(), tx)
         .expect("subscribe should succeed");
@@ -3750,18 +4832,12 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
 
 #[test]
 fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
-    let harness = DeterministicHarness::new(Timestamp(1_000), []);
-    let data_dir = tempdir().expect("service tempdir should build");
-    let service = Service::new_with_simulation(
-        data_dir.path(),
-        harness.clock.clone(),
-        harness.faults.clone(),
-    )
-    .expect("service should create");
-    let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    service
-        .create_tenant(tenant_id.clone())
-        .expect("tenant should be created");
+    let harness = DeterministicHarness::scenario("manual-clock-scheduler", 1, Timestamp(1_000));
+    let fixture = ServiceFixture::new_with_harness(harness.clone(), |path, harness| {
+        Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
+    });
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
 
     service
         .schedule_mutation(
@@ -3781,7 +4857,7 @@ fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
             .is_empty()
     );
 
-    let advanced = harness.clock.advance_ms(500);
+    let advanced = harness.clock().advance_ms(500);
     crate::scheduler::tick_at(&service, advanced).expect("advanced tick should succeed");
     let documents = service
         .query_documents(&tenant_id, &query_for("tasks"))
@@ -3791,6 +4867,7 @@ fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
         documents[0].get_field("title"),
         Some(&json!("clocked task"))
     );
+    assert_eq!(harness.describe(), "manual-clock-scheduler (seed 1)");
 }
 
 #[tokio::test]
@@ -4024,6 +5101,236 @@ async fn recovered_scheduled_job_does_not_double_apply_after_replay() {
         .expect("job result should exist");
     assert_eq!(result.outcome, ScheduledJobOutcome::Completed);
     assert!(result.error.is_none());
+}
+
+#[tokio::test]
+async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_boundaries() {
+    let restart_schedule = ScriptedRestartSchedule::scripted(
+        ScenarioMetadata::new("scheduler-restart-campaign", 61),
+        [
+            RestartPoint::new(0, RestartBoundary::SchedulerClaim),
+            RestartPoint::new(1, RestartBoundary::SchedulerCompletion),
+            RestartPoint::new(2, RestartBoundary::SchedulerClaim),
+        ],
+    );
+    let data_dir = tempdir().expect("tempdir should create");
+    let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
+
+    let (first_job_id, second_job_id) = {
+        let service = Service::new(data_dir.path()).expect("service should create");
+        service
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let first_job_id = service
+            .schedule_mutation(
+                &tenant_id,
+                ScheduleRequest {
+                    run_after_ms: 0,
+                    mutation: insert_task_mutation("scheduler-alpha"),
+                },
+            )
+            .expect("first schedule should succeed");
+        let second_job_id = service
+            .schedule_mutation(
+                &tenant_id,
+                ScheduleRequest {
+                    run_after_ms: 0,
+                    mutation: insert_task_mutation("scheduler-beta"),
+                },
+            )
+            .expect("second schedule should succeed");
+        let claimed = service
+            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .expect("initial claim should succeed");
+        assert_eq!(
+            claimed.len(),
+            2,
+            "{}",
+            restart_schedule.failure_context(
+                "initial scheduler claim should move both jobs into running state",
+                Some(0),
+            )
+        );
+        (first_job_id, second_job_id)
+    };
+
+    let completed_job_id = {
+        let reloaded = Service::new(data_dir.path()).expect("service should reopen after claim");
+        reloaded
+            .load_tenants_with_scheduled_work()
+            .expect("scheduled tenants should load after claim restart");
+        assert!(
+            reloaded
+                .list_documents(&tenant_id, &tasks_table())
+                .expect("documents should list after claim recovery")
+                .is_empty(),
+            "{}",
+            restart_schedule.failure_context(
+                "claim-boundary restart should not make scheduled mutations visible",
+                Some(0),
+            )
+        );
+        assert_eq!(
+            reloaded
+                .list_scheduled_jobs(&tenant_id)
+                .expect("pending jobs should list after claim recovery")
+                .len(),
+            2,
+            "{}",
+            restart_schedule.failure_context(
+                "claim-boundary restart should recover running jobs back to pending",
+                Some(0),
+            )
+        );
+
+        let mut claimed = reloaded
+            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .expect("claim after restart should succeed");
+        claimed.sort_by_key(|job| job.id.to_string());
+        let completed_job = claimed.remove(0);
+        let execution_id = format!("scheduled:{}", completed_job.id);
+        assert!(
+            reloaded
+                .execute_scheduled_mutation(
+                    &tenant_id,
+                    &execution_id,
+                    completed_job.mutation.clone(),
+                )
+                .expect("scheduled mutation execution should succeed"),
+            "{}",
+            restart_schedule.failure_context(
+                "executing a recovered scheduled mutation should apply exactly once",
+                Some(1),
+            )
+        );
+        reloaded
+            .record_scheduled_job_result(
+                &tenant_id,
+                &ScheduledJobResult {
+                    id: completed_job.id,
+                    run_at: completed_job.run_at,
+                    finished_at: Timestamp::now(),
+                    mutation: completed_job.mutation,
+                    outcome: ScheduledJobOutcome::Completed,
+                    error: None,
+                },
+            )
+            .expect("completed job result should persist");
+        reloaded
+            .complete_scheduled_job(&tenant_id, &completed_job.id)
+            .expect("completed job should leave the running set");
+        completed_job.id
+    };
+
+    {
+        let reloaded =
+            Service::new(data_dir.path()).expect("service should reopen after completion");
+        reloaded
+            .load_tenants_with_scheduled_work()
+            .expect("scheduled tenants should load after completion restart");
+        let documents = reloaded
+            .list_documents(&tenant_id, &tasks_table())
+            .expect("documents should list after completion recovery");
+        assert_eq!(
+            documents.len(),
+            1,
+            "{}",
+            restart_schedule.failure_context(
+                "completion-boundary restart should preserve the completed mutation exactly once",
+                Some(1),
+            )
+        );
+        assert_eq!(
+            reloaded
+                .list_scheduled_jobs(&tenant_id)
+                .expect("pending jobs should list after completion restart")
+                .len(),
+            1,
+            "{}",
+            restart_schedule.failure_context(
+                "completion-boundary restart should recover the still-running job",
+                Some(1),
+            )
+        );
+        assert_eq!(
+            reloaded
+                .get_scheduled_job_result(&tenant_id, &completed_job_id)
+                .expect("completed job result should persist after restart")
+                .outcome,
+            ScheduledJobOutcome::Completed
+        );
+        let claimed = reloaded
+            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .expect("remaining job should claim after completion restart");
+        assert_eq!(
+            claimed.len(),
+            1,
+            "{}",
+            restart_schedule.failure_context(
+                "second claim-boundary restart should leave exactly one pending job to recover",
+                Some(2),
+            )
+        );
+    }
+
+    let reloaded = Service::new(data_dir.path()).expect("service should reopen after second claim");
+    reloaded
+        .load_tenants_with_scheduled_work()
+        .expect("scheduled tenants should load after second claim restart");
+    assert_eq!(
+        reloaded
+            .list_scheduled_jobs(&tenant_id)
+            .expect("pending jobs should list after second claim restart")
+            .len(),
+        1,
+        "{}",
+        restart_schedule.failure_context(
+            "second claim-boundary restart should recover the remaining running job",
+            Some(2),
+        )
+    );
+    crate::scheduler::tick_at(&reloaded, Timestamp::now())
+        .expect("scheduler tick should complete the recovered job");
+    let mut titles = reloaded
+        .list_documents(&tenant_id, &tasks_table())
+        .expect("documents should list after final recovery")
+        .into_iter()
+        .map(|document| {
+            document
+                .fields
+                .get("title")
+                .and_then(|value| value.as_str())
+                .expect("scheduled mutation title should be present")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    titles.sort();
+    assert_eq!(titles, vec!["scheduler-alpha", "scheduler-beta"]);
+    assert!(
+        reloaded
+            .list_scheduled_jobs(&tenant_id)
+            .expect("pending jobs should list after final recovery")
+            .is_empty(),
+        "{}",
+        restart_schedule.failure_context(
+            "all recovered scheduled jobs should eventually complete",
+            None,
+        )
+    );
+    assert_eq!(
+        reloaded
+            .get_scheduled_job_result(&tenant_id, &first_job_id)
+            .expect("first job result should exist after final recovery")
+            .outcome,
+        ScheduledJobOutcome::Completed
+    );
+    assert_eq!(
+        reloaded
+            .get_scheduled_job_result(&tenant_id, &second_job_id)
+            .expect("second job result should exist after final recovery")
+            .outcome,
+        ScheduledJobOutcome::Completed
+    );
 }
 
 #[tokio::test]
@@ -4685,7 +5992,7 @@ async fn service_read_policy_filters_full_scans_pagination_and_subscription_resu
     assert_eq!(subscription_bodies(&second_page.data), vec!["Ada-2"]);
     assert!(!second_page.has_more);
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let _subscription = service
         .subscribe_with_principal(&tenant_id, query, &principal, "req-1".to_string(), tx)
         .expect("subscription should succeed");
@@ -4957,6 +6264,259 @@ fn mutation_execution_unit_commits_when_concurrent_write_is_disjoint() {
 }
 
 #[test]
+fn mutation_execution_unit_insert_then_update_commits_as_single_insert() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_insert_update");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let document_id = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("staged insert should succeed");
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Updated"))]),
+        )
+        .expect("staged update should succeed");
+
+    let commit = execution_unit
+        .commit()
+        .expect("commit should succeed")
+        .expect("commit entry should be returned");
+    assert_eq!(commit.writes.len(), 1);
+    assert!(commit.writes[0].previous.is_none());
+    assert_eq!(
+        commit.writes[0]
+            .current
+            .as_ref()
+            .and_then(|document| document.get_field("body")),
+        Some(&json!("Updated"))
+    );
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, document_id)
+            .expect("inserted document should exist")
+            .get_field("body"),
+        Some(&json!("Updated"))
+    );
+}
+
+#[test]
+fn mutation_execution_unit_insert_then_delete_commits_as_noop() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_insert_delete");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let document_id = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Transient")),
+            ]),
+        )
+        .expect("staged insert should succeed");
+    execution_unit
+        .delete_document(table.clone(), document_id)
+        .expect("staged delete should succeed");
+
+    let commit = execution_unit.commit().expect("commit should succeed");
+    assert!(
+        commit.is_none(),
+        "insert followed by delete should collapse to a no-op"
+    );
+    let error = service
+        .get_document(&tenant_id, &table, document_id)
+        .expect_err("transient document should not exist");
+    assert!(matches!(error, Error::DocumentNotFound(_)));
+}
+
+#[test]
+fn mutation_execution_unit_restage_after_revert_commits_once() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_restage");
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("First"))]),
+        )
+        .expect("first staged update should succeed");
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Initial"))]),
+        )
+        .expect("revert staged update should succeed");
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Second"))]),
+        )
+        .expect("restaged update should succeed");
+
+    let commit = execution_unit
+        .commit()
+        .expect("commit should succeed")
+        .expect("commit entry should be returned");
+    assert_eq!(
+        commit.writes.len(),
+        1,
+        "restaging after a revert should only produce one final write"
+    );
+    assert_eq!(
+        service
+            .get_document(&tenant_id, &table, document_id)
+            .expect("document should exist")
+            .get_field("body"),
+        Some(&json!("Second"))
+    );
+}
+
+#[tokio::test]
+async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(92_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let table = messages_table("messages_occ_apply_lag");
+
+    let outside_update = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let table = table.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    table,
+                    serde_json::Map::from_iter([
+                        ("owner".to_string(), json!("user-456")),
+                        ("body".to_string(), json!("Outside insert")),
+                    ]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    timeout(Duration::from_secs(1), outside_update)
+        .await
+        .expect("outside update should acknowledge after durable append")
+        .expect("outside update task should join successfully")
+        .expect("outside update should succeed");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let visible = execution_unit
+        .query_documents_cancellable(
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            &mut || Ok(()),
+        )
+        .expect("query should succeed");
+    assert!(
+        visible.is_empty(),
+        "execution unit should still see the applied snapshot while the outside write lags"
+    );
+    execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Tx insert")),
+            ]),
+        )
+        .expect("staged insert should succeed");
+
+    let commit_handle = tokio::task::spawn_blocking({
+        let execution_unit = execution_unit.clone();
+        move || execution_unit.commit()
+    });
+
+    let commit_result = timeout(Duration::from_secs(1), commit_handle)
+        .await
+        .expect("commit should resolve promptly while the journal worker is still blocked")
+        .expect("commit task should join successfully");
+    faults.release();
+
+    let error = commit_result.expect_err(
+        "commit should conflict with the durable journal write that was not part of the applied snapshot",
+    );
+    assert!(matches!(error, Error::Conflict(_)));
+    let documents = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: Some(OrderBy {
+                    field: "body".to_string(),
+                    direction: OrderDirection::Asc,
+                }),
+                limit: None,
+            },
+        )
+        .expect("query should succeed after apply");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(
+        documents[0].get_field("body"),
+        Some(&json!("Outside insert"))
+    );
+}
+
+#[test]
 fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -5061,7 +6621,7 @@ async fn policy_revision_changes_terminate_active_authorized_subscriptions() {
         )
         .expect("fixture insert should succeed");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let (tx, mut rx) = subscription_channel();
     let principal = principal_with_subject("user-123");
     let _subscription = service
         .subscribe_with_principal(

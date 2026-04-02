@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::types::TableName;
 
 /// A single-table query.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Query {
     pub table: TableName,
     pub filters: Vec<Filter>,
@@ -13,11 +13,11 @@ pub struct Query {
 }
 
 /// Opaque pagination cursor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Cursor(pub String);
 
 /// A paginated query request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaginatedQuery {
     pub query: Query,
     pub page_size: usize,
@@ -33,7 +33,7 @@ pub struct Page {
 }
 
 /// A field predicate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Filter {
     pub field: String,
     pub op: FilterOp,
@@ -41,7 +41,7 @@ pub struct Filter {
 }
 
 /// Supported filter operators for phase 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterOp {
     Eq,
@@ -53,14 +53,14 @@ pub enum FilterOp {
 }
 
 /// Ordering clause for a query.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrderBy {
     pub field: String,
     pub direction: OrderDirection,
 }
 
 /// Sort direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderDirection {
     Asc,
