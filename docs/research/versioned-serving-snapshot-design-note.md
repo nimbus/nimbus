@@ -1,7 +1,7 @@
 # Versioned Serving Snapshot Design Note
 
 This note is the `MH5` design gate from
-`docs/plans/materialized-serving-hardening-plan.md`.
+`docs/plans/archive/materialized-serving-hardening-plan.md`.
 
 It describes the canonical next step after `MH1` through `MH4`: evolve the
 current hardened materialized-serving slice into a versioned serving snapshot

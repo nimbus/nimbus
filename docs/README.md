@@ -24,13 +24,13 @@ and where to go next.
 - [Demos](../demos/README.md):
   demo layout and run commands
 - [Plans](plans/README.md):
-  active roadmap and archived execution history
+  active execution plans
 
 ## Layout
 
 - `reference/`: stable operator and developer reference docs
 - `convex/`: Convex-surface behavior and compatibility notes
-- `plans/`: active roadmap plus archived execution plans
+- `plans/`: active execution plans
 - `research/`: background research and north-star direction, not the execution
   control plane
 
