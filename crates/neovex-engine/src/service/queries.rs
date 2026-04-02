@@ -185,11 +185,13 @@ impl Service {
         table: TableName,
         document_id: DocumentId,
     ) -> Result<Document> {
-        self.get_document_async_with_principal(
+        self.get_document_async_cancellable_with_principal(
             tenant_id,
             table,
             document_id,
             PrincipalContext::anonymous(),
+            pending(),
+            || Ok(()),
         )
         .await
     }
@@ -202,6 +204,55 @@ impl Service {
         document_id: DocumentId,
         principal: PrincipalContext,
     ) -> Result<Document> {
+        self.get_document_async_cancellable_with_principal(
+            tenant_id,
+            table,
+            document_id,
+            principal,
+            pending(),
+            || Ok(()),
+        )
+        .await
+    }
+
+    /// Fetches a single document asynchronously with cooperative cancellation.
+    pub async fn get_document_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Document>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.get_document_async_cancellable_with_principal(
+            tenant_id,
+            table,
+            document_id,
+            PrincipalContext::anonymous(),
+            cancel_wait,
+            check_cancel,
+        )
+        .await
+    }
+
+    /// Fetches a single document asynchronously for the provided principal with cooperative cancellation.
+    pub async fn get_document_async_cancellable_with_principal<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<Document>
+    where
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let schema = runtime.schema();
         let authorization = ReadAuthorization::for_table(schema.get_table(&table), &principal)?;
@@ -210,6 +261,7 @@ impl Service {
         }
 
         if let Some(document) = runtime.get_cached_document(&table, document_id) {
+            check_cancel()?;
             let _operation = runtime.enter_operation(&tenant_id)?;
             if !authorization.allows_document(&principal, &document)? {
                 return Err(Error::DocumentNotFound(document_id));
@@ -222,8 +274,9 @@ impl Service {
         let table_for_task = table.clone();
         let document = runtime
             .read_storage
-            .execute(move |store| {
+            .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
                 let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                check_cancel()?;
                 store.get(&table_for_task, &document_id)
             })
             .await?

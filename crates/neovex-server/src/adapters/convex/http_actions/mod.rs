@@ -28,4 +28,5 @@ mod request_context;
 mod response;
 
 pub(in crate::adapters::convex) use dispatch::dispatch_http_route;
+pub(in crate::adapters::convex) use execution::prepare_http_action_response_async;
 pub(in crate::adapters::convex) use execution::prepare_http_action_response_cancellable;

@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{future, sync::Arc};
 
 use super::Service;
 use neovex_core::{
     CreateCronRequest, CronJob, Error, JobId, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobResult, TenantId, Timestamp,
 };
-use neovex_storage::TenantReadStorage;
+use neovex_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 
 impl Service {
     /// Schedules a mutation to execute in the future.
@@ -34,8 +34,47 @@ impl Service {
         tenant_id: TenantId,
         request: ScheduleRequest,
     ) -> Result<JobId> {
-        self.call_blocking(move |service| service.schedule_mutation(&tenant_id, request))
+        self.schedule_mutation_async_cancellable(tenant_id, request, future::pending(), || Ok(()))
             .await
+    }
+
+    /// Schedules a mutation to execute in the future asynchronously with cooperative cancellation.
+    pub async fn schedule_mutation_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        request: ScheduleRequest,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<JobId>
+    where
+        Fut: future::Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        let now = self.now();
+        let job = ScheduledJob {
+            id: JobId::new(),
+            run_at: Timestamp(now.0.saturating_add(request.run_after_ms)),
+            mutation: request.mutation,
+            created_at: now,
+        };
+        let job_id = job.id;
+        let outcome = runtime
+            .read_storage
+            .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.insert_scheduled_job(&job)?;
+                Ok(job_id)
+            })
+            .await?;
+        let job_id = match outcome {
+            TenantWriteOutcome::CancelledBeforeCommit => return Err(Error::Cancelled),
+            TenantWriteOutcome::Committed(committed) => committed.value,
+        };
+        self.wake_scheduler();
+        Ok(job_id)
     }
 
     /// Claims all due scheduled jobs for execution.
@@ -55,8 +94,17 @@ impl Service {
         tenant_id: TenantId,
         now: Timestamp,
     ) -> Result<Vec<ScheduledJob>> {
-        self.call_blocking(move |service| service.claim_due_jobs(&tenant_id, now))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        Ok(runtime
+            .read_storage
+            .execute_write(move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.claim_due_jobs(now)
+            })
+            .await?
+            .value)
     }
 
     /// Marks a claimed scheduled job as complete.
@@ -72,8 +120,17 @@ impl Service {
         tenant_id: TenantId,
         job_id: JobId,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.complete_scheduled_job(&tenant_id, &job_id))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute_write(move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.complete_scheduled_job(&job_id)
+            })
+            .await?;
+        Ok(())
     }
 
     /// Cancels a pending scheduled job before it begins executing.
@@ -92,11 +149,44 @@ impl Service {
         tenant_id: TenantId,
         job_id: JobId,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.cancel_scheduled_job(&tenant_id, &job_id))
+        self.cancel_scheduled_job_async_cancellable(tenant_id, job_id, future::pending(), || Ok(()))
             .await
     }
 
+    /// Cancels a pending scheduled job before it begins executing asynchronously with cooperative cancellation.
+    pub async fn cancel_scheduled_job_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        job_id: JobId,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<()>
+    where
+        Fut: future::Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        let outcome = runtime
+            .read_storage
+            .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.cancel_scheduled_job(&job_id)
+            })
+            .await?;
+        let removed = match outcome {
+            TenantWriteOutcome::CancelledBeforeCommit => return Err(Error::Cancelled),
+            TenantWriteOutcome::Committed(committed) => committed.value,
+        };
+        if removed {
+            return Ok(());
+        }
+        Err(Error::ScheduledJobNotFound(job_id))
+    }
+
     /// Persists the final result for an executed scheduled job.
+    #[cfg(test)]
     pub(crate) fn record_scheduled_job_result(
         &self,
         tenant_id: &TenantId,
@@ -113,8 +203,17 @@ impl Service {
         tenant_id: TenantId,
         result: ScheduledJobResult,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.record_scheduled_job_result(&tenant_id, &result))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute_write(move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.record_scheduled_job_result(&result)
+            })
+            .await?;
+        Ok(())
     }
 
     /// Loads the final result for an executed scheduled job.
@@ -209,8 +308,47 @@ impl Service {
         tenant_id: TenantId,
         request: CreateCronRequest,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.create_cron_job(&tenant_id, request))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        let existing = {
+            let tenant_id_for_task = tenant_id.clone();
+            let runtime_for_task = runtime.clone();
+            runtime
+                .read_storage
+                .execute(move |store| {
+                    let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                    store.load_cron_jobs()
+                })
+                .await?
+        };
+        if existing.iter().any(|cron| cron.name == request.name) {
+            return Err(Error::AlreadyExists(format!(
+                "cron job '{}' already exists",
+                request.name
+            )));
+        }
+
+        let now = self.now();
+        let next_run = request.schedule.next_after(now);
+        let cron = CronJob {
+            name: request.name,
+            schedule: request.schedule,
+            mutation: request.mutation,
+            enabled: true,
+            last_run: None,
+            next_run,
+            created_at: now,
+        };
+        runtime
+            .read_storage
+            .execute_write(move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.save_cron_job(&cron)
+            })
+            .await?;
+        self.wake_scheduler();
+        Ok(())
     }
 
     /// Loads cron jobs for a tenant.
@@ -250,8 +388,17 @@ impl Service {
         tenant_id: TenantId,
         cron: CronJob,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.update_cron_job(&tenant_id, &cron))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute_write(move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.save_cron_job(&cron)
+            })
+            .await?;
+        Ok(())
     }
 
     /// Lists cron jobs for a tenant.
@@ -280,8 +427,17 @@ impl Service {
         tenant_id: TenantId,
         name: String,
     ) -> Result<()> {
-        self.call_blocking(move |service| service.delete_cron_job(&tenant_id, &name))
-            .await
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute_write(move |transaction| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                transaction.delete_cron_job(&name)
+            })
+            .await?;
+        Ok(())
     }
 
     /// Returns the IDs for all tenants currently loaded in memory.

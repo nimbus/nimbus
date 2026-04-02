@@ -12,13 +12,16 @@ pub mod usage_store;
 
 pub use async_storage::{
     OpenedRedbTenant, RedbStorageEngine, RedbTenantStorage, RedbUsageStorage, StorageEngine,
-    TenantReadStorage, TenantWriteStorage, TenantWriteTransaction, UsageStorage,
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
 };
 pub use simulation::{
     Clock, FaultInjector, FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector,
     ScriptedFaultInjector, SeededFaultInjector, SystemClock,
 };
-pub use store::{ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore};
+pub use store::{
+    ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore, TenantWriteCommit,
+    TenantWriteTransaction,
+};
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 
 #[cfg(test)]

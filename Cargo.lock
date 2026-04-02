@@ -1500,6 +1500,7 @@ dependencies = [
  "neovex-core",
  "neovex-engine",
  "neovex-runtime",
+ "neovex-storage",
  "neovex-test-support",
  "reqwest",
  "ring",

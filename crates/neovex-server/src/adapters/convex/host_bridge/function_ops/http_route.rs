@@ -1,6 +1,35 @@
 use super::*;
 
 impl ConvexHostBridge {
+    pub(in crate::adapters::convex) async fn invoke_http_route_async_cancellable(
+        &self,
+        payload: Value,
+        cancellation: &HostCallCancellation,
+    ) -> std::result::Result<Value, NeovexRuntimeError> {
+        let payload: ConvexRuntimeHttpRouteInvokePayload = serde_json::from_value(payload)?;
+        validate_runtime_http_route(&payload.request, &payload.route)?;
+        ensure_runtime_host_not_cancelled(cancellation)?;
+        let request_context: ConvexHttpRequestContext =
+            serde_json::from_value(payload.request.args.clone())?;
+        let response = prepare_http_action_response_async(
+            &self.service,
+            &self.registry,
+            &self.tenant_id,
+            &payload.route.plan,
+            &request_context,
+            self.auth.as_ref(),
+            Some(cancellation.clone()),
+        )
+        .await
+        .and_then(|parts| {
+            serde_json::to_value(parts).map_err(|error| Error::Serialization(error.to_string()))
+        })
+        .map(ConvexRuntimeResponseEnvelope::ok)
+        .unwrap_or_else(ConvexRuntimeResponseEnvelope::from_core_error);
+
+        serde_json::to_value(response).map_err(NeovexRuntimeError::from)
+    }
+
     pub(in crate::adapters::convex) fn invoke_http_route(
         &self,
         payload: Value,

@@ -88,13 +88,4 @@ impl RuntimeAsyncHostCallTrace {
             ),
         }
     }
-
-    pub(crate) fn record_join_failure(&self, error: &tokio::task::JoinError) {
-        tracing::debug!(
-            parent: &self.span,
-            error = %error,
-            "{} failed before completion",
-            self.label
-        );
-    }
 }

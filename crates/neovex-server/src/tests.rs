@@ -27,6 +27,30 @@ use crate::{
     build_router_with_license,
 };
 
+#[test]
+fn async_runtime_integration_removes_hot_path_blocking_adapters() {
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let engine_service_mod =
+        fs::read_to_string(workspace_root.join("../neovex-engine/src/service/mod.rs"))
+            .expect("engine service module should be readable");
+    assert!(
+        !engine_service_mod.contains("call_blocking("),
+        "engine service should not retain the call_blocking adapter"
+    );
+
+    let async_host_calls =
+        fs::read_to_string(workspace_root.join("src/runtime/host_calls/async_calls.rs"))
+            .expect("runtime async host call module should be readable");
+    assert!(
+        !async_host_calls.contains("spawn_blocking("),
+        "runtime async host calls should await real futures instead of spawn_blocking wrappers"
+    );
+    assert!(
+        !async_host_calls.contains("execute_async_blocking_host_call"),
+        "runtime async host calls should not retain the blocking adapter helper"
+    );
+}
+
 fn convex_registry(functions: serde_json::Value) -> ConvexRegistry {
     convex_registry_with_routes(functions, json!([]))
 }

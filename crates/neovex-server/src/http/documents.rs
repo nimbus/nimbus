@@ -9,8 +9,23 @@ pub(crate) async fn insert_document(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(request.table)?;
     let service = state.service.clone();
+    let request_cancellation = RequestCancellationGuard::new();
+    let cancellation = request_cancellation.token();
+    let cancellation_check = cancellation.clone();
     let document_id = service
-        .insert_document_async(tenant_id, table, request.fields)
+        .insert_document_async_cancellable(
+            tenant_id,
+            table,
+            request.fields,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
         .await?;
 
     Ok((
@@ -31,8 +46,24 @@ pub(crate) async fn update_document(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
+    let request_cancellation = RequestCancellationGuard::new();
+    let cancellation = request_cancellation.token();
+    let cancellation_check = cancellation.clone();
     let document_id = service
-        .update_document_async(tenant_id, table, document_id, request.patch)
+        .update_document_async_cancellable(
+            tenant_id,
+            table,
+            document_id,
+            request.patch,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
         .await?;
 
     Ok(Json(DocumentResponse {
@@ -49,8 +80,23 @@ pub(crate) async fn delete_document(
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
+    let request_cancellation = RequestCancellationGuard::new();
+    let cancellation = request_cancellation.token();
+    let cancellation_check = cancellation.clone();
     service
-        .delete_document_async(tenant_id, table, document_id)
+        .delete_document_async_cancellable(
+            tenant_id,
+            table,
+            document_id,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -63,7 +109,18 @@ pub(crate) async fn list_documents(
     let tenant_id = TenantId::new(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
-    let documents = service.list_documents_async(tenant_id, table).await?;
+    let request_cancellation = RequestCancellationGuard::new();
+    let cancellation = request_cancellation.token();
+    let cancellation_check = cancellation.clone();
+    let documents = service
+        .list_documents_async_cancellable(tenant_id, table, cancellation.cancelled(), move || {
+            if cancellation_check.is_cancelled() {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
+        })
+        .await?;
     Ok(Json(DataResponse {
         data: documents
             .into_iter()
@@ -81,8 +138,23 @@ pub(crate) async fn get_document(
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
+    let request_cancellation = RequestCancellationGuard::new();
+    let cancellation = request_cancellation.token();
+    let cancellation_check = cancellation.clone();
     let document = service
-        .get_document_async(tenant_id, table, document_id)
+        .get_document_async_cancellable(
+            tenant_id,
+            table,
+            document_id,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
         .await?;
     Ok(Json(DocumentDataResponse {
         document: document.to_json(),

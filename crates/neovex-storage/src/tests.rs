@@ -18,7 +18,8 @@ use crate::index::encode_index_value;
 use crate::keys::{document_key, prefix_end, table_prefix};
 use crate::{
     FaultInjector, FaultOccurrence, FaultPoint, ManualClock, RedbTenantStorage,
-    SeededFaultInjector, TenantReadStorage, TenantStore, UsageStore,
+    SeededFaultInjector, TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage,
+    UsageStore,
 };
 
 fn sample_document(table: &str, title: &str) -> Document {
@@ -43,6 +44,54 @@ fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
 struct BlockingReadGate {
     entered: Notify,
     release_gate: (Mutex<bool>, Condvar),
+}
+
+struct BlockingFaultInjector {
+    point: FaultPoint,
+    entered: Notify,
+    release_gate: (Mutex<bool>, Condvar),
+}
+
+impl BlockingFaultInjector {
+    fn new(point: FaultPoint) -> Arc<Self> {
+        Arc::new(Self {
+            point,
+            entered: Notify::new(),
+            release_gate: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    async fn wait_until_entered(&self) {
+        self.entered.notified().await;
+    }
+
+    fn release(&self) {
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking fault injector should acquire release lock");
+        *released = true;
+        cvar.notify_all();
+    }
+}
+
+impl FaultInjector for BlockingFaultInjector {
+    fn check(&self, point: FaultPoint) -> neovex_core::Result<()> {
+        if point != self.point {
+            return Ok(());
+        }
+        self.entered.notify_one();
+        let (lock, cvar) = &self.release_gate;
+        let mut released = lock
+            .lock()
+            .expect("blocking fault injector should acquire release lock");
+        while !*released {
+            released = cvar
+                .wait(released)
+                .expect("blocking fault injector should wait for release");
+        }
+        Ok(())
+    }
 }
 
 impl BlockingReadGate {
@@ -1166,6 +1215,164 @@ async fn same_tenant_async_reads_can_progress_concurrently() {
         .expect("first read task should join successfully")
         .expect("first read should complete");
     assert_eq!(first_result, 1);
+}
+
+#[tokio::test]
+async fn canceled_async_write_before_commit_leaves_no_durable_state() {
+    let store = Arc::new(TenantStore::create_in_memory().expect("store should open"));
+    let storage = RedbTenantStorage::with_max_concurrent_reads(store.clone(), 2);
+    let document = Document::new(
+        TableName::new("tasks").expect("table should build"),
+        serde_json::Map::from_iter([("rank".to_string(), json!(7))]),
+    );
+    let indexes = vec![IndexDefinition {
+        name: "by_rank".to_string(),
+        field: "rank".to_string(),
+    }];
+    let gate = BlockingReadGate::new();
+    let gate_for_task = gate.clone();
+    let cancel = Arc::new(Notify::new());
+    let cancel_for_wait = cancel.clone();
+    let handle = tokio::spawn({
+        let storage = storage.clone();
+        let document = document.clone();
+        async move {
+            storage
+                .execute_write_cancellable(
+                    async move {
+                        cancel_for_wait.notified().await;
+                    },
+                    || Ok(()),
+                    move |transaction| {
+                        transaction.insert_document_with_indexes(&document, &indexes)?;
+                        gate_for_task.block();
+                        Ok(document.id)
+                    },
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), gate.wait_until_entered())
+        .await
+        .expect("write should reach the pre-commit gate");
+    cancel.notify_one();
+    gate.release();
+
+    let outcome = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async write should resolve after cancellation")
+        .expect("write task should join successfully")
+        .expect("write executor should return an outcome");
+    assert!(matches!(outcome, TenantWriteOutcome::CancelledBeforeCommit));
+    assert!(
+        store
+            .get(&document.table, &document.id)
+            .expect("get should succeed")
+            .is_none(),
+        "document should not become visible after pre-commit cancellation"
+    );
+    assert!(
+        store
+            .index_scan_eq(&document.table, "by_rank", &json!(7))
+            .expect("index scan should succeed")
+            .is_empty(),
+        "index entries should roll back with the canceled write"
+    );
+    assert!(
+        store
+            .read_commit_log_from(SequenceNumber(1))
+            .expect("commit log should read")
+            .is_empty(),
+        "commit log should stay empty after pre-commit cancellation"
+    );
+}
+
+#[tokio::test]
+async fn canceled_async_write_after_commit_still_reports_committed() {
+    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let store = Arc::new(
+        TenantStore::create_in_memory_with_simulation(clock, faults.clone())
+            .expect("store should open with simulation seams"),
+    );
+    let storage = RedbTenantStorage::with_max_concurrent_reads(store.clone(), 2);
+    let document = Document::new(
+        TableName::new("tasks").expect("table should build"),
+        serde_json::Map::from_iter([("rank".to_string(), json!(11))]),
+    );
+    let indexes = vec![IndexDefinition {
+        name: "by_rank".to_string(),
+        field: "rank".to_string(),
+    }];
+    let cancel = Arc::new(Notify::new());
+    let cancel_for_wait = cancel.clone();
+    let handle = tokio::spawn({
+        let storage = storage.clone();
+        let document = document.clone();
+        async move {
+            storage
+                .execute_write_cancellable(
+                    async move {
+                        cancel_for_wait.notified().await;
+                    },
+                    || Ok(()),
+                    move |transaction| {
+                        transaction.insert_document_with_indexes(&document, &indexes)?;
+                        Ok(document.id)
+                    },
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("write should block after the durable commit point");
+    cancel.notify_one();
+    faults.release();
+
+    let outcome = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async write should resolve after post-commit cancellation")
+        .expect("write task should join successfully")
+        .expect("write executor should return an outcome");
+    match outcome {
+        TenantWriteOutcome::Committed(committed) => {
+            assert_eq!(committed.value, document.id);
+            assert_eq!(
+                committed
+                    .commit
+                    .expect("committed write should append a commit entry")
+                    .sequence,
+                SequenceNumber(1)
+            );
+        }
+        TenantWriteOutcome::CancelledBeforeCommit => {
+            panic!("post-commit cancellation must not downgrade a committed write")
+        }
+    }
+    assert!(
+        store
+            .get(&document.table, &document.id)
+            .expect("get should succeed")
+            .is_some(),
+        "document should stay visible after post-commit cancellation"
+    );
+    assert_eq!(
+        store
+            .index_scan_eq(&document.table, "by_rank", &json!(11))
+            .expect("index scan should succeed")
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .read_commit_log_from(SequenceNumber(1))
+            .expect("commit log should read")
+            .len(),
+        1
+    );
 }
 
 fn utc_unix_ms(year: i32, month: Month, day: u8) -> u64 {

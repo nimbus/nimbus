@@ -8,9 +8,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use neovex_core::{Error, Result, TenantId};
 use tokio::sync::Semaphore;
 
-use crate::{Clock, FaultInjector, TenantStore, UsageStore};
+use crate::{
+    Clock, FaultInjector, TenantStore, TenantWriteCommit, TenantWriteTransaction, UsageStore,
+};
 
 const MIN_TENANT_READ_PARALLELISM: usize = 2;
+const TENANT_WRITE_PARALLELISM: usize = 1;
 const USAGE_READ_PARALLELISM: usize = 4;
 
 pub trait StorageEngine {
@@ -39,11 +42,29 @@ pub trait TenantReadStorage: Send + Sync {
         F: FnOnce(Arc<TenantStore>, &mut dyn FnMut() -> Result<()>) -> Result<T> + Send + 'static;
 }
 
-pub trait TenantWriteStorage: Send + Sync {
-    type Transaction: TenantWriteTransaction;
+pub enum TenantWriteOutcome<T> {
+    CancelledBeforeCommit,
+    Committed(TenantWriteCommit<T>),
 }
 
-pub trait TenantWriteTransaction: Send {}
+pub trait TenantWriteStorage: Send + Sync {
+    async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static;
+
+    async fn execute_write_cancellable<T, Fut, Check, F>(
+        &self,
+        cancel_wait: Fut,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteOutcome<T>>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static;
+}
 
 pub trait UsageStorage: Send + Sync {
     async fn execute<T, F>(&self, task: F) -> Result<T>
@@ -145,9 +166,99 @@ where
     }
 }
 
+struct BlockingWriteExecutor {
+    store: Arc<TenantStore>,
+    permits: Arc<Semaphore>,
+}
+
+impl Clone for BlockingWriteExecutor {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            permits: self.permits.clone(),
+        }
+    }
+}
+
+impl BlockingWriteExecutor {
+    fn new(store: Arc<TenantStore>) -> Self {
+        Self {
+            store,
+            permits: Arc::new(Semaphore::new(TENANT_WRITE_PARALLELISM)),
+        }
+    }
+
+    async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        let permit = self
+            .permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(map_permit_error)?;
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            store.execute_write(task)
+        })
+        .await
+        .map_err(map_join_error)?
+    }
+
+    async fn execute_write_cancellable<T, Fut, Check, F>(
+        &self,
+        cancel_wait: Fut,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteOutcome<T>>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        tokio::pin!(cancel_wait);
+
+        let permit = tokio::select! {
+            _ = &mut cancel_wait => return Ok(TenantWriteOutcome::CancelledBeforeCommit),
+            permit = self.permits.clone().acquire_owned() => permit.map_err(map_permit_error)?,
+        };
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let store = self.store.clone();
+        let cancelled_for_task = cancelled.clone();
+        let mut handle = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            store.execute_write_cancellable(
+                move || {
+                    if cancelled_for_task.load(Ordering::SeqCst) {
+                        return Err(Error::Cancelled);
+                    }
+                    check_cancel()
+                },
+                task,
+            )
+        });
+
+        tokio::select! {
+            result = &mut handle => {
+                map_write_result(result.map_err(map_join_error)?)
+            }
+            _ = &mut cancel_wait => {
+                cancelled.store(true, Ordering::SeqCst);
+                map_write_result(handle.await.map_err(map_join_error)?)
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RedbTenantStorage {
     executor: BlockingReadExecutor<TenantStore>,
+    write_executor: BlockingWriteExecutor,
 }
 
 impl RedbTenantStorage {
@@ -157,7 +268,8 @@ impl RedbTenantStorage {
 
     pub fn with_max_concurrent_reads(store: Arc<TenantStore>, max_concurrent_reads: usize) -> Self {
         Self {
-            executor: BlockingReadExecutor::new(store, max_concurrent_reads),
+            executor: BlockingReadExecutor::new(store.clone(), max_concurrent_reads),
+            write_executor: BlockingWriteExecutor::new(store),
         }
     }
 
@@ -189,6 +301,33 @@ impl TenantReadStorage for RedbTenantStorage {
     {
         self.executor
             .execute_cancellable(cancel_wait, check_cancel, task)
+            .await
+    }
+}
+
+impl TenantWriteStorage for RedbTenantStorage {
+    async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        self.write_executor.execute_write(task).await
+    }
+
+    async fn execute_write_cancellable<T, Fut, Check, F>(
+        &self,
+        cancel_wait: Fut,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteOutcome<T>>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        self.write_executor
+            .execute_write_cancellable(cancel_wait, check_cancel, task)
             .await
     }
 }
@@ -255,7 +394,7 @@ impl RedbStorageEngine {
         self.usage_storage.store()
     }
 
-    pub fn usage_read_storage(&self) -> Arc<RedbUsageStorage> {
+    pub fn usage_storage(&self) -> Arc<RedbUsageStorage> {
         self.usage_storage.clone()
     }
 
@@ -266,11 +405,25 @@ impl RedbStorageEngine {
         ))
     }
 
+    pub async fn create_tenant(&self, tenant_id: &TenantId) -> Result<OpenedRedbTenant> {
+        let path = self.tenant_path(tenant_id);
+        if tokio::fs::try_exists(&path)
+            .await
+            .map_err(|error| Error::Internal(error.to_string()))?
+        {
+            return Err(Error::AlreadyExists(format!(
+                "tenant already exists: {tenant_id}"
+            )));
+        }
+
+        self.open_tenant_at_path(path).await
+    }
+
     pub async fn open_existing_tenant(
         &self,
         tenant_id: &TenantId,
     ) -> Result<Option<OpenedRedbTenant>> {
-        let path = self.data_dir.join(format!("{}.redb", tenant_id.as_str()));
+        let path = self.tenant_path(tenant_id);
         if !tokio::fs::try_exists(&path)
             .await
             .map_err(|error| Error::Internal(error.to_string()))?
@@ -278,6 +431,26 @@ impl RedbStorageEngine {
             return Ok(None);
         }
 
+        Ok(Some(self.open_tenant_at_path(path).await?))
+    }
+
+    pub async fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
+        tokio::fs::remove_file(self.tenant_path(tenant_id))
+            .await
+            .map_err(|error| Error::Internal(error.to_string()))
+    }
+
+    pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
+        tokio::fs::try_exists(self.tenant_path(tenant_id))
+            .await
+            .map_err(|error| Error::Internal(error.to_string()))
+    }
+
+    fn tenant_path(&self, tenant_id: &TenantId) -> PathBuf {
+        self.data_dir.join(format!("{}.redb", tenant_id.as_str()))
+    }
+
+    async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedRedbTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
         let store = tokio::task::spawn_blocking(move || {
@@ -288,10 +461,10 @@ impl RedbStorageEngine {
 
         let store = Arc::new(store);
         let read_storage = self.read_storage_for_store(store.clone());
-        Ok(Some(OpenedRedbTenant {
+        Ok(OpenedRedbTenant {
             store,
             read_storage,
-        }))
+        })
     }
 }
 
@@ -336,4 +509,12 @@ fn map_join_error(error: tokio::task::JoinError) -> Error {
 
 fn map_permit_error(_error: tokio::sync::AcquireError) -> Error {
     Error::Internal("blocking storage permit was closed".to_string())
+}
+
+fn map_write_result<T>(result: Result<TenantWriteCommit<T>>) -> Result<TenantWriteOutcome<T>> {
+    match result {
+        Ok(committed) => Ok(TenantWriteOutcome::Committed(committed)),
+        Err(Error::Cancelled) => Ok(TenantWriteOutcome::CancelledBeforeCommit),
+        Err(error) => Err(error),
+    }
 }

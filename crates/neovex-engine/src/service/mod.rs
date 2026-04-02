@@ -31,7 +31,7 @@ pub struct Service {
     tenant_load_gate: AsyncMutex<()>,
     storage_engine: Arc<RedbStorageEngine>,
     usage_store: Arc<UsageStore>,
-    usage_read_storage: Arc<RedbUsageStorage>,
+    usage_storage: Arc<RedbUsageStorage>,
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
@@ -57,29 +57,18 @@ impl Service {
             storage_fault_injector.clone(),
         )?);
         let usage_store = storage_engine.usage_store();
-        let usage_read_storage = storage_engine.usage_read_storage();
+        let usage_storage = storage_engine.usage_storage();
         Ok(Self {
             data_dir,
             tenants: RwLock::new(HashMap::new()),
             tenant_load_gate: AsyncMutex::new(()),
             storage_engine,
             usage_store,
-            usage_read_storage,
+            usage_storage,
             clock,
             storage_fault_injector,
             scheduler_wakeup: Notify::new(),
         })
-    }
-
-    pub(crate) async fn call_blocking<T, F>(self: &Arc<Self>, task: F) -> Result<T>
-    where
-        T: Send + 'static,
-        F: FnOnce(Arc<Self>) -> Result<T> + Send + 'static,
-    {
-        let service = self.clone();
-        tokio::task::spawn_blocking(move || task(service))
-            .await
-            .map_err(|error| Error::Internal(format!("blocking task failed: {error}")))?
     }
 
     pub(crate) fn wake_scheduler(&self) {

@@ -31,8 +31,28 @@ impl Service {
 
     /// Creates a tenant explicitly asynchronously.
     pub async fn create_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
-        self.call_blocking(move |service| service.create_tenant(tenant_id))
-            .await
+        let _tenant_load_guard = self.tenant_load_gate.lock().await;
+        if self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .contains_key(&tenant_id)
+        {
+            return Err(Error::AlreadyExists(format!(
+                "tenant already exists: {tenant_id}"
+            )));
+        }
+
+        let opened = self.storage_engine.create_tenant(&tenant_id).await?;
+        let runtime = Arc::new(TenantRuntime::from_parts(
+            opened.store,
+            opened.read_storage,
+        )?);
+        self.tenants
+            .write()
+            .expect("tenant registry lock should not be poisoned")
+            .insert(tenant_id, runtime);
+        Ok(())
     }
 
     /// Lists all tenant ids on disk.
@@ -85,8 +105,24 @@ impl Service {
 
     /// Deletes a tenant database and evicts it from memory asynchronously.
     pub async fn delete_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
-        self.call_blocking(move |service| service.delete_tenant(&tenant_id))
-            .await
+        let _tenant_load_guard = self.tenant_load_gate.lock().await;
+        let runtime = {
+            self.tenants
+                .write()
+                .expect("tenant registry lock should not be poisoned")
+                .remove(&tenant_id)
+        };
+        if runtime.is_none() && !self.storage_engine.tenant_exists(&tenant_id).await? {
+            return Err(Error::TenantNotFound(tenant_id));
+        }
+        if let Some(runtime) = runtime {
+            let _deletion = runtime.begin_delete_async().await;
+            runtime
+                .subscriptions
+                .shutdown_all(format!("tenant deleted: {tenant_id}"));
+        }
+        self.storage_engine.delete_tenant(&tenant_id).await?;
+        Ok(())
     }
 
     /// Verifies that a tenant exists.

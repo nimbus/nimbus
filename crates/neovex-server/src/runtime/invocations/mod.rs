@@ -64,4 +64,5 @@ fn runtime_for_host(
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host;
 #[cfg(test)]
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host_state;
+pub(crate) use worker::invoke_runtime_bundle_on_worker_with_host;
 pub(crate) use worker::invoke_runtime_bundle_on_worker_with_host_state;
