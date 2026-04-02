@@ -1,7 +1,7 @@
 use neovex_core::{Error, Result, Schema, TableName, TableSchema};
 use redb::{ReadableTable, TableError};
 
-use crate::index::{encode_index_value, index_key};
+use crate::index::index_key_for_document;
 use crate::keys::{prefix_end, table_prefix};
 use crate::store::{
     DOCUMENTS, INDEXES, SCHEMAS, TenantStore, TenantWriteTransaction, map_redb_error,
@@ -272,14 +272,8 @@ fn push_document_index_keys(
     table_schema: &TableSchema,
 ) -> Result<()> {
     for index in &table_schema.indexes {
-        if let Some(value) = document.get_field(&index.field) {
-            let encoded = encode_index_value(value)?;
-            keys.push(index_key(
-                &table_schema.table,
-                &index.name,
-                &encoded,
-                &document.id,
-            ));
+        if let Some(key) = index_key_for_document(document, index)? {
+            keys.push(key);
         }
     }
     Ok(())

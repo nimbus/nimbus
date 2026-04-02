@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 neovex-core = { path = "../neovex-core" }
 redb.workspace = true
+rmp.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true

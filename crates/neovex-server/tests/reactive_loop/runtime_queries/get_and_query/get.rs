@@ -51,7 +51,14 @@ async fn convex_named_get_subscription_returns_single_document_and_null_on_delet
     let initial = socket.next_json().await;
     assert_eq!(initial["type"], json!("subscription_result"));
     assert_eq!(initial["request_id"], json!("convex-get"));
-    assert_eq!(initial["data"]["body"], json!("Tracked"));
+    let current = if initial["data"].is_null() {
+        let caught_up = socket.next_json().await;
+        assert_eq!(caught_up["type"], json!("subscription_result"));
+        caught_up
+    } else {
+        initial
+    };
+    assert_eq!(current["data"]["body"], json!("Tracked"));
 
     let delete_response = api.delete_document("demo", "messages", &document_id).await;
     assert_eq!(delete_response.status(), reqwest::StatusCode::NO_CONTENT);
@@ -136,8 +143,15 @@ export {};
     let initial = socket.next_json().await;
     assert_eq!(initial["type"], json!("subscription_result"));
     assert_eq!(initial["request_id"], json!("convex-runtime-get"));
-    assert_eq!(initial["data"]["runtime"], json!(true));
-    assert_eq!(initial["data"]["value"]["body"], json!("Tracked"));
+    let current = if initial["data"]["value"].is_null() {
+        let caught_up = socket.next_json().await;
+        assert_eq!(caught_up["type"], json!("subscription_result"));
+        caught_up
+    } else {
+        initial
+    };
+    assert_eq!(current["data"]["runtime"], json!(true));
+    assert_eq!(current["data"]["value"]["body"], json!("Tracked"));
 
     assert!(
         api.insert_document("demo", "messages", json!({ "body": "Other" }))

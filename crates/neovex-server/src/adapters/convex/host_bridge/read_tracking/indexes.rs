@@ -11,7 +11,7 @@ impl ConvexHostBridge {
             .indexes
             .iter()
             .find(|index| index.name == index_name)
-            .map(|index| index.field.clone()))
+            .and_then(|index| index.single_field().map(|field| field.to_string())))
     }
 
     pub(in crate::adapters::convex) fn derive_index_read(
@@ -31,11 +31,12 @@ impl ConvexHostBridge {
         } else {
             table_schema.indexes.iter().find(|index| {
                 query.filters.iter().any(|filter| {
-                    filter.field == index.field && is_scalar_filter_value(&filter.value)
+                    index.single_field() == Some(filter.field.as_str())
+                        && is_scalar_filter_value(&filter.value)
                 })
             })
         }?;
-        let field = index.field.clone();
+        let field = index.single_field()?.to_string();
         let mut start: Option<Value> = None;
         let mut end: Option<Value> = None;
         let mut start_inclusive = false;

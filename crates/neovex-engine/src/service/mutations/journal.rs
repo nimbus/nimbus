@@ -2,40 +2,45 @@ use std::{
     collections::{HashMap, HashSet},
     future,
     sync::Arc,
+    sync::atomic::AtomicBool,
 };
 
 use neovex_core::{
     AccessAction, CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Mutation,
     Result, TableName, TenantId,
 };
+use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::subscriptions::{QueuedSubscriptionWork, SubscriptionBatchCandidate};
-use crate::tenant::{QueuedMutationRequest, QueuedMutationResult, TenantRuntime};
+use crate::tenant::{
+    QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
+};
 
 use super::{
-    MutationExecutionMode, MutationExecutionResult, Service, enforce_mutation_authorization,
+    MutationExecutionMode, MutationExecutionResult, Service, candidate_documents_for_commit,
+    enforce_mutation_authorization,
 };
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 
 struct PlannedQueuedMutation {
-    request: QueuedMutationRequest,
+    cancelled: Arc<AtomicBool>,
+    _operation: TenantOperationGuard,
+    response: oneshot::Sender<Result<QueuedMutationResult>>,
     result: QueuedMutationResult,
     scheduled_execution_id: Option<String>,
-    candidate_documents: Vec<Document>,
-    deleted_documents: Vec<Document>,
     writes: Vec<neovex_core::WriteOp>,
 }
 
-struct AppliedQueuedMutation {
-    commit: CommitEntry,
-    candidate_documents: Vec<Document>,
-    deleted_documents: Vec<Document>,
+struct ActiveQueuedMutation {
+    _operation: TenantOperationGuard,
+    response: oneshot::Sender<Result<QueuedMutationResult>>,
+    result: QueuedMutationResult,
 }
 
 struct QueuedMutationBatchResult {
-    applied: Vec<AppliedQueuedMutation>,
+    applied: Vec<CommitEntry>,
 }
 
 impl Service {
@@ -137,22 +142,21 @@ impl Service {
         })
     }
 
-    fn process_applied_commit_batch(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        applied: &[AppliedQueuedMutation],
-    ) {
+    fn process_applied_commit_batch(&self, runtime: Arc<TenantRuntime>, applied: &[CommitEntry]) {
         if applied.is_empty() {
             return;
         }
 
-        runtime.invalidate_document_cache_for_commits(applied.iter().map(|item| &item.commit));
-
+        let batch_candidate_documents = applied
+            .iter()
+            .map(candidate_documents_for_commit)
+            .collect::<Vec<_>>();
         let batch_candidates = applied
             .iter()
-            .map(|item| SubscriptionBatchCandidate {
-                commit: &item.commit,
-                candidate_documents: &item.candidate_documents,
+            .zip(batch_candidate_documents.iter())
+            .map(|(commit, candidate_documents)| SubscriptionBatchCandidate {
+                commit,
+                candidate_documents,
             })
             .collect::<Vec<_>>();
         let affected = runtime
@@ -174,8 +178,11 @@ impl Service {
             .expect("non-empty applied batch should have a latest commit");
         let work = QueuedSubscriptionWork::new_coalesced(
             affected.subscription_ids,
-            latest.commit.sequence,
-            (applied.len() == 1).then(|| latest.commit.clone()),
+            latest.sequence,
+            // Coalesced batches intentionally omit per-commit identity; only a
+            // single applied commit can safely preserve exact commit metadata
+            // for downstream consumers.
+            (applied.len() == 1).then(|| latest.clone()),
             merge_deleted_documents_for_batch(applied),
         );
         self.dispatch_or_enqueue_subscription_work(runtime, work);
@@ -203,30 +210,40 @@ fn process_queued_mutation_batch(
     }
 
     let mut active = Vec::new();
+    let mut records = Vec::new();
     let mut next_sequence = runtime.durable_head().0.saturating_add(1);
     for planned_request in planned {
-        if planned_request
-            .request
-            .cancelled
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            let _ = planned_request.request.response.send(Err(Error::Cancelled));
+        let PlannedQueuedMutation {
+            cancelled,
+            _operation,
+            response,
+            result,
+            scheduled_execution_id,
+            writes,
+        } = planned_request;
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            let _ = response.send(Err(Error::Cancelled));
             continue;
         }
         let record = match DurableMutationRecord::new(
             neovex_core::SequenceNumber(next_sequence),
             runtime.store.now(),
-            planned_request.writes.clone(),
-            planned_request.scheduled_execution_id.clone(),
+            writes,
+            scheduled_execution_id,
         ) {
             Ok(record) => record,
             Err(error) => {
-                let _ = planned_request.request.response.send(Err(error));
+                let _ = response.send(Err(error));
                 continue;
             }
         };
         next_sequence = next_sequence.saturating_add(1);
-        active.push((planned_request, record));
+        active.push(ActiveQueuedMutation {
+            _operation,
+            response,
+            result,
+        });
+        records.push(record);
     }
 
     if active.is_empty() {
@@ -235,15 +252,10 @@ fn process_queued_mutation_batch(
         });
     }
 
-    let records = active
-        .iter()
-        .map(|(_, record)| record.clone())
-        .collect::<Vec<_>>();
-    if let Err(error) = runtime.store.append_durable_records_batch(records.clone()) {
+    if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let message = format!("durable journal append failed: {error}");
-        for (planned_request, _) in active {
-            let _ = planned_request
-                .request
+        for active_request in active {
+            let _ = active_request
                 .response
                 .send(Err(Error::Internal(message.clone())));
         }
@@ -255,16 +267,9 @@ fn process_queued_mutation_batch(
     }
 
     let mut applied = Vec::with_capacity(records.len());
-    for (planned_request, record) in active {
-        let _ = planned_request
-            .request
-            .response
-            .send(Ok(planned_request.result));
-        applied.push(AppliedQueuedMutation {
-            commit: record.as_commit_entry(),
-            candidate_documents: planned_request.candidate_documents.clone(),
-            deleted_documents: planned_request.deleted_documents.clone(),
-        });
+    for (active_request, record) in active.into_iter().zip(records.iter()) {
+        let _ = active_request.response.send(Ok(active_request.result));
+        applied.push(record.as_commit_entry());
     }
 
     runtime
@@ -278,6 +283,7 @@ fn process_queued_mutation_batch(
             progress.applied_head
         }
     };
+    runtime.invalidate_document_cache_for_commits(applied.iter());
     runtime.mark_applied_head(applied_head);
 
     Ok(QueuedMutationBatchResult { applied })
@@ -289,200 +295,198 @@ fn plan_queued_mutation_request(
     overlay: &mut HashMap<(TableName, DocumentId), Option<Document>>,
     scheduled_execution_overlay: &mut HashSet<String>,
 ) -> Option<PlannedQueuedMutation> {
-    if request.cancelled.load(std::sync::atomic::Ordering::Acquire) {
-        let _ = request.response.send(Err(Error::Cancelled));
+    let QueuedMutationRequest {
+        mutation,
+        principal,
+        scheduled_execution_id,
+        cancelled,
+        _operation,
+        response,
+    } = request;
+
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        let _ = response.send(Err(Error::Cancelled));
         return None;
     }
 
-    if let Some(execution_id) = request.scheduled_execution_id.as_deref() {
+    if let Some(execution_id) = scheduled_execution_id.as_deref() {
         if scheduled_execution_overlay.contains(execution_id) {
-            let _ = request
-                .response
-                .send(Ok(QueuedMutationResult::Scheduled(false)));
+            let _ = response.send(Ok(QueuedMutationResult::Scheduled(false)));
             return None;
         }
         match runtime.store.scheduled_execution_exists(execution_id) {
             Ok(true) => {
-                let _ = request
-                    .response
-                    .send(Ok(QueuedMutationResult::Scheduled(false)));
+                let _ = response.send(Ok(QueuedMutationResult::Scheduled(false)));
                 return None;
             }
             Ok(false) => {}
             Err(error) => {
-                let _ = request.response.send(Err(error));
+                let _ = response.send(Err(error));
                 return None;
             }
         }
     }
 
     let schema = runtime.schema();
-    match request.mutation.clone() {
+    match mutation {
         Mutation::Insert { table, fields } => {
             let table_schema = schema.get_table(&table).cloned();
-            let planned = (|| -> Result<(Document, Vec<neovex_core::WriteOp>)> {
-                if let Some(table_schema) = table_schema.as_ref() {
-                    table_schema.validate(&fields)?;
-                }
-                let document = Document::new(table.clone(), fields);
-                enforce_mutation_authorization(
-                    table_schema.as_ref(),
-                    AccessAction::Create,
-                    &request.principal,
-                    Some(&document),
-                    None,
-                )?;
-                Ok((
-                    document.clone(),
-                    vec![neovex_core::WriteOp {
-                        table: document.table.clone(),
-                        op_type: neovex_core::WriteOpType::Insert,
-                        doc_id: document.id,
-                        previous: None,
-                        current: Some(document),
-                    }],
-                ))
-            })();
-            match planned {
-                Ok((document, writes)) => {
-                    overlay.insert((table, document.id), Some(document.clone()));
-                    let scheduled_execution_id = request.scheduled_execution_id.clone();
-                    if let Some(execution_id) = scheduled_execution_id.clone() {
-                        scheduled_execution_overlay.insert(execution_id);
-                    }
-                    let result = match scheduled_execution_id {
-                        Some(_) => QueuedMutationResult::Scheduled(true),
-                        None => QueuedMutationResult::Immediate(Some(document.id)),
-                    };
-                    Some(PlannedQueuedMutation {
-                        request,
-                        result,
-                        scheduled_execution_id,
-                        candidate_documents: vec![document],
-                        deleted_documents: Vec::new(),
-                        writes,
-                    })
-                }
-                Err(error) => {
-                    let _ = request.response.send(Err(error));
-                    None
-                }
+            if let Some(table_schema) = table_schema.as_ref()
+                && let Err(error) = table_schema.validate(&fields)
+            {
+                let _ = response.send(Err(error));
+                return None;
             }
+            let document = Document::new(table.clone(), fields);
+            if let Err(error) = enforce_mutation_authorization(
+                table_schema.as_ref(),
+                AccessAction::Create,
+                &principal,
+                Some(&document),
+                None,
+            ) {
+                let _ = response.send(Err(error));
+                return None;
+            }
+            let document_id = document.id;
+            overlay.insert((table, document_id), Some(document.clone()));
+            if let Some(execution_id) = scheduled_execution_id.as_ref() {
+                scheduled_execution_overlay.insert(execution_id.clone());
+            }
+            let result = match scheduled_execution_id.as_ref() {
+                Some(_) => QueuedMutationResult::Scheduled(true),
+                None => QueuedMutationResult::Immediate(Some(document_id)),
+            };
+            Some(PlannedQueuedMutation {
+                cancelled,
+                _operation,
+                response,
+                result,
+                scheduled_execution_id,
+                writes: vec![neovex_core::WriteOp {
+                    table: document.table.clone(),
+                    op_type: neovex_core::WriteOpType::Insert,
+                    doc_id: document_id,
+                    previous: None,
+                    current: Some(document),
+                }],
+            })
         }
         Mutation::Update { table, id, patch } => {
             let table_schema = schema.get_table(&table).cloned();
-            let planned = (|| -> Result<(Document, Document, Vec<neovex_core::WriteOp>)> {
-                let existing = load_batched_document(runtime, overlay, &table, id)?
-                    .ok_or(Error::DocumentNotFound(id))?;
-                let mut document = existing.clone();
-                for (field, value) in patch {
-                    document.fields.insert(field, value);
-                }
-                if let Some(table_schema) = table_schema.as_ref() {
-                    table_schema.validate(&document.fields)?;
-                }
-                enforce_mutation_authorization(
-                    table_schema.as_ref(),
-                    AccessAction::Update,
-                    &request.principal,
-                    Some(&document),
-                    Some(&existing),
-                )?;
-                Ok((
-                    existing.clone(),
-                    document.clone(),
-                    vec![neovex_core::WriteOp {
-                        table: table.clone(),
-                        op_type: neovex_core::WriteOpType::Update,
-                        doc_id: id,
-                        previous: Some(existing),
-                        current: Some(document),
-                    }],
-                ))
-            })();
-            match planned {
-                Ok((_existing, document, writes)) => {
-                    overlay.insert((table.clone(), id), Some(document));
-                    let scheduled_execution_id = request.scheduled_execution_id.clone();
-                    if let Some(execution_id) = scheduled_execution_id.clone() {
-                        scheduled_execution_overlay.insert(execution_id);
-                    }
-                    let result = match scheduled_execution_id {
-                        Some(_) => QueuedMutationResult::Scheduled(true),
-                        None => QueuedMutationResult::Immediate(Some(id)),
-                    };
-                    Some(PlannedQueuedMutation {
-                        request,
-                        result,
-                        scheduled_execution_id,
-                        candidate_documents: Vec::new(),
-                        deleted_documents: Vec::new(),
-                        writes,
-                    })
+            let existing = match load_batched_document(runtime, overlay, &table, id) {
+                Ok(Some(existing)) => existing,
+                Ok(None) => {
+                    let _ = response.send(Err(Error::DocumentNotFound(id)));
+                    return None;
                 }
                 Err(error) => {
-                    let _ = request.response.send(Err(error));
-                    None
+                    let _ = response.send(Err(error));
+                    return None;
                 }
+            };
+            let mut document = existing.clone();
+            for (field, value) in patch {
+                document.fields.insert(field, value);
             }
+            if let Some(table_schema) = table_schema.as_ref()
+                && let Err(error) = table_schema.validate(&document.fields)
+            {
+                let _ = response.send(Err(error));
+                return None;
+            }
+            if let Err(error) = enforce_mutation_authorization(
+                table_schema.as_ref(),
+                AccessAction::Update,
+                &principal,
+                Some(&document),
+                Some(&existing),
+            ) {
+                let _ = response.send(Err(error));
+                return None;
+            }
+            overlay.insert((table.clone(), id), Some(document.clone()));
+            if let Some(execution_id) = scheduled_execution_id.as_ref() {
+                scheduled_execution_overlay.insert(execution_id.clone());
+            }
+            let result = match scheduled_execution_id.as_ref() {
+                Some(_) => QueuedMutationResult::Scheduled(true),
+                None => QueuedMutationResult::Immediate(Some(id)),
+            };
+            Some(PlannedQueuedMutation {
+                cancelled,
+                _operation,
+                response,
+                result,
+                scheduled_execution_id,
+                writes: vec![neovex_core::WriteOp {
+                    table: table.clone(),
+                    op_type: neovex_core::WriteOpType::Update,
+                    doc_id: id,
+                    previous: Some(existing),
+                    current: Some(document),
+                }],
+            })
         }
         Mutation::Delete { table, id } => {
             let table_schema = schema.get_table(&table).cloned();
-            let planned = (|| -> Result<(Document, Vec<neovex_core::WriteOp>)> {
-                let existing = load_batched_document(runtime, overlay, &table, id)?
-                    .ok_or(Error::DocumentNotFound(id))?;
-                enforce_mutation_authorization(
-                    table_schema.as_ref(),
-                    AccessAction::Delete,
-                    &request.principal,
-                    None,
-                    Some(&existing),
-                )?;
-                Ok((
-                    existing.clone(),
-                    vec![neovex_core::WriteOp {
-                        table: table.clone(),
-                        op_type: neovex_core::WriteOpType::Delete,
-                        doc_id: id,
-                        previous: Some(existing),
-                        current: None,
-                    }],
-                ))
-            })();
-            match planned {
-                Ok((existing, writes)) => {
-                    overlay.insert((table.clone(), id), None);
-                    let scheduled_execution_id = request.scheduled_execution_id.clone();
-                    if let Some(execution_id) = scheduled_execution_id.clone() {
-                        scheduled_execution_overlay.insert(execution_id);
-                    }
-                    let result = match scheduled_execution_id {
-                        Some(_) => QueuedMutationResult::Scheduled(true),
-                        None => QueuedMutationResult::Immediate(None),
-                    };
-                    Some(PlannedQueuedMutation {
-                        request,
-                        result,
-                        scheduled_execution_id,
-                        candidate_documents: vec![existing.clone()],
-                        deleted_documents: vec![existing],
-                        writes,
-                    })
+            let existing = match load_batched_document(runtime, overlay, &table, id) {
+                Ok(Some(existing)) => existing,
+                Ok(None) => {
+                    let _ = response.send(Err(Error::DocumentNotFound(id)));
+                    return None;
                 }
                 Err(error) => {
-                    let _ = request.response.send(Err(error));
-                    None
+                    let _ = response.send(Err(error));
+                    return None;
                 }
+            };
+            if let Err(error) = enforce_mutation_authorization(
+                table_schema.as_ref(),
+                AccessAction::Delete,
+                &principal,
+                None,
+                Some(&existing),
+            ) {
+                let _ = response.send(Err(error));
+                return None;
             }
+            overlay.insert((table.clone(), id), None);
+            if let Some(execution_id) = scheduled_execution_id.as_ref() {
+                scheduled_execution_overlay.insert(execution_id.clone());
+            }
+            let result = match scheduled_execution_id.as_ref() {
+                Some(_) => QueuedMutationResult::Scheduled(true),
+                None => QueuedMutationResult::Immediate(None),
+            };
+            Some(PlannedQueuedMutation {
+                cancelled,
+                _operation,
+                response,
+                result,
+                scheduled_execution_id,
+                writes: vec![neovex_core::WriteOp {
+                    table: table.clone(),
+                    op_type: neovex_core::WriteOpType::Delete,
+                    doc_id: id,
+                    previous: Some(existing),
+                    current: None,
+                }],
+            })
         }
     }
 }
 
-fn merge_deleted_documents_for_batch(applied: &[AppliedQueuedMutation]) -> Vec<Document> {
+fn merge_deleted_documents_for_batch(applied: &[CommitEntry]) -> Vec<Document> {
     let mut seen = HashSet::<(TableName, DocumentId)>::new();
     let mut deleted_documents = Vec::new();
-    for item in applied {
-        for document in &item.deleted_documents {
+    for commit in applied {
+        for document in commit
+            .writes
+            .iter()
+            .filter(|write| matches!(write.op_type, neovex_core::WriteOpType::Delete))
+            .filter_map(|write| write.previous.as_ref())
+        {
             let key = (document.table.clone(), document.id);
             if seen.insert(key) {
                 deleted_documents.push(document.clone());

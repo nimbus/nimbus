@@ -16,9 +16,8 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Barrier, Condvar, Mutex};
 use std::task::{Context, Poll};
 use tempfile::tempdir;
 use tokio::sync::{Notify, mpsc, watch};
@@ -28,7 +27,8 @@ use crate::evaluator::{
     evaluate_paginated, evaluate_paginated_cancellable, evaluate_query, evaluate_query_cancellable,
 };
 use crate::service::{
-    paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
+    SubscriptionBootstrapCancellation, paginate_documents_for_docs_with_principal,
+    query_documents_for_docs_with_principal,
 };
 use crate::tenant::DOCUMENT_CACHE_CAPACITY;
 use crate::verification::{
@@ -845,6 +845,32 @@ fn evaluator_supports_range_filters_on_numbers() {
 }
 
 #[test]
+fn evaluator_range_filter_on_unsupported_field_type_still_errors_after_pushdown_defers() {
+    let store = neovex_storage::TenantStore::create_in_memory().expect("store should open");
+    let document = neovex_core::Document::new(
+        tasks_table(),
+        serde_json::Map::from_iter([(
+            "rank".to_string(),
+            json!({
+                "nested": 1
+            }),
+        )]),
+    );
+    store.insert(&document).expect("insert should succeed");
+
+    let mut query = query_for("tasks");
+    query.filters = vec![filter("rank", FilterOp::Gt, json!(0))];
+
+    let error = evaluate_query(&store, &query).expect_err("query should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("comparisons only support string and number fields"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn evaluator_query_cancellable_stops_mid_scan() {
     let store = neovex_storage::TenantStore::create_in_memory().expect("store should open");
     for rank in 0..32 {
@@ -1495,6 +1521,145 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
     assert_eq!(stats.coalesced_work_count, 0);
     assert_eq!(stats.reevaluation_count, 1);
     assert!(stats.total_reevaluation_nanos > 0);
+}
+
+#[tokio::test]
+async fn journal_batch_delete_updates_preserve_deleted_documents_from_commit_log() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let first_document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Task A")),
+                ("status".to_string(), json!("active")),
+            ]),
+        )
+        .expect("first fixture insert should succeed");
+    let second_document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Task B")),
+                ("status".to_string(), json!("active")),
+            ]),
+        )
+        .expect("second fixture insert should succeed");
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = service
+        .subscribe(
+            &tenant_id,
+            Query {
+                table: tasks_table(),
+                filters: vec![filter("status", FilterOp::Eq, json!("active"))],
+                order: None,
+                limit: None,
+            },
+            "batch-delete".to_string(),
+            tx,
+        )
+        .expect("subscribe should succeed");
+    let initial = rx
+        .recv()
+        .await
+        .expect("initial subscription update should arrive");
+    match initial {
+        SubscriptionUpdate::Result { data, .. } => assert_eq!(data.len(), 2),
+        other => panic!("unexpected initial subscription update: {other:?}"),
+    }
+
+    let pause = service
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("journal pause handle should load");
+    pause.arm();
+
+    let first_delete = {
+        let service = Arc::clone(&service);
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            service
+                .delete_document_async(tenant_id, tasks_table(), first_document_id)
+                .await
+        })
+    };
+
+    let pause_wait = pause.clone();
+    assert!(
+        tokio::task::spawn_blocking(move || pause_wait.wait_until_entered(Duration::from_secs(1)))
+            .await
+            .expect("pause wait should join"),
+        "journal worker should pause before applying the queued delete batch"
+    );
+
+    let second_delete = {
+        let service = Arc::clone(&service);
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            service
+                .delete_document_async(tenant_id, tasks_table(), second_document_id)
+                .await
+        })
+    };
+
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    pause.release();
+
+    timeout(Duration::from_secs(1), async {
+        first_delete
+            .await
+            .expect("first delete task should join")
+            .expect("first delete should succeed");
+        second_delete
+            .await
+            .expect("second delete task should join")
+            .expect("second delete should succeed");
+    })
+    .await
+    .expect("queued deletes should complete once the journal worker is released");
+
+    let update = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("coalesced delete subscription update should arrive")
+        .expect("subscription channel should remain open");
+    match update {
+        SubscriptionUpdate::Result {
+            commit,
+            deleted_documents,
+            data,
+            ..
+        } => {
+            assert!(
+                commit.is_none(),
+                "multi-commit coalesced deliveries should omit per-commit metadata"
+            );
+            assert!(
+                data.is_empty(),
+                "the active query should be empty after both deletes"
+            );
+            let titles = deleted_documents
+                .into_iter()
+                .map(|document| {
+                    document
+                        .fields
+                        .get("title")
+                        .and_then(|value| value.as_str())
+                        .expect("deleted document should retain its title")
+                        .to_string()
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                titles,
+                BTreeSet::from(["Task A".to_string(), "Task B".to_string()])
+            );
+        }
+        other => panic!("unexpected coalesced delete update: {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -2630,7 +2795,7 @@ async fn query_uses_index_for_equality_filter() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_status".to_string(),
-            field: "status".to_string(),
+            fields: vec!["status".to_string()],
         }],
         access_policy: None,
     };
@@ -2677,7 +2842,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_status".to_string(),
-            field: "status".to_string(),
+            fields: vec!["status".to_string()],
         }],
         access_policy: None,
     };
@@ -2731,6 +2896,110 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
     }
 }
 
+#[test]
+fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_shape() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Ada"))]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = query_for("tasks");
+    let (tx, mut rx) = subscription_channel();
+    let subscription = service
+        .subscribe(&tenant_id, query, "sub-fullscan-sync".to_string(), tx)
+        .expect("subscribe should succeed");
+
+    let initial = rx.blocking_recv().expect("initial update should arrive");
+    match initial {
+        SubscriptionUpdate::Result {
+            subscription_id,
+            request_id,
+            data,
+            ..
+        } => {
+            assert_eq!(subscription_id, subscription.id());
+            assert_eq!(request_id.as_deref(), Some("sub-fullscan-sync"));
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("Ada"));
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    let surface_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(surface_stats.loaded_table_count, 1);
+    assert_eq!(surface_stats.table_load_count, 1);
+    assert_eq!(surface_stats.evaluation_count, 1);
+
+    let planning_stats = service
+        .query_planning_stats_for_testing(&tenant_id)
+        .expect("query planning stats should load");
+    assert_eq!(planning_stats.query_full_scan_count, 1);
+}
+
+#[tokio::test]
+async fn subscription_async_initial_evaluation_uses_materialized_serving_path_for_full_scan_shape()
+{
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Ada"))]),
+        )
+        .expect("seed insert should succeed");
+
+    let (tx, mut rx) = subscription_channel();
+    let subscription = service
+        .subscribe_async(
+            tenant_id.clone(),
+            query_for("tasks"),
+            "sub-fullscan-async".to_string(),
+            tx,
+        )
+        .await
+        .expect("async subscribe should succeed");
+
+    let initial = rx.recv().await.expect("initial update should arrive");
+    match initial {
+        SubscriptionUpdate::Result {
+            subscription_id,
+            request_id,
+            data,
+            ..
+        } => {
+            assert_eq!(subscription_id, subscription.id());
+            assert_eq!(request_id.as_deref(), Some("sub-fullscan-async"));
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("Ada"));
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    let surface_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(surface_stats.loaded_table_count, 1);
+    assert_eq!(surface_stats.table_load_count, 1);
+    assert_eq!(surface_stats.evaluation_count, 1);
+
+    let planning_stats = service
+        .query_planning_stats_for_testing(&tenant_id)
+        .expect("query planning stats should load");
+    assert_eq!(planning_stats.query_full_scan_count, 1);
+}
+
 #[tokio::test]
 async fn setting_schema_backfills_indexes_for_existing_documents() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
@@ -2756,7 +3025,7 @@ async fn setting_schema_backfills_indexes_for_existing_documents() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_status".to_string(),
-            field: "status".to_string(),
+            fields: vec!["status".to_string()],
         }],
         access_policy: None,
     };
@@ -2792,7 +3061,7 @@ async fn query_uses_index_for_range_filter() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -2850,7 +3119,7 @@ async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
         ],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_status".to_string(),
-            field: "status".to_string(),
+            fields: vec!["status".to_string()],
         }],
         access_policy: None,
     };
@@ -2908,7 +3177,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_status".to_string(),
-            field: "status".to_string(),
+            fields: vec!["status".to_string()],
         }],
         access_policy: None,
     };
@@ -2974,6 +3243,65 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
 }
 
 #[tokio::test]
+async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan_shape() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Ada"))]),
+        )
+        .expect("seed insert should succeed");
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = service
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "sub-fullscan-update".to_string(),
+            tx,
+        )
+        .expect("subscribe should succeed");
+    let _ = rx.recv().await.expect("initial update should arrive");
+
+    let initial_surface_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(initial_surface_stats.table_load_count, 1);
+    assert_eq!(initial_surface_stats.evaluation_count, 1);
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Beta"))]),
+        )
+        .expect("follow-up insert should succeed");
+
+    let update = rx.recv().await.expect("subscription update should arrive");
+    match update {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 2);
+        }
+        other => panic!("unexpected subscription event: {other:?}"),
+    }
+
+    let surface_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(surface_stats.table_load_count, 1);
+    assert_eq!(surface_stats.evaluation_count, 2);
+
+    let planning_stats = service
+        .query_planning_stats_for_testing(&tenant_id)
+        .expect("query planning stats should load");
+    assert_eq!(planning_stats.query_full_scan_count, 2);
+}
+
+#[tokio::test]
 async fn query_uses_index_for_bounded_range_filter() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -2987,7 +3315,7 @@ async fn query_uses_index_for_bounded_range_filter() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -3028,6 +3356,92 @@ async fn query_uses_index_for_bounded_range_filter() {
 }
 
 #[tokio::test]
+async fn query_uses_three_field_composite_range_index_through_planner() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let schema = TableSchema {
+        table: tasks_table(),
+        fields: vec![
+            FieldSchema {
+                name: "team".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ],
+        indexes: vec![IndexDefinition {
+            name: "by_team_status_rank".to_string(),
+            fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
+        }],
+        access_policy: None,
+    };
+    service
+        .set_table_schema(&tenant_id, schema)
+        .expect("schema should save");
+
+    for (team, status, rank) in [
+        ("alpha", "open", 1),
+        ("alpha", "open", 2),
+        ("alpha", "open", 3),
+        ("alpha", "done", 2),
+        ("beta", "open", 2),
+    ] {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("team".to_string(), json!(team)),
+                    ("status".to_string(), json!(status)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let documents = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: tasks_table(),
+                filters: vec![
+                    filter("team", FilterOp::Eq, json!("alpha")),
+                    filter("status", FilterOp::Eq, json!("open")),
+                    filter("rank", FilterOp::Gte, json!(2)),
+                    filter("rank", FilterOp::Lt, json!(4)),
+                ],
+                order: Some(OrderBy {
+                    field: "rank".to_string(),
+                    direction: OrderDirection::Asc,
+                }),
+                limit: None,
+            },
+        )
+        .expect("three-field composite query should succeed");
+
+    assert_eq!(documents.len(), 2);
+    assert_eq!(documents[0].fields.get("rank"), Some(&json!(2)));
+    assert_eq!(documents[1].fields.get("rank"), Some(&json!(3)));
+
+    let stats = service
+        .query_planning_stats_for_testing(&tenant_id)
+        .expect("query planning stats should load");
+    assert_eq!(stats.query_composite_index_count, 1);
+    assert_eq!(stats.query_single_field_index_count, 0);
+    assert_eq!(stats.query_full_scan_count, 0);
+}
+
+#[tokio::test]
 async fn query_documents_cancellable_stops_during_index_scan() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -3041,7 +3455,7 @@ async fn query_documents_cancellable_stops_during_index_scan() {
         }],
         indexes: vec![IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -3153,7 +3567,7 @@ async fn query_documents_async_cancellable_returns_cancelled_during_index_scan()
                 }],
                 indexes: vec![IndexDefinition {
                     name: "by_rank".to_string(),
-                    field: "rank".to_string(),
+                    fields: vec!["rank".to_string()],
                 }],
                 access_policy: None,
             },
@@ -3226,7 +3640,7 @@ async fn paginated_query_uses_index_for_range_filter() {
         }],
         indexes: vec![neovex_core::IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -3288,6 +3702,1611 @@ async fn paginated_query_uses_index_for_range_filter() {
     assert_eq!(second_page.data.len(), 2);
     assert_eq!(second_page.data[0]["rank"], json!(7));
     assert_eq!(second_page.data[1]["rank"], json!(8));
+}
+
+#[tokio::test]
+async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progress() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let schema = TableSchema {
+        table: tasks_table(),
+        fields: vec![
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ],
+        indexes: vec![neovex_core::IndexDefinition {
+            name: "by_status_rank".to_string(),
+            fields: vec!["status".to_string(), "rank".to_string()],
+        }],
+        access_policy: None,
+    };
+    service
+        .set_table_schema(&tenant_id, schema)
+        .expect("schema should save");
+
+    for (status, rank) in [
+        ("open", 1),
+        ("open", 2),
+        ("open", 3),
+        ("open", 4),
+        ("done", 0),
+        ("done", 5),
+    ] {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!(status)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let first_page = service
+        .paginate_documents(
+            &tenant_id,
+            &PaginatedQuery {
+                query: Query {
+                    table: tasks_table(),
+                    filters: vec![filter("status", FilterOp::Eq, json!("open"))],
+                    order: Some(OrderBy {
+                        field: "rank".to_string(),
+                        direction: OrderDirection::Asc,
+                    }),
+                    limit: None,
+                },
+                page_size: 2,
+                after: None,
+            },
+        )
+        .expect("first page should succeed");
+    assert_eq!(first_page.data.len(), 2);
+    assert_eq!(first_page.data[0]["status"], json!("open"));
+    assert_eq!(first_page.data[0]["rank"], json!(1));
+    assert_eq!(first_page.data[1]["status"], json!("open"));
+    assert_eq!(first_page.data[1]["rank"], json!(2));
+    assert!(first_page.has_more);
+
+    let second_page = service
+        .paginate_documents(
+            &tenant_id,
+            &PaginatedQuery {
+                query: Query {
+                    table: tasks_table(),
+                    filters: vec![filter("status", FilterOp::Eq, json!("open"))],
+                    order: Some(OrderBy {
+                        field: "rank".to_string(),
+                        direction: OrderDirection::Asc,
+                    }),
+                    limit: None,
+                },
+                page_size: 2,
+                after: first_page.next_cursor.clone(),
+            },
+        )
+        .expect("second page should succeed");
+    assert_eq!(second_page.data.len(), 2);
+    assert_eq!(second_page.data[0]["status"], json!("open"));
+    assert_eq!(second_page.data[0]["rank"], json!(3));
+    assert_eq!(second_page.data[1]["status"], json!("open"));
+    assert_eq!(second_page.data[1]["rank"], json!(4));
+    assert!(!second_page.has_more);
+    assert!(second_page.next_cursor.is_none());
+}
+
+#[test]
+fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let schema = TableSchema {
+        table: tasks_table(),
+        fields: vec![
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+            FieldSchema {
+                name: "title".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+        ],
+        indexes: vec![
+            IndexDefinition {
+                name: "by_status_rank".to_string(),
+                fields: vec!["status".to_string(), "rank".to_string()],
+            },
+            IndexDefinition {
+                name: "by_rank".to_string(),
+                fields: vec!["rank".to_string()],
+            },
+        ],
+        access_policy: None,
+    };
+    service
+        .set_table_schema(&tenant_id, schema)
+        .expect("schema should save");
+
+    for (status, rank, title) in [
+        ("open", 1, "a"),
+        ("open", 2, "b"),
+        ("open", 3, "c"),
+        ("done", 4, "d"),
+    ] {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!(status)),
+                    ("rank".to_string(), json!(rank)),
+                    ("title".to_string(), json!(title)),
+                ]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let composite = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: tasks_table(),
+                filters: vec![filter("status", FilterOp::Eq, json!("open"))],
+                order: Some(OrderBy {
+                    field: "rank".to_string(),
+                    direction: OrderDirection::Asc,
+                }),
+                limit: None,
+            },
+        )
+        .expect("composite query should succeed");
+    assert_eq!(composite.len(), 3);
+
+    let single_field = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: tasks_table(),
+                filters: vec![filter("rank", FilterOp::Gte, json!(2))],
+                order: Some(OrderBy {
+                    field: "rank".to_string(),
+                    direction: OrderDirection::Asc,
+                }),
+                limit: None,
+            },
+        )
+        .expect("single-field query should succeed");
+    assert_eq!(single_field.len(), 3);
+
+    let fallback = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: tasks_table(),
+                filters: vec![filter("title", FilterOp::Eq, json!("b"))],
+                order: None,
+                limit: None,
+            },
+        )
+        .expect("fallback query should succeed");
+    assert_eq!(fallback.len(), 1);
+
+    let page = service
+        .paginate_documents(
+            &tenant_id,
+            &PaginatedQuery {
+                query: Query {
+                    table: tasks_table(),
+                    filters: vec![filter("status", FilterOp::Eq, json!("open"))],
+                    order: Some(OrderBy {
+                        field: "rank".to_string(),
+                        direction: OrderDirection::Asc,
+                    }),
+                    limit: None,
+                },
+                page_size: 2,
+                after: None,
+            },
+        )
+        .expect("paginated composite query should succeed");
+    assert_eq!(page.data.len(), 2);
+
+    let stats = service
+        .query_planning_stats_for_testing(&tenant_id)
+        .expect("query planning stats should load");
+    assert_eq!(stats.query_composite_index_count, 1);
+    assert_eq!(stats.query_single_field_index_count, 1);
+    assert_eq!(stats.query_full_scan_count, 1);
+    assert_eq!(stats.paginated_composite_index_count, 1);
+    assert_eq!(stats.paginated_single_field_index_count, 0);
+    assert_eq!(stats.paginated_full_scan_count, 0);
+}
+
+#[test]
+fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_reads");
+
+    let keep_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("first insert should succeed");
+    let warm_only_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("skip")),
+                ("body".to_string(), json!("Hidden")),
+            ]),
+        )
+        .expect("second insert should succeed");
+    let _ = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("third insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let first = service
+        .query_documents(&tenant_id, &query)
+        .expect("first full-scan query should succeed");
+    assert_eq!(document_bodies(&first), vec!["Ada", "Beta"]);
+    assert_eq!(first[0].id, keep_id);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.evaluation_count, 1);
+    assert_eq!(stats.paginated_count, 0);
+    assert_eq!(stats.get_hit_count, 0);
+
+    let second = service
+        .query_documents(&tenant_id, &query)
+        .expect("second full-scan query should succeed");
+    assert_eq!(document_bodies(&second), vec!["Ada", "Beta"]);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.evaluation_count, 2);
+
+    let warm_only = service
+        .get_document(&tenant_id, &table, warm_only_id)
+        .expect("warm-table get should succeed from the materialized surface");
+    assert_eq!(warm_only.get_field("body"), Some(&json!("Hidden")));
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.get_hit_count, 1);
+}
+
+#[test]
+fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_serving_handle_stability");
+
+    let _ = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let warmed = service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["Ada"]);
+
+    let before_insert = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+    let pinned = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, before_insert)
+        .expect("serving snapshot should load")
+        .expect("warmed table should expose a serving snapshot");
+    assert_eq!(pinned.covered_sequence(), before_insert);
+    let pinned_documents = pinned
+        .table_documents(&table)
+        .expect("pinned snapshot should include the warmed table");
+    assert_eq!(document_bodies(&pinned_documents), vec!["Ada"]);
+
+    let _ = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("second insert should succeed");
+
+    let after_insert = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+    let current = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, after_insert)
+        .expect("current serving snapshot should load")
+        .expect("published serving snapshot should advance after apply");
+    assert_eq!(current.covered_sequence(), after_insert);
+    let current_documents = current
+        .table_documents(&table)
+        .expect("current snapshot should include the warmed table");
+    let mut current_bodies = document_bodies(&current_documents)
+        .into_iter()
+        .collect::<Vec<_>>();
+    current_bodies.sort_unstable();
+    assert_eq!(current_bodies, vec!["Ada", "Beta"]);
+
+    assert_eq!(pinned.covered_sequence(), before_insert);
+    let pinned_documents = pinned
+        .table_documents(&table)
+        .expect("pinned snapshot should still include the warmed table");
+    let pinned_bodies = document_bodies(&pinned_documents)
+        .into_iter()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pinned_bodies,
+        vec!["Ada"],
+        "a pinned serving snapshot should continue to reflect the exact frontier it captured"
+    );
+}
+
+#[test]
+fn materialized_surface_reacquires_retained_covering_version_for_older_required_sequence() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_serving_handle_retention");
+
+    service
+        .set_materialized_read_surface_version_capacity_for_testing(&tenant_id, 3)
+        .expect("materialized surface version capacity should be configurable for tests");
+
+    let _ = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let warmed = service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["Ada"]);
+
+    let first_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("second insert should succeed");
+
+    let second_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+
+    let retained = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, first_sequence)
+        .expect("retained serving snapshot should load")
+        .expect("historical retained version should remain available");
+    assert_eq!(retained.covered_sequence(), first_sequence);
+    let retained_documents = retained
+        .table_documents(&table)
+        .expect("retained snapshot should include the warmed table");
+    assert_eq!(document_bodies(&retained_documents), vec!["Ada"]);
+
+    let current = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, second_sequence)
+        .expect("current serving snapshot should load")
+        .expect("current version should remain available");
+    assert_eq!(current.covered_sequence(), second_sequence);
+    let current_documents = current
+        .table_documents(&table)
+        .expect("current snapshot should include the warmed table");
+    let mut current_bodies = document_bodies(&current_documents)
+        .into_iter()
+        .collect::<Vec<_>>();
+    current_bodies.sort_unstable();
+    assert_eq!(current_bodies, vec!["Ada", "Beta"]);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.retained_version_count, 1);
+    assert_eq!(stats.earliest_retained_sequence, Some(first_sequence));
+    assert_eq!(stats.latest_retained_sequence, Some(first_sequence));
+    assert_eq!(stats.latest_covered_sequence, Some(second_sequence));
+}
+
+#[test]
+fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let alpha = messages_table("messages_snapshot_alpha");
+    let beta = messages_table("messages_snapshot_beta");
+
+    service
+        .set_materialized_read_surface_version_capacity_for_testing(&tenant_id, 4)
+        .expect("materialized surface version capacity should be configurable for tests");
+
+    service
+        .insert_document(
+            &tenant_id,
+            alpha.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("alpha seed insert should succeed");
+    service
+        .insert_document(
+            &tenant_id,
+            beta.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Gamma")),
+            ]),
+        )
+        .expect("beta seed insert should succeed");
+
+    let query_for = |table: TableName| Query {
+        table,
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    service
+        .query_documents(&tenant_id, &query_for(alpha.clone()))
+        .expect("alpha warm query should succeed");
+    service
+        .query_documents(&tenant_id, &query_for(beta.clone()))
+        .expect("beta warm query should succeed");
+
+    service
+        .insert_document(
+            &tenant_id,
+            alpha.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("alpha update insert should succeed");
+    let alpha_update_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+
+    service
+        .insert_document(
+            &tenant_id,
+            beta.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Delta")),
+            ]),
+        )
+        .expect("beta update insert should succeed");
+    let latest_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+
+    let exact_snapshot = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, alpha_update_sequence)
+        .expect("exact serving snapshot should load")
+        .expect("snapshot at the alpha update frontier should be retained");
+    assert_eq!(exact_snapshot.covered_sequence(), alpha_update_sequence);
+    let alpha_documents = exact_snapshot
+        .table_documents(&alpha)
+        .expect("exact snapshot should include warmed alpha");
+    let mut alpha_bodies = document_bodies(&alpha_documents)
+        .into_iter()
+        .collect::<Vec<_>>();
+    alpha_bodies.sort_unstable();
+    assert_eq!(alpha_bodies, vec!["Ada", "Beta"]);
+    let beta_documents = exact_snapshot
+        .table_documents(&beta)
+        .expect("exact snapshot should include warmed beta");
+    let beta_bodies = document_bodies(&beta_documents)
+        .into_iter()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        beta_bodies,
+        vec!["Gamma"],
+        "the snapshot pinned at the earlier frontier should not include the later beta write"
+    );
+
+    let latest_snapshot = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, latest_sequence)
+        .expect("latest serving snapshot should load")
+        .expect("latest snapshot should remain available");
+    assert_eq!(latest_snapshot.covered_sequence(), latest_sequence);
+    let latest_beta_documents = latest_snapshot
+        .table_documents(&beta)
+        .expect("latest snapshot should include warmed beta");
+    let mut latest_beta_bodies = document_bodies(&latest_beta_documents)
+        .into_iter()
+        .collect::<Vec<_>>();
+    latest_beta_bodies.sort_unstable();
+    assert_eq!(latest_beta_bodies, vec!["Delta", "Gamma"]);
+}
+
+#[tokio::test]
+async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_snapshot_waiter");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+
+    let first_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+    let required_sequence = SequenceNumber(first_sequence.0.saturating_add(1));
+
+    let waiter = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .wait_for_materialized_serving_snapshot_for_testing(
+                    tenant_id,
+                    required_sequence,
+                    std::future::pending::<()>(),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_millis(200), async {
+        loop {
+            let stats = service
+                .serving_snapshot_manager_stats_for_testing(&tenant_id)
+                .expect("serving snapshot manager stats should load");
+            if stats.waiter_count == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("waiter should register");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("second insert should succeed");
+
+    let snapshot = timeout(Duration::from_millis(200), waiter)
+        .await
+        .expect("snapshot waiter should wake")
+        .expect("snapshot waiter task should join")
+        .expect("snapshot waiter should succeed");
+    assert_eq!(snapshot.covered_sequence(), required_sequence);
+    let documents = snapshot
+        .table_documents(&table)
+        .expect("woken snapshot should include the target table");
+    let mut bodies = document_bodies(&documents).into_iter().collect::<Vec<_>>();
+    bodies.sort_unstable();
+    assert_eq!(bodies, vec!["Ada", "Beta"]);
+
+    let stats = service
+        .serving_snapshot_manager_stats_for_testing(&tenant_id)
+        .expect("serving snapshot manager stats should load");
+    assert_eq!(stats.waiter_count, 0);
+    assert_eq!(stats.latest_retained_sequence, Some(required_sequence));
+}
+
+#[test]
+fn pinned_serving_snapshot_extends_retention_until_release() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_snapshot_pin_retention");
+
+    service
+        .set_materialized_read_surface_version_capacity_for_testing(&tenant_id, 2)
+        .expect("materialized surface version capacity should be configurable for tests");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+
+    let first_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+    let pinned = service
+        .materialized_serving_snapshot_for_testing(&tenant_id, first_sequence)
+        .expect("first serving snapshot should load")
+        .expect("first serving snapshot should exist");
+
+    for body in ["Beta", "Gamma"] {
+        service
+            .insert_document(
+                &tenant_id,
+                table.clone(),
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!("keep")),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("follow-up insert should succeed");
+    }
+    let third_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+
+    let pinned_stats = service
+        .serving_snapshot_manager_stats_for_testing(&tenant_id)
+        .expect("serving snapshot manager stats should load");
+    assert_eq!(pinned_stats.retained_snapshot_count, 3);
+    assert_eq!(
+        pinned_stats.earliest_retained_sequence,
+        Some(first_sequence)
+    );
+    assert_eq!(pinned_stats.latest_retained_sequence, Some(third_sequence));
+    assert_eq!(pinned_stats.pinned_snapshot_count, 1);
+
+    drop(pinned);
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Delta")),
+            ]),
+        )
+        .expect("final insert should succeed");
+    let fourth_sequence = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .applied_head;
+
+    let released_stats = service
+        .serving_snapshot_manager_stats_for_testing(&tenant_id)
+        .expect("serving snapshot manager stats should load");
+    assert_eq!(released_stats.retained_snapshot_count, 2);
+    assert_eq!(
+        released_stats.earliest_retained_sequence,
+        Some(third_sequence)
+    );
+    assert_eq!(
+        released_stats.latest_retained_sequence,
+        Some(fourth_sequence)
+    );
+    assert_eq!(released_stats.pinned_snapshot_count, 0);
+    assert!(
+        released_stats.pruned_snapshot_count >= 2,
+        "older snapshots should prune once the pin is released"
+    );
+}
+
+#[test]
+fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_coverage");
+
+    let _document_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let warmed = service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["Ada"]);
+
+    let journal_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
+    let publication = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+        .expect("materialized publication should load")
+        .expect("warmed table should publish");
+    assert_eq!(publication.covered_sequence, journal_stats.applied_head);
+    assert_eq!(publication.document_count, 1);
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Elsewhere"))]),
+        )
+        .expect("unrelated insert should succeed");
+
+    let journal_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
+    let publication = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+        .expect("materialized publication should load")
+        .expect("warmed table should stay published");
+    assert_eq!(publication.covered_sequence, journal_stats.applied_head);
+    assert_eq!(publication.document_count, 1);
+
+    let refreshed = service
+        .query_documents(&tenant_id, &query)
+        .expect("refreshed query should reuse the warmed publication");
+    assert_eq!(document_bodies(&refreshed), vec!["Ada"]);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.evaluation_count, 2);
+    assert_eq!(
+        stats.latest_covered_sequence,
+        Some(journal_stats.applied_head)
+    );
+}
+
+#[test]
+fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let alpha = messages_table("messages_materialized_alpha_reuse");
+    let beta = messages_table("messages_materialized_beta_reuse");
+
+    for (table, body) in [(alpha.clone(), "Alpha"), (beta.clone(), "Beta")] {
+        service
+            .insert_document(
+                &tenant_id,
+                table,
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!("keep")),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("seed insert should succeed");
+    }
+
+    let query_for = |table: TableName| Query {
+        table,
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    assert_eq!(
+        document_bodies(
+            &service
+                .query_documents(&tenant_id, &query_for(alpha.clone()))
+                .expect("alpha warm query should succeed"),
+        ),
+        vec!["Alpha"]
+    );
+    assert_eq!(
+        document_bodies(
+            &service
+                .query_documents(&tenant_id, &query_for(beta.clone()))
+                .expect("beta warm query should succeed"),
+        ),
+        vec!["Beta"]
+    );
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Elsewhere"))]),
+        )
+        .expect("unrelated insert should succeed");
+
+    let beta_again = service
+        .query_documents(&tenant_id, &query_for(beta.clone()))
+        .expect("beta query should reuse the warmed serving snapshot");
+    assert_eq!(document_bodies(&beta_again), vec!["Beta"]);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 2);
+    assert_eq!(stats.table_load_count, 2);
+    assert_eq!(stats.evaluation_count, 3);
+    assert_eq!(stats.retained_version_count, 0);
+    assert_eq!(stats.retained_estimated_bytes, 0);
+
+    let journal_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
+    let beta_publication = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
+        .expect("beta publication stats should load")
+        .expect("beta table should stay published");
+    assert_eq!(
+        beta_publication.covered_sequence,
+        journal_stats.applied_head
+    );
+}
+
+#[test]
+fn materialized_surface_handles_concurrent_reads_and_writes() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_concurrent");
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("seed")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+    let warmed = service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["seed"]);
+
+    let barrier = Arc::new(Barrier::new(2));
+    let reader_service = service.clone();
+    let reader_tenant = tenant_id.clone();
+    let reader_query = query.clone();
+    let reader_barrier = barrier.clone();
+    let reader = std::thread::spawn(move || {
+        reader_barrier.wait();
+        for _ in 0..64 {
+            let documents = reader_service
+                .query_documents(&reader_tenant, &reader_query)
+                .expect("concurrent materialized query should succeed");
+            let bodies = document_bodies(&documents);
+            let mut sorted = bodies.clone();
+            sorted.sort_unstable();
+            assert_eq!(bodies, sorted);
+            let unique = bodies.iter().copied().collect::<BTreeSet<_>>();
+            assert_eq!(unique.len(), bodies.len());
+        }
+    });
+
+    let writer_service = service.clone();
+    let writer_tenant = tenant_id.clone();
+    let writer_table = table.clone();
+    let writer_barrier = barrier;
+    let writer = std::thread::spawn(move || {
+        writer_barrier.wait();
+        for index in 0..32 {
+            writer_service
+                .insert_document(
+                    &writer_tenant,
+                    writer_table.clone(),
+                    serde_json::Map::from_iter([
+                        ("owner".to_string(), json!("user-123")),
+                        ("body".to_string(), json!(format!("msg-{index:02}"))),
+                    ]),
+                )
+                .expect("concurrent insert should succeed");
+        }
+    });
+
+    reader.join().expect("reader thread should finish");
+    writer.join().expect("writer thread should finish");
+
+    let documents = service
+        .query_documents(&tenant_id, &query)
+        .expect("final query should succeed");
+    let bodies = document_bodies(&documents);
+    let mut sorted = bodies.clone();
+    sorted.sort_unstable();
+    assert_eq!(bodies, sorted);
+    assert_eq!(bodies.len(), 33);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.table_load_count, 1);
+    assert!(stats.evaluation_count >= 66);
+}
+
+#[test]
+fn materialized_surface_evicts_least_recently_used_tables_under_byte_budget() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let alpha = messages_table("messages_materialized_alpha");
+    let beta = messages_table("messages_materialized_beta");
+
+    service
+        .set_materialized_read_surface_limits_for_testing(&tenant_id, 8, 1)
+        .expect("materialized surface limits should be configurable for tests");
+
+    for table in [alpha.clone(), beta.clone()] {
+        service
+            .insert_document(
+                &tenant_id,
+                table,
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!("keep")),
+                    ("body".to_string(), json!("payload that exceeds one byte")),
+                ]),
+            )
+            .expect("seed insert should succeed");
+    }
+
+    let query_for_table = |table: TableName| Query {
+        table,
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let alpha_docs = service
+        .query_documents(&tenant_id, &query_for_table(alpha.clone()))
+        .expect("alpha warm query should succeed");
+    assert_eq!(alpha_docs.len(), 1);
+
+    let beta_docs = service
+        .query_documents(&tenant_id, &query_for_table(beta.clone()))
+        .expect("beta warm query should succeed");
+    assert_eq!(beta_docs.len(), 1);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 2);
+    assert_eq!(stats.eviction_count, 1);
+    assert_eq!(stats.resident_document_count, 1);
+    assert_eq!(stats.byte_capacity, 1);
+    assert!(
+        service
+            .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
+            .expect("alpha publication should load")
+            .is_none(),
+        "older table should be evicted under the byte budget"
+    );
+    assert!(
+        service
+            .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
+            .expect("beta publication should load")
+            .is_some(),
+        "newest table should remain resident"
+    );
+}
+
+#[tokio::test]
+async fn paused_first_load_catches_up_before_publication() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_bypass");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let publish_pause = service
+        .materialized_read_publish_pause_handle_for_testing(&tenant_id)
+        .expect("publish pause handle should load");
+    publish_pause.arm();
+
+    let first_query = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let query = query.clone();
+        async move { service.query_documents_async(tenant_id, query).await }
+    });
+
+    assert!(
+        tokio::task::spawn_blocking({
+            let publish_pause = publish_pause.clone();
+            move || publish_pause.wait_until_entered(Duration::from_secs(1))
+        })
+        .await
+        .expect("pause waiter should join"),
+        "first warmer should pause before publication"
+    );
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.in_flight_load_count, 1);
+    assert_eq!(stats.bypass_count, 0);
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("concurrent insert should succeed");
+
+    publish_pause.release();
+
+    let first_query = first_query
+        .await
+        .expect("first query task should join")
+        .expect("first query should succeed");
+    assert_eq!(document_bodies(&first_query), vec!["Ada", "Beta"]);
+
+    let publication = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+        .expect("publication should load")
+        .expect("first query should publish its snapshot");
+    let after_insert_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
+    assert_eq!(
+        publication.covered_sequence,
+        after_insert_stats.applied_head
+    );
+    assert_eq!(publication.document_count, 2);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.bypass_count, 0);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.in_flight_load_count, 0);
+    assert_eq!(
+        stats.latest_covered_sequence,
+        Some(after_insert_stats.applied_head)
+    );
+}
+
+#[tokio::test]
+async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_table() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_concurrent_publish");
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let publish_pause = service
+        .materialized_read_publish_pause_handle_for_testing(&tenant_id)
+        .expect("publish pause handle should load");
+    publish_pause.arm();
+
+    let first_query = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let query = query.clone();
+        async move { service.query_documents_async(tenant_id, query).await }
+    });
+
+    assert!(
+        tokio::task::spawn_blocking({
+            let publish_pause = publish_pause.clone();
+            move || publish_pause.wait_until_entered(Duration::from_secs(1))
+        })
+        .await
+        .expect("pause waiter should join"),
+        "first loader should pause before publication"
+    );
+    assert!(
+        service
+            .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+            .expect("materialized publication should load")
+            .is_none(),
+        "no partially caught-up table should be visible before publication"
+    );
+
+    service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("concurrent insert should succeed");
+    let after_insert_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
+
+    let second_query = tokio::task::spawn_blocking({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let query = query.clone();
+        move || service.query_documents(&tenant_id, &query)
+    });
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.in_flight_load_count, 1);
+    assert_eq!(stats.table_load_count, 0);
+    assert_eq!(stats.bypass_count, 0);
+    assert!(
+        service
+            .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+            .expect("materialized publication should load")
+            .is_none(),
+        "waiting readers should not publish a second in-flight table"
+    );
+
+    publish_pause.release();
+
+    let first_query = first_query
+        .await
+        .expect("first query task should join")
+        .expect("first query should succeed");
+    assert_eq!(document_bodies(&first_query), vec!["Ada", "Beta"]);
+    let second_query = second_query
+        .await
+        .expect("second query task should join")
+        .expect("second query should succeed");
+    assert_eq!(document_bodies(&second_query), vec!["Ada", "Beta"]);
+
+    let publication_after_release = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+        .expect("materialized publication should load")
+        .expect("warmed table should remain published");
+    assert_eq!(
+        publication_after_release.covered_sequence,
+        after_insert_stats.applied_head
+    );
+    assert_eq!(publication_after_release.document_count, 2);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.bypass_count, 0);
+    assert_eq!(stats.in_flight_load_count, 0);
+    assert_eq!(
+        stats.latest_covered_sequence,
+        Some(after_insert_stats.applied_head)
+    );
+}
+
+#[tokio::test]
+async fn async_paginated_full_scans_reuse_and_refresh_materialized_surface_after_async_writes() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_paginated");
+
+    for body in ["Beta", "Delta", "Gamma"] {
+        service
+            .insert_document(
+                &tenant_id,
+                table.clone(),
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!("keep")),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("seed insert should succeed");
+    }
+
+    let query = PaginatedQuery {
+        query: Query {
+            table: table.clone(),
+            filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+            order: Some(OrderBy {
+                field: "body".to_string(),
+                direction: OrderDirection::Asc,
+            }),
+            limit: None,
+        },
+        page_size: 2,
+        after: None,
+    };
+
+    let first_page = service
+        .paginate_documents_async(tenant_id.clone(), query.clone())
+        .await
+        .expect("first paginated full-scan query should succeed");
+    assert_eq!(subscription_bodies(&first_page.data), vec!["Beta", "Delta"]);
+    assert!(first_page.has_more);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.paginated_count, 1);
+
+    service
+        .insert_document_async(
+            tenant_id.clone(),
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Able")),
+            ]),
+        )
+        .await
+        .expect("async insert after warmup should succeed");
+
+    let refreshed_page = service
+        .paginate_documents_async(tenant_id.clone(), query)
+        .await
+        .expect("refreshed paginated full-scan query should succeed");
+    assert_eq!(
+        subscription_bodies(&refreshed_page.data),
+        vec!["Able", "Beta"]
+    );
+    assert!(refreshed_page.has_more);
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.paginated_count, 2);
+}
+
+#[tokio::test]
+async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontiers_after_writes() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let alpha = messages_table("messages_materialized_rewarm_alpha");
+    let beta = messages_table("messages_materialized_rewarm_beta");
+
+    service
+        .set_materialized_read_surface_limits_for_testing(&tenant_id, 1, usize::MAX)
+        .expect("materialized surface limits should be configurable for tests");
+
+    service
+        .insert_document(
+            &tenant_id,
+            alpha.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("alpha seed insert should succeed");
+    service
+        .insert_document(
+            &tenant_id,
+            beta.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Gamma")),
+            ]),
+        )
+        .expect("beta seed insert should succeed");
+
+    let alpha_query = Query {
+        table: alpha.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let beta_query = Query {
+        table: beta.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    let warmed_alpha = service
+        .query_documents(&tenant_id, &alpha_query)
+        .expect("warming alpha should succeed");
+    assert_eq!(document_bodies(&warmed_alpha), vec!["Ada"]);
+
+    let alpha_publication = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
+        .expect("alpha publication should load")
+        .expect("alpha should publish after the first warm load");
+
+    service
+        .insert_document(
+            &tenant_id,
+            alpha.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Beta")),
+            ]),
+        )
+        .expect("resident alpha insert should succeed");
+    let after_resident_insert = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load after resident insert");
+    let alpha_after_resident_insert = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
+        .expect("alpha publication should load")
+        .expect("resident alpha table should stay published");
+    assert_eq!(
+        alpha_after_resident_insert.generation, alpha_publication.generation,
+        "resident apply should advance coverage in place instead of republishing the table"
+    );
+    assert_eq!(
+        alpha_after_resident_insert.covered_sequence,
+        after_resident_insert.applied_head
+    );
+    assert_eq!(alpha_after_resident_insert.document_count, 2);
+
+    let warmed_beta = service
+        .query_documents(&tenant_id, &beta_query)
+        .expect("warming beta should succeed");
+    assert_eq!(document_bodies(&warmed_beta), vec!["Gamma"]);
+    assert!(
+        service
+            .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
+            .expect("alpha publication should load")
+            .is_none(),
+        "warming beta under a one-table budget should evict alpha"
+    );
+
+    service
+        .insert_document(
+            &tenant_id,
+            alpha.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Delta")),
+            ]),
+        )
+        .expect("evicted alpha insert should succeed");
+    let after_rewarm_insert = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load after evicted insert");
+
+    let rewarmed_alpha = service
+        .query_documents(&tenant_id, &alpha_query)
+        .expect("rewarming alpha should succeed");
+    assert_eq!(
+        document_bodies(&rewarmed_alpha),
+        vec!["Ada", "Beta", "Delta"]
+    );
+
+    let republished_alpha = service
+        .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
+        .expect("alpha publication should load")
+        .expect("rewarmed alpha should publish again");
+    assert!(
+        republished_alpha.generation > alpha_publication.generation,
+        "rewarming an evicted table should publish a newer generation"
+    );
+    assert_eq!(republished_alpha.document_count, 3);
+    assert_eq!(
+        republished_alpha.covered_sequence, after_rewarm_insert.applied_head,
+        "rewarmed tables should publish the exact frontier they cover"
+    );
+
+    let stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.table_load_count, 3);
+    assert_eq!(stats.eviction_count, 2);
+    assert_eq!(
+        stats.latest_covered_sequence,
+        Some(after_rewarm_insert.applied_head)
+    );
 }
 
 #[tokio::test]
@@ -4078,6 +6097,260 @@ async fn subscription_updates_publish_only_after_journal_apply() {
 }
 
 #[tokio::test]
+async fn async_subscription_bootstrap_catches_up_writes_committed_before_activation() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let pause = service
+        .subscription_bootstrap_pause_handle_for_testing(&tenant_id)
+        .expect("bootstrap pause handle should load");
+    pause.arm();
+
+    let (tx, mut rx) = subscription_channel();
+    let subscribe_task = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .subscribe_async(
+                    tenant_id,
+                    query_for("tasks"),
+                    "bootstrap-gap".to_string(),
+                    tx,
+                )
+                .await
+        }
+    });
+
+    let initial = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("initial subscription result should arrive")
+        .expect("subscription channel should remain open");
+    match initial {
+        SubscriptionUpdate::Result {
+            request_id, data, ..
+        } => {
+            assert_eq!(request_id.as_deref(), Some("bootstrap-gap"));
+            assert!(data.is_empty());
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    assert!(
+        pause.wait_until_entered(Duration::from_secs(1)),
+        "subscription bootstrap should pause before activation"
+    );
+
+    service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("during-bootstrap"))]),
+        )
+        .await
+        .expect("insert during bootstrap gap should succeed");
+
+    assert!(
+        timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .is_err(),
+        "inactive bootstrap window should not publish reactive updates before activation resumes"
+    );
+
+    pause.release();
+
+    let _subscription = timeout(Duration::from_secs(1), subscribe_task)
+        .await
+        .expect("subscribe task should finish after pause release")
+        .expect("subscribe task should join successfully")
+        .expect("subscription should register successfully");
+
+    let catch_up = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("subscription should catch up the write committed during bootstrap")
+        .expect("subscription channel should remain open");
+    match catch_up {
+        SubscriptionUpdate::Result {
+            request_id, data, ..
+        } => {
+            assert!(request_id.is_none());
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("during-bootstrap"));
+        }
+        other => panic!("unexpected bootstrap catch-up event: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn async_subscription_bootstrap_cancellation_before_activation_returns_cancelled() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let pause = service
+        .subscription_bootstrap_pause_handle_for_testing(&tenant_id)
+        .expect("bootstrap pause handle should load");
+    pause.arm();
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancel_notify = Arc::new(Notify::new());
+    let (tx, mut rx) = subscription_channel();
+    let subscribe_task = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        let cancelled = cancelled.clone();
+        let cancel_notify = cancel_notify.clone();
+        async move {
+            service
+                .subscribe_async_cancellable(
+                    tenant_id,
+                    query_for("tasks"),
+                    "bootstrap-cancel".to_string(),
+                    tx,
+                    SubscriptionBootstrapCancellation::new(
+                        async move { cancel_notify.notified().await },
+                        move || {
+                            if cancelled.load(Ordering::SeqCst) {
+                                Err(Error::Cancelled)
+                            } else {
+                                Ok(())
+                            }
+                        },
+                    ),
+                )
+                .await
+        }
+    });
+
+    let initial = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("initial subscription result should arrive")
+        .expect("subscription channel should remain open");
+    match initial {
+        SubscriptionUpdate::Result {
+            request_id, data, ..
+        } => {
+            assert_eq!(request_id.as_deref(), Some("bootstrap-cancel"));
+            assert!(data.is_empty());
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    assert!(
+        pause.wait_until_entered(Duration::from_secs(1)),
+        "subscription bootstrap should pause before activation"
+    );
+
+    cancelled.store(true, Ordering::SeqCst);
+    cancel_notify.notify_waiters();
+    pause.release();
+
+    let error = timeout(Duration::from_secs(1), subscribe_task)
+        .await
+        .expect("cancelled subscribe task should finish after pause release")
+        .expect("cancelled subscribe task should join successfully")
+        .expect_err("subscription bootstrap should be cancelled before activation");
+    assert!(matches!(error, Error::Cancelled));
+
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        0,
+        "cancelled bootstrap should remove the pending subscription",
+    );
+    match timeout(Duration::from_millis(100), rx.recv()).await {
+        Err(_) | Ok(None) => {}
+        Ok(Some(update)) => {
+            panic!("cancelled bootstrap should not emit a catch-up update: {update:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(60_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let insert_task = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("lagged-sync"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("write should block after durable append");
+    timeout(Duration::from_secs(1), insert_task)
+        .await
+        .expect("insert should acknowledge while apply is blocked")
+        .expect("insert task should join successfully")
+        .expect("insert should succeed");
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = service
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "sync-lagged".to_string(),
+            tx,
+        )
+        .expect("sync subscription should register");
+
+    let initial = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("initial sync subscription result should arrive")
+        .expect("subscription channel should remain open");
+    match initial {
+        SubscriptionUpdate::Result {
+            request_id, data, ..
+        } => {
+            assert_eq!(request_id.as_deref(), Some("sync-lagged"));
+            assert!(data.is_empty());
+        }
+        other => panic!("unexpected initial sync subscription event: {other:?}"),
+    }
+
+    faults.release();
+
+    let update = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("sync subscription should observe the lagged commit after apply resumes")
+        .expect("subscription channel should remain open");
+    match update {
+        SubscriptionUpdate::Result {
+            request_id, data, ..
+        } => {
+            assert!(request_id.is_none());
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("lagged-sync"));
+        }
+        other => panic!("unexpected lagged sync subscription event: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn service_reload_recovers_durable_journal_before_serving_async_reads() {
     let data_dir = tempdir().expect("service tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
@@ -4093,21 +6366,19 @@ async fn service_reload_recovers_durable_journal_before_serving_async_reads() {
         serde_json::Map::from_iter([("title".to_string(), json!("recovered"))]),
     );
     store
-        .append_durable_records_batch(vec![
-            neovex_core::DurableMutationRecord::new(
-                SequenceNumber(1),
-                Timestamp(60_000),
-                vec![neovex_core::WriteOp {
-                    table: document.table.clone(),
-                    op_type: neovex_core::WriteOpType::Insert,
-                    doc_id: document.id,
-                    previous: None,
-                    current: Some(document.clone()),
-                }],
-                None,
-            )
-            .expect("durable record should build"),
-        ])
+        .append_durable_records_batch(&[neovex_core::DurableMutationRecord::new(
+            SequenceNumber(1),
+            Timestamp(60_000),
+            vec![neovex_core::WriteOp {
+                table: document.table.clone(),
+                op_type: neovex_core::WriteOpType::Insert,
+                doc_id: document.id,
+                previous: None,
+                current: Some(document.clone()),
+            }],
+            None,
+        )
+        .expect("durable record should build")])
         .expect("durable journal append should succeed");
     drop(store);
 
@@ -4583,7 +6854,7 @@ async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
                 }],
                 indexes: vec![IndexDefinition {
                     name: "by_rank".to_string(),
-                    field: "rank".to_string(),
+                    fields: vec!["rank".to_string()],
                 }],
                 access_policy: None,
             },
@@ -4713,7 +6984,7 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
                 "messages_shadow_schema",
                 vec![IndexDefinition {
                     name: "by_owner".to_string(),
-                    field: "owner".to_string(),
+                    fields: vec!["owner".to_string()],
                 }],
                 Some(read_only_owner_policy()),
             ),
@@ -4829,7 +7100,7 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
                 }],
                 indexes: vec![IndexDefinition {
                     name: "by_rank".to_string(),
-                    field: "rank".to_string(),
+                    fields: vec!["rank".to_string()],
                 }],
                 access_policy: None,
             },
@@ -5042,7 +7313,7 @@ async fn schema_async_write_path_rebuilds_and_removes_indexes_durably() {
         }],
         indexes: vec![IndexDefinition {
             name: "by_rank".to_string(),
-            field: "rank".to_string(),
+            fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     };
@@ -6208,7 +8479,7 @@ async fn service_read_policy_filters_indexed_queries_and_hides_unauthorized_gets
                 "messages_indexed",
                 vec![IndexDefinition {
                     name: "by_owner".to_string(),
-                    field: "owner".to_string(),
+                    fields: vec!["owner".to_string()],
                 }],
                 Some(read_only_owner_policy()),
             ),
@@ -6371,6 +8642,69 @@ async fn service_read_policy_filters_full_scans_pagination_and_subscription_resu
         }
         other => panic!("unexpected subscription update: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn materialized_surface_respects_read_policy_after_schema_change() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_materialized_schema_change");
+    let query = Query {
+        table: table.clone(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    for (owner, body) in [("user-123", "Ada"), ("user-456", "Grace")] {
+        service
+            .insert_document(
+                &tenant_id,
+                table.clone(),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!(owner)),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("fixture insert should succeed");
+    }
+
+    let warmed = service
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["Ada", "Grace"]);
+
+    let warmed_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(warmed_stats.table_load_count, 1);
+
+    service
+        .set_table_schema(
+            &tenant_id,
+            messages_schema(
+                "messages_materialized_schema_change",
+                Vec::new(),
+                Some(read_only_owner_policy()),
+            ),
+        )
+        .expect("schema should save");
+
+    let visible = service
+        .query_documents_with_principal(&tenant_id, &query, &principal_with_subject("user-123"))
+        .expect("authorized query should succeed after schema change");
+    assert_eq!(document_bodies(&visible), vec!["Ada"]);
+
+    let post_change_stats = service
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(post_change_stats.table_load_count, 2);
+    assert_eq!(post_change_stats.loaded_table_count, 1);
+    assert!(post_change_stats.evaluation_count > warmed_stats.evaluation_count);
 }
 
 #[tokio::test]
@@ -6876,7 +9210,7 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
                 "messages_occ_auth",
                 vec![IndexDefinition {
                     name: "by_owner".to_string(),
-                    field: "owner".to_string(),
+                    fields: vec!["owner".to_string()],
                 }],
                 Some(owner_read_write_policy()),
             ),
@@ -6937,6 +9271,122 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
         .commit()
         .expect_err("commit should detect the auth-filtered visibility change");
     assert!(matches!(error, Error::Conflict(_)));
+}
+
+#[test]
+fn mutation_execution_unit_rejects_reuse_after_successful_commit() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_finalize_success");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let document_id = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Committed")),
+            ]),
+        )
+        .expect("staged insert should succeed");
+    let commit = execution_unit
+        .commit()
+        .expect("commit should succeed")
+        .expect("commit entry should be returned");
+    assert_eq!(commit.writes.len(), 1);
+
+    let read_error = execution_unit
+        .get_document(&table, document_id)
+        .expect_err("finalized execution unit should reject further reads");
+    assert!(matches!(read_error, Error::InvalidInput(message) if message.contains("finalized")));
+
+    let write_error = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Second")),
+            ]),
+        )
+        .expect_err("finalized execution unit should reject further writes");
+    assert!(matches!(write_error, Error::InvalidInput(message) if message.contains("finalized")));
+
+    let commit_error = execution_unit
+        .commit()
+        .expect_err("finalized execution unit should reject a second commit");
+    assert!(matches!(commit_error, Error::InvalidInput(message) if message.contains("finalized")));
+}
+
+#[test]
+fn mutation_execution_unit_rejects_reuse_after_failed_commit_attempt() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = messages_table("messages_occ_finalize_failure");
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Initial")),
+            ]),
+        )
+        .expect("fixture insert should succeed");
+
+    let execution_unit = service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .get_document(&table, document_id)
+        .expect("point read should succeed")
+        .expect("document should exist");
+    execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Tx update"))]),
+        )
+        .expect("staged update should succeed");
+
+    service
+        .update_document(
+            &tenant_id,
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Outside update"))]),
+        )
+        .expect("concurrent update should commit");
+
+    let commit_error = execution_unit
+        .commit()
+        .expect_err("commit should detect the conflict");
+    assert!(matches!(commit_error, Error::Conflict(_)));
+
+    let read_error = execution_unit
+        .get_document(&table, document_id)
+        .expect_err("conflicted execution unit should reject further reads");
+    assert!(matches!(read_error, Error::InvalidInput(message) if message.contains("finalized")));
+
+    let write_error = execution_unit
+        .update_document(
+            table.clone(),
+            document_id,
+            serde_json::Map::from_iter([("body".to_string(), json!("Retry"))]),
+        )
+        .expect_err("conflicted execution unit should reject further writes");
+    assert!(matches!(write_error, Error::InvalidInput(message) if message.contains("finalized")));
+
+    let second_commit_error = execution_unit
+        .commit()
+        .expect_err("conflicted execution unit should reject a second commit");
+    assert!(
+        matches!(second_commit_error, Error::InvalidInput(message) if message.contains("finalized"))
+    );
 }
 
 #[tokio::test]

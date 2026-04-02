@@ -41,6 +41,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
             args,
             auth,
             read_set,
+            last_value,
         } => {
             reeval::apply_runtime_named_query_transform(
                 context,
@@ -49,6 +50,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
                     args,
                     auth,
                     read_set,
+                    last_value,
                 },
             )
             .await
@@ -60,6 +62,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
             cursor,
             auth,
             read_set,
+            last_value,
         } => {
             reeval::apply_runtime_named_paginated_query_transform(
                 context,
@@ -70,6 +73,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
                     cursor,
                     auth,
                     read_set,
+                    last_value,
                 },
             )
             .await

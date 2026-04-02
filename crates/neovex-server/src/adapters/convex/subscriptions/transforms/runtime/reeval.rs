@@ -47,6 +47,7 @@ pub(super) struct RuntimeNamedQueryTransform {
     pub(super) args: Value,
     pub(super) auth: Option<InvocationAuth>,
     pub(super) read_set: Option<RuntimeReadSet>,
+    pub(super) last_value: Option<Arc<Value>>,
 }
 
 pub(super) struct RuntimeNamedPaginatedQueryTransform {
@@ -56,6 +57,7 @@ pub(super) struct RuntimeNamedPaginatedQueryTransform {
     pub(super) cursor: Option<String>,
     pub(super) auth: Option<InvocationAuth>,
     pub(super) read_set: Option<RuntimeReadSet>,
+    pub(super) last_value: Option<Arc<Value>>,
 }
 
 pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_query_transform(
@@ -90,6 +92,11 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
         Err(error) => return Err(error.to_string()),
     };
     let (value, new_read_set) = result;
+    let suppress_duplicate = transform
+        .last_value
+        .as_ref()
+        .is_some_and(|last_value| last_value.as_ref() == &value);
+    let value = Arc::new(value);
     update_runtime_transform_read_set(
         context.transforms,
         context.event.subscription_id,
@@ -98,9 +105,10 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
             args: transform.args,
             auth: transform.auth,
             read_set: Some(new_read_set),
+            last_value: Some(value.clone()),
         },
     );
-    Ok(Some(value))
+    Ok((!suppress_duplicate).then(|| value.as_ref().clone()))
 }
 
 pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_paginated_query_transform(
@@ -139,6 +147,11 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
         Err(error) => return Err(error.to_string()),
     };
     let (value, new_read_set) = result;
+    let suppress_duplicate = transform
+        .last_value
+        .as_ref()
+        .is_some_and(|last_value| last_value.as_ref() == &value);
+    let value = Arc::new(value);
     update_runtime_transform_read_set(
         context.transforms,
         context.event.subscription_id,
@@ -149,9 +162,10 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
             cursor: transform.cursor,
             auth: transform.auth,
             read_set: Some(new_read_set),
+            last_value: Some(value.clone()),
         },
     );
-    Ok(Some(value))
+    Ok((!suppress_duplicate).then(|| value.as_ref().clone()))
 }
 
 fn should_skip_runtime_transform(

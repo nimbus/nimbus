@@ -94,11 +94,19 @@ A table without a schema accepts any document. Setting a schema adds constraints
 ## Verification Commands
 
 - **Format check:** `cargo fmt --all --check`
-- **Full test suite:** `cargo test --workspace`
-- **Lint:** `cargo clippy --workspace --all-targets -- -D warnings`
-- **Dependency audit:** `cargo deny check`
+- **Workspace check:** `make check`
+- **Full test suite:** `make test`
+- **Lint:** `make clippy`
+- **Dependency audit:** `make deny`
 - **JS tests:** `npm run test --workspaces --if-present`
 - **JS build:** `npm run build --workspaces --if-present`
 - **All at once:** `make ci`
 
-Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` before opening a PR. CI enforces both plus `cargo deny check`.
+Prefer the `make` entrypoints above for long-running workspace-wide verification:
+they are wrapped with the repo's single-flight guard so an accidental duplicate
+invocation exits quickly instead of starting another overlapping run. Use
+direct `cargo test ...` or `cargo clippy ...` when you intentionally want a
+focused crate-level or test-level command.
+
+Run `cargo fmt --all --check` and `make clippy` before opening a PR. CI enforces
+those checks plus `make deny`.

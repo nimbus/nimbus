@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -52,7 +54,9 @@ run_surface() {
   local test_name
   package="$(surface_package "$surface")"
   test_name="$(surface_test_name "$mode" "$surface")"
-  cargo test -p "$package" "$test_name" -- --ignored --nocapture
+  bash "${SCRIPT_DIR}/single-flight.sh" \
+    --key "verify-harness-${mode}-${surface}" \
+    -- cargo test -p "$package" "$test_name" -- --ignored --nocapture
 }
 
 run_mode() {
@@ -76,7 +80,9 @@ run_repro() {
   package="$(surface_package "$surface")"
   test_name="$(surface_test_name "$mode" "$surface")"
   NEOVEX_VERIFY_CASE="$case_id" \
-    cargo test -p "$package" "$test_name" -- --ignored --nocapture
+    bash "${SCRIPT_DIR}/single-flight.sh" \
+      --key "verify-harness-repro-${surface}-${mode}-${case_id}" \
+      -- cargo test -p "$package" "$test_name" -- --ignored --nocapture
 }
 
 main() {

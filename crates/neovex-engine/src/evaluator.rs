@@ -48,10 +48,12 @@ pub(crate) fn evaluate_query_cancellable_with_predicate<F>(
 where
     F: FnMut(&Document) -> Result<bool>,
 {
-    let filtered =
-        store.scan_table_matching_cancellable(&query.table, check_cancel, |document| {
-            Ok(matches_filters(document, &query.filters)? && include_document(document)?)
-        })?;
+    let filtered = store.scan_table_matching_with_filters_cancellable(
+        &query.table,
+        &query.filters,
+        check_cancel,
+        |document| Ok(matches_filters(document, &query.filters)? && include_document(document)?),
+    )?;
     finalize_query_documents(filtered, query, check_cancel)
 }
 
@@ -102,19 +104,19 @@ fn finalize_query_documents(
 #[derive(Debug, Serialize, Deserialize)]
 struct CursorPayload {
     query_signature: String,
-    sort_value: Option<Value>,
+    sort_values: Vec<Option<Value>>,
     doc_id: String,
 }
 
 /// Encodes a pagination cursor.
 pub fn encode_cursor(
-    sort_value: Option<&Value>,
+    sort_values: &[Option<Value>],
     doc_id: &DocumentId,
     query: &Query,
 ) -> Result<Cursor> {
     let payload = CursorPayload {
         query_signature: query_signature(query)?,
-        sort_value: sort_value.cloned(),
+        sort_values: sort_values.to_vec(),
         doc_id: doc_id.to_string(),
     };
     let json = serde_json::to_vec(&payload)
@@ -123,7 +125,7 @@ pub fn encode_cursor(
 }
 
 /// Decodes a pagination cursor.
-pub fn decode_cursor(cursor: &Cursor, query: &Query) -> Result<(Option<Value>, DocumentId)> {
+pub fn decode_cursor(cursor: &Cursor, query: &Query) -> Result<(Vec<Option<Value>>, DocumentId)> {
     let bytes = URL_SAFE_NO_PAD
         .decode(&cursor.0)
         .map_err(|_| Error::InvalidInput("invalid cursor".to_string()))?;
@@ -132,11 +134,14 @@ pub fn decode_cursor(cursor: &Cursor, query: &Query) -> Result<(Option<Value>, D
     if payload.query_signature != query_signature(query)? {
         return Err(Error::InvalidInput("invalid cursor".to_string()));
     }
+    if payload.sort_values.len() != expected_cursor_sort_value_count(query) {
+        return Err(Error::InvalidInput("invalid cursor".to_string()));
+    }
     let doc_id = payload
         .doc_id
         .parse::<DocumentId>()
         .map_err(|_| Error::InvalidInput("invalid cursor document id".to_string()))?;
-    Ok((payload.sort_value, doc_id))
+    Ok((payload.sort_values, doc_id))
 }
 
 /// Evaluates a paginated query.
@@ -184,8 +189,9 @@ pub(crate) fn evaluate_paginated_cancellable_with_predicate<F>(
 where
     F: FnMut(&Document) -> Result<bool>,
 {
-    let filtered = store.scan_table_matching_cancellable(
+    let filtered = store.scan_table_matching_with_filters_cancellable(
         &paginated.query.table,
+        &paginated.query.filters,
         check_cancel,
         |document| {
             Ok(matches_filters(document, &paginated.query.filters)? && include_document(document)?)
@@ -237,14 +243,14 @@ fn evaluate_paginated_with_filtered_docs_cancellable(
     sort_documents(&mut filtered, unbounded_query.order.as_ref())?;
 
     let start_index = if let Some(cursor) = &paginated.after {
-        let (cursor_sort_value, cursor_doc_id) = decode_cursor(cursor, &unbounded_query)?;
+        let (cursor_sort_values, cursor_doc_id) = decode_cursor(cursor, &unbounded_query)?;
         let mut start = filtered.len();
         for (index, document) in filtered.iter().enumerate() {
             check_cancel()?;
             if compare_document_to_cursor(
                 document,
                 paginated.query.order.as_ref(),
-                cursor_sort_value.as_ref(),
+                &cursor_sort_values,
                 &cursor_doc_id,
             )? == Ordering::Greater
             {
@@ -270,12 +276,9 @@ fn evaluate_paginated_with_filtered_docs_cancellable(
         page_docs
             .last()
             .map(|document| {
-                let sort_value = paginated
-                    .query
-                    .order
-                    .as_ref()
-                    .and_then(|order| document.get_field(&order.field));
-                encode_cursor(sort_value, &document.id, &unbounded_query)
+                let sort_values =
+                    cursor_sort_values_for_document(paginated.query.order.as_ref(), document);
+                encode_cursor(&sort_values, &document.id, &unbounded_query)
             })
             .transpose()?
     } else {
@@ -369,22 +372,39 @@ fn compare_order_field(left: Option<&Value>, right: Option<&Value>) -> Result<Or
 fn compare_document_to_cursor(
     document: &Document,
     order: Option<&OrderBy>,
-    cursor_sort_value: Option<&Value>,
+    cursor_sort_values: &[Option<Value>],
     cursor_doc_id: &DocumentId,
 ) -> Result<Ordering> {
     let ordering = match order {
         Some(order) => {
-            let ordering =
-                compare_order_field(document.get_field(&order.field), cursor_sort_value)?;
+            let boundary_value = cursor_sort_values.first().and_then(Option::as_ref);
+            let ordering = compare_order_field(document.get_field(&order.field), boundary_value)?;
             match order.direction {
                 OrderDirection::Asc => ordering,
                 OrderDirection::Desc => ordering.reverse(),
             }
         }
+        None if !cursor_sort_values.is_empty() => {
+            return Err(Error::InvalidInput("invalid cursor".to_string()));
+        }
         None => Ordering::Equal,
     };
 
     Ok(ordering.then_with(|| document.id.cmp(cursor_doc_id)))
+}
+
+fn cursor_sort_values_for_document(
+    order: Option<&OrderBy>,
+    document: &Document,
+) -> Vec<Option<Value>> {
+    match order {
+        Some(order) => vec![document.get_field(&order.field).cloned()],
+        None => Vec::new(),
+    }
+}
+
+fn expected_cursor_sort_value_count(query: &Query) -> usize {
+    usize::from(query.order.is_some())
 }
 
 fn validate_order_domain<'a>(
@@ -417,6 +437,60 @@ fn order_value_kind(value: &Value) -> Result<OrderValueKind> {
         _ => Err(Error::InvalidInput(
             "ordering only supports string and number fields in phase 1".to_string(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use neovex_core::{OrderBy, OrderDirection, TableName};
+
+    fn tasks_query_with_rank_order() -> Query {
+        Query {
+            table: TableName::new("tasks").expect("table should be valid"),
+            filters: Vec::new(),
+            order: Some(OrderBy {
+                field: "rank".to_string(),
+                direction: OrderDirection::Asc,
+            }),
+            limit: None,
+        }
+    }
+
+    #[test]
+    fn cursor_roundtrips_tuple_capable_sort_values() {
+        let query = tasks_query_with_rank_order();
+        let document_id = DocumentId::new();
+        let cursor =
+            encode_cursor(&[Some(json!(7))], &document_id, &query).expect("cursor should encode");
+
+        let (sort_values, decoded_document_id) =
+            decode_cursor(&cursor, &query).expect("cursor should decode");
+
+        assert_eq!(sort_values, vec![Some(json!(7))]);
+        assert_eq!(decoded_document_id, document_id);
+    }
+
+    #[test]
+    fn cursor_rejects_wrong_tuple_width_for_query_shape() {
+        let query = tasks_query_with_rank_order();
+        let document_id = DocumentId::new();
+        let cursor = Cursor(
+            URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&CursorPayload {
+                    query_signature: query_signature(&query)
+                        .expect("query signature should serialize"),
+                    sort_values: Vec::new(),
+                    doc_id: document_id.to_string(),
+                })
+                .expect("cursor payload should serialize"),
+            ),
+        );
+
+        let error = decode_cursor(&cursor, &query).expect_err("cursor should be rejected");
+        assert!(matches!(error, Error::InvalidInput(_)));
     }
 }
 

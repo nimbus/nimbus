@@ -53,6 +53,7 @@ pub(in crate::adapters::convex::subscriptions) fn subscription_plan_for_named_qu
                 args: args.clone(),
                 auth: None,
                 read_set: None,
+                last_value: None,
             },
         ),
         ConvexFunctionKind::PaginatedQuery => {
@@ -66,6 +67,7 @@ pub(in crate::adapters::convex::subscriptions) fn subscription_plan_for_named_qu
                         cursor,
                         auth: None,
                         read_set: None,
+                        last_value: None,
                     },
                 )
             } else {

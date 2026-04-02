@@ -48,9 +48,9 @@ impl RuntimeReadSet {
                 table: read.table.clone(),
                 filters: read.filters.clone(),
                 order: read.order.clone(),
-                start_sort_value: read.start_sort_value.clone(),
+                start_sort_values: read.start_sort_values.clone(),
                 start_doc_id: read.start_doc_id,
-                end_sort_value: read.end_sort_value.clone(),
+                end_sort_values: read.end_sort_values.clone(),
                 end_doc_id: read.end_doc_id,
                 result_count: read.result_count,
                 page_size: read.page_size,
@@ -94,25 +94,25 @@ impl RuntimeReadSet {
         after: Option<&Cursor>,
         page: &neovex_core::Page,
     ) {
-        let (start_sort_value, start_doc_id) = after
+        let (start_sort_values, start_doc_id) = after
             .and_then(decode_runtime_cursor_boundary)
-            .map_or((None, None), |(sort_value, doc_id)| {
-                (sort_value, Some(doc_id))
+            .map_or((Vec::new(), None), |(sort_values, doc_id)| {
+                (sort_values, Some(doc_id))
             });
-        let (end_sort_value, end_doc_id) = page
+        let (end_sort_values, end_doc_id) = page
             .data
             .last()
             .and_then(|value| extract_runtime_cursor_boundary(query.order.as_ref(), value))
-            .map_or((None, None), |(sort_value, doc_id)| {
-                (sort_value, Some(doc_id))
+            .map_or((Vec::new(), None), |(sort_values, doc_id)| {
+                (sort_values, Some(doc_id))
             });
         let read = RuntimePaginatedWindowRead {
             table: query.table.clone(),
             filters: query.filters.clone(),
             order: query.order.clone(),
-            start_sort_value,
+            start_sort_values,
             start_doc_id,
-            end_sort_value,
+            end_sort_values,
             end_doc_id,
             result_count: page.data.len(),
             page_size,
@@ -166,9 +166,9 @@ pub(super) struct RuntimePaginatedWindowRead {
     pub(super) table: TableName,
     pub(super) filters: Vec<Filter>,
     pub(super) order: Option<OrderBy>,
-    pub(super) start_sort_value: Option<Value>,
+    pub(super) start_sort_values: Vec<Option<Value>>,
     pub(super) start_doc_id: Option<DocumentId>,
-    pub(super) end_sort_value: Option<Value>,
+    pub(super) end_sort_values: Vec<Option<Value>>,
     pub(super) end_doc_id: Option<DocumentId>,
     pub(super) result_count: usize,
     pub(super) page_size: usize,

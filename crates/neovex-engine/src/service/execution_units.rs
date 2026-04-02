@@ -34,12 +34,31 @@ enum StagedSchedulerEntry {
 
 #[derive(Debug, Default)]
 struct MutationExecutionUnitState {
+    lifecycle: ExecutionUnitLifecycle,
     read_dependencies: DependencySet,
     write_dependencies: DependencySet,
     staged_writes: HashMap<(TableName, DocumentId), StagedWriteEntry>,
     write_order: Vec<(TableName, DocumentId)>,
     staged_scheduler_jobs: HashMap<neovex_core::JobId, StagedSchedulerEntry>,
     scheduler_order: Vec<neovex_core::JobId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ExecutionUnitLifecycle {
+    #[default]
+    Active,
+    Finalizing,
+    Finalized,
+}
+
+struct FinalizationGuard<'a> {
+    unit: &'a MutationExecutionUnit,
+}
+
+impl Drop for FinalizationGuard<'_> {
+    fn drop(&mut self) {
+        self.unit.finish_finalization();
+    }
 }
 
 pub struct MutationExecutionUnit {
@@ -137,7 +156,7 @@ impl MutationExecutionUnit {
         }
 
         let merged_query = authorization.merge_query(query);
-        self.record_query_dependency(&merged_query);
+        self.record_query_dependency(&merged_query)?;
         let documents = self.materialize_table_view(&query.table, check_cancel)?;
         let mut include_document =
             |document: &Document| authorization.allows_document(&self.principal, document);
@@ -148,7 +167,7 @@ impl MutationExecutionUnit {
             &mut include_document,
         )?;
         if let Some(limit) = query.limit {
-            self.record_limited_window_dependency(&merged_query, limit, &result);
+            self.record_limited_window_dependency(&merged_query, limit, &result)?;
         }
         Ok(result)
     }
@@ -213,7 +232,7 @@ impl MutationExecutionUnit {
             Some(&document),
             None,
         )?;
-        self.stage_write(table, document.id, None, Some(document.clone()), indexes);
+        self.stage_write(table, document.id, None, Some(document.clone()), indexes)?;
         Ok(document.id)
     }
 
@@ -246,7 +265,7 @@ impl MutationExecutionUnit {
             Some(&document),
             Some(&existing),
         )?;
-        self.stage_write(table, document_id, Some(existing), Some(document), indexes);
+        self.stage_write(table, document_id, Some(existing), Some(document), indexes)?;
         Ok(document_id)
     }
 
@@ -267,7 +286,7 @@ impl MutationExecutionUnit {
             None,
             Some(&existing),
         )?;
-        self.stage_write(table, document_id, Some(existing), None, indexes);
+        self.stage_write(table, document_id, Some(existing), None, indexes)?;
         Ok(())
     }
 
@@ -285,7 +304,7 @@ impl MutationExecutionUnit {
             created_at: now,
         };
         let job_id = job.id;
-        self.stage_scheduled_job(job);
+        self.stage_scheduled_job(job)?;
         Ok(job_id)
     }
 
@@ -303,7 +322,7 @@ impl MutationExecutionUnit {
             created_at: now,
         };
         let job_id = job.id;
-        self.stage_scheduled_job(job);
+        self.stage_scheduled_job(job)?;
         Ok(job_id)
     }
 
@@ -314,60 +333,40 @@ impl MutationExecutionUnit {
 
     pub fn commit(&self) -> Result<Option<CommitEntry>> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let mut state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
-        let writes = self.build_resolved_writes(&state);
-        let schedule_ops = self.build_resolved_schedule_ops(&state);
+        let finalization_guard = FinalizationGuard { unit: self };
+        let (writes, schedule_ops, conflict_dependencies) = {
+            let mut state = self.active_state()?;
+            state.lifecycle = ExecutionUnitLifecycle::Finalizing;
+            let writes = self.build_resolved_writes(&state);
+            let schedule_ops = self.build_resolved_schedule_ops(&state);
+            let mut conflict_dependencies = state.read_dependencies.clone();
+            conflict_dependencies.extend(&state.write_dependencies);
+            (writes, schedule_ops, conflict_dependencies)
+        };
         if writes.is_empty() && schedule_ops.is_empty() {
             return Ok(None);
         }
 
-        let mut conflict_dependencies = state.read_dependencies.clone();
-        conflict_dependencies.extend(&state.write_dependencies);
-        self.ensure_schema_unchanged(&conflict_dependencies)?;
-        self.ensure_no_conflicts(&conflict_dependencies)?;
+        let result = (|| -> Result<Option<CommitEntry>> {
+            self.ensure_schema_unchanged(&conflict_dependencies)?;
+            self.ensure_no_conflicts(&conflict_dependencies)?;
 
-        let commit = {
-            let _sequence_guard = self.runtime.lock_mutation_sequence();
-            self.runtime
-                .store
-                .apply_execution_unit_batch(&writes, &schedule_ops)?
-        };
-        let candidate_documents = writes
-            .iter()
-            .filter_map(|write| match write {
-                ResolvedWrite::Insert { document, .. } => Some(document.clone()),
-                ResolvedWrite::Update { current, .. } => Some(current.clone()),
-                ResolvedWrite::Delete { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let deleted_documents = writes
-            .iter()
-            .filter_map(|write| match write {
-                ResolvedWrite::Delete { previous, .. } => Some(previous.clone()),
-                ResolvedWrite::Insert { .. } | ResolvedWrite::Update { .. } => None,
-            })
-            .collect::<Vec<_>>();
-
-        state.staged_writes.clear();
-        state.write_order.clear();
-        state.staged_scheduler_jobs.clear();
-        state.scheduler_order.clear();
-        state.read_dependencies = DependencySet::default();
-        state.write_dependencies = DependencySet::default();
-        drop(state);
+            let commit = {
+                let _sequence_guard = self.runtime.lock_mutation_sequence();
+                self.runtime
+                    .store
+                    .apply_execution_unit_batch(&writes, &schedule_ops)?
+            };
+            Ok(commit)
+        })();
+        drop(finalization_guard);
+        let commit = result?;
 
         if let Some(commit) = &commit {
             self.runtime.mark_durable_head(commit.sequence);
+            self.runtime.invalidate_document_cache_for_commit(commit);
             self.runtime.mark_applied_head(commit.sequence);
-            self.service.process_commit(
-                self.runtime.clone(),
-                commit,
-                &candidate_documents,
-                &deleted_documents,
-            );
+            self.service.process_commit(self.runtime.clone(), commit);
         }
         if schedule_ops
             .iter()
@@ -383,10 +382,7 @@ impl MutationExecutionUnit {
         table: &TableName,
         document_id: DocumentId,
     ) -> Result<Option<Document>> {
-        let state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
+        let state = self.active_state()?;
         if let Some(entry) = state.staged_writes.get(&(table.clone(), document_id)) {
             return Ok(entry.current.clone());
         }
@@ -399,13 +395,11 @@ impl MutationExecutionUnit {
         table: &TableName,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
+        self.ensure_active()?;
         let mut documents =
             self.snapshot
                 .scan_table_matching_cancellable(table, check_cancel, |_document| Ok(true))?;
-        let state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
+        let state = self.active_state()?;
         let staged_ids = state
             .staged_writes
             .iter()
@@ -434,11 +428,8 @@ impl MutationExecutionUnit {
         original: Option<Document>,
         current: Option<Document>,
         indexes: Vec<neovex_core::IndexDefinition>,
-    ) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
+    ) -> Result<()> {
+        let mut state = self.active_state()?;
         let key = (table.clone(), document_id);
         if !state.staged_writes.contains_key(&key) {
             state.write_order.push(key.clone());
@@ -463,13 +454,11 @@ impl MutationExecutionUnit {
                 .write_dependencies
                 .record_document(&table, document_id);
         }
+        Ok(())
     }
 
-    fn stage_scheduled_job(&self, job: neovex_core::ScheduledJob) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
+    fn stage_scheduled_job(&self, job: neovex_core::ScheduledJob) -> Result<()> {
+        let mut state = self.active_state()?;
         let job_id = job.id;
         if !state.staged_scheduler_jobs.contains_key(&job_id) {
             state.scheduler_order.push(job_id);
@@ -477,13 +466,11 @@ impl MutationExecutionUnit {
         state
             .staged_scheduler_jobs
             .insert(job_id, StagedSchedulerEntry::Insert(job));
+        Ok(())
     }
 
     fn stage_scheduled_job_cancellation(&self, job_id: neovex_core::JobId) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
+        let mut state = self.active_state()?;
         match state.staged_scheduler_jobs.get(&job_id).cloned() {
             Some(StagedSchedulerEntry::Insert(_)) => {
                 state
@@ -504,11 +491,8 @@ impl MutationExecutionUnit {
         }
     }
 
-    fn record_query_dependency(&self, query: &Query) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned");
+    fn record_query_dependency(&self, query: &Query) -> Result<()> {
+        let mut state = self.active_state()?;
         if query.filters.is_empty() {
             state.read_dependencies.record_table(&query.table);
         } else {
@@ -519,6 +503,7 @@ impl MutationExecutionUnit {
                     filters: query.filters.clone(),
                 });
         }
+        Ok(())
     }
 
     fn record_limited_window_dependency(
@@ -526,33 +511,30 @@ impl MutationExecutionUnit {
         query: &Query,
         limit: usize,
         documents: &[Document],
-    ) {
+    ) -> Result<()> {
         if query.order.is_none() {
-            return;
+            return Ok(());
         }
-        self.state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned")
+        self.active_state()?
             .read_dependencies
             .record_paginated_window(PaginatedWindowDependency {
                 table: query.table.clone(),
                 filters: query.filters.clone(),
                 order: query.order.clone(),
-                start_sort_value: None,
+                start_sort_values: Vec::new(),
                 start_doc_id: None,
-                end_sort_value: documents
+                end_sort_values: documents
                     .last()
-                    .and_then(|document| {
-                        query
-                            .order
-                            .as_ref()
-                            .and_then(|order| document.get_field(&order.field))
+                    .map(|document| match query.order.as_ref() {
+                        Some(order) => vec![document.get_field(&order.field).cloned()],
+                        None => Vec::new(),
                     })
-                    .cloned(),
+                    .unwrap_or_default(),
                 end_doc_id: documents.last().map(|document| document.id),
                 result_count: documents.len(),
                 page_size: limit,
             });
+        Ok(())
     }
 
     fn record_paginated_window_dependency(
@@ -560,43 +542,86 @@ impl MutationExecutionUnit {
         paginated: &PaginatedQuery,
         page: &neovex_core::Page,
     ) -> Result<()> {
-        let (start_sort_value, start_doc_id) = paginated
+        let (start_sort_values, start_doc_id) = paginated
             .after
             .as_ref()
             .map(|cursor| decode_cursor(cursor, &paginated.query))
             .transpose()?
-            .map_or((None, None), |(sort_value, document_id)| {
-                (sort_value, Some(document_id))
+            .map_or((Vec::new(), None), |(sort_values, document_id)| {
+                (sort_values, Some(document_id))
             });
         let end_document = page
             .data
             .last()
             .and_then(|value| value.get("_id").and_then(serde_json::Value::as_str))
             .and_then(|value| value.parse::<DocumentId>().ok());
-        let end_sort_value = page.data.last().and_then(|value| {
-            paginated
-                .query
-                .order
-                .as_ref()
-                .and_then(|order| value.get(&order.field))
-                .cloned()
-        });
-        self.state
-            .lock()
-            .expect("mutation execution unit lock should not be poisoned")
+        let end_sort_values = page
+            .data
+            .last()
+            .map(|value| match paginated.query.order.as_ref() {
+                Some(order) => vec![value.get(&order.field).cloned()],
+                None => Vec::new(),
+            })
+            .unwrap_or_default();
+        self.active_state()?
             .read_dependencies
             .record_paginated_window(PaginatedWindowDependency {
                 table: paginated.query.table.clone(),
                 filters: paginated.query.filters.clone(),
                 order: paginated.query.order.clone(),
-                start_sort_value,
+                start_sort_values,
                 start_doc_id,
-                end_sort_value,
+                end_sort_values,
                 end_doc_id: end_document,
                 result_count: page.data.len(),
                 page_size: paginated.page_size,
             });
         Ok(())
+    }
+
+    fn active_state(&self) -> Result<std::sync::MutexGuard<'_, MutationExecutionUnitState>> {
+        let state = self
+            .state
+            .lock()
+            .expect("mutation execution unit lock should not be poisoned");
+        Self::ensure_active_lifecycle(state.lifecycle)?;
+        Ok(state)
+    }
+
+    fn ensure_active(&self) -> Result<()> {
+        let state = self
+            .state
+            .lock()
+            .expect("mutation execution unit lock should not be poisoned");
+        Self::ensure_active_lifecycle(state.lifecycle)
+    }
+
+    fn ensure_active_lifecycle(lifecycle: ExecutionUnitLifecycle) -> Result<()> {
+        match lifecycle {
+            ExecutionUnitLifecycle::Active => Ok(()),
+            ExecutionUnitLifecycle::Finalizing => Err(Error::InvalidInput(
+                "mutation execution unit is finalizing; start a new execution unit".to_string(),
+            )),
+            ExecutionUnitLifecycle::Finalized => Err(Error::InvalidInput(
+                "mutation execution unit is finalized; start a new execution unit".to_string(),
+            )),
+        }
+    }
+
+    fn finish_finalization(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation execution unit lock should not be poisoned");
+        // Execution units are single-use: successful, conflicting, and no-op
+        // commit attempts all retire the staged state permanently.
+        state.lifecycle = ExecutionUnitLifecycle::Finalized;
+        state.staged_writes.clear();
+        state.write_order.clear();
+        state.staged_scheduler_jobs.clear();
+        state.scheduler_order.clear();
+        state.read_dependencies = DependencySet::default();
+        state.write_dependencies = DependencySet::default();
     }
 
     fn build_resolved_writes(&self, state: &MutationExecutionUnitState) -> Vec<ResolvedWrite> {

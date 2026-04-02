@@ -5,23 +5,23 @@ use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 struct RuntimeCursorBoundaryPayload {
-    sort_value: Option<Value>,
+    sort_values: Vec<Option<Value>>,
     doc_id: String,
 }
 
 pub(in crate::runtime::read_tracking) fn decode_runtime_cursor_boundary(
     cursor: &Cursor,
-) -> Option<(Option<Value>, DocumentId)> {
+) -> Option<(Vec<Option<Value>>, DocumentId)> {
     let bytes = URL_SAFE_NO_PAD.decode(&cursor.0).ok()?;
     let payload: RuntimeCursorBoundaryPayload = serde_json::from_slice(&bytes).ok()?;
     let document_id = payload.doc_id.parse().ok()?;
-    Some((payload.sort_value, document_id))
+    Some((payload.sort_values, document_id))
 }
 
 pub(in crate::runtime::read_tracking) fn extract_runtime_cursor_boundary(
     order: Option<&OrderBy>,
     value: &Value,
-) -> Option<(Option<Value>, DocumentId)> {
+) -> Option<(Vec<Option<Value>>, DocumentId)> {
     let Value::Object(object) = value else {
         return None;
     };
@@ -29,6 +29,9 @@ pub(in crate::runtime::read_tracking) fn extract_runtime_cursor_boundary(
         .get("_id")
         .and_then(Value::as_str)
         .and_then(|value| value.parse().ok())?;
-    let sort_value = order.and_then(|order| object.get(&order.field).cloned());
-    Some((sort_value, document_id))
+    let sort_values = match order {
+        Some(order) => vec![object.get(&order.field).cloned()],
+        None => Vec::new(),
+    };
+    Some((sort_values, document_id))
 }

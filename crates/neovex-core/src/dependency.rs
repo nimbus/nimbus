@@ -149,9 +149,9 @@ pub struct PaginatedWindowDependency {
     pub table: TableName,
     pub filters: Vec<Filter>,
     pub order: Option<OrderBy>,
-    pub start_sort_value: Option<Value>,
+    pub start_sort_values: Vec<Option<Value>>,
     pub start_doc_id: Option<DocumentId>,
-    pub end_sort_value: Option<Value>,
+    pub end_sort_values: Vec<Option<Value>>,
     pub end_doc_id: Option<DocumentId>,
     pub result_count: usize,
     pub page_size: usize,
@@ -407,7 +407,7 @@ fn document_may_affect_paginated_window(
         match compare_document_to_boundary(
             document,
             dependency.order.as_ref(),
-            dependency.start_sort_value.as_ref(),
+            &dependency.start_sort_values,
             start_doc_id,
         ) {
             Ok(std::cmp::Ordering::Greater) => {}
@@ -422,7 +422,7 @@ fn document_may_affect_paginated_window(
         match compare_document_to_boundary(
             document,
             dependency.order.as_ref(),
-            dependency.end_sort_value.as_ref(),
+            &dependency.end_sort_values,
             end_doc_id,
         ) {
             Ok(std::cmp::Ordering::Greater) => return false,
@@ -437,17 +437,23 @@ fn document_may_affect_paginated_window(
 fn compare_document_to_boundary(
     document: &Document,
     order: Option<&OrderBy>,
-    boundary_sort_value: Option<&Value>,
+    boundary_sort_values: &[Option<Value>],
     boundary_doc_id: &DocumentId,
 ) -> Result<std::cmp::Ordering> {
     let ordering = match order {
         Some(order) => {
+            let boundary_value = boundary_sort_values.first().and_then(Option::as_ref);
             let ordering =
-                compare_runtime_order_field(document.get_field(&order.field), boundary_sort_value)?;
+                compare_runtime_order_field(document.get_field(&order.field), boundary_value)?;
             match order.direction {
                 crate::OrderDirection::Asc => ordering,
                 crate::OrderDirection::Desc => ordering.reverse(),
             }
+        }
+        None if !boundary_sort_values.is_empty() => {
+            return Err(Error::InvalidInput(
+                "invalid paginated dependency boundary".to_string(),
+            ));
         }
         None => std::cmp::Ordering::Equal,
     };
@@ -633,9 +639,9 @@ mod tests {
                 value: json!("active"),
             }],
             order: None,
-            start_sort_value: None,
+            start_sort_values: Vec::new(),
             start_doc_id: None,
-            end_sort_value: None,
+            end_sort_values: Vec::new(),
             end_doc_id: None,
             result_count: 1,
             page_size: 10,
@@ -673,9 +679,9 @@ mod tests {
             table,
             filters: predicate_dependency.filters.clone(),
             order: None,
-            start_sort_value: None,
+            start_sort_values: Vec::new(),
             start_doc_id: None,
-            end_sort_value: None,
+            end_sort_values: Vec::new(),
             end_doc_id: None,
             result_count: 1,
             page_size: 10,

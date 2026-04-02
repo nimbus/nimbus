@@ -20,11 +20,13 @@ pub use neovex_storage::{
 };
 pub use replica::EmbeddedReplica;
 pub use scheduler::run_scheduler;
-pub use service::{MutationExecutionUnit, Service};
+pub use service::{MutationExecutionUnit, Service, SubscriptionBootstrapCancellation};
 pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,
     SubscriptionUpdate,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub use tenant::{MaterializedReadSurfaceStats, QueryPlanningStats, ServingSnapshotManagerStats};
 pub use verification::{
     BootstrapFingerprint, ConsistencyMismatch, ConsistencyScope, ConsistencyVerificationReport,
     SnapshotFingerprint,

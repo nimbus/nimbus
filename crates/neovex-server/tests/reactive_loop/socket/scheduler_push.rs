@@ -21,7 +21,7 @@ async fn scheduled_mutation_over_http_drives_websocket_push() {
                     { "name": "title", "field_type": "string", "required": false }
                 ],
                 "indexes": [
-                    { "name": "by_priority", "field": "priority" }
+                    { "name": "by_priority", "fields": ["priority"] }
                 ]
             }),
         )

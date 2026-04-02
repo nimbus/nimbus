@@ -62,6 +62,12 @@ cargo install --path crates/neovex-bin
 
 Every release includes SHA256 checksums and [build provenance attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) signed via [Sigstore](https://www.sigstore.dev/). These provide cryptographic proof that each binary was built by our GitHub Actions CI from this repository's source code.
 
+For local repo verification, prefer the checked-in entrypoints such as
+`make test`, `make clippy`, `make check`, and the verification-harness scripts.
+They are guarded with a small single-flight wrapper so accidentally launching
+the same long-running verification command twice exits quickly instead of
+starting another full local run.
+
 ### Checksum verification
 
 Each release includes a `checksums-sha256.txt` file:

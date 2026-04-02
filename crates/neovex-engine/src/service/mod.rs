@@ -31,6 +31,7 @@ pub(crate) use queries::{
 pub(crate) use queries::{
     paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
 };
+pub use subscriptions::SubscriptionBootstrapCancellation;
 
 /// Top-level Neovex engine service.
 pub struct Service {

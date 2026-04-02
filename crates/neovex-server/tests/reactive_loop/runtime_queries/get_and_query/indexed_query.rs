@@ -52,7 +52,7 @@ export {};
                     { "name": "status", "field_type": "string", "required": false }
                 ],
                 "indexes": [
-                    { "name": "by_status", "field": "status" }
+                    { "name": "by_status", "fields": ["status"] }
                 ]
             }),
         )
@@ -88,9 +88,19 @@ export {};
     let initial = socket.next_json().await;
     assert_eq!(initial["type"], json!("subscription_result"));
     assert_eq!(initial["request_id"], json!("convex-runtime-open"));
-    assert_eq!(initial["data"]["runtime"], json!(true));
+    let current = if initial["data"]["value"]
+        .as_array()
+        .is_some_and(|documents| documents.is_empty())
+    {
+        let caught_up = socket.next_json().await;
+        assert_eq!(caught_up["type"], json!("subscription_result"));
+        caught_up
+    } else {
+        initial
+    };
+    assert_eq!(current["data"]["runtime"], json!(true));
     assert_eq!(
-        initial["data"]["value"][0]["title"],
+        current["data"]["value"][0]["title"],
         json!("Tracked open task")
     );
 
