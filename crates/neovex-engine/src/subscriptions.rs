@@ -30,6 +30,7 @@ pub enum SubscriptionUpdate {
 #[derive(Debug, Clone)]
 struct Subscription {
     id: u64,
+    active: bool,
     query: Query,
     dependencies: DependencySet,
     principal: PrincipalContext,
@@ -131,10 +132,12 @@ impl SubscriptionRegistry {
         principal_snapshot: PrincipalSnapshot,
         policy_revision: String,
         sender: mpsc::UnboundedSender<SubscriptionUpdate>,
+        active: bool,
     ) -> SubscriptionRegistration {
         let id = self.state.next_id.fetch_add(1, Ordering::SeqCst);
         let subscription = Subscription {
             id,
+            active,
             dependencies: DependencySet::from_engine_query(&query),
             principal,
             principal_snapshot,
@@ -161,6 +164,18 @@ impl SubscriptionRegistry {
         self.state.remove(id);
     }
 
+    pub fn activate(&self, id: u64) {
+        if let Some(subscription) = self
+            .state
+            .subscriptions
+            .write()
+            .expect("subscription lock should not be poisoned")
+            .get_mut(&id)
+        {
+            subscription.active = true;
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.state.len()
     }
@@ -176,6 +191,7 @@ impl SubscriptionRegistry {
             .read()
             .expect("subscription lock should not be poisoned")
             .values()
+            .filter(|subscription| subscription.active)
             .filter(|subscription| {
                 commit_intersects_dependency_set(
                     commit,
@@ -282,6 +298,7 @@ mod tests {
                 .expect("anonymous principal should snapshot"),
             "policy-v1".to_string(),
             tx,
+            true,
         );
 
         assert_eq!(registration.id(), 1);
@@ -311,6 +328,7 @@ mod tests {
                 .expect("anonymous principal should snapshot"),
             "policy-v1".to_string(),
             tx,
+            true,
         );
         let stored = registry
             .state

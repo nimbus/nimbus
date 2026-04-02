@@ -161,7 +161,10 @@ file links (links go stale; symbol search does not).
 
 - `types.rs` — `TenantId`, `TableName`, `DocumentId`, `SequenceNumber`, `Timestamp`. All validated on construction (alphanumeric + `_` + `-`, max 128 chars).
 - `document.rs` — `Document` struct. Serializes to MessagePack for storage, JSON for wire. System fields `_id` and `_creationTime` added during JSON serialization.
-- `mutation.rs` — `Mutation` enum (`Insert`/`Update`/`Delete`), `CommitEntry`, `WriteOp`. The commit log records every mutation.
+- `mutation.rs` — `Mutation` enum (`Insert`/`Update`/`Delete`),
+  `DurableMutationRecord`, `CommitEntry`, `WriteOp`. The durable journal
+  records every mutation; `CommitEntry` is the applied compatibility view used
+  by existing engine and transport surfaces.
 - `query.rs` — `Query`, `Filter`, `FilterOp`, `OrderBy`. Also `PaginatedQuery`, `Cursor`, `Page` for cursor-based pagination.
 - `schema.rs` — `Schema`, `TableSchema`, `FieldSchema`, `FieldType`, `IndexDefinition`. Schema is optional per-table. Validation checks required fields and type matching.
 - `scheduled.rs` — `ScheduledJob`, `CronJob`, `CronSchedule`, `ScheduledJobResult`. Interval-based cron.
@@ -170,25 +173,37 @@ file links (links go stale; symbol search does not).
 **`neovex-storage`** — Persistence layer. One `TenantStore` per tenant redb file, plus a global `UsageStore` for cross-tenant metering.
 
 - `async_storage.rs` — Internal async storage boundary. Defines the redb-backed read and write executors, cooperative cancellation, queued-write admission, and the write outcome model that distinguishes canceled-before-commit from committed results.
-- `store.rs` — `TenantStore` wrapping a redb `Database`. Defines 10 redb tables plus `TenantWriteTransaction`, which stages durable mutations and commits them atomically at an explicit durable commit point.
+- `store.rs` — `TenantStore` wrapping a redb `Database`. Defines 10 redb
+  tables plus `TenantWriteTransaction`, journal progress tracking, and
+  materialized snapshot-plus-tail rebuild helpers for the authoritative journal
+  model.
 - `keys.rs` — Key construction for the DOCUMENTS table. Prefix-based range scans for table isolation.
 - `index.rs` — Order-preserving value encoding, index key construction, `index_scan_eq`, `index_scan_range`, index maintenance during writes.
 - `schema_store.rs` — Schema persistence. `replace_table_schema` atomically updates schema and rebuilds indexes in one transaction.
 - `scheduler.rs` — Scheduled job and cron job persistence. `claim_due_jobs` atomically moves due jobs from pending to running. `recover_running_jobs` handles crash recovery.
-- `commit_log.rs` — Commit log append and read operations.
+- `commit_log.rs` — Durable mutation journal serialization and compatibility
+  projection back to `CommitEntry`.
 - `usage_store.rs` — `UsageStore` backed by a separate redb database (`neovex-control.db`). Tracks monthly active users (MAU) by token identifier with per-month counters.
 
 **`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
 - `service/mod.rs` — `Service` struct: tenant registry plus the async storage boundary (`RedbStorageEngine`, tenant storage handles, usage storage handle), simulation seams, and scheduler wakeups. Lazy-loads tenants from disk on first access.
-- `service/mutations.rs` — `apply_mutation`: schema validation, declarative access-policy enforcement, index-aware storage write, commit log append, subscription fan-out. This is the core write path.
+- `service/mutations.rs` — `apply_mutation`: schema validation, declarative
+  access-policy enforcement, durable journal append, ordered materialization
+  into document or index state, and subscription fan-out after the applied
+  watermark advances. This is the core write path.
 - `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Sync paths call it directly; async read paths route the same planner and evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
 - `service/scheduler.rs` — Schedule/cron CRUD. `load_tenants_with_scheduled_work` eagerly loads tenants on startup.
 - `service/tenants.rs` — Tenant CRUD and lifecycle management. Create/delete now use async storage-engine control APIs; deletion evicts the tenant from the registry, rejects new work through a tenant-local lifecycle primitive, waits for in-flight operations to drain, then removes the on-disk store.
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
-- `tenant.rs` — `TenantRuntime`: holds `Arc<TenantStore>`, async storage handles, `SubscriptionRegistry`, `RwLock<Schema>`, and a tenant-local close-then-drain lifecycle primitive. Operation entry uses RAII guards to keep the in-flight count correct; sync waiters use a `Condvar`, async waiters use `Notify`, and both share the same deleted-plus-active-operations state.
+- `tenant.rs` — `TenantRuntime`: holds `Arc<TenantStore>`, async storage
+  handles, `SubscriptionRegistry`, `RwLock<Schema>`, a tenant-local
+  close-then-drain lifecycle primitive, and per-tenant durable versus applied
+  mutation-journal progress. Operation entry uses RAII guards to keep the
+  in-flight count correct; sync waiters use a `Condvar`, async waiters use
+  `Notify`, and both share the same deleted-plus-active-operations state.
 - `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
 - `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry. `affected(tables)` returns subscriptions that need re-evaluation.
 - `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification) and dispatches mutations through the public Service API.
@@ -245,9 +260,11 @@ architecture discussion.
    integration lives in the server's bridge implementation, not in the runtime
    crate.
 
-3. **Document write + index update + commit log append are a single redb
-   transaction.** Never commit a document without its index entries. Never
-   append a commit without the document write.
+3. **Durability and visibility are separate, explicit phases.** A mutation is
+   acknowledged only after its durable journal record is appended in commit
+   order. Read visibility, cache publication, and subscription fan-out happen
+   only after ordered materialization updates document and index state and
+   advances the applied watermark.
 
 4. **Every mutation — whether from HTTP, WebSocket, the scheduler, or the
    runtime — flows through `Service::apply_mutation`.** There is no separate
@@ -274,10 +291,10 @@ architecture discussion.
    acquires a shared lock. New operations after the `deleted` flag is set
    return `TenantNotFound`.
 
-8. **Runtime bundles are integrity-checked.** The SHA-256 hash of the bundle
+9. **Runtime bundles are integrity-checked.** The SHA-256 hash of the bundle
    is verified before every invocation. A tampered or stale bundle is rejected.
 
-9. **Runtime host operations go through the same Service path as direct
+10. **Runtime host operations go through the same Service path as direct
    calls.** `ctx.db.insert(...)` inside a V8 handler ultimately calls the
    same `Service::apply_mutation` as an HTTP `POST`. No bypass.
 
@@ -296,21 +313,22 @@ sequenceDiagram
     participant WS as Subscribed Client
 
     C->>Svc: insert_document
-    Svc->>Svc: Schema validation
-    Svc->>St: insert_with_indexes
-    Note over St: Single redb write txn
-    St-->>Svc: CommitEntry
+    Svc->>Svc: Schema validation + access policy
+    Svc->>St: Append durable mutation record
+    Note over St: Durable ordered journal append
+    St-->>Svc: Acknowledged sequence
+    Svc-->>C: DocumentId
 
-    Svc->>Sub: affected tables
+    Svc->>St: Materialize document + index changes
+    Note over St: Ordered apply advances applied watermark
+    Svc->>Sub: affected tables after apply
     Sub-->>Svc: matching subscriptions
 
     loop Each affected subscription
         Svc->>St: evaluate_with_index
-        Note over Svc,St: Index scan or table scan,<br/>then filter, sort, limit
+        Note over Svc,St: Reads wait for applied watermark,<br/>then use index scan or table scan
         Svc-->>WS: SubscriptionUpdate Result
     end
-
-    Svc-->>C: DocumentId
 ```
 
 ### Runtime Bundle Execution Path
@@ -372,8 +390,8 @@ Each tenant's redb file contains 10 key-value tables:
 | `DOCUMENTS` | `table\0doc_id` | msgpack(Document) | Primary document store |
 | `INDEXES` | `table\0idx\0encoded_val+doc_id` | empty | Secondary index entries |
 | `SCHEMAS` | `table_name` | msgpack(TableSchema) | Per-table schema definitions |
-| `COMMIT_LOG` | `sequence (u64)` | msgpack(CommitEntry) | Append-only mutation log. Today this is a transactional side effect; the roadmap grows it into a richer durable logical journal. |
-| `METADATA` | `"next_sequence"` | `u64` | Sequence counter |
+| `COMMIT_LOG` | `sequence (u64)` | msgpack(DurableMutationRecord) | Append-only durable mutation journal. `CommitEntry` reads are a compatibility projection over the logical journal format. |
+| `METADATA` | `"next_sequence"` / `"applied_sequence"` | `u64` | Tracks the next durable sequence to allocate and the latest applied read-visible sequence. |
 | `SCHEDULED_JOBS` | `run_at(8B)+job_id(16B)` | msgpack(ScheduledJob) | Pending scheduled mutations |
 | `RUNNING_SCHEDULED_JOBS` | `job_id(16B)` | msgpack(ScheduledJob) | In-flight jobs (crash recovery) |
 | `SCHEDULED_JOB_RESULTS` | `job_id(16B)` | msgpack(Result) | Execution outcomes |
@@ -449,14 +467,62 @@ This is the right decision for Neovex because:
   materializers later without redefining the application-level durability
   contract
 
-**Committed does not immediately mean read-visible once Phase 6 lands.** The
-durable journal defines commit order and durability. The serving read path
-still comes from applied materialized state. For the first journal-backed
-implementation, Neovex should keep one authoritative read-visible state and
-wait for `applied_sequence >= required_sequence` instead of overlaying
-journal-only records directly into point reads, scans, subscriptions, or cache
-lookups. That keeps visibility rules explicit, preserves one serving read path,
-and avoids introducing a second correctness-critical overlay engine too early.
+**The durable journal is now the authoritative per-tenant history.** The
+ordered `DurableMutationRecord` stream is the source of truth for replay,
+rebuild, and future CDC or replica consumers. Document and index tables remain
+an applied materialized view maintained from that history, with
+`applied_sequence` defining the snapshot boundary between what is already
+materialized and what still lives only in the journal tail.
+
+Materialized snapshot boundaries now carry explicit metadata as well: at
+minimum the snapshot format records the applied sequence it materialized
+through and the durable head observed at export time. That lets rebuild reject
+an incomplete journal tail loudly instead of silently reconstructing only the
+applied prefix when a snapshot is taken during apply lag.
+
+**External journal consumers now use the same ordered history contract.** Phase
+8A exposes the authoritative journal through tenant-scoped sequence cursors
+rather than inventing a second replication log. Consumers read durable
+`DurableMutationRecord` pages with at-least-once, duplicate-tolerant replay
+semantics: retrying an older cursor replays the same suffix, and later
+compaction can invalidate cursors below an explicit cursor floor instead of
+silently skipping history.
+
+**Bootstrap is snapshot plus the same stream, not a separate export format.**
+Bootstrapping a downstream consumer now returns a materialized snapshot, the
+applied sequence to resume after, and the durable cut that bounded the snapshot
+export. To reconstruct the same logical state, a consumer restores the
+snapshot, then applies streamed journal records with
+`resume_after < sequence <= bootstrap_cut`. If newer writes arrive while that
+consumer is catching up, they remain part of the same ordered stream and can be
+processed after the bootstrap cut without switching formats.
+
+**Replica-local reads are now a validated path, but not the default serving
+path.** Neovex now has a narrow read-only `EmbeddedReplica` that bootstraps
+from the authoritative snapshot-plus-stream contract, applies the same durable
+journal records into a local materialized store, and evaluates queries or
+pagination locally against that store. This is an architectural proof point for
+edge and embedded read offload, not a change to write authority or subscription
+fan-out.
+
+**Server-side re-evaluation remains the near-term production path.** The main
+server still owns writes, subscription re-evaluation, and pushed results. The
+embedded replica work proves that local read evaluation can stay consistent
+with the authoritative journal, but it does not replace the server-driven
+reactive path yet. Future promotion of replica-local evaluation should build on
+this contract rather than bypassing the durable journal or inventing a second
+materialization format.
+
+**Committed does not immediately mean read-visible.** The durable journal now
+defines commit order and durability, while the serving read path still comes
+from applied materialized state. Async mutations acknowledge after the durable
+append, but reads, subscriptions, and cache publication wait for
+`applied_sequence >= required_sequence` instead of overlaying journal-only
+records directly into point reads, scans, subscriptions, or cache lookups.
+Rebuild and bootstrap use a materialized snapshot plus journal tail rather than
+inventing a second serving read path. That keeps visibility rules explicit,
+preserves one serving read path, and avoids introducing a second
+correctness-critical overlay engine too early.
 
 **What should guide the durable journal design?** Use external systems as
 reference implementations, not as accidental architecture replacements. The
@@ -478,6 +544,38 @@ compaction principles inspired by TigerBeetle and ship first in shadow mode
 against the redb-backed serving path. Promotion onto any serving path requires
 replay, corruption, and shadow-parity testing rather than benchmark-only
 confidence.
+
+**The first custom materializer remains shadow-only and checkpoint-driven.**
+Phase 9A introduces a storage-owned `ShadowMaterializer` that rebuilds from an
+explicit `MaterializedJournalSnapshot` plus an ordered durable-journal suffix,
+then maintains a versioned manifest with the checkpoint sequence, current
+sequence, buffered tail length, compaction count, and configured compaction
+threshold. Recovery validates those manifest fields against the checkpoint
+boundary before replaying the pending suffix again.
+
+**Compaction is triggered by explicit journal state, not time.** The current
+shadow materializer compacts only when its buffered durable-journal tail reaches
+the configured record-count threshold. A compaction rewrites the current
+materialized view into a new checkpoint snapshot, advances the checkpoint
+sequence to the current sequence, and clears the pending tail. Given the same
+checkpoint snapshot, journal suffix, and threshold configuration, rebuild and
+compaction converge on the same logical state without relying on timers or
+background races.
+
+**redb remains the serving oracle while the materializer proves parity.** The
+shadow materializer is not on a live serving path yet. The current role is to
+replay authoritative `DurableMutationRecord`s and compare query or pagination
+results against the existing redb-backed service path. Any future serving
+promotion should build on that shadow-parity evidence rather than bypassing the
+authoritative journal or weakening the redb correctness path.
+
+**Serving promotion now requires a robustness harness, not just parity on clean
+inputs.** The current shadow-materializer bar includes replay after interrupted
+materialization, replay after interrupted compaction, loud rejection of
+corrupted journal or manifest inputs, and seeded rebuild sequences that compare
+shadow results against the redb-backed oracle across multiple generated
+histories. This is the minimum evidence floor before any query class is allowed
+to read from a custom materializer instead of redb.
 
 **Explicit non-decisions.**
 

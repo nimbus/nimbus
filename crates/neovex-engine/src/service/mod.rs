@@ -106,7 +106,10 @@ impl Service {
     ) -> Result<Arc<TenantRuntime>> {
         let store = Arc::new(store);
         let read_storage = self.storage_engine.read_storage_for_store(store.clone());
-        Ok(Arc::new(TenantRuntime::from_parts(store, read_storage)?))
+        let runtime = Arc::new(TenantRuntime::from_parts(store.clone(), read_storage)?);
+        let progress = store.recover_durable_journal()?;
+        runtime.sync_mutation_journal_progress(progress);
+        Ok(runtime)
     }
 }
 

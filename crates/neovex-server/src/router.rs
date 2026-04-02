@@ -89,6 +89,11 @@ fn build_core_router() -> Router<Arc<AppState>> {
             get(http::read_commit_log),
         )
         .route(
+            "/api/tenants/{tenant_id}/journal/bootstrap",
+            get(http::bootstrap_journal),
+        )
+        .route("/api/tenants/{tenant_id}/journal", get(http::read_journal))
+        .route(
             "/api/tenants/{tenant_id}/documents",
             post(http::insert_document),
         )

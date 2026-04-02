@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    CommitEntry, Document, DocumentId, Error, Filter, OrderBy, Query, Result, TableName,
-    WriteOpType,
+    CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Filter, OrderBy, Query,
+    Result, TableName, WriteOpType,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -138,18 +138,47 @@ pub fn commit_intersects_dependency_set<F>(
 where
     F: FnMut(&TableName, DocumentId) -> Result<Option<Document>>,
 {
+    writes_intersect_dependency_set(
+        &commit.writes,
+        dependencies,
+        candidate_documents,
+        &mut resolve_document,
+    )
+}
+
+pub fn durable_record_intersects_dependency_set<F>(
+    record: &DurableMutationRecord,
+    dependencies: &DependencySet,
+    candidate_documents: &[Document],
+    mut resolve_document: F,
+) -> bool
+where
+    F: FnMut(&TableName, DocumentId) -> Result<Option<Document>>,
+{
+    writes_intersect_dependency_set(
+        &record.writes,
+        dependencies,
+        candidate_documents,
+        &mut resolve_document,
+    )
+}
+
+fn writes_intersect_dependency_set<F>(
+    writes: &[crate::WriteOp],
+    dependencies: &DependencySet,
+    candidate_documents: &[Document],
+    resolve_document: &mut F,
+) -> bool
+where
+    F: FnMut(&TableName, DocumentId) -> Result<Option<Document>>,
+{
     let candidate_documents = candidate_documents
         .iter()
         .map(|document| ((document.table.clone(), document.id), document))
         .collect::<HashMap<(TableName, DocumentId), &Document>>();
 
-    commit.writes.iter().any(|write| {
-        write_intersects_dependency_set(
-            write,
-            dependencies,
-            &candidate_documents,
-            &mut resolve_document,
-        )
+    writes.iter().any(|write| {
+        write_intersects_dependency_set(write, dependencies, &candidate_documents, resolve_document)
     })
 }
 

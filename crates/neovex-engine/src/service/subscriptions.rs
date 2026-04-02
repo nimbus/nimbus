@@ -51,6 +51,7 @@ impl Service {
             principal_snapshot,
             policy_revision,
             sender.clone(),
+            false,
         );
         let subscription_id = registration.id();
         let mut check_cancel = || Ok(());
@@ -69,11 +70,16 @@ impl Service {
                     data: documents_to_json(documents),
                 };
                 if sender.send(update).is_err() {
+                    runtime.subscriptions.remove(subscription_id);
                     return Err(Error::Internal("subscription channel closed".to_string()));
                 }
+                runtime.subscriptions.activate(subscription_id);
                 Ok(registration)
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                runtime.subscriptions.remove(subscription_id);
+                Err(error)
+            }
         }
     }
 
@@ -115,6 +121,7 @@ impl Service {
             principal_snapshot,
             policy_revision,
             sender.clone(),
+            false,
         );
         let subscription_id = registration.id();
         let documents = self
@@ -134,8 +141,10 @@ impl Service {
             data: documents_to_json(documents),
         };
         if sender.send(update).is_err() {
+            runtime.subscriptions.remove(subscription_id);
             return Err(Error::Internal("subscription channel closed".to_string()));
         }
+        runtime.subscriptions.activate(subscription_id);
         Ok(registration)
     }
 

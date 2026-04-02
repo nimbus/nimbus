@@ -19,8 +19,8 @@ use tokio::time::{Duration, timeout};
 use crate::evaluator::{
     evaluate_paginated, evaluate_paginated_cancellable, evaluate_query, evaluate_query_cancellable,
 };
-use crate::{Service, SubscriptionUpdate};
-use neovex_storage::{FaultInjector, FaultPoint, ManualClock};
+use crate::{EmbeddedReplica, Service, ShadowMaterializerConfig, SubscriptionUpdate};
+use neovex_storage::{FaultInjector, FaultPoint, ManualClock, TenantStore};
 
 fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
@@ -922,9 +922,13 @@ async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation
         )
         .expect("insert should succeed");
 
-    let documents = service
-        .query_documents(&tenant_id, &query_for("tasks"))
-        .expect("query should succeed");
+    let documents = timeout(
+        Duration::from_secs(1),
+        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
+    )
+    .await
+    .expect("query should resolve after apply")
+    .expect("query should succeed");
     assert_eq!(documents.len(), 1);
 
     let cached = service
@@ -2512,7 +2516,7 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
 #[tokio::test]
 async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log() {
     let data_dir = tempdir().expect("service tempdir should build");
-    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitBeforeVisibility);
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
     let service = Arc::new(
         Service::new_with_simulation(
             data_dir.path(),
@@ -2525,6 +2529,29 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     service
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
+
+    let blocker = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("blocker"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("first write should block after durable append and before apply");
+    let blocker_id = timeout(Duration::from_secs(1), blocker)
+        .await
+        .expect("first mutation should acknowledge while apply is blocked")
+        .expect("blocker task should join successfully")
+        .expect("first mutation should succeed");
 
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
@@ -2546,39 +2573,36 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
         }
     });
 
-    timeout(Duration::from_secs(1), faults.wait_until_entered())
-        .await
-        .expect("write should block before the durable commit point");
     cancel.notify_one();
     tokio::time::sleep(Duration::from_millis(25)).await;
     faults.release();
 
     let error = timeout(Duration::from_secs(1), handle)
         .await
-        .expect("async mutation should resolve after cancellation")
+        .expect("queued async mutation should resolve after cancellation")
         .expect("mutation task should join successfully")
-        .expect_err("pre-commit cancellation should surface as cancelled");
+        .expect_err("queued cancellation before durable append should surface as cancelled");
     assert!(matches!(error, Error::Cancelled));
-    assert!(
-        service
-            .query_documents(&tenant_id, &query_for("tasks"))
-            .expect("query should succeed")
-            .is_empty(),
-        "pre-commit cancellation should not leave a document behind"
-    );
-    assert!(
+    let documents = service
+        .query_documents(&tenant_id, &query_for("tasks"))
+        .expect("query should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, blocker_id);
+    assert_eq!(documents[0].fields.get("title"), Some(&json!("blocker")));
+    assert_eq!(
         service
             .read_commit_log(&tenant_id, SequenceNumber(0))
             .expect("commit log should read")
-            .is_empty(),
-        "pre-commit cancellation should not append a commit"
+            .len(),
+        1,
+        "queued cancellation before durable append should not append a second commit"
     );
 }
 
 #[tokio::test]
 async fn mutation_async_cancellable_after_commit_returns_committed_result() {
     let data_dir = tempdir().expect("service tempdir should build");
-    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
     let service = Arc::new(
         Service::new_with_simulation(
             data_dir.path(),
@@ -2614,18 +2638,22 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
 
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
-        .expect("write should block after the durable commit point");
+        .expect("write should block after durable append and before apply");
     cancel.notify_one();
-    faults.release();
 
     let document_id = timeout(Duration::from_secs(1), handle)
         .await
         .expect("async mutation should resolve after post-commit cancellation")
         .expect("mutation task should join successfully")
         .expect("post-commit cancellation should still return success");
-    let documents = service
-        .query_documents(&tenant_id, &query_for("tasks"))
-        .expect("query should succeed");
+    faults.release();
+    let documents = timeout(
+        Duration::from_secs(1),
+        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
+    )
+    .await
+    .expect("query should resolve after apply")
+    .expect("query should succeed");
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, document_id);
     assert_eq!(
@@ -2639,6 +2667,725 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibility() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(30_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("durable-first"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append and before apply");
+
+    let document_id = timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("async mutation should acknowledge promptly once durable")
+        .expect("mutation task should join successfully")
+        .expect("durable mutation should acknowledge successfully");
+    assert_eq!(
+        service
+            .latest_sequence_async(tenant_id.clone())
+            .await
+            .expect("latest sequence should read"),
+        SequenceNumber(1)
+    );
+    assert_eq!(
+        service
+            .read_commit_log(&tenant_id, SequenceNumber(0))
+            .expect("commit log should read")
+            .len(),
+        1
+    );
+
+    faults.release();
+
+    let documents = timeout(
+        Duration::from_secs(1),
+        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
+    )
+    .await
+    .expect("query should resolve after apply")
+    .expect("query should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, document_id);
+    assert_eq!(
+        documents[0].fields.get("title"),
+        Some(&json!("durable-first"))
+    );
+}
+
+#[tokio::test]
+async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(40_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let insert_handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("wait-for-apply"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should acknowledge after durable append")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
+
+    let stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should read");
+    assert_eq!(stats.durable_head, SequenceNumber(1));
+    assert_eq!(stats.applied_head, SequenceNumber(0));
+    assert_eq!(stats.apply_lag, 1);
+    assert_eq!(stats.read_wait_count, 0);
+
+    let (query_tx, mut query_rx) = mpsc::unbounded_channel();
+    tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            let result = service
+                .query_documents_async(tenant_id, query_for("tasks"))
+                .await;
+            let _ = query_tx.send(result);
+        }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), query_rx.recv())
+            .await
+            .is_err(),
+        "query should wait for the applied watermark while journaled data is not yet materialized"
+    );
+
+    faults.release();
+
+    let documents = timeout(Duration::from_secs(1), query_rx.recv())
+        .await
+        .expect("query should resolve after apply")
+        .expect("query result should be sent")
+        .expect("query should succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(
+        documents[0].fields.get("title"),
+        Some(&json!("wait-for-apply"))
+    );
+
+    let stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should read after apply");
+    assert_eq!(stats.durable_head, SequenceNumber(1));
+    assert_eq!(stats.applied_head, SequenceNumber(1));
+    assert_eq!(stats.apply_lag, 0);
+    assert_eq!(stats.read_wait_count, 1);
+    assert!(
+        stats.total_read_wait_nanos > 0,
+        "read wait metrics should accumulate a positive wait duration"
+    );
+}
+
+#[tokio::test]
+async fn subscription_updates_publish_only_after_journal_apply() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(50_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionUpdate>();
+    let subscription = service
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "journal-sub".to_string(),
+            tx,
+        )
+        .expect("subscribe should succeed");
+    let subscription_id = subscription.id();
+    let initial = rx
+        .recv()
+        .await
+        .expect("initial subscription update should arrive");
+    match initial {
+        SubscriptionUpdate::Result {
+            subscription_id: actual_id,
+            request_id,
+            data,
+            ..
+        } => {
+            assert_eq!(actual_id, subscription_id);
+            assert_eq!(request_id.as_deref(), Some("journal-sub"));
+            assert!(data.is_empty());
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    let insert_handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("reactive"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should acknowledge while apply is blocked")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
+
+    assert!(
+        timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .is_err(),
+        "subscription fan-out must stay behind the applied visibility boundary"
+    );
+
+    faults.release();
+
+    let update = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("subscription update should arrive after apply")
+        .expect("subscription update should be sent");
+    match update {
+        SubscriptionUpdate::Result {
+            subscription_id: actual_id,
+            request_id,
+            data,
+            ..
+        } => {
+            assert_eq!(actual_id, subscription_id);
+            assert!(request_id.is_none());
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("reactive"));
+        }
+        other => panic!("unexpected reactive update: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn service_reload_recovers_durable_journal_before_serving_async_reads() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let service = Service::new(data_dir.path()).expect("service should create");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    drop(service);
+
+    let store = TenantStore::open(data_dir.path().join("demo.redb")).expect("store should open");
+    let document = neovex_core::Document::new(
+        tasks_table(),
+        serde_json::Map::from_iter([("title".to_string(), json!("recovered"))]),
+    );
+    store
+        .append_durable_records_batch(vec![
+            neovex_core::DurableMutationRecord::new(
+                SequenceNumber(1),
+                Timestamp(60_000),
+                vec![neovex_core::WriteOp {
+                    table: document.table.clone(),
+                    op_type: neovex_core::WriteOpType::Insert,
+                    doc_id: document.id,
+                    previous: None,
+                    current: Some(document.clone()),
+                }],
+                None,
+            )
+            .expect("durable record should build"),
+        ])
+        .expect("durable journal append should succeed");
+    drop(store);
+
+    let reopened = Arc::new(Service::new(data_dir.path()).expect("service should reopen"));
+    let documents = reopened
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("async read should recover and succeed");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, document.id);
+    assert_eq!(documents[0].fields.get("title"), Some(&json!("recovered")));
+    assert_eq!(
+        reopened
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("journal stats should read after recovery"),
+        crate::tenant::MutationJournalStats {
+            durable_head: SequenceNumber(1),
+            applied_head: SequenceNumber(1),
+            apply_lag: 0,
+            read_wait_count: 0,
+            total_read_wait_nanos: 0,
+        }
+    );
+}
+
+#[tokio::test]
+async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let document_id = service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("journal"))]),
+        )
+        .await
+        .expect("insert should succeed");
+    service
+        .update_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("journal-updated"))]),
+        )
+        .await
+        .expect("update should succeed");
+
+    let records = service
+        .read_durable_journal_async(tenant_id.clone(), SequenceNumber(0))
+        .await
+        .expect("durable journal should read");
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1), SequenceNumber(2)]
+    );
+    assert_eq!(
+        records[0].writes[0].op_type,
+        neovex_core::WriteOpType::Insert
+    );
+    assert_eq!(
+        records[1].writes[0].op_type,
+        neovex_core::WriteOpType::Update
+    );
+    assert_eq!(
+        records[1].writes[0]
+            .current
+            .as_ref()
+            .and_then(|document| document.fields.get("title")),
+        Some(&json!("journal-updated"))
+    );
+
+    let filtered = service
+        .read_durable_journal_async(tenant_id, SequenceNumber(1))
+        .await
+        .expect("filtered durable journal should read");
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].sequence, SequenceNumber(2));
+}
+
+#[tokio::test]
+async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tolerant_pages() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let first_document_id = service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
+        )
+        .await
+        .expect("first insert should succeed");
+    service
+        .update_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            first_document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("first-updated"))]),
+        )
+        .await
+        .expect("update should succeed");
+    service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
+        )
+        .await
+        .expect("second insert should succeed");
+
+    let first_page = service
+        .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), 1)
+        .await
+        .expect("first journal page should read");
+    assert_eq!(first_page.cursor_floor, SequenceNumber(0));
+    assert_eq!(first_page.latest_sequence, SequenceNumber(3));
+    assert!(first_page.has_more);
+    assert_eq!(first_page.next_cursor, SequenceNumber(1));
+    assert_eq!(first_page.records.len(), 1);
+    assert_eq!(first_page.records[0].sequence, SequenceNumber(1));
+
+    let replayed_first_page = service
+        .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), 1)
+        .await
+        .expect("replayed first journal page should read");
+    assert_eq!(replayed_first_page.records, first_page.records);
+    assert_eq!(replayed_first_page.next_cursor, first_page.next_cursor);
+
+    let second_page = service
+        .stream_durable_journal_async(tenant_id.clone(), first_page.next_cursor, 1)
+        .await
+        .expect("second journal page should read");
+    assert!(second_page.has_more);
+    assert_eq!(second_page.next_cursor, SequenceNumber(2));
+    assert_eq!(second_page.records.len(), 1);
+    assert_eq!(second_page.records[0].sequence, SequenceNumber(2));
+
+    let third_page = service
+        .stream_durable_journal_async(tenant_id.clone(), second_page.next_cursor, 1)
+        .await
+        .expect("third journal page should read");
+    assert!(!third_page.has_more);
+    assert_eq!(third_page.next_cursor, SequenceNumber(3));
+    assert_eq!(third_page.records.len(), 1);
+    assert_eq!(third_page.records[0].sequence, SequenceNumber(3));
+
+    let empty_page = service
+        .stream_durable_journal_async(tenant_id, third_page.next_cursor, 1)
+        .await
+        .expect("empty journal page should read");
+    assert!(!empty_page.has_more);
+    assert_eq!(empty_page.next_cursor, SequenceNumber(3));
+    assert!(empty_page.records.is_empty());
+}
+
+#[tokio::test]
+async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_reads() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
+    let service = Arc::new(
+        Service::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(80_000))),
+            faults.clone(),
+        )
+        .expect("service should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    let insert_handle = tokio::spawn({
+        let service = service.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("bootstrap"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), faults.wait_until_entered())
+        .await
+        .expect("journal worker should block after durable append");
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should acknowledge while apply is blocked")
+        .expect("mutation task should join")
+        .expect("mutation should succeed");
+
+    let bootstrap = service
+        .export_durable_journal_bootstrap_async(tenant_id.clone())
+        .await
+        .expect("bootstrap metadata should read");
+    assert_eq!(bootstrap.resume_after, SequenceNumber(0));
+    assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(1));
+    assert_eq!(bootstrap.cursor_floor, SequenceNumber(0));
+    assert_eq!(bootstrap.snapshot.applied_sequence, SequenceNumber(0));
+    assert_eq!(bootstrap.snapshot.durable_head, SequenceNumber(1));
+    assert!(bootstrap.snapshot.documents.is_empty());
+
+    let page = service
+        .stream_durable_journal_async(tenant_id.clone(), bootstrap.resume_after, 10)
+        .await
+        .expect("journal tail should read");
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].sequence, SequenceNumber(1));
+
+    let rebuilt = TenantStore::create_in_memory().expect("rebuild store should open");
+    rebuilt
+        .rebuild_materialized_journal_from_snapshot(
+            &bootstrap.snapshot,
+            &page.records,
+            Some(bootstrap.bootstrap_cut),
+        )
+        .expect("snapshot plus stream tail should rebuild");
+
+    faults.release();
+
+    let live_documents = service
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("live read should succeed after apply");
+    let rebuilt_documents = rebuilt
+        .scan_table(&tasks_table())
+        .expect("rebuilt store should scan");
+    assert_eq!(rebuilt_documents, live_documents);
+}
+
+#[tokio::test]
+async fn embedded_replica_bootstrap_matches_live_query_and_pagination_results() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    for (title, rank) in [("alpha", 1), ("beta", 2), ("gamma", 3)] {
+        service
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("title".to_string(), json!(title)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .await
+            .expect("seed insert should succeed");
+    }
+
+    let replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+        .await
+        .expect("replica should bootstrap");
+    let live_query = service
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("live query should succeed");
+    let replica_query = replica
+        .query_documents(&query_for("tasks"))
+        .expect("replica query should succeed");
+    assert_eq!(replica_query, live_query);
+
+    let paginated = PaginatedQuery {
+        query: Query {
+            table: tasks_table(),
+            filters: Vec::new(),
+            order: Some(OrderBy {
+                field: "rank".to_string(),
+                direction: OrderDirection::Asc,
+            }),
+            limit: None,
+        },
+        page_size: 2,
+        after: None,
+    };
+    let live_page = service
+        .paginate_documents_async(tenant_id.clone(), paginated.clone())
+        .await
+        .expect("live page should succeed");
+    let replica_page = replica
+        .paginate_documents(&paginated)
+        .expect("replica page should succeed");
+    assert_eq!(replica_page, live_page);
+}
+
+#[tokio::test]
+async fn embedded_replica_catches_up_after_reconnection() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("before"))]),
+        )
+        .await
+        .expect("initial insert should succeed");
+
+    let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
+        .await
+        .expect("replica should bootstrap");
+    assert_eq!(replica.sequence_cursor(), SequenceNumber(1));
+
+    service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("after"))]),
+        )
+        .await
+        .expect("follow-up insert should succeed");
+
+    let stale_documents = replica
+        .query_documents(&query_for("tasks"))
+        .expect("stale replica query should succeed");
+    assert_eq!(stale_documents.len(), 1);
+
+    replica
+        .catch_up(&service, 1)
+        .await
+        .expect("replica catch-up should succeed");
+    assert_eq!(replica.sequence_cursor(), SequenceNumber(2));
+
+    let live_documents = service
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("live query should succeed");
+    let replica_documents = replica
+        .query_documents(&query_for("tasks"))
+        .expect("replica query should succeed");
+    assert_eq!(replica_documents, live_documents);
+}
+
+#[tokio::test]
+async fn shadow_materializer_queries_match_live_service_path() {
+    let data_dir = tempdir().expect("service tempdir should build");
+    let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    service
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+
+    for (title, rank) in [("alpha", 1), ("beta", 2), ("gamma", 3)] {
+        service
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("title".to_string(), json!(title)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .await
+            .expect("seed insert should succeed");
+    }
+
+    let shadow = service
+        .build_shadow_materializer_async(
+            tenant_id.clone(),
+            ShadowMaterializerConfig {
+                compaction_threshold_records: 2,
+            },
+        )
+        .await
+        .expect("shadow materializer should build");
+    assert_eq!(shadow.manifest().current_sequence, SequenceNumber(3));
+    assert_eq!(
+        shadow.current_snapshot().applied_sequence,
+        SequenceNumber(3)
+    );
+
+    let ordered_query = Query {
+        table: tasks_table(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "rank".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+    let live_query = service
+        .query_documents_async(tenant_id.clone(), ordered_query.clone())
+        .await
+        .expect("live query should succeed");
+    let shadow_query = crate::evaluate_query_with_docs(shadow.current_documents(), &ordered_query)
+        .expect("shadow query should succeed");
+    assert_eq!(shadow_query, live_query);
+
+    let paginated = PaginatedQuery {
+        query: ordered_query,
+        page_size: 2,
+        after: None,
+    };
+    let live_page = service
+        .paginate_documents_async(tenant_id, paginated.clone())
+        .await
+        .expect("live page should succeed");
+    let shadow_page = crate::evaluate_paginated_with_docs(shadow.current_documents(), &paginated)
+        .expect("shadow page should succeed");
+    assert_eq!(shadow_page, live_page);
 }
 
 #[tokio::test]

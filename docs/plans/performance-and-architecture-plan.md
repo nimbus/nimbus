@@ -245,12 +245,12 @@ dependencies are `done`.
 | 5A | done | none | completed 2026-04-01 |
 | 5B | done | 5A | completed 2026-04-01 |
 | 5C | done | 5A, 5B | completed 2026-04-01 |
-| 6A | todo | 4D, 5A, 5B, 5C | durable journal begins after Phase 5 and deterministic seam groundwork |
-| 6B | todo | 6A | promote journal after 6A |
-| 8A | todo | 6B | external journal streaming after authoritative journal |
-| 8B | todo | 8A | embedded replica path after streaming path |
-| 9A | todo | 4D, 6B | shadow materializer after simulation seams and authoritative journal |
-| 9B | todo | 9A | robustness testing after shadow materializer |
+| 6A | done | 4D, 5A, 5B, 5C | completed 2026-04-01 |
+| 6B | done | 6A | completed 2026-04-01 |
+| 8A | done | 6B | completed 2026-04-01 |
+| 8B | done | 8A | completed 2026-04-01 |
+| 9A | done | 4D, 6B | completed 2026-04-01 |
+| 9B | done | 9A | completed 2026-04-01 |
 
 ### Conditional and gated items
 
@@ -288,6 +288,20 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-04-01 | 9B | done | Added a TigerBeetle-inspired robustness harness around the shadow materializer and durable-journal replay path. The storage test matrix now proves replay convergence after interrupted compaction, rejection of corrupted journal and manifest inputs, and deterministic seeded rebuild parity against the redb-backed oracle across multiple generated histories; recovery bookkeeping also now preserves compaction counts monotonically when replay itself performs a compaction. Existing engine shadow-parity coverage remains in the verification matrix so redb stays the correctness oracle until any future serving promotion is explicitly justified. | `cargo test -p neovex-storage shadow_materializer_ -- --nocapture`; `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine shadow_materializer -- --nocapture`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | no further non-deferred roadmap items remain; only deferred or blocked items are left |
+| 2026-04-01 | 9B | checkpointed | Promoted 9B after completing 9A. The current implementation slice is focused on TigerBeetle-style robustness testing rather than new serving behavior: deterministic replay after interrupted materialization and interrupted compaction, corruption detection for journal or manifest inputs, and a seeded property-style rebuild harness that repeatedly compares shadow materialization against the authoritative redb-backed state. | document and code review | add the new storage-first robustness tests, extend shadow parity coverage where helpful, run targeted verification plus the crate-level suites, then mark 9B done |
+| 2026-04-01 | 9A | done | Added a storage-owned `ShadowMaterializer` that rebuilds from a materialized snapshot plus authoritative durable-journal tail, carries explicit versioned manifest state, validates checkpoint and pending-tail invariants during recovery, and applies deterministic record-count compaction while remaining off the serving path. The engine now exposes an async bootstrap helper for constructing the shadow copy from the authoritative bootstrap-plus-stream contract, and storage or engine tests now prove rebuild parity, deterministic compaction, checkpoint-boundary recovery, and representative query or pagination parity against the redb-backed service path. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage shadow_materializer -- --nocapture`; `cargo test -p neovex-engine shadow_materializer -- --nocapture`; `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 9B |
+| 2026-04-01 | 9A | checkpointed | Reconciled the dirty worktree to Phase 9A. The current implementation adds a storage-owned `ShadowMaterializer` built from a materialized snapshot plus durable-journal tail, carries explicit checkpoint and manifest state with deterministic record-count compaction, and exposes an engine helper for building the shadow copy from the authoritative journal so parity tests can compare local query evaluation against the live redb-backed service path. Verification has not run yet for this item. | document and code review | finish validating manifest and checkpoint invariants, run the new storage and engine parity tests, update `ARCHITECTURE.md`, then mark 9A done |
+| 2026-04-01 | 8B | done | Added a narrow read-only embedded replica path on top of the authoritative journal by introducing `EmbeddedReplica` in the engine, bootstrapping it from the 8A snapshot-plus-stream contract, replaying authoritative journal pages into a local materialized store, and validating local query or pagination results against the live service and HTTP surfaces before and after catch-up. Writes and reactive fan-out remain server-authoritative. | `cargo check -p neovex-engine -p neovex-server`; `cargo test -p neovex-engine embedded_replica_bootstrap_matches_live_query_and_pagination_results -- --nocapture`; `cargo test -p neovex-engine embedded_replica_catches_up_after_reconnection -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 9A |
+| 2026-04-01 | 8B | checkpointed | Promoted 8B after completing 8A. The implementation is starting with a narrow read-only embedded replica that bootstraps from the snapshot-plus-stream contract, applies the same durable journal records into a local materialized store, and compares local query results directly against the existing server-evaluated path before taking on broader edge or offline scope. | document and code review | add the replica consumer module, prove bootstrap plus catch-up against local query evaluation, then extend engine and server integration tests |
+| 2026-04-01 | 8A | done | Added a concrete tenant-scoped authoritative journal stream with ordered sequence cursors, bounded page reads, explicit cursor-floor validation, and snapshot-based bootstrap metadata that reuses the same durable-journal vocabulary. Storage now defines the stream contract, the engine exposes sync and async stream plus bootstrap helpers, the server serves `/journal` and `/journal/bootstrap`, and commit-log compatibility remains a projection over the same ordered history. | `cargo check -p neovex-storage -p neovex-engine -p neovex-server -p neovex-test-support`; `cargo test -p neovex-storage durable_journal_stream_uses_cursor_floor_after_retention_cut -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tolerant_pages -- --nocapture`; `cargo test -p neovex-engine durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_reads -- --nocapture`; `cargo test -p neovex-engine durable_journal_reads_return_strictly_ordered_authoritative_records -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server journal_route_returns_ordered_cursor_pages -- --nocapture`; `cargo test -p neovex-server journal_bootstrap_route_returns_snapshot_and_durable_cut -- --nocapture`; `cargo test -p neovex-server commit_log_route_returns_sequenced_commits -- --nocapture`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 8B |
+| 2026-04-01 | 8A | checkpointed | Promoted 8A after reconciling the 6B cleanup. The implementation is starting from a single authoritative sequence-cursor journal stream plus a bootstrap response that carries a materialized snapshot and its durable cut, so external consumers can reconstruct from the same durable-journal vocabulary instead of a second replication format. | document and code review | add bounded journal stream reads with cursor-floor semantics, expose bootstrap metadata and HTTP routes, then extend engine and server tests for resume, ordering, and snapshot-plus-stream reconstruction |
+| 2026-04-01 | 6B | refined | Split the completed Phase 6 journal surfaces into dedicated engine and storage modules to keep the authoritative-history path readable before 8A. Journal worker, batching, and apply sequencing now live in a dedicated mutations submodule; snapshot, restore, and rebuild logic now live in a storage journal-snapshot submodule; and `read_commit_log*` is explicitly maintained as a compatibility wrapper over the durable-journal path. | `cargo check -p neovex-storage -p neovex-engine -p neovex-server`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep 8A as next eligible item; continue favoring durable-journal vocabulary on new external surfaces |
+| 2026-04-01 | 6B | refined | Hardened the snapshot-plus-tail rebuild foundation after a TigerBeetle-guided checkpoint review by adding explicit materialized-snapshot boundary metadata and validation. Snapshots now carry a version plus the durable head seen at export time, and rebuild now rejects incomplete journal tails instead of silently reconstructing only the applied prefix when a snapshot was taken during apply lag. | `cargo test -p neovex-storage materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_plus_journal_tail_rebuild_matches_live_state -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence -- --nocapture`; `cargo fmt --all --check` | keep using explicit snapshot cut-point metadata as the basis for 8A retention, cursor, and bootstrap rules |
+| 2026-04-01 | 6B | done | Promoted the durable mutation journal from a durability boundary into the authoritative per-tenant ordered history by adding a materialized snapshot-plus-tail rebuild surface in storage, exposing direct durable-journal reads through the engine, and shifting dependency-matching and replay tests onto the durable record vocabulary. Materialized document/index state remains the serving read path, but it can now be rebuilt to a chosen sequence boundary from a snapshot plus authoritative journal tail, which gives CDC and replica work a concrete foundation. | `cargo check -p neovex-core -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage durable_journal_metadata_supports_dependency_intersection_checks -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_plus_journal_tail_rebuild_matches_live_state -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine durable_journal_reads_return_strictly_ordered_authoritative_records -- --nocapture`; `cargo test -p neovex-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 8A |
+| 2026-04-01 | 6B | checkpointed | Promoted 6B after completing 6A and auditing the remaining authoritative-history gaps. The durable mutation journal now exists and already gates durability for async mutations, but the storage layer still needs an explicit snapshot-plus-tail rebuild surface, authoritative journal reads should stop depending on `CommitEntry`-only vocabulary, and replay coverage still needs to prove ordered journal consumption and point-in-time reconstruction against the materialized view. | document and code review | add snapshot export or restore plus journal-tail rebuild helpers, expose authoritative journal reads through the service layer, add ordered replay tests, then run targeted storage and engine verification |
+| 2026-04-01 | 6A | done | Finalized the durable mutation journal introduced in Phase 6 by making `DurableMutationRecord` the explicit on-disk journal format, tracking per-tenant durable versus applied watermarks in storage, batching immediate and scheduled async mutations through a tenant-local durable-append then ordered-apply queue, recovering durable-but-unapplied records on tenant open, and keeping reads, cache publication, and subscription fan-out behind the applied visibility boundary. Subscription bootstrap now registers inactive listeners until the initial result is delivered so journal-backed writes cannot publish a reactive update before bootstrap ordering is established. | `cargo check -p neovex-core -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage durable_journal_serialization_preserves_payload_and_metadata -- --nocapture`; `cargo test -p neovex-storage durable_journal_batch_append_enforces_no_holes -- --nocapture`; `cargo test -p neovex-storage recovery_replays_durable_but_unapplied_records -- --nocapture`; `cargo test -p neovex-storage commit_log_sequences_increment -- --nocapture`; `cargo test -p neovex-storage canceled_async_write_after_commit_still_reports_committed -- --nocapture`; `cargo test -p neovex-storage canceled_async_write_before_commit_leaves_no_durable_state -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine mutation_journal_acknowledges_after_durable_append_before_apply_visibility -- --nocapture`; `cargo test -p neovex-engine query_waits_for_applied_journal_visibility_and_records_wait_metrics -- --nocapture`; `cargo test -p neovex-engine subscription_updates_publish_only_after_journal_apply -- --nocapture`; `cargo test -p neovex-engine service_reload_recovers_durable_journal_before_serving_async_reads -- --nocapture`; `cargo test -p neovex-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log -- --nocapture`; `cargo test -p neovex-engine mutation_async_cancellable_after_commit_returns_committed_result -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo test -p neovex-server --test reactive_loop`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6B |
+| 2026-04-01 | 6A | checkpointed | Promoted 6A after completing 5C and beginning the first journal-oriented implementation slice. The current worktree has started introducing a first-class durable mutation record in `neovex-core`, per-tenant durable versus applied journal progress in `neovex-storage`, startup recovery hooks, and tenant-local mutation journal queue or watermark scaffolding in the engine. The item is not complete yet: the immediate async mutation path still needs the batched durable-append plus ordered-apply flow to compile and replace the old direct materialization path, and read-watermark gating plus the new storage or engine tests still need to land before verification can run. | document and code review | finish the immediate async journal batch path, gate reads on applied watermarks, add recovery and no-hole tests, then run targeted verification plus roadmap checks |
 | 2026-04-01 | 5C | done | Removed the remaining hot-path blocking adaptation layers by replacing `Service::call_blocking(...)` tenant-control and MAU paths with async storage-engine APIs, reworking tenant deletion around a tenant-local close-then-drain lifecycle primitive, and making runtime-backed async host calls await real engine or storage futures directly. Direct HTTP document reads and runtime-backed host operations now propagate cancellation to real storage work, and the default parallel `cargo test -p neovex-server` suite continues to pass after the 5A Deno-aligned bootstrap hardening. | `cargo check -p neovex-engine -p neovex-server`; `cargo test -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo test -p neovex-engine delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work`; `cargo test -p neovex-server async_runtime_integration_removes_hot_path_blocking_adapters`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6A |
 | 2026-04-01 | 5C | checkpointed | Promoted 5C after completing 5B and re-inventoried the remaining blocking adaptation layers. The only hot-path wrappers left are `Service::call_blocking(...)` in tenant create/delete and MAU recording plus the runtime host bridge `execute_async_blocking_host_call(...)` wrapper; the next slice will replace those with real async storage-backed lifecycle and host-call futures. The default parallel `cargo test -p neovex-server` suite now passes cleanly, so the earlier V8 abort appears resolved by the 5A Deno-aligned bootstrap hardening rather than this remaining 5C scope. | document and code review; `cargo test -p neovex-server` | remove the blocking helpers, migrate tenant lifecycle and usage writes onto async storage, and keep request-drop cancellation coverage green |
 | 2026-04-01 | 5B | done | Introduced an explicit async write transaction boundary in `neovex-storage` via `TenantWriteTransaction`, `TenantWriteCommit`, and `TenantWriteOutcome`; moved mutation, scheduler, and schema write paths onto that durable model; made the pre-commit versus post-commit boundary explicit with deterministic fault seams and transport-drop coverage; and updated `ARCHITECTURE.md` to describe the write-side async commit semantics. | `cargo check -p neovex-storage -p neovex-engine`; `cargo check -p neovex-server`; `cargo test -p neovex-storage async_write`; `cargo test -p neovex-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log`; `cargo test -p neovex-engine mutation_async_cancellable_after_commit_returns_committed_result`; `cargo test -p neovex-engine scheduler_async_write_path_round_trips_pending_running_and_history_state`; `cargo test -p neovex-engine schema_async_write_path_rebuilds_and_removes_indexes_durably`; `cargo test -p neovex-server dropped_http_insert_after_commit_still_persists_the_document`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 5C is now in progress |
@@ -2463,6 +2477,24 @@ Explicit non-decisions for Phase 6:
   without requiring a second Neovex-owned application WAL
 - startup recovery can reapply durable journal entries safely
 
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `neovex-core` now defines a first-class `DurableMutationRecord` with
+  versioning, integrity hashing, replay payloads, and normalized write-set
+  metadata so the on-disk journal format is explicit rather than implicit in
+  `CommitEntry` serialization.
+- `neovex-storage` now tracks durable versus applied sequence watermarks per
+  tenant, appends and replays durable records in no-hole order, and recovers
+  durable-but-unapplied work before a tenant serves reads again.
+- `neovex-engine` now routes immediate and scheduled async mutations through a
+  tenant-local journal queue that durably appends first, acknowledges only
+  after ordered append, and then applies document, index, cache, and reactive
+  visibility in commit order behind the applied watermark.
+- Subscription bootstrap now registers listeners inactive until the initial
+  result is delivered so journal-backed reactive updates cannot overtake the
+  bootstrap response.
+
 ---
 
 ### 6B. Promote the durable journal to the authoritative per-tenant history
@@ -2472,8 +2504,13 @@ Explicit non-decisions for Phase 6:
 
 #### Current verified state
 
-The commit log is still a transactional side effect, not the authoritative
-source of replayable state.
+- the durable mutation journal introduced in 6A is now the durability boundary
+  for async mutations and persists replayable `DurableMutationRecord` entries
+- serving reads, cache publication, and subscription fan-out still come from
+  applied materialized state behind the applied watermark
+- journal access outside storage still leans on compatibility `CommitEntry`
+  projections, and there is not yet an explicit snapshot-plus-tail rebuild
+  surface that proves the journal is the authoritative history
 
 #### Implementation plan
 
@@ -2533,6 +2570,33 @@ source of replayable state.
 - serving reads still obey applied materialized visibility rather than direct
   journal visibility
 - CDC and future replication work have a concrete, testable foundation
+
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `neovex-storage` now exports materialized journal snapshots, restores an
+  empty tenant store from a snapshot boundary, and rebuilds document/index
+  state to a chosen sequence from that snapshot plus an authoritative journal
+  tail.
+- materialized snapshots now carry explicit boundary metadata, including a
+  version and the durable head seen at export time, so rebuild can reject an
+  incomplete tail instead of silently reconstructing only the applied prefix
+  when a snapshot is taken during apply lag.
+- the Phase 6 journal surfaces are now split into dedicated modules so the
+  engine's journal worker, batching, and ordered-apply queue logic lives in
+  `crates/neovex-engine/src/service/mutations/journal.rs`, while snapshot,
+  restore, and rebuild logic lives in
+  `crates/neovex-storage/src/store/journal_snapshot.rs`.
+- `neovex-engine` now exposes direct durable-journal reads so downstream
+  consumers can use the authoritative record vocabulary without routing through
+  `CommitEntry` compatibility projections first.
+- `read_commit_log*` remains only as a compatibility wrapper over the
+  authoritative durable-journal path so later phases can keep moving external
+  surfaces toward durable-journal vocabulary without changing the underlying
+  ordering contract.
+- replay and dependency tests now validate the durable record format directly,
+  including strict sequence ordering and point-in-time rebuild behavior against
+  the materialized serving state.
 
 ---
 
@@ -2744,6 +2808,24 @@ feed instead of stopping at internal CDC readiness.
 - the roadmap now has an explicit bridge from authoritative journal history to
   sync and replica consumers
 
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `neovex-storage` now owns the authoritative journal streaming contract with
+  bounded page reads, explicit cursor-floor validation for future retention or
+  compaction, and a bootstrap response that pairs a materialized snapshot with
+  `resume_after` plus `bootstrap_cut` metadata instead of inventing a separate
+  bootstrap tail format.
+- `neovex-engine` now exposes sync and async journal stream plus bootstrap
+  helpers directly from the authoritative durable journal path so higher layers
+  do not need to reconstruct cursor semantics themselves.
+- `neovex-server` now serves `/api/tenants/{tenant_id}/journal` and
+  `/api/tenants/{tenant_id}/journal/bootstrap`, while `/commits` remains a
+  compatibility projection over the same underlying journal history.
+- storage, engine, and server tests now cover cursor resume behavior, retention
+  floor invalidation, and snapshot-plus-stream reconstruction against live
+  state.
+
 ---
 
 ### 8B. Add an embedded-replica path for local or edge query evaluation
@@ -2810,6 +2892,21 @@ replica-local reads for selected workloads.
   authoritative journal
 - server-side re-evaluation is clearly documented as the near-term path, not the
   final architecture endpoint
+
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `neovex-engine` now exposes a narrow read-only `EmbeddedReplica` that
+  bootstraps from the 8A snapshot-plus-stream contract into a local
+  materialized store, catches up by replaying more authoritative
+  `DurableMutationRecord` pages, and evaluates queries or pagination locally
+  with the same engine evaluator functions used by the live service.
+- The replica path keeps writes server-authoritative: there is no alternate
+  mutation surface, and catch-up only reuses the existing authoritative journal
+  stream rather than inventing a second replication format.
+- engine tests now validate bootstrap parity and reconnection catch-up against
+  live service queries, and server integration tests now compare local replica
+  reads directly against HTTP query results before and after journal catch-up.
 
 ---
 
@@ -2906,6 +3003,25 @@ Deterministic compaction here means:
 - materialized state can be rebuilt from checkpoint plus durable journal
 - redb remains the correctness oracle until shadow verification proves parity
 
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- `neovex-storage` now has a storage-owned `ShadowMaterializer` module that
+  rebuilds from `MaterializedJournalSnapshot` plus ordered
+  `DurableMutationRecord` tail, tracks explicit manifest state, and triggers
+  compaction from an explicit record-count threshold instead of timers or
+  background scheduling.
+- The shadow state keeps an explicit checkpoint snapshot plus pending journal
+  tail, validates manifest version, threshold, checkpoint sequence, current
+  sequence, and buffered-tail length on recovery, and mirrors durable replay
+  semantics closely enough to surface conflicting journal or checkpoint state
+  loudly instead of silently drifting.
+- `neovex-engine` now exposes an async helper that bootstraps the shadow
+  materializer from the authoritative journal bootstrap plus ordered stream,
+  and storage or engine tests now prove rebuild parity, deterministic
+  compaction, checkpoint-boundary recovery, and representative shadow query
+  parity against the live redb-backed service path.
+
 ---
 
 ### 9B. Add TigerBeetle-style robustness testing for journal and materializer
@@ -2974,6 +3090,20 @@ crash, and corruption robustness rather than benchmark-first optimism.
 - replay, corruption detection, and shadow-parity guarantees are testable
 - no serving-path promotion occurs without documented shadow-validation
   evidence
+
+#### Implementation checkpoint
+
+- Completed 2026-04-01.
+- The initial 9B slice is using the 9A `ShadowMaterializer` and the existing
+  durable-journal replay helpers as the robustness target rather than adding a
+  new serving path.
+- The resulting harness now covers three concrete failure classes: interrupted
+  materialization or compaction that must converge after replay, corrupted
+  checkpoint or journal inputs that fail loudly, and seeded rebuild sequences
+  that repeatedly compare shadow state against the redb-backed oracle.
+- Recovery bookkeeping now treats `compaction_runs` as monotonic state: replay
+  preserves prior completed compactions and also records any compaction that
+  recovery itself performs while normalizing an interrupted manifest.
 
 ---
 

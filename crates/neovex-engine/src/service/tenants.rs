@@ -198,9 +198,11 @@ impl Service {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         };
         let runtime = Arc::new(TenantRuntime::from_parts(
-            opened.store,
+            opened.store.clone(),
             opened.read_storage,
         )?);
+        let progress = opened.store.recover_durable_journal()?;
+        runtime.sync_mutation_journal_progress(progress);
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")

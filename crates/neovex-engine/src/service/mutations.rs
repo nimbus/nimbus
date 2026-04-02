@@ -1,12 +1,12 @@
+mod journal;
+
 use std::{future, sync::Arc};
 
 use neovex_core::{
     AccessAction, AccessRule, CommitEntry, Document, DocumentId, Error, Mutation, PrincipalContext,
     Result, Schema, TableName, TableSchema, TenantId,
 };
-use neovex_storage::{
-    TenantStore, TenantWriteCommit, TenantWriteOutcome, TenantWriteStorage, TenantWriteTransaction,
-};
+use neovex_storage::TenantStore;
 use tracing::warn;
 
 use crate::subscriptions::SubscriptionUpdate;
@@ -23,12 +23,6 @@ enum MutationExecutionMode {
 enum MutationExecutionResult {
     Immediate(Option<DocumentId>),
     Scheduled(bool),
-}
-
-struct MutationWriteArtifacts {
-    result: MutationExecutionResult,
-    candidate_documents: Vec<Document>,
-    deleted_documents: Vec<Document>,
 }
 
 struct UpdateMutationRequest<'a> {
@@ -111,7 +105,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<DocumentId>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         self.insert_document_async_cancellable_with_principal(
@@ -135,7 +129,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<DocumentId>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         match self
@@ -247,7 +241,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<DocumentId>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         self.update_document_async_cancellable_with_principal(
@@ -274,7 +268,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<DocumentId>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         match self
@@ -382,7 +376,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<()>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         self.delete_document_async_cancellable_with_principal(
@@ -406,7 +400,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<()>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         match self
@@ -498,7 +492,12 @@ impl Service {
     where
         F: FnOnce(&TenantStore) -> Result<CommitEntry>,
     {
-        let commit = mutate(&runtime.store)?;
+        let commit = {
+            let _sequence_guard = runtime.lock_mutation_sequence();
+            mutate(&runtime.store)?
+        };
+        runtime.mark_durable_head(commit.sequence);
+        runtime.mark_applied_head(commit.sequence);
         self.process_commit(runtime, &commit, candidate_documents, &[]);
         Ok(commit)
     }
@@ -512,9 +511,15 @@ impl Service {
     where
         F: FnOnce(&TenantStore) -> Result<Option<CommitEntry>>,
     {
-        let Some(commit) = mutate(&runtime.store)? else {
+        let commit = {
+            let _sequence_guard = runtime.lock_mutation_sequence();
+            mutate(&runtime.store)?
+        };
+        let Some(commit) = commit else {
             return Ok(false);
         };
+        runtime.mark_durable_head(commit.sequence);
+        runtime.mark_applied_head(commit.sequence);
         self.process_commit(runtime, &commit, candidate_documents, &[]);
         Ok(true)
     }
@@ -527,7 +532,12 @@ impl Service {
     where
         F: FnOnce(&TenantStore) -> Result<(CommitEntry, Document)>,
     {
-        let (commit, deleted_document) = mutate(&runtime.store)?;
+        let (commit, deleted_document) = {
+            let _sequence_guard = runtime.lock_mutation_sequence();
+            mutate(&runtime.store)?
+        };
+        runtime.mark_durable_head(commit.sequence);
+        runtime.mark_applied_head(commit.sequence);
         self.process_commit(
             runtime,
             &commit,
@@ -545,9 +555,15 @@ impl Service {
     where
         F: FnOnce(&TenantStore) -> Result<Option<(CommitEntry, Document)>>,
     {
-        let Some((commit, deleted_document)) = mutate(&runtime.store)? else {
+        let commit = {
+            let _sequence_guard = runtime.lock_mutation_sequence();
+            mutate(&runtime.store)?
+        };
+        let Some((commit, deleted_document)) = commit else {
             return Ok(false);
         };
+        runtime.mark_durable_head(commit.sequence);
+        runtime.mark_applied_head(commit.sequence);
         self.process_commit(
             runtime,
             &commit,
@@ -555,35 +571,6 @@ impl Service {
             std::slice::from_ref(&deleted_document),
         );
         Ok(true)
-    }
-
-    fn process_mutation_write(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        committed: TenantWriteCommit<MutationWriteArtifacts>,
-    ) -> MutationExecutionResult {
-        if let Some(commit) = committed.commit.as_ref() {
-            self.process_commit(
-                runtime,
-                commit,
-                &committed.value.candidate_documents,
-                &committed.value.deleted_documents,
-            );
-        }
-        committed.value.result
-    }
-
-    async fn finish_async_mutation_write(
-        self: &Arc<Self>,
-        runtime: Arc<TenantRuntime>,
-        outcome: Result<TenantWriteOutcome<MutationWriteArtifacts>>,
-    ) -> Result<MutationExecutionResult> {
-        match outcome? {
-            TenantWriteOutcome::CancelledBeforeCommit => Err(Error::Cancelled),
-            TenantWriteOutcome::Committed(committed) => {
-                Ok(self.process_mutation_write(runtime, committed))
-            }
-        }
     }
 
     fn apply_mutation_with_mode(
@@ -647,359 +634,20 @@ impl Service {
         check_cancel: Check,
     ) -> Result<MutationExecutionResult>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        check_cancel()?;
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
-        let schema = runtime.schema();
-
-        match mutation {
-            Mutation::Insert { table, fields } => {
-                let table_schema = schema.get_table(&table).cloned();
-                let indexes = table_schema
-                    .as_ref()
-                    .map(|table_schema| {
-                        table_schema.validate(&fields)?;
-                        Ok(table_schema.indexes.clone())
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                let document = Document::new(table, fields);
-                enforce_mutation_authorization(
-                    table_schema.as_ref(),
-                    AccessAction::Create,
-                    &principal,
-                    Some(&document),
-                    None,
-                )?;
-
-                let runtime_for_task = runtime.clone();
-                let tenant_id_for_task = tenant_id.clone();
-                let mode_for_task = mode.clone();
-                let outcome = runtime
-                    .read_storage
-                    .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
-                        let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
-                        match mode_for_task {
-                            MutationExecutionMode::Immediate => {
-                                if indexes.is_empty() {
-                                    transaction.insert_document(&document)?;
-                                } else {
-                                    transaction
-                                        .insert_document_with_indexes(&document, &indexes)?;
-                                }
-                                Ok(MutationWriteArtifacts {
-                                    result: MutationExecutionResult::Immediate(Some(document.id)),
-                                    candidate_documents: vec![document.clone()],
-                                    deleted_documents: Vec::new(),
-                                })
-                            }
-                            MutationExecutionMode::Scheduled { execution_id } => {
-                                if !transaction
-                                    .begin_scheduled_execution(Some(execution_id.as_str()))?
-                                {
-                                    return Ok(MutationWriteArtifacts {
-                                        result: MutationExecutionResult::Scheduled(false),
-                                        candidate_documents: Vec::new(),
-                                        deleted_documents: Vec::new(),
-                                    });
-                                }
-                                if indexes.is_empty() {
-                                    transaction.insert_document(&document)?;
-                                } else {
-                                    transaction
-                                        .insert_document_with_indexes(&document, &indexes)?;
-                                }
-                                Ok(MutationWriteArtifacts {
-                                    result: MutationExecutionResult::Scheduled(true),
-                                    candidate_documents: vec![document.clone()],
-                                    deleted_documents: Vec::new(),
-                                })
-                            }
-                        }
-                    })
-                    .await;
-                self.finish_async_mutation_write(runtime, outcome).await
-            }
-            Mutation::Update { table, id, patch } => {
-                let runtime_for_task = runtime.clone();
-                let tenant_id_for_task = tenant_id.clone();
-                let mode_for_task = mode.clone();
-                let outcome = match schema.get_table(&table).cloned() {
-                    Some(table_schema) if table_schema.indexes.is_empty() => {
-                        let authorization_schema = table_schema.clone();
-                        let principal = principal.clone();
-                        runtime
-                            .read_storage
-                            .execute_write_cancellable(
-                                cancel_wait,
-                                check_cancel,
-                                move |transaction| {
-                                    let _operation =
-                                        runtime_for_task.enter_operation(&tenant_id_for_task)?;
-                                    let apply_update =
-                                        |transaction: &mut TenantWriteTransaction| {
-                                            transaction.update_document_validated(
-                                                &table,
-                                                &id,
-                                                &patch,
-                                                |existing, document| {
-                                                    table_schema.validate(&document.fields)?;
-                                                    enforce_mutation_authorization(
-                                                        Some(&authorization_schema),
-                                                        AccessAction::Update,
-                                                        &principal,
-                                                        Some(document),
-                                                        Some(existing),
-                                                    )
-                                                },
-                                            )
-                                        };
-
-                                    match mode_for_task {
-                                        MutationExecutionMode::Immediate => {
-                                            apply_update(transaction)?;
-                                            Ok(MutationWriteArtifacts {
-                                                result: MutationExecutionResult::Immediate(Some(
-                                                    id,
-                                                )),
-                                                candidate_documents: Vec::new(),
-                                                deleted_documents: Vec::new(),
-                                            })
-                                        }
-                                        MutationExecutionMode::Scheduled { execution_id } => {
-                                            if !transaction.begin_scheduled_execution(Some(
-                                                execution_id.as_str(),
-                                            ))? {
-                                                return Ok(MutationWriteArtifacts {
-                                                    result: MutationExecutionResult::Scheduled(
-                                                        false,
-                                                    ),
-                                                    candidate_documents: Vec::new(),
-                                                    deleted_documents: Vec::new(),
-                                                });
-                                            }
-                                            apply_update(transaction)?;
-                                            Ok(MutationWriteArtifacts {
-                                                result: MutationExecutionResult::Scheduled(true),
-                                                candidate_documents: Vec::new(),
-                                                deleted_documents: Vec::new(),
-                                            })
-                                        }
-                                    }
-                                },
-                            )
-                            .await
-                    }
-                    Some(table_schema) => {
-                        let authorization_schema = table_schema.clone();
-                        let indexes = table_schema.indexes.clone();
-                        let principal = principal.clone();
-                        runtime
-                            .read_storage
-                            .execute_write_cancellable(
-                                cancel_wait,
-                                check_cancel,
-                                move |transaction| {
-                                    let _operation =
-                                        runtime_for_task.enter_operation(&tenant_id_for_task)?;
-                                    let apply_update =
-                                        |transaction: &mut TenantWriteTransaction| {
-                                            transaction.update_document_with_indexes_validated(
-                                                &table,
-                                                &id,
-                                                &patch,
-                                                &indexes,
-                                                |existing, document| {
-                                                    table_schema.validate(&document.fields)?;
-                                                    enforce_mutation_authorization(
-                                                        Some(&authorization_schema),
-                                                        AccessAction::Update,
-                                                        &principal,
-                                                        Some(document),
-                                                        Some(existing),
-                                                    )
-                                                },
-                                            )
-                                        };
-
-                                    match mode_for_task {
-                                        MutationExecutionMode::Immediate => {
-                                            apply_update(transaction)?;
-                                            Ok(MutationWriteArtifacts {
-                                                result: MutationExecutionResult::Immediate(Some(
-                                                    id,
-                                                )),
-                                                candidate_documents: Vec::new(),
-                                                deleted_documents: Vec::new(),
-                                            })
-                                        }
-                                        MutationExecutionMode::Scheduled { execution_id } => {
-                                            if !transaction.begin_scheduled_execution(Some(
-                                                execution_id.as_str(),
-                                            ))? {
-                                                return Ok(MutationWriteArtifacts {
-                                                    result: MutationExecutionResult::Scheduled(
-                                                        false,
-                                                    ),
-                                                    candidate_documents: Vec::new(),
-                                                    deleted_documents: Vec::new(),
-                                                });
-                                            }
-                                            apply_update(transaction)?;
-                                            Ok(MutationWriteArtifacts {
-                                                result: MutationExecutionResult::Scheduled(true),
-                                                candidate_documents: Vec::new(),
-                                                deleted_documents: Vec::new(),
-                                            })
-                                        }
-                                    }
-                                },
-                            )
-                            .await
-                    }
-                    None => {
-                        let principal = principal.clone();
-                        runtime
-                            .read_storage
-                            .execute_write_cancellable(
-                                cancel_wait,
-                                check_cancel,
-                                move |transaction| {
-                                    let _operation =
-                                        runtime_for_task.enter_operation(&tenant_id_for_task)?;
-                                    let apply_update =
-                                        |transaction: &mut TenantWriteTransaction| {
-                                            transaction.update_document_validated(
-                                                &table,
-                                                &id,
-                                                &patch,
-                                                |existing, document| {
-                                                    enforce_mutation_authorization(
-                                                        None,
-                                                        AccessAction::Update,
-                                                        &principal,
-                                                        Some(document),
-                                                        Some(existing),
-                                                    )
-                                                },
-                                            )
-                                        };
-
-                                    match mode_for_task {
-                                        MutationExecutionMode::Immediate => {
-                                            apply_update(transaction)?;
-                                            Ok(MutationWriteArtifacts {
-                                                result: MutationExecutionResult::Immediate(Some(
-                                                    id,
-                                                )),
-                                                candidate_documents: Vec::new(),
-                                                deleted_documents: Vec::new(),
-                                            })
-                                        }
-                                        MutationExecutionMode::Scheduled { execution_id } => {
-                                            if !transaction.begin_scheduled_execution(Some(
-                                                execution_id.as_str(),
-                                            ))? {
-                                                return Ok(MutationWriteArtifacts {
-                                                    result: MutationExecutionResult::Scheduled(
-                                                        false,
-                                                    ),
-                                                    candidate_documents: Vec::new(),
-                                                    deleted_documents: Vec::new(),
-                                                });
-                                            }
-                                            apply_update(transaction)?;
-                                            Ok(MutationWriteArtifacts {
-                                                result: MutationExecutionResult::Scheduled(true),
-                                                candidate_documents: Vec::new(),
-                                                deleted_documents: Vec::new(),
-                                            })
-                                        }
-                                    }
-                                },
-                            )
-                            .await
-                    }
-                };
-                self.finish_async_mutation_write(runtime, outcome).await
-            }
-            Mutation::Delete { table, id } => {
-                let table_schema = schema.get_table(&table).cloned();
-                let indexes = table_schema
-                    .as_ref()
-                    .map(|table_schema| table_schema.indexes.clone())
-                    .unwrap_or_default();
-                let runtime_for_task = runtime.clone();
-                let tenant_id_for_task = tenant_id.clone();
-                let mode_for_task = mode.clone();
-                let principal = principal.clone();
-                let outcome = runtime
-                    .read_storage
-                    .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
-                        let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
-                        let table_schema_for_delete = table_schema.clone();
-                        let remove_document = |transaction: &mut TenantWriteTransaction| {
-                            if indexes.is_empty() {
-                                transaction.delete_document_validated(&table, &id, |existing| {
-                                    enforce_mutation_authorization(
-                                        table_schema_for_delete.as_ref(),
-                                        AccessAction::Delete,
-                                        &principal,
-                                        None,
-                                        Some(existing),
-                                    )
-                                })
-                            } else {
-                                transaction.delete_document_with_indexes_validated(
-                                    &table,
-                                    &id,
-                                    &indexes,
-                                    |existing| {
-                                        enforce_mutation_authorization(
-                                            table_schema_for_delete.as_ref(),
-                                            AccessAction::Delete,
-                                            &principal,
-                                            None,
-                                            Some(existing),
-                                        )
-                                    },
-                                )
-                            }
-                        };
-
-                        match mode_for_task {
-                            MutationExecutionMode::Immediate => {
-                                let deleted_document = remove_document(transaction)?;
-                                Ok(MutationWriteArtifacts {
-                                    result: MutationExecutionResult::Immediate(None),
-                                    candidate_documents: vec![deleted_document.clone()],
-                                    deleted_documents: vec![deleted_document],
-                                })
-                            }
-                            MutationExecutionMode::Scheduled { execution_id } => {
-                                if !transaction
-                                    .begin_scheduled_execution(Some(execution_id.as_str()))?
-                                {
-                                    return Ok(MutationWriteArtifacts {
-                                        result: MutationExecutionResult::Scheduled(false),
-                                        candidate_documents: Vec::new(),
-                                        deleted_documents: Vec::new(),
-                                    });
-                                }
-                                let deleted_document = remove_document(transaction)?;
-                                Ok(MutationWriteArtifacts {
-                                    result: MutationExecutionResult::Scheduled(true),
-                                    candidate_documents: vec![deleted_document.clone()],
-                                    deleted_documents: vec![deleted_document],
-                                })
-                            }
-                        }
-                    })
-                    .await;
-                self.finish_async_mutation_write(runtime, outcome).await
-            }
-        }
+        self.submit_journaled_async_mutation(
+            runtime,
+            &tenant_id,
+            mode,
+            mutation,
+            principal,
+            cancel_wait,
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -1363,7 +1011,7 @@ impl Service {
         check_cancel: Check,
     ) -> Result<bool>
     where
-        Fut: future::Future<Output = ()> + Send,
+        Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
         match self

@@ -4,12 +4,15 @@ use std::sync::Arc;
 use std::cmp::Ordering;
 
 use neovex_core::{
-    AccessAction, AccessRule, CommitEntry, Document, DocumentId, Error, Filter, FilterOp, Page,
-    PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TableName, TableSchema,
-    TenantId, policy_revision_id,
+    AccessAction, AccessRule, CommitEntry, Document, DocumentId, DurableMutationRecord, Error,
+    Filter, FilterOp, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber,
+    TableName, TableSchema, TenantId, policy_revision_id,
 };
 use neovex_storage::index::encode_index_value;
-use neovex_storage::{TenantReadStorage, TenantStore};
+use neovex_storage::{
+    DurableJournalBootstrap, DurableJournalPage, ShadowMaterializer, ShadowMaterializerConfig,
+    TenantReadStorage, TenantStore,
+};
 use serde_json::Value;
 
 use crate::evaluator::{
@@ -254,6 +257,9 @@ impl Service {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        runtime
+            .wait_for_applied_sequence(runtime.durable_head())
+            .await;
         let schema = runtime.schema();
         let authorization = ReadAuthorization::for_table(schema.get_table(&table), &principal)?;
         if authorization.impossible {
@@ -371,6 +377,9 @@ impl Service {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        runtime
+            .wait_for_applied_sequence(runtime.durable_head())
+            .await;
         evaluate_with_index_async_for_principal(
             runtime,
             tenant_id,
@@ -495,6 +504,9 @@ impl Service {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        runtime
+            .wait_for_applied_sequence(runtime.durable_head())
+            .await;
         paginate_with_index_async_for_principal(
             runtime,
             tenant_id,
@@ -541,24 +553,24 @@ impl Service {
         )
     }
 
-    /// Reads commit log entries committed after the provided sequence number.
-    pub fn read_commit_log(
+    /// Reads durable journal records committed after the provided sequence number.
+    pub fn read_durable_journal(
         &self,
         tenant_id: &TenantId,
         after: SequenceNumber,
-    ) -> Result<Vec<CommitEntry>> {
+    ) -> Result<Vec<DurableMutationRecord>> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let from = SequenceNumber(after.0.saturating_add(1));
-        runtime.store.read_commit_log_from(from)
+        runtime.store.read_durable_journal_from(from)
     }
 
-    /// Reads commit log entries asynchronously.
-    pub async fn read_commit_log_async(
+    /// Reads durable journal records asynchronously.
+    pub async fn read_durable_journal_async(
         self: &Arc<Self>,
         tenant_id: TenantId,
         after: SequenceNumber,
-    ) -> Result<Vec<CommitEntry>> {
+    ) -> Result<Vec<DurableMutationRecord>> {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let tenant_id_for_task = tenant_id.clone();
         let runtime_for_task = runtime.clone();
@@ -567,9 +579,123 @@ impl Service {
             .execute(move |store| {
                 let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
                 let from = SequenceNumber(after.0.saturating_add(1));
-                store.read_commit_log_from(from)
+                store.read_durable_journal_from(from)
             })
             .await
+    }
+
+    /// Streams durable journal records using an ordered sequence cursor.
+    pub fn stream_durable_journal(
+        &self,
+        tenant_id: &TenantId,
+        after: SequenceNumber,
+        limit: usize,
+    ) -> Result<DurableJournalPage> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.store.stream_durable_journal(after, limit)
+    }
+
+    /// Streams durable journal records asynchronously using an ordered sequence cursor.
+    pub async fn stream_durable_journal_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        after: SequenceNumber,
+        limit: usize,
+    ) -> Result<DurableJournalPage> {
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store.stream_durable_journal(after, limit)
+            })
+            .await
+    }
+
+    /// Exports snapshot metadata for bootstrapping a journal consumer.
+    pub fn export_durable_journal_bootstrap(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<DurableJournalBootstrap> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.store.export_durable_journal_bootstrap()
+    }
+
+    /// Exports snapshot metadata for bootstrapping a journal consumer asynchronously.
+    pub async fn export_durable_journal_bootstrap_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<DurableJournalBootstrap> {
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_id_for_task = tenant_id.clone();
+        let runtime_for_task = runtime.clone();
+        runtime
+            .read_storage
+            .execute(move |store| {
+                let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
+                store.export_durable_journal_bootstrap()
+            })
+            .await
+    }
+
+    /// Builds a shadow materializer from the current authoritative journal state.
+    pub async fn build_shadow_materializer_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        config: ShadowMaterializerConfig,
+    ) -> Result<ShadowMaterializer> {
+        let bootstrap = self
+            .export_durable_journal_bootstrap_async(tenant_id.clone())
+            .await?;
+        let mut after = bootstrap.resume_after;
+        let mut tail = Vec::new();
+        while after.0 < bootstrap.bootstrap_cut.0 {
+            let page = self
+                .stream_durable_journal_async(tenant_id.clone(), after, 256)
+                .await?;
+            let page_records = page
+                .records
+                .into_iter()
+                .take_while(|record| record.sequence.0 <= bootstrap.bootstrap_cut.0)
+                .collect::<Vec<_>>();
+            let Some(last_record) = page_records.last() else {
+                return Err(Error::Internal(format!(
+                    "journal stream made no progress while building shadow materializer for tenant {} up to sequence {} from {}",
+                    tenant_id, bootstrap.bootstrap_cut.0, after.0
+                )));
+            };
+            after = last_record.sequence;
+            tail.extend(page_records);
+        }
+        ShadowMaterializer::from_checkpoint_and_journal(bootstrap.snapshot, tail, config)
+    }
+
+    /// Reads commit log entries committed after the provided sequence number.
+    /// This is a compatibility wrapper over the authoritative durable journal.
+    pub fn read_commit_log(
+        &self,
+        tenant_id: &TenantId,
+        after: SequenceNumber,
+    ) -> Result<Vec<CommitEntry>> {
+        Ok(commit_entries_from_durable_records(
+            self.read_durable_journal(tenant_id, after)?,
+        ))
+    }
+
+    /// Reads commit log entries asynchronously.
+    /// This is a compatibility wrapper over the authoritative durable journal.
+    pub async fn read_commit_log_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        after: SequenceNumber,
+    ) -> Result<Vec<CommitEntry>> {
+        Ok(commit_entries_from_durable_records(
+            self.read_durable_journal_async(tenant_id, after).await?,
+        ))
     }
 
     /// Returns the latest committed sequence number for a tenant.
@@ -605,6 +731,23 @@ impl Service {
         let _operation = runtime.enter_operation(tenant_id)?;
         Ok(runtime.document_cache_stats())
     }
+
+    #[cfg(test)]
+    pub(crate) fn mutation_journal_stats_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::MutationJournalStats> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        Ok(runtime.mutation_journal_stats())
+    }
+}
+
+fn commit_entries_from_durable_records(records: Vec<DurableMutationRecord>) -> Vec<CommitEntry> {
+    records
+        .into_iter()
+        .map(|record| record.as_commit_entry())
+        .collect()
 }
 
 pub(super) fn evaluate_with_index_cancellable_for_principal(

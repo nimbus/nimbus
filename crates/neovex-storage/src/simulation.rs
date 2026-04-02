@@ -70,6 +70,7 @@ pub enum FaultPoint {
     JournalFlushBeforeVisibility = 4,
     CheckpointPublishBeforeManifestUpdate = 5,
     CompactionStartBeforePublish = 6,
+    JournalDurableAppendBeforeApply = 7,
 }
 
 impl FaultPoint {
@@ -85,6 +86,7 @@ impl FaultPoint {
                 "checkpoint_publish_before_manifest_update"
             }
             Self::CompactionStartBeforePublish => "compaction_start_before_publish",
+            Self::JournalDurableAppendBeforeApply => "journal_durable_append_before_apply",
         }
     }
 }

@@ -110,13 +110,19 @@ impl ConvexHostBridge {
             execution_unit.insert_document(table, fields)
         } else {
             let check_cancellation = cancellation.clone();
+            let cancel_wait = {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancelled().await;
+                }
+            };
             self.service
                 .insert_document_async_cancellable_with_principal(
                     self.tenant_id.clone(),
                     table,
                     fields,
                     self.principal.clone(),
-                    cancellation.cancelled(),
+                    cancel_wait,
                     move || check_host_cancellation(&check_cancellation),
                 )
                 .await
@@ -172,6 +178,12 @@ impl ConvexHostBridge {
             execution_unit.update_document(table, id, patch)
         } else {
             let check_cancellation = cancellation.clone();
+            let cancel_wait = {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancelled().await;
+                }
+            };
             self.service
                 .update_document_async_cancellable_with_principal(
                     self.tenant_id.clone(),
@@ -179,7 +191,7 @@ impl ConvexHostBridge {
                     id,
                     patch,
                     self.principal.clone(),
-                    cancellation.cancelled(),
+                    cancel_wait,
                     move || check_host_cancellation(&check_cancellation),
                 )
                 .await
@@ -236,13 +248,19 @@ impl ConvexHostBridge {
             execution_unit.delete_document(table, id)
         } else {
             let check_cancellation = cancellation.clone();
+            let cancel_wait = {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancelled().await;
+                }
+            };
             self.service
                 .delete_document_async_cancellable_with_principal(
                     self.tenant_id.clone(),
                     table,
                     id,
                     self.principal.clone(),
-                    cancellation.cancelled(),
+                    cancel_wait,
                     move || check_host_cancellation(&check_cancellation),
                 )
                 .await

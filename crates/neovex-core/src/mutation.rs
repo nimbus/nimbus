@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
-use crate::Document;
 use crate::types::{DocumentId, SequenceNumber, TableName, Timestamp};
+use crate::{Document, Error, Result};
 
 /// A mutation request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,5 +61,82 @@ impl CommitEntry {
             .iter()
             .map(|write| write.table.clone())
             .collect()
+    }
+}
+
+const DURABLE_MUTATION_RECORD_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct DurableMutationRecordHashPayload<'a> {
+    version: u16,
+    sequence: SequenceNumber,
+    timestamp: Timestamp,
+    writes: &'a [WriteOp],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scheduled_execution_id: Option<&'a str>,
+}
+
+/// A replayable mutation record stored in the durable journal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DurableMutationRecord {
+    pub version: u16,
+    pub sequence: SequenceNumber,
+    pub timestamp: Timestamp,
+    pub writes: Vec<WriteOp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_execution_id: Option<String>,
+    pub integrity_sha256: [u8; 32],
+}
+
+impl DurableMutationRecord {
+    pub fn new(
+        sequence: SequenceNumber,
+        timestamp: Timestamp,
+        writes: Vec<WriteOp>,
+        scheduled_execution_id: Option<String>,
+    ) -> Result<Self> {
+        let mut record = Self {
+            version: DURABLE_MUTATION_RECORD_VERSION,
+            sequence,
+            timestamp,
+            writes,
+            scheduled_execution_id,
+            integrity_sha256: [0; 32],
+        };
+        record.integrity_sha256 = record.compute_integrity()?;
+        Ok(record)
+    }
+
+    pub fn validate_integrity(&self) -> Result<()> {
+        let expected = self.compute_integrity()?;
+        if self.integrity_sha256 == expected {
+            Ok(())
+        } else {
+            Err(Error::Internal(format!(
+                "durable mutation record {} failed integrity verification",
+                self.sequence.0
+            )))
+        }
+    }
+
+    pub fn as_commit_entry(&self) -> CommitEntry {
+        CommitEntry {
+            sequence: self.sequence,
+            timestamp: self.timestamp,
+            writes: self.writes.clone(),
+        }
+    }
+
+    fn compute_integrity(&self) -> Result<[u8; 32]> {
+        let payload = DurableMutationRecordHashPayload {
+            version: self.version,
+            sequence: self.sequence,
+            timestamp: self.timestamp,
+            writes: &self.writes,
+            scheduled_execution_id: self.scheduled_execution_id.as_deref(),
+        };
+        let encoded = rmp_serde::to_vec_named(&payload)
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        Ok(Sha256::digest(encoded).into())
     }
 }
