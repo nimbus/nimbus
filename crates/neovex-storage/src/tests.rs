@@ -2730,7 +2730,8 @@ fn usage_store_counts_unique_monthly_active_users_per_month() {
 #[tokio::test]
 async fn queued_canceled_async_read_never_begins_real_storage_execution() {
     let store = Arc::new(TenantStore::create_in_memory().expect("store should open"));
-    let read_storage = RedbTenantStorage::with_max_concurrent_reads(store, 1);
+    let read_storage =
+        RedbTenantStorage::with_max_concurrent_reads(store, tokio::runtime::Handle::current(), 1);
     let first_gate = BlockingReadGate::new();
     let first_gate_for_task = first_gate.clone();
     let first_storage = read_storage.clone();
@@ -2789,7 +2790,8 @@ async fn queued_canceled_async_read_never_begins_real_storage_execution() {
 #[tokio::test]
 async fn same_tenant_async_reads_can_progress_concurrently() {
     let store = Arc::new(TenantStore::create_in_memory().expect("store should open"));
-    let read_storage = RedbTenantStorage::with_max_concurrent_reads(store, 2);
+    let read_storage =
+        RedbTenantStorage::with_max_concurrent_reads(store, tokio::runtime::Handle::current(), 2);
     let first_gate = BlockingReadGate::new();
     let first_gate_for_task = first_gate.clone();
     let first_storage = read_storage.clone();
@@ -2840,7 +2842,11 @@ async fn same_tenant_async_reads_can_progress_concurrently() {
 #[tokio::test]
 async fn canceled_async_write_before_commit_leaves_no_durable_state() {
     let store = Arc::new(TenantStore::create_in_memory().expect("store should open"));
-    let storage = RedbTenantStorage::with_max_concurrent_reads(store.clone(), 2);
+    let storage = RedbTenantStorage::with_max_concurrent_reads(
+        store.clone(),
+        tokio::runtime::Handle::current(),
+        2,
+    );
     let document = Document::new(
         TableName::new("tasks").expect("table should build"),
         serde_json::Map::from_iter([("rank".to_string(), json!(7))]),
@@ -2917,7 +2923,11 @@ async fn canceled_async_write_after_commit_still_reports_committed() {
         TenantStore::create_in_memory_with_simulation(clock, faults.clone())
             .expect("store should open with simulation seams"),
     );
-    let storage = RedbTenantStorage::with_max_concurrent_reads(store.clone(), 2);
+    let storage = RedbTenantStorage::with_max_concurrent_reads(
+        store.clone(),
+        tokio::runtime::Handle::current(),
+        2,
+    );
     let document = Document::new(
         TableName::new("tasks").expect("table should build"),
         serde_json::Map::from_iter([("rank".to_string(), json!(11))]),

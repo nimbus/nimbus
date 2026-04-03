@@ -26,8 +26,9 @@ pub use subscriptions::{
     SubscriptionUpdate,
 };
 pub use tenant::{
-    MaterializedReadSurfaceStats, MutationJournalStats, QueryPlanningStats,
-    ServingSnapshotManagerStats, SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
+    MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
+    MutationJournalStats, QueryPlanningStats, ServingSnapshotManagerStats,
+    SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
 };
 pub use verification::{
     BootstrapFingerprint, ConsistencyMismatch, ConsistencyScope, ConsistencyVerificationReport,

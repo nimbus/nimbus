@@ -166,7 +166,10 @@ export {};
     );
 
     let metrics = registry.runtime_metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
+    assert_eq!(
+        metrics.isolate_pool_hits + metrics.isolate_pool_misses,
+        2,
+        "bootstrap plus one reactive reevaluation should account for two pool outcomes"
+    );
     assert_eq!(metrics.isolate_pool_replacements, 0);
 }

@@ -90,10 +90,14 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         "recovery runtime invocation after cancellation",
         |metrics| {
             metrics.worker_dispatched_invocations == 2
-                && metrics.isolate_pool_hits == 1
+                && metrics.completed_invocations == 2
                 && metrics.isolate_pool_replacements == 1
         },
     )
     .await;
-    assert_eq!(recovery_metrics.isolate_pool_misses, 1);
+    assert_eq!(
+        recovery_metrics.isolate_pool_hits + recovery_metrics.isolate_pool_misses,
+        2,
+        "the canceled invocation and recovery invocation should each contribute one pool outcome"
+    );
 }

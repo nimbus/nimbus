@@ -465,7 +465,7 @@ async fn journal_bootstrap_route_returns_snapshot_and_durable_cut() {
         StatusCode::CREATED
     );
 
-    let insert_task = tokio::spawn({
+    let mut insert_task = tokio::spawn({
         let client = server.client().clone();
         let url = server.http_url("/api/tenants/demo/documents");
         async move {
@@ -484,11 +484,12 @@ async fn journal_bootstrap_route_returns_snapshot_and_durable_cut() {
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    let insert_response = timeout(Duration::from_secs(1), insert_task)
-        .await
-        .expect("insert should acknowledge while apply is blocked")
-        .expect("insert task should join");
-    assert_eq!(insert_response.status(), StatusCode::CREATED);
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_task)
+            .await
+            .is_err(),
+        "document insert should remain pending until the journal apply step completes"
+    );
 
     let bootstrap = api
         .journal_bootstrap("demo")
@@ -516,6 +517,11 @@ async fn journal_bootstrap_route_returns_snapshot_and_durable_cut() {
     assert_eq!(tail["next_cursor"], serde_json::json!(1));
 
     faults.release();
+    let insert_response = timeout(Duration::from_secs(1), insert_task)
+        .await
+        .expect("insert should complete after journal apply unblocks")
+        .expect("insert task should join");
+    assert_eq!(insert_response.status(), StatusCode::CREATED);
     assert_eq!(harness.describe(), "journal-bootstrap-route (seed 40)");
 }
 

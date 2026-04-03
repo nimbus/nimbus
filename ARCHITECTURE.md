@@ -196,11 +196,12 @@ file links (links go stale; symbol search does not).
   The durable-journal batch path coalesces cache invalidation and subscription
   wakeups across multi-record apply batches before handing work to that
   background queue. This is the core write path.
-- `service/mutations/journal.rs` — Queued async mutation path. Tenant-local
-  queued writes are drained by a journal worker task that is spawned on the
-  Service-owned background runtime rather than on request-scoped runtimes. That
-  worker owns durable append, ordered apply, and resolution of queued async
-  mutation futures.
+- `service/mutations/journal.rs` — Queued async mutation path. Async mutations
+  first enter a tenant-local outer admission gate with CoDel shedding. A
+  journal worker task spawned on the Service-owned background runtime drains
+  that gate into the commit path, preserves admitted work once it crosses into
+  the journal path, and owns durable append, ordered apply, and resolution of
+  queued async mutation futures.
 - `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Sync paths call it directly; async read paths route the same planner and evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
@@ -214,8 +215,10 @@ file links (links go stale; symbol search does not).
   Operation entry uses RAII guards to keep the in-flight count correct; sync
   waiters use a `Condvar`, async waiters use `Notify`, and both share the same
   deleted-plus-active-operations state. The subscription-delivery queue also
-  tracks batch-coalescing metrics, while the journal worker exposes an
-  async-friendly test pause seam for deterministic multi-record apply coverage.
+  drains small ready batches, merges overlapping queued delivery work before
+  reevaluation, and tracks both journal-batch and queue-level coalescing
+  metrics, while the journal worker exposes an async-friendly test pause seam
+  for deterministic multi-record apply coverage.
 - `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
 - `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry.
   It identifies affected subscription ids at commit time, resolves current
@@ -225,18 +228,20 @@ file links (links go stale; symbol search does not).
   newer visible state. When multiple applied commits are merged into one
   delivery unit, subscribers receive the latest applied sequence and current
   query result, but not per-commit metadata for the intermediate records.
-- `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification) and dispatches mutations through the public Service API.
+- `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification), then fans loaded tenants out through a bounded concurrent scheduler tick so one slow tenant does not stall other due work.
 
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
 
-- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: V8 isolate creation, heap/timeout limits, process-global bootstrap snapshot initialization, and the `invoke_bundle_unmanaged` entry point. `RuntimeBundle` holds the ESM source + SHA-256 integrity hash. `InvocationRequest` describes the function name, kind, and args.
-- `executor.rs` — `RuntimeExecutor`: a fixed-size worker thread pool that dispatches `InvocationRequest`s to V8 isolates. Each worker owns one current-thread tokio runtime that is reused across jobs. Supports both direct invocation and worker-pool-mediated invocation with cancellation. These runtimes are request-execution runtimes; long-lived engine workers must not be owned by them.
-- `host_executor.rs` — `RuntimeHostExecutor`: an optional helper for queueing synchronous host-side work off a caller thread. It exists in the runtime crate, but the live Convex async host-call path does not currently route through it; async host calls await engine/storage futures directly.
+- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: V8 isolate creation, heap/timeout limits, process-global bootstrap snapshot initialization, the `invoke_bundle_unmanaged` entry point, and the `SharedInvocationPermit` / timeout-controller hooks stored in `OpState` for async host-op suspend/resume. `RuntimeBundle` holds the ESM source + SHA-256 integrity hash. `InvocationRequest` describes the function name, kind, and args.
+- `executor.rs` — `RuntimeExecutor`: global queueing, per-tenant runtime admission, worker thread ownership, and shared JS permit management. It owns the oversubscribed worker pool, the shared `WatchdogTimer`, and the active/in-flight/queued tenant accounting that gates runtime work.
+- `worker_loop.rs` — `WorkerLoopFactory`, `WorkerLoop`, and `RunToCompletionWorkerLoop`: the primary executor seam. Each worker thread builds one worker loop that owns a reused current-thread Tokio runtime and drives run-to-completion deno_core invocations for today's runtime model.
+- `backend.rs` — Worker-local `RuntimeBackendFactory` / `RuntimeBackend` helpers. The current `DenoRuntimeBackend` keeps the run-to-completion `invoke(...)` helper below the worker-loop seam so runtime-specific types stay out of `RuntimeExecutor`.
 - `host.rs` — `HostBridge` trait and `HostCallRequest` struct defining the contract between V8 guest code and Rust host operations (db queries, mutations, scheduler commands, `ctx.run*` delegation).
 - `context.rs` — `RuntimeInvocationContext`: per-request metadata (invocation ID, function name, kind, auth identity) threaded through the runtime and host bridge.
-- `limits.rs` — `RuntimeLimits` (heap, timeout, max isolates, max nested calls) and `RuntimePolicy` (enforces limits + owns the isolate concurrency semaphore).
+- `limits.rs` — `RuntimeLimits` (heap, timeout, max isolates, worker threads, per-tenant active/in-flight/queued caps, max nested calls) and `RuntimePolicy` (enforces limits + owns the isolate concurrency semaphore).
 - `metrics.rs` — `RuntimeMetrics` / `RuntimeMetricsSnapshot`: live counters for active isolates, queued invocations, worker dispatches, cancellations, timeouts, host ops, and same-isolate nested dispatches.
 - `module_loader.rs` — Custom `deno_core` module loader that restricts ESM imports to the bundle root.
+- `watchdog.rs` — `WatchdogTimer`: shared timeout and external-cancellation watchdog owned by `RuntimeExecutor`, replacing the old per-invocation watchdog OS threads.
 - `error.rs` — `NeovexRuntimeError` and `ConvexRuntimeError` with variants for timeout, cancellation, heap exceeded, contract violations, and user-thrown errors.
 
 ### Async Ownership Boundaries
@@ -249,17 +254,22 @@ flowchart LR
     end
 
     subgraph ServiceOwned["Service-owned background execution"]
-        Bg["Service background Tokio runtime"]
+        EngineExec["Engine BackgroundExecutor"]
+        StorageExec["Storage BackgroundExecutor"]
         JW["Journal worker"]
+        SB["Storage blocking tasks"]
         SD["Subscription delivery worker"]
         Sch["Scheduler loop"]
     end
 
     Native -->|async mutation| JW
     V8 -->|ctx.runMutation / host op| JW
-    Bg --> JW
+    EngineExec --> JW
     JW --> SD
-    Bg --> Sch
+    EngineExec --> Sch
+    Native -->|storage read/write| SB
+    V8 -->|host bridge storage| SB
+    StorageExec --> SB
 ```
 
 Request executors may enqueue work onto Service-owned background workers, but
@@ -272,18 +282,39 @@ similar durable background work are Service responsibilities.
 | Domain | Owner | Primitive | Live responsibility |
 | --- | --- | --- | --- |
 | Main server runtime | `neovex-bin` | process Tokio runtime from `#[tokio::main]` | axum HTTP/WS request handling and the root scheduler task |
-| Scheduler loop | `neovex-bin` + `Service` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then dispatches via `Service` |
-| Service background runtime | `Service` | process-wide Tokio runtime handle | stable home for long-lived engine async workers |
-| Mutation journal worker | `Service` + `TenantRuntime` | service-owned async task | drains queued async mutations, durably appends, applies in order, resolves mutation futures |
-| Subscription delivery worker | `TenantRuntime` | tenant-owned dedicated OS thread with `Condvar` queue | bounded subscription reevaluation and delivery preparation |
-| Runtime executor | Convex adapter | fixed OS worker threads, each with one reused current-thread Tokio runtime | V8 invocation execution plus async host-call awaiting |
-| Storage async boundary | `RedbTenantStorage` / `RedbUsageStorage` | semaphore admission plus `spawn_blocking(...)` on the caller runtime | bounded redb reads, writes, and usage operations |
+| Scheduler loop | `neovex-bin` + `Service` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then fans out a bounded set of per-tenant ticks via `Service` so one slow tenant cannot stall others |
+| Service background runtime | `Service` | owned `BackgroundExecutor` field with `TaskTracker`, `CancellationToken`, and explicit `quiesce()` | stable home for long-lived engine async workers with service-owned shutdown semantics |
+| Mutation journal worker | `Service` + `TenantRuntime` | service-owned async task | drains the outer mutation admission gate, applies CoDel shedding before journal ownership transfer, durably appends and applies queued mutations in order, and resolves mutation futures |
+| Subscription delivery worker | `TenantRuntime` | tenant-owned dedicated OS thread with `Condvar` queue | bounded subscription reevaluation and delivery preparation, including small-batch queue draining and overlap-aware work merging before reevaluation |
+| Runtime executor | Convex adapter | oversubscribed OS worker pool; each worker owns one current-thread Tokio runtime and one worker loop; JS permits remain separately bounded | V8 invocation execution, permit suspend/resume during async host I/O, and per-tenant active/in-flight/queued runtime admission |
+| Storage async boundary | `Service` + `RedbTenantStorage` / `RedbUsageStorage` | storage-owned `BackgroundExecutor` handle plus read/write semaphores | bounded redb reads, writes, and usage operations on the service-owned storage executor |
 | Session child tasks | WebSocket session / runtime subscription | `OwnedTaskSet` over Tokio `JoinSet` | sender, forwarder, bridge, and bootstrap tasks owned by the parent session |
-| Invocation watchdogs | `neovex-runtime` | short-lived OS threads per active invocation | timeout and external-cancellation termination of a V8 isolate |
+| Invocation watchdogs | `RuntimeExecutor` | shared `WatchdogTimer` thread plus per-invocation registrations | timeout and external-cancellation termination of a V8 isolate without per-invocation watchdog thread churn |
 
 The most important ownership split is between request execution and durable
 background work. Request-scoped paths may wait on Service-owned work, but they
 must not be the lifetime owner of that work.
+
+Service owns its engine and storage executors as struct fields, not process-wide
+statics. Both executors support a two-phase shutdown model: `quiesce()`
+refuses new work and drains in-flight tasks, then runtime drop provides the
+stop phase. Storage blocking work runs on the storage-owned executor instead of
+borrowing whichever request or V8 runtime happened to call into storage.
+
+`RuntimeExecutor` now also owns a shared `WatchdogTimer`. Runtime invocations
+register timeout and external-cancellation termination callbacks against that
+timer and explicitly disarm them before `JsRuntime` teardown. This keeps the
+watchdog lifecycle executor-owned and replaces the old "up to two watchdog
+threads per invocation" model with one shared watchdog thread per executor.
+
+`RuntimeExecutor` also decouples worker threads from JS permits. Parked deno
+invocations hold their worker thread because `JsRuntime` is `!Send` and only
+one runtime may safely exist per thread, but async host ops now release the JS
+permit and the per-tenant active slot through `SharedInvocationPermit`. Another
+worker can use that freed capacity while the parked invocation waits to
+re-acquire its permit. The executor's primary extensibility seam is
+`WorkerLoopFactory` / `WorkerLoop`; the current `DenoRuntimeBackend` stays
+worker-local beneath that seam.
 
 **`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
@@ -314,7 +345,7 @@ must not be the lifetime owner of that work.
 
 **`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-server`, and `neovex-storage` so downstream consumers depend on a single crate.
 
-**`neovex-bin`** — CLI entry point. Parses `--port`, `--data-dir`, `--convex-app-dir`, `--license-file`, and runtime limit flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`, `--runtime-timeout-secs`, `--runtime-max-isolates`, `--runtime-max-nested-calls`). Loads tenants with scheduled work, spawns the scheduler, optionally loads the Convex registry and license state, starts the server, handles graceful shutdown.
+**`neovex-bin`** — CLI entry point. Parses `--port`, `--data-dir`, `--convex-app-dir`, `--license-file`, and runtime limit flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`, `--runtime-timeout-secs`, `--runtime-max-isolates`, `--runtime-worker-threads`, `--runtime-max-nested-calls`). Loads tenants with scheduled work, spawns the scheduler, optionally loads the Convex registry and license state, starts the server, handles graceful shutdown.
 
 **`packages/codegen`** — Node.js code generation tool. Reads Convex source files (`convex/*.ts`) and a `convex/schema.ts`, emits `.neovex/convex/functions.json` (named-function manifest), `.neovex/convex/bundle.mjs` (runtime ESM entrypoint), `.neovex/convex/bundle.sha256` (integrity hash), and generated `convex/_generated/` TypeScript (api, server, dataModel, scheduled_functions).
 
@@ -908,8 +939,8 @@ must run on the thread that created them. The `RuntimeExecutor` spawns a
 fixed-size pool of OS threads, each reusing one current-thread Tokio runtime
 across jobs. This keeps V8 off the main async executor. Async host operations
 from inside V8 currently await engine and storage futures directly through the
-server-side `HostBridge`; they do not bounce through a separate live
-`RuntimeHostExecutor` pool.
+server-side `HostBridge`; they do not bounce through an extra runtime-owned
+host executor layer.
 
 **Why dependency inversion for the runtime?** The runtime crate has zero
 workspace dependencies so it can be tested, fuzzed, and evolved independently.
@@ -942,9 +973,18 @@ work or a wakeup notification. The `RuntimeExecutor` runs V8 on dedicated OS
 threads with worker-local current-thread Tokio runtimes. Long-lived engine
 workers such as the mutation journal run on the Service-owned background
 runtime, while subscription delivery remains a tenant-owned dedicated thread.
-Storage blocking work is executed through `spawn_blocking(...)` on the caller
-runtime, bounded by semaphores at the storage layer. An isolate concurrency
-semaphore caps the number of simultaneous V8 invocations.
+Timeout and external-cancellation termination for V8 now run through one shared
+executor-owned `WatchdogTimer` thread instead of spawning per-invocation
+watchdog threads.
+That delivery worker drains a small ready batch and merges overlapping queued
+subscription work before reevaluation so write storms collapse redundant
+delivery passes earlier than the stale-sequence check alone.
+Storage blocking work is executed through the Service-owned storage
+`BackgroundExecutor`, still bounded by semaphores at the storage layer. Async
+mutations enter a per-tenant outer admission gate before the journal queue, so
+overload shedding happens at admission while admitted journal work retains its
+commit-path guarantee. An isolate concurrency semaphore caps the number of
+simultaneous V8 invocations.
 
 **Error handling.** All fallible operations return `neovex_core::Result<T>`.
 Runtime errors use `NeovexRuntimeError` with variants for timeout,
@@ -1132,7 +1172,8 @@ dispatches. This endpoint is not available in the native-only router.
 
 **Engine observability.** On both the native-only and Convex-enabled routers,
 `GET /debug/tenants/{tenant_id}/engine/metrics` exposes per-tenant engine
-health: mutation journal progress and queue state, subscription-delivery queue
-state, materialized-serving residency and coverage, serving-snapshot retention,
-and query-planning counters. This is the canonical operator-facing snapshot for
+health: mutation admission-gate state, mutation journal progress and queue
+state, subscription-delivery queue state and queue-level merge counters,
+materialized-serving residency and coverage, serving-snapshot retention, and
+query-planning counters. This is the canonical operator-facing snapshot for
 tenant-local durability and derived-state health.

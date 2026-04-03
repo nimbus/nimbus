@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::OnceLock;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use deno_core::JsRuntimeForSnapshot;
 use deno_core::{
@@ -20,10 +20,11 @@ use sha2::{Digest, Sha256};
 
 use crate::RuntimeInvocationContext;
 use crate::error::{NeovexRuntimeError, Result};
-use crate::executor::RuntimeExecutor;
+use crate::executor::{RuntimeExecutor, SharedInvocationPermit};
 use crate::host::{HostBridge, HostCallCancellation, HostCallRequest};
 use crate::limits::{RuntimeLimits, RuntimePolicy};
 use crate::module_loader::SandboxedModuleLoader;
+use crate::watchdog::{WatchdogRegistration, WatchdogTimer};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -326,6 +327,103 @@ struct RuntimeHostState {
 struct RuntimeCancellationState {
     cancel_handle: Rc<CancelHandle>,
     signal: HostCallCancellation,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeInvocationTimeoutController {
+    inner: Arc<Mutex<RuntimeInvocationTimeoutControllerState>>,
+}
+
+struct RuntimeInvocationTimeoutControllerState {
+    timer: WatchdogTimer,
+    remaining: Duration,
+    armed_at: Option<Instant>,
+    registration: Option<WatchdogRegistration>,
+    callback: Arc<dyn Fn() + Send + Sync>,
+    disarmed: bool,
+}
+
+impl RuntimeInvocationTimeoutController {
+    fn new(
+        timer: WatchdogTimer,
+        timeout: Duration,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Self> {
+        let registration = if timeout.is_zero() {
+            None
+        } else {
+            Some(Self::register(&timer, timeout, callback.clone())?)
+        };
+        Ok(Self {
+            inner: Arc::new(Mutex::new(RuntimeInvocationTimeoutControllerState {
+                timer,
+                remaining: timeout,
+                armed_at: (!timeout.is_zero()).then_some(Instant::now()),
+                registration,
+                callback,
+                disarmed: false,
+            })),
+        })
+    }
+
+    fn register(
+        timer: &WatchdogTimer,
+        timeout: Duration,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<WatchdogRegistration> {
+        timer.register_timeout(Instant::now() + timeout, move || {
+            callback();
+        })
+    }
+
+    pub(crate) async fn pause(&self) {
+        let registration = {
+            let mut state = self
+                .inner
+                .lock()
+                .expect("runtime timeout controller lock should not be poisoned");
+            if state.disarmed {
+                return;
+            }
+            let Some(armed_at) = state.armed_at.take() else {
+                return;
+            };
+            state.remaining = state.remaining.saturating_sub(armed_at.elapsed());
+            state.registration.take()
+        };
+        if let Some(registration) = registration {
+            registration.disarm().await;
+        }
+    }
+
+    pub(crate) fn resume(&self) -> Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("runtime timeout controller lock should not be poisoned");
+        if state.disarmed || state.remaining.is_zero() || state.registration.is_some() {
+            return Ok(());
+        }
+        let registration = Self::register(&state.timer, state.remaining, state.callback.clone())?;
+        state.armed_at = Some(Instant::now());
+        state.registration = Some(registration);
+        Ok(())
+    }
+
+    pub(crate) async fn disarm(&self) {
+        let registration = {
+            let mut state = self
+                .inner
+                .lock()
+                .expect("runtime timeout controller lock should not be poisoned");
+            state.disarmed = true;
+            state.armed_at = None;
+            state.registration.take()
+        };
+        if let Some(registration) = registration {
+            registration.disarm().await;
+        }
+    }
 }
 
 struct RuntimeStartupSnapshot {
@@ -1256,7 +1354,38 @@ async fn op_neovex_async_host_call<T>(
 where
     T: Serialize + Send + 'static,
 {
-    let (host_state, cancel_handle, cancellation_signal) = {
+    struct HostCallPermitLease {
+        permit: SharedInvocationPermit,
+        completed: bool,
+    }
+
+    impl HostCallPermitLease {
+        fn new(permit: SharedInvocationPermit) -> Self {
+            permit.begin_async_host_call();
+            Self {
+                permit,
+                completed: false,
+            }
+        }
+
+        async fn complete(&mut self) -> std::result::Result<(), JsErrorBox> {
+            self.completed = true;
+            self.permit
+                .complete_async_host_call()
+                .await
+                .map_err(|error| JsErrorBox::generic(error.to_string()))
+        }
+    }
+
+    impl Drop for HostCallPermitLease {
+        fn drop(&mut self) {
+            if !self.completed {
+                self.permit.drop_async_host_call();
+            }
+        }
+    }
+
+    let (host_state, cancel_handle, cancellation_signal, permit) = {
         let state = state.borrow();
         (
             state.borrow::<RuntimeHostState>().clone(),
@@ -1265,8 +1394,10 @@ where
                 .cancel_handle
                 .clone(),
             state.borrow::<RuntimeCancellationState>().signal.clone(),
+            state.borrow::<SharedInvocationPermit>().clone(),
         )
     };
+    let mut permit_lease = HostCallPermitLease::new(permit);
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
     let operation = operation.to_string();
@@ -1284,20 +1415,24 @@ where
 
     tokio::select! {
         result = &mut host_call => {
-            normalize_host_call_value(
+            let result = normalize_host_call_value(
                 result
                 .map_err(JsErrorBox::from)?
                 .map_err(|error| JsErrorBox::generic(error.to_string()))?
-            )
+            );
+            permit_lease.complete().await?;
+            result
         }
         _ = cancellation_signal.cancelled() => {
             cancel_handle.cancel();
-            normalize_host_call_value(
+            let result = normalize_host_call_value(
                 host_call
                 .await
                 .map_err(JsErrorBox::from)?
                 .map_err(|error| JsErrorBox::generic(error.to_string()))?
-            )
+            );
+            permit_lease.complete().await?;
+            result
         }
     }
 }
@@ -1337,6 +1472,15 @@ pub struct NeovexRuntime {
     host: Arc<dyn HostBridge>,
     policy: Arc<RuntimePolicy>,
     bypass_concurrency_limit: bool,
+}
+
+pub(crate) struct RuntimeInvocationExecution {
+    pub(crate) watchdog: WatchdogTimer,
+    pub(crate) bundle: RuntimeBundle,
+    pub(crate) request: InvocationRequest,
+    pub(crate) context: RuntimeInvocationContext,
+    pub(crate) external_cancellation: Option<HostCallCancellation>,
+    pub(crate) permit: SharedInvocationPermit,
 }
 
 /// Legacy alias for Convex-shaped integrations.
@@ -1434,18 +1578,23 @@ impl NeovexRuntime {
     pub(crate) async fn invoke_bundle_unmanaged(
         &self,
         isolate_pool: Option<&mut RuntimeWorkerIsolatePool>,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        _context: &RuntimeInvocationContext,
-        external_cancellation: Option<HostCallCancellation>,
+        invocation: RuntimeInvocationExecution,
     ) -> Result<Value> {
+        let RuntimeInvocationExecution {
+            watchdog,
+            bundle,
+            request,
+            context: _context,
+            external_cancellation,
+            permit,
+        } = invocation;
         bundle.verify_integrity()?;
         let mut isolate_pool = isolate_pool;
         let mut runtime = match isolate_pool.as_deref_mut() {
-            Some(pool) => pool.take_runtime(self, bundle)?,
+            Some(pool) => pool.take_runtime(self, &bundle)?,
             None => {
                 let snapshot = self.bootstrap_snapshot()?;
-                self.create_runtime_from_snapshot(bundle, snapshot)?
+                self.create_runtime_from_snapshot(&bundle, snapshot)?
             }
         };
         let timeout = self.policy.limits().execution_timeout;
@@ -1460,27 +1609,19 @@ impl NeovexRuntime {
                 .signal
                 .clone()
         };
-        let external_cancellation_watchdog = external_cancellation.clone().map(|external| {
-            let (stop_tx, stop_rx) = mpsc::channel();
-            let isolate_handle = runtime.v8_isolate().thread_safe_handle();
-            let cancellation_signal = cancellation_signal.clone();
-            let external_cancellation_triggered = external_cancellation_triggered.clone();
-            let thread = std::thread::spawn(move || {
-                loop {
-                    if external.is_cancelled() {
-                        external_cancellation_triggered.store(true, Ordering::SeqCst);
-                        cancellation_signal.cancel();
-                        let _ = isolate_handle.terminate_execution();
-                        break;
-                    }
-                    match stop_rx.recv_timeout(std::time::Duration::from_millis(10)) {
-                        Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    }
-                }
-            });
-            (stop_tx, thread)
-        });
+        let external_cancellation_watchdog = external_cancellation
+            .clone()
+            .map(|external| {
+                let isolate_handle = runtime.v8_isolate().thread_safe_handle();
+                let cancellation_signal = cancellation_signal.clone();
+                let external_cancellation_triggered = external_cancellation_triggered.clone();
+                watchdog.register_cancellation(external, move || {
+                    external_cancellation_triggered.store(true, Ordering::SeqCst);
+                    cancellation_signal.cancel();
+                    let _ = isolate_handle.terminate_execution();
+                })
+            })
+            .transpose()?;
 
         {
             let heap_limit_triggered = heap_limit_triggered.clone();
@@ -1494,30 +1635,38 @@ impl NeovexRuntime {
             });
         }
 
-        let watchdog = if timeout.is_zero() {
+        let timeout_controller = if timeout.is_zero() {
             None
         } else {
-            let (stop_tx, stop_rx) = mpsc::channel();
             let isolate_handle = runtime.v8_isolate().thread_safe_handle();
             let timeout_triggered = timeout_triggered.clone();
             let cancellation_signal = cancellation_signal.clone();
-            let thread = std::thread::spawn(move || {
-                if stop_rx.recv_timeout(timeout).is_err() {
-                    timeout_triggered.store(true, Ordering::SeqCst);
-                    cancellation_signal.cancel();
-                    let _ = isolate_handle.terminate_execution();
-                }
+            let callback: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                timeout_triggered.store(true, Ordering::SeqCst);
+                cancellation_signal.cancel();
+                let _ = isolate_handle.terminate_execution();
             });
-            Some((stop_tx, thread))
+            Some(RuntimeInvocationTimeoutController::new(
+                watchdog.clone(),
+                timeout,
+                callback,
+            )?)
         };
+        if let Some(timeout_controller) = timeout_controller.clone() {
+            permit.set_timeout_controller(timeout_controller);
+        }
+        {
+            let op_state = runtime.op_state();
+            op_state.borrow_mut().put(permit.clone());
+        }
 
         let result = {
             let isolate_handle = runtime.v8_isolate().thread_safe_handle();
             let cancellation_signal = cancellation_signal.clone();
             let external_cancellation_triggered = external_cancellation_triggered.clone();
             let invoke = async {
-                self.load_bundle(&mut runtime, bundle).await?;
-                self.invoke_loaded_bundle(&mut runtime, request).await
+                self.load_bundle(&mut runtime, &bundle).await?;
+                self.invoke_loaded_bundle(&mut runtime, &request).await
             };
             tokio::pin!(invoke);
             match external_cancellation {
@@ -1536,13 +1685,12 @@ impl NeovexRuntime {
             }
         };
 
-        if let Some((stop_tx, thread)) = watchdog {
-            let _ = stop_tx.send(());
-            let _ = thread.join();
+        if let Some(timeout_controller) = timeout_controller {
+            timeout_controller.disarm().await;
         }
-        if let Some((stop_tx, thread)) = external_cancellation_watchdog {
-            let _ = stop_tx.send(());
-            let _ = thread.join();
+        permit.clear_timeout_controller();
+        if let Some(external_cancellation_watchdog) = external_cancellation_watchdog {
+            external_cancellation_watchdog.disarm().await;
         }
 
         let replacement_required = timeout_triggered.load(Ordering::SeqCst)
@@ -1672,6 +1820,13 @@ impl NeovexRuntime {
                 cancel_handle: CancelHandle::new_rc(),
                 signal,
             });
+            state.put(SharedInvocationPermit::new(
+                self.policy.clone(),
+                None,
+                None,
+                true,
+                None,
+            ));
         }
     }
 
@@ -2596,6 +2751,7 @@ export {};
 
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             max_concurrent_isolates: 1,
+            worker_threads: 1,
             ..RuntimeLimits::default()
         }));
         let executor = RuntimeExecutor::new(policy.clone());
@@ -2648,6 +2804,7 @@ export {};
 
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             max_concurrent_isolates: 1,
+            worker_threads: 1,
             ..RuntimeLimits::default()
         }));
         let executor = RuntimeExecutor::new(policy.clone());
@@ -3163,8 +3320,11 @@ export {};
                 initial_heap_mb: 4,
                 execution_timeout: std::time::Duration::from_secs(2),
                 max_concurrent_isolates: 1,
-                max_top_level_invocations_per_tenant: RuntimeLimits::default()
-                    .max_top_level_invocations_per_tenant,
+                worker_threads: RuntimeLimits::default().worker_threads,
+                max_active_top_level_invocations_per_tenant: RuntimeLimits::default()
+                    .max_active_top_level_invocations_per_tenant,
+                max_in_flight_top_level_invocations_per_tenant: RuntimeLimits::default()
+                    .max_in_flight_top_level_invocations_per_tenant,
                 max_queued_top_level_invocations_per_tenant: RuntimeLimits::default()
                     .max_queued_top_level_invocations_per_tenant,
                 max_nested_runtime_invocations: RuntimeLimits::default()

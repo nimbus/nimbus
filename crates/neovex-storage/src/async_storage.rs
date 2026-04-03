@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use neovex_core::{Error, Result, TenantId};
+use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -76,6 +77,7 @@ pub trait UsageStorage: Send + Sync {
 struct BlockingReadExecutor<S> {
     store: Arc<S>,
     permits: Arc<Semaphore>,
+    runtime_handle: TokioRuntimeHandle,
 }
 
 impl<S> Clone for BlockingReadExecutor<S> {
@@ -83,6 +85,7 @@ impl<S> Clone for BlockingReadExecutor<S> {
         Self {
             store: self.store.clone(),
             permits: self.permits.clone(),
+            runtime_handle: self.runtime_handle.clone(),
         }
     }
 }
@@ -91,10 +94,11 @@ impl<S> BlockingReadExecutor<S>
 where
     S: Send + Sync + 'static,
 {
-    fn new(store: Arc<S>, max_concurrent_reads: usize) -> Self {
+    fn new(store: Arc<S>, runtime_handle: TokioRuntimeHandle, max_concurrent_reads: usize) -> Self {
         Self {
             store,
             permits: Arc::new(Semaphore::new(max_concurrent_reads.max(1))),
+            runtime_handle,
         }
     }
 
@@ -114,12 +118,13 @@ where
             .await
             .map_err(map_permit_error)?;
         let store = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            task(store)
-        })
-        .await
-        .map_err(map_join_error)?
+        self.runtime_handle
+            .spawn_blocking(move || {
+                let _permit = permit;
+                task(store)
+            })
+            .await
+            .map_err(map_join_error)?
     }
 
     async fn execute_cancellable<T, Fut, Check, F>(
@@ -144,7 +149,7 @@ where
         let cancelled = Arc::new(AtomicBool::new(false));
         let store = self.store.clone();
         let cancelled_for_task = cancelled.clone();
-        let mut handle = tokio::task::spawn_blocking(move || {
+        let mut handle = self.runtime_handle.spawn_blocking(move || {
             let _permit = permit;
             let mut combined_cancel = || {
                 if cancelled_for_task.load(Ordering::SeqCst) {
@@ -169,6 +174,7 @@ where
 struct BlockingWriteExecutor {
     store: Arc<TenantStore>,
     permits: Arc<Semaphore>,
+    runtime_handle: TokioRuntimeHandle,
 }
 
 impl Clone for BlockingWriteExecutor {
@@ -176,15 +182,17 @@ impl Clone for BlockingWriteExecutor {
         Self {
             store: self.store.clone(),
             permits: self.permits.clone(),
+            runtime_handle: self.runtime_handle.clone(),
         }
     }
 }
 
 impl BlockingWriteExecutor {
-    fn new(store: Arc<TenantStore>) -> Self {
+    fn new(store: Arc<TenantStore>, runtime_handle: TokioRuntimeHandle) -> Self {
         Self {
             store,
             permits: Arc::new(Semaphore::new(TENANT_WRITE_PARALLELISM)),
+            runtime_handle,
         }
     }
 
@@ -200,12 +208,13 @@ impl BlockingWriteExecutor {
             .await
             .map_err(map_permit_error)?;
         let store = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            store.execute_write(task)
-        })
-        .await
-        .map_err(map_join_error)?
+        self.runtime_handle
+            .spawn_blocking(move || {
+                let _permit = permit;
+                store.execute_write(task)
+            })
+            .await
+            .map_err(map_join_error)?
     }
 
     async fn execute_write_cancellable<T, Fut, Check, F>(
@@ -230,7 +239,7 @@ impl BlockingWriteExecutor {
         let cancelled = Arc::new(AtomicBool::new(false));
         let store = self.store.clone();
         let cancelled_for_task = cancelled.clone();
-        let mut handle = tokio::task::spawn_blocking(move || {
+        let mut handle = self.runtime_handle.spawn_blocking(move || {
             let _permit = permit;
             store.execute_write_cancellable(
                 move || {
@@ -262,14 +271,22 @@ pub struct RedbTenantStorage {
 }
 
 impl RedbTenantStorage {
-    pub fn new(store: Arc<TenantStore>) -> Self {
-        Self::with_max_concurrent_reads(store, default_tenant_read_parallelism())
+    pub fn new(store: Arc<TenantStore>, runtime_handle: TokioRuntimeHandle) -> Self {
+        Self::with_max_concurrent_reads(store, runtime_handle, default_tenant_read_parallelism())
     }
 
-    pub fn with_max_concurrent_reads(store: Arc<TenantStore>, max_concurrent_reads: usize) -> Self {
+    pub fn with_max_concurrent_reads(
+        store: Arc<TenantStore>,
+        runtime_handle: TokioRuntimeHandle,
+        max_concurrent_reads: usize,
+    ) -> Self {
         Self {
-            executor: BlockingReadExecutor::new(store.clone(), max_concurrent_reads),
-            write_executor: BlockingWriteExecutor::new(store),
+            executor: BlockingReadExecutor::new(
+                store.clone(),
+                runtime_handle.clone(),
+                max_concurrent_reads,
+            ),
+            write_executor: BlockingWriteExecutor::new(store, runtime_handle),
         }
     }
 
@@ -338,9 +355,9 @@ pub struct RedbUsageStorage {
 }
 
 impl RedbUsageStorage {
-    fn new(store: Arc<UsageStore>) -> Self {
+    fn new(store: Arc<UsageStore>, runtime_handle: TokioRuntimeHandle) -> Self {
         Self {
-            executor: BlockingReadExecutor::new(store, USAGE_READ_PARALLELISM),
+            executor: BlockingReadExecutor::new(store, runtime_handle, USAGE_READ_PARALLELISM),
         }
     }
 
@@ -370,6 +387,7 @@ pub struct RedbStorageEngine {
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     usage_storage: Arc<RedbUsageStorage>,
+    storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
 }
 
@@ -378,6 +396,7 @@ impl RedbStorageEngine {
         data_dir: impl Into<PathBuf>,
         clock: Arc<dyn Clock>,
         fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         let usage_store = Arc::new(UsageStore::open(data_dir.join("neovex-control.db"))?);
@@ -385,7 +404,8 @@ impl RedbStorageEngine {
             data_dir,
             clock,
             fault_injector,
-            usage_storage: Arc::new(RedbUsageStorage::new(usage_store)),
+            usage_storage: Arc::new(RedbUsageStorage::new(usage_store, storage_handle.clone())),
+            storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
         })
     }
@@ -401,6 +421,7 @@ impl RedbStorageEngine {
     pub fn read_storage_for_store(&self, store: Arc<TenantStore>) -> Arc<RedbTenantStorage> {
         Arc::new(RedbTenantStorage::with_max_concurrent_reads(
             store,
+            self.storage_handle.clone(),
             self.tenant_read_parallelism,
         ))
     }
@@ -453,11 +474,11 @@ impl RedbStorageEngine {
     async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedRedbTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
-        let store = tokio::task::spawn_blocking(move || {
-            TenantStore::open_with_simulation(path, clock, fault_injector)
-        })
-        .await
-        .map_err(map_join_error)??;
+        let store = self
+            .storage_handle
+            .spawn_blocking(move || TenantStore::open_with_simulation(path, clock, fault_injector))
+            .await
+            .map_err(map_join_error)??;
 
         let store = Arc::new(store);
         let read_storage = self.read_storage_for_store(store.clone());
@@ -474,26 +495,27 @@ impl StorageEngine for RedbStorageEngine {
 
     async fn list_tenants(&self) -> Result<Vec<TenantId>> {
         let data_dir = self.data_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut tenants = Vec::new();
-            let entries =
-                std::fs::read_dir(&data_dir).map_err(|error| Error::Internal(error.to_string()))?;
-            for entry in entries {
-                let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
-                let path = entry.path();
-                if path
-                    .extension()
-                    .is_some_and(|extension| extension == "redb")
-                    && let Some(stem) = path.file_stem()
-                {
-                    tenants.push(TenantId::new(stem.to_string_lossy().to_string())?);
+        self.storage_handle
+            .spawn_blocking(move || {
+                let mut tenants = Vec::new();
+                let entries = std::fs::read_dir(&data_dir)
+                    .map_err(|error| Error::Internal(error.to_string()))?;
+                for entry in entries {
+                    let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
+                    let path = entry.path();
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension == "redb")
+                        && let Some(stem) = path.file_stem()
+                    {
+                        tenants.push(TenantId::new(stem.to_string_lossy().to_string())?);
+                    }
                 }
-            }
-            tenants.sort();
-            Ok(tenants)
-        })
-        .await
-        .map_err(map_join_error)?
+                tenants.sort();
+                Ok(tenants)
+            })
+            .await
+            .map_err(map_join_error)?
     }
 }
 

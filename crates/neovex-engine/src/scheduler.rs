@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::stream::{self, StreamExt};
 use neovex_core::{Mutation, Result, ScheduledJobOutcome, ScheduledJobResult, TenantId, Timestamp};
 use tokio::sync::watch;
 
@@ -79,12 +80,27 @@ pub(crate) fn tick_at(service: &Service, now: Timestamp) -> Result<()> {
 }
 
 pub(crate) async fn tick_at_async(service: &Arc<Service>, now: Timestamp) -> Result<()> {
-    for tenant_id in service.loaded_tenant_ids() {
-        if let Err(error) = process_tenant_async(service, &tenant_id, now).await {
-            tracing::warn!(tenant = %tenant_id, error = %error, "scheduler failed for tenant");
-        }
-    }
+    let tenant_ids = service.loaded_tenant_ids();
+    let max_concurrent_tenant_ticks = scheduler_tenant_tick_parallelism(tenant_ids.len());
+    stream::iter(tenant_ids)
+        .for_each_concurrent(max_concurrent_tenant_ticks, |tenant_id| {
+            let service = service.clone();
+            async move {
+                if let Err(error) = process_tenant_async(&service, &tenant_id, now).await {
+                    tracing::warn!(tenant = %tenant_id, error = %error, "scheduler failed for tenant");
+                }
+            }
+        })
+        .await;
     Ok(())
+}
+
+fn scheduler_tenant_tick_parallelism(tenant_count: usize) -> usize {
+    let available_parallelism = std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(4)
+        .max(1);
+    tenant_count.max(1).min(available_parallelism)
 }
 
 #[cfg(test)]

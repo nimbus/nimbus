@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use neovex_core::{
     CommitEntry, Document, DocumentId, Error, Mutation, PrincipalContext, Result, Schema,
@@ -14,7 +14,7 @@ use tokio::sync::{Notify, oneshot};
 
 use crate::subscriptions::{
     QueuedSubscriptionWork, SubscriptionDispatchStats, SubscriptionRegistry,
-    dispatch_subscription_work,
+    dispatch_subscription_work, merge_queued_subscription_work,
 };
 
 #[cfg(test)]
@@ -27,8 +27,10 @@ pub(crate) struct DocumentCacheStats {
 }
 
 pub(crate) const DOCUMENT_CACHE_CAPACITY: usize = 256;
+pub(crate) const DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY: usize = 256;
 pub(crate) const DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY: usize = 256;
 pub(crate) const DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY: usize = 256;
+const SUBSCRIPTION_DELIVERY_DRAIN_BATCH_SIZE: usize = 8;
 pub(crate) const DEFAULT_MATERIALIZED_SURFACE_TABLE_CAPACITY: usize = 8;
 pub(crate) const DEFAULT_MATERIALIZED_SURFACE_BYTE_CAPACITY: usize = 16 * 1024 * 1024;
 pub(crate) const DEFAULT_MATERIALIZED_SURFACE_VERSION_CAPACITY: usize = 4;
@@ -1187,6 +1189,7 @@ pub struct TenantRuntime {
     query_planning: QueryPlanningMetrics,
     subscription_delivery: SubscriptionDeliveryQueue,
     lifecycle: Arc<TenantLifecycle>,
+    mutation_admission: Arc<MutationAdmissionGate>,
     mutation_journal: Arc<MutationJournalState>,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
@@ -1212,6 +1215,23 @@ pub(crate) struct QueuedMutationRequest {
     pub response: oneshot::Sender<Result<QueuedMutationResult>>,
     #[cfg_attr(not(test), allow(dead_code))]
     pub enqueued_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum MutationAdmissionPhase {
+    Idle,
+    Dropping,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MutationAdmissionStats {
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub oldest_queue_age_nanos: u64,
+    pub admitted_count: u64,
+    pub shed_count: u64,
+    pub queue_rejection_count: u64,
+    pub codel_phase: MutationAdmissionPhase,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1244,6 +1264,7 @@ pub struct SubscriptionDeliveryStats {
     pub coalesced_batch_count: u64,
     pub coalesced_commit_count: u64,
     pub merged_subscription_wakeup_count: u64,
+    pub queue_level_merge_count: u64,
     pub coalesced_work_count: u64,
     pub reevaluation_count: u64,
     pub total_reevaluation_nanos: u64,
@@ -1261,6 +1282,7 @@ pub struct QueryPlanningStats {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TenantEngineDiagnosticsSnapshot {
+    pub mutation_admission: MutationAdmissionStats,
     pub mutation_journal: MutationJournalStats,
     pub subscription_delivery: SubscriptionDeliveryStats,
     pub materialized_read_surface: MaterializedReadSurfaceStats,
@@ -1288,6 +1310,40 @@ struct QueryPlanningMetrics {
     paginated_full_scan_count: AtomicU64,
     paginated_single_field_index_count: AtomicU64,
     paginated_composite_index_count: AtomicU64,
+}
+
+struct MutationAdmissionGate {
+    state: Mutex<MutationAdmissionGateState>,
+    capacity: AtomicUsize,
+    admitted_count: AtomicU64,
+    shed_count: AtomicU64,
+    queue_rejection_count: AtomicU64,
+}
+
+struct MutationAdmissionGateState {
+    queue: VecDeque<QueuedMutationRequest>,
+    codel: CoDelState,
+}
+
+struct CoDelState {
+    target: Duration,
+    interval: Duration,
+    phase: CoDelPhase,
+    first_above_time: Option<Instant>,
+}
+
+enum CoDelPhase {
+    Idle,
+    Dropping { drop_next: Instant, drop_count: u32 },
+}
+
+enum MutationAdmissionDecision {
+    Admit(QueuedMutationRequest),
+    Reject {
+        request: QueuedMutationRequest,
+        error: Error,
+    },
+    Empty,
 }
 
 impl QueryPlanningMetrics {
@@ -1628,6 +1684,7 @@ struct SubscriptionDeliveryState {
     coalesced_batch_count: AtomicU64,
     coalesced_commit_count: AtomicU64,
     merged_subscription_wakeup_count: AtomicU64,
+    queue_level_merge_count: AtomicU64,
     coalesced_work_count: AtomicU64,
     reevaluation_count: AtomicU64,
     total_reevaluation_nanos: AtomicU64,
@@ -1717,6 +1774,174 @@ impl Drop for TenantOperationGuard {
     }
 }
 
+impl MutationAdmissionGate {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(MutationAdmissionGateState {
+                queue: VecDeque::new(),
+                codel: CoDelState::new(Duration::from_millis(5), Duration::from_millis(100)),
+            }),
+            capacity: AtomicUsize::new(DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY),
+            admitted_count: AtomicU64::new(0),
+            shed_count: AtomicU64::new(0),
+            queue_rejection_count: AtomicU64::new(0),
+        }
+    }
+
+    fn enqueue(&self, request: QueuedMutationRequest) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned");
+        let capacity = self.capacity.load(Ordering::Acquire).max(1);
+        if state.queue.len() >= capacity {
+            self.queue_rejection_count.fetch_add(1, Ordering::Relaxed);
+            return Err(Error::ResourceExhausted(format!(
+                "mutation admission gate full (capacity {capacity})"
+            )));
+        }
+        state.queue.push_back(request);
+        self.admitted_count.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn pop_next_at(&self, now: Instant) -> MutationAdmissionDecision {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned");
+        let Some(request) = state.queue.pop_front() else {
+            state.codel.reset();
+            return MutationAdmissionDecision::Empty;
+        };
+
+        let should_drop = state.codel.should_drop(now, request.enqueued_at);
+        if state.queue.is_empty() {
+            state.codel.reset();
+        }
+
+        if should_drop {
+            self.shed_count.fetch_add(1, Ordering::Relaxed);
+            return MutationAdmissionDecision::Reject {
+                request,
+                error: Error::ResourceExhausted("mutation shed by admission gate".to_string()),
+            };
+        }
+
+        MutationAdmissionDecision::Admit(request)
+    }
+
+    fn has_pending(&self) -> bool {
+        !self
+            .state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned")
+            .queue
+            .is_empty()
+    }
+
+    fn stats(&self) -> MutationAdmissionStats {
+        let state = self
+            .state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned");
+        let oldest_queue_age_nanos = state
+            .queue
+            .front()
+            .map(|request| request.enqueued_at.elapsed().as_nanos())
+            .unwrap_or(0)
+            .min(u128::from(u64::MAX)) as u64;
+        MutationAdmissionStats {
+            queue_depth: state.queue.len(),
+            queue_capacity: self.capacity.load(Ordering::Relaxed),
+            oldest_queue_age_nanos,
+            admitted_count: self.admitted_count.load(Ordering::Relaxed),
+            shed_count: self.shed_count.load(Ordering::Relaxed),
+            queue_rejection_count: self.queue_rejection_count.load(Ordering::Relaxed),
+            codel_phase: state.codel.phase_stats(),
+        }
+    }
+
+    #[cfg(test)]
+    fn set_codel_for_testing(&self, target: Duration, interval: Duration) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned");
+        state.codel = CoDelState::new(target, interval);
+    }
+}
+
+impl CoDelState {
+    fn new(target: Duration, interval: Duration) -> Self {
+        Self {
+            target,
+            interval,
+            phase: CoDelPhase::Idle,
+            first_above_time: None,
+        }
+    }
+
+    fn should_drop(&mut self, now: Instant, enqueued_at: Instant) -> bool {
+        let sojourn = now.saturating_duration_since(enqueued_at);
+        if sojourn < self.target {
+            self.reset();
+            return false;
+        }
+
+        match &mut self.phase {
+            CoDelPhase::Idle => match self.first_above_time {
+                None => {
+                    self.first_above_time = Some(now + self.interval);
+                    false
+                }
+                Some(first_above_time) if now < first_above_time => false,
+                Some(_) => {
+                    self.phase = CoDelPhase::Dropping {
+                        drop_next: now + codel_drop_interval(self.interval, 1),
+                        drop_count: 1,
+                    };
+                    true
+                }
+            },
+            CoDelPhase::Dropping {
+                drop_next,
+                drop_count,
+            } => {
+                if sojourn < self.target {
+                    self.reset();
+                    return false;
+                }
+                if now < *drop_next {
+                    return false;
+                }
+                *drop_count = drop_count.saturating_add(1);
+                *drop_next = now + codel_drop_interval(self.interval, *drop_count);
+                true
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.phase = CoDelPhase::Idle;
+        self.first_above_time = None;
+    }
+
+    fn phase_stats(&self) -> MutationAdmissionPhase {
+        match self.phase {
+            CoDelPhase::Idle => MutationAdmissionPhase::Idle,
+            CoDelPhase::Dropping { .. } => MutationAdmissionPhase::Dropping,
+        }
+    }
+}
+
+fn codel_drop_interval(interval: Duration, drop_count: u32) -> Duration {
+    let divisor = f64::from(drop_count.max(1)).sqrt();
+    Duration::from_secs_f64((interval.as_secs_f64() / divisor).max(0.000_001))
+}
+
+type MutationJournalEnqueueError = Box<(QueuedMutationRequest, Error)>;
+
 impl MutationJournalState {
     fn new(progress: JournalProgress) -> Self {
         Self {
@@ -1740,7 +1965,10 @@ impl MutationJournalState {
         }
     }
 
-    fn enqueue(&self, request: QueuedMutationRequest) -> Result<bool> {
+    fn enqueue(
+        &self,
+        request: QueuedMutationRequest,
+    ) -> std::result::Result<(), MutationJournalEnqueueError> {
         let mut queue = self
             .queue
             .lock()
@@ -1748,20 +1976,18 @@ impl MutationJournalState {
         let capacity = self.capacity.load(Ordering::Acquire).max(1);
         if queue.len() >= capacity {
             self.queue_rejection_count.fetch_add(1, Ordering::Relaxed);
-            return Err(Error::ResourceExhausted(format!(
-                "mutation journal queue full (capacity {capacity})"
+            return Err(Box::new((
+                request,
+                Error::ResourceExhausted(format!(
+                    "mutation journal queue full (capacity {capacity})"
+                )),
             )));
         }
         queue.push_back(request);
-        Ok(self
-            .worker_running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok())
+        Ok(())
     }
 
     async fn drain_batch(&self, max_batch_size: usize) -> Vec<QueuedMutationRequest> {
-        #[cfg(test)]
-        self.pause_before_drain.wait_if_armed().await;
         let mut queue = self
             .queue
             .lock()
@@ -1770,18 +1996,30 @@ impl MutationJournalState {
         queue.drain(..batch_size).collect()
     }
 
-    fn release_worker(&self) -> bool {
+    #[cfg(test)]
+    async fn wait_before_drain(&self) {
+        self.pause_before_drain.wait_if_armed().await;
+    }
+
+    fn release_worker(&self, gate_has_more: bool) -> bool {
         self.worker_running.store(false, Ordering::Release);
-        let queue_has_more = !self
-            .queue
-            .lock()
-            .expect("mutation journal queue lock should not be poisoned")
-            .is_empty();
+        let queue_has_more = gate_has_more
+            || !self
+                .queue
+                .lock()
+                .expect("mutation journal queue lock should not be poisoned")
+                .is_empty();
         queue_has_more
             && self
                 .worker_running
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
+    }
+
+    fn try_start_worker(&self) -> bool {
+        self.worker_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 
     fn record_worker_start(&self) {
@@ -1983,6 +2221,7 @@ impl SubscriptionDeliveryQueue {
                 coalesced_batch_count: AtomicU64::new(0),
                 coalesced_commit_count: AtomicU64::new(0),
                 merged_subscription_wakeup_count: AtomicU64::new(0),
+                queue_level_merge_count: AtomicU64::new(0),
                 coalesced_work_count: AtomicU64::new(0),
                 reevaluation_count: AtomicU64::new(0),
                 total_reevaluation_nanos: AtomicU64::new(0),
@@ -2014,13 +2253,13 @@ impl SubscriptionDeliveryQueue {
         // explicit shutdown path joins first, and the weak upgrade lets the
         // worker exit cleanly if teardown wins the race.
         let runtime = Arc::downgrade(runtime);
-        *worker = Some(
-            std::thread::Builder::new()
-                .name("neovex-subscription-delivery".to_string())
-                .spawn(move || {
-                    loop {
-                        let work =
-                            {
+        *worker =
+            Some(
+                std::thread::Builder::new()
+                    .name("neovex-subscription-delivery".to_string())
+                    .spawn(move || {
+                        loop {
+                            let first_work = {
                                 let mut queue = state.queue.lock().expect(
                                     "subscription delivery queue lock should not be poisoned",
                                 );
@@ -2038,18 +2277,41 @@ impl SubscriptionDeliveryQueue {
                                 }
                             };
 
-                        #[cfg(test)]
-                        state.pause.wait_if_armed();
+                            #[cfg(test)]
+                            state.pause.wait_if_armed();
 
-                        let Some(runtime) = runtime.upgrade() else {
-                            return;
-                        };
-                        let stats = dispatch_subscription_work(&runtime, &work);
-                        state.record_dispatch_stats(stats);
-                    }
-                })
-                .expect("subscription delivery worker should spawn"),
-        );
+                            let mut work_batch = vec![first_work];
+                            {
+                                let mut queue = state.queue.lock().expect(
+                                    "subscription delivery queue lock should not be poisoned",
+                                );
+                                if state.shutdown.load(Ordering::Acquire) {
+                                    queue.clear();
+                                    return;
+                                }
+                                while work_batch.len() < SUBSCRIPTION_DELIVERY_DRAIN_BATCH_SIZE {
+                                    let Some(work) = queue.pop_front() else {
+                                        break;
+                                    };
+                                    work_batch.push(work);
+                                }
+                            }
+                            let (work, merged_count) = merge_queued_subscription_work(work_batch);
+                            if merged_count != 0 {
+                                state
+                                    .queue_level_merge_count
+                                    .fetch_add(merged_count, Ordering::Relaxed);
+                            }
+
+                            let Some(runtime) = runtime.upgrade() else {
+                                return;
+                            };
+                            let stats = dispatch_subscription_work(&runtime, &work);
+                            state.record_dispatch_stats(stats);
+                        }
+                    })
+                    .expect("subscription delivery worker should spawn"),
+            );
     }
 
     fn enqueue(
@@ -2153,6 +2415,7 @@ impl SubscriptionDeliveryQueue {
                 .state
                 .merged_subscription_wakeup_count
                 .load(Ordering::Relaxed),
+            queue_level_merge_count: self.state.queue_level_merge_count.load(Ordering::Relaxed),
             coalesced_work_count: self.state.coalesced_work_count.load(Ordering::Relaxed),
             reevaluation_count: self.state.reevaluation_count.load(Ordering::Relaxed),
             total_reevaluation_nanos: self.state.total_reevaluation_nanos.load(Ordering::Relaxed),
@@ -2209,6 +2472,7 @@ impl TenantRuntime {
             query_planning: QueryPlanningMetrics::new(),
             subscription_delivery: SubscriptionDeliveryQueue::new(),
             lifecycle: Arc::new(TenantLifecycle::new()),
+            mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
@@ -2473,19 +2737,54 @@ impl TenantRuntime {
         self.subscription_delivery.shutdown();
     }
 
-    pub(crate) fn enqueue_mutation_request(&self, request: QueuedMutationRequest) -> Result<bool> {
-        self.mutation_journal.enqueue(request)
+    pub(crate) fn enqueue_mutation_admission_request(
+        &self,
+        request: QueuedMutationRequest,
+    ) -> Result<bool> {
+        self.mutation_admission.enqueue(request)?;
+        Ok(self.mutation_journal.try_start_worker())
+    }
+
+    pub(crate) fn drain_mutation_admission_queue(&self) {
+        loop {
+            match self.mutation_admission.pop_next_at(Instant::now()) {
+                MutationAdmissionDecision::Admit(request) => {
+                    if let Err(enqueue_error) = self.mutation_journal.enqueue(request) {
+                        let (request, error) = *enqueue_error;
+                        let _ = request.response.send(Err(error));
+                    }
+                }
+                MutationAdmissionDecision::Reject { request, error } => {
+                    let _ = request.response.send(Err(error));
+                }
+                MutationAdmissionDecision::Empty => break,
+            }
+        }
     }
 
     pub(crate) async fn drain_mutation_batch(
         &self,
         max_batch_size: usize,
     ) -> Vec<QueuedMutationRequest> {
-        self.mutation_journal.drain_batch(max_batch_size).await
+        #[cfg(test)]
+        self.mutation_journal.wait_before_drain().await;
+        let mut batch = self.mutation_journal.drain_batch(max_batch_size).await;
+        let batch_limit = max_batch_size.max(1);
+        while batch.len() < batch_limit {
+            match self.mutation_admission.pop_next_at(Instant::now()) {
+                MutationAdmissionDecision::Admit(request) => batch.push(request),
+                MutationAdmissionDecision::Reject { request, error } => {
+                    let _ = request.response.send(Err(error));
+                }
+                MutationAdmissionDecision::Empty => break,
+            }
+        }
+        batch
     }
 
     pub(crate) fn release_mutation_worker(&self) -> bool {
-        self.mutation_journal.release_worker()
+        self.mutation_journal
+            .release_worker(self.mutation_admission.has_pending())
     }
 
     pub(crate) fn record_mutation_worker_start(&self) {
@@ -2595,6 +2894,10 @@ impl TenantRuntime {
             .set_version_capacity_for_testing(version_capacity);
     }
 
+    pub(crate) fn mutation_admission_stats(&self) -> MutationAdmissionStats {
+        self.mutation_admission.stats()
+    }
+
     pub(crate) fn mutation_journal_stats(&self) -> MutationJournalStats {
         self.mutation_journal.stats()
     }
@@ -2609,6 +2912,7 @@ impl TenantRuntime {
 
     pub(crate) fn engine_diagnostics_snapshot(&self) -> TenantEngineDiagnosticsSnapshot {
         TenantEngineDiagnosticsSnapshot {
+            mutation_admission: self.mutation_admission_stats(),
             mutation_journal: self.mutation_journal_stats(),
             subscription_delivery: self.subscription_delivery_stats(),
             materialized_read_surface: self.materialized_read_surface_stats(),
@@ -2626,6 +2930,16 @@ impl TenantRuntime {
     #[cfg(test)]
     pub(crate) fn set_mutation_journal_queue_capacity_for_testing(&self, capacity: usize) {
         self.mutation_journal.set_capacity_for_testing(capacity);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_mutation_admission_codel_for_testing(
+        &self,
+        target: Duration,
+        interval: Duration,
+    ) {
+        self.mutation_admission
+            .set_codel_for_testing(target, interval);
     }
 
     #[cfg(test)]
@@ -2663,3 +2977,6 @@ impl TenantRuntime {
         self.subscription_bootstrap_pause.wait_if_armed().await;
     }
 }
+
+#[cfg(test)]
+mod mutation_admission_tests;

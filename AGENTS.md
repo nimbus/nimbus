@@ -33,19 +33,16 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active execution plan
-- For event loop, worker lifecycle, backpressure, shutdown, or runtime-admission
-  work, go straight from `docs/plans/README.md` to
-  `docs/plans/execution-ownership-hardening-plan.md` and use it as the durable
-  control plan.
+- For future admission-control work, go from `docs/plans/README.md` to
+  `docs/plans/layered-admission-control-plan.md`.
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- For execution-ownership work, resume from the `EO*` item ledger,
-  checkpoints, and execution log in
-  `docs/plans/execution-ownership-hardening-plan.md`.
+- For future layered admission work, use
+  `docs/plans/layered-admission-control-plan.md`.
 - Treat the roadmap plus the current git worktree as progress state. Do not rely on chat history to remember where work stopped.
 - If an item is already `in_progress` or the worktree is dirty, reconcile and resume that work before starting a new roadmap item.
 - Checkpoint roadmap state before stopping, handing off, or any likely context loss. Do not assume you will get an explicit compaction warning.
@@ -114,6 +111,11 @@ they are wrapped with the repo's single-flight guard so an accidental duplicate
 invocation exits quickly instead of starting another overlapping run. Use
 direct `cargo test ...` or `cargo clippy ...` when you intentionally want a
 focused crate-level or test-level command.
+
+For focused ad hoc cargo commands that may be run in parallel, or when
+recovering from a hung cargo run that left the shared artifact directory locked,
+prefer `bash scripts/cargo-isolated.sh -- ...` so the command gets a unique
+`CARGO_TARGET_DIR` under `/tmp` instead of blocking later focused runs.
 
 Run `cargo fmt --all --check` and `make clippy` before opening a PR. CI enforces
 those checks plus `make deny`.
