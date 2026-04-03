@@ -7,6 +7,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
+- `docs/plans/execution-ownership-hardening-plan.md`
+  - control plan for event loop ownership, worker lifecycle, backpressure, and
+    shutdown hardening — cross-referenced against Convex, TigerBeetle, and
+    CockroachDB
 
 ## How To Use This Folder
 

@@ -33,12 +33,19 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active execution plan
+- For event loop, worker lifecycle, backpressure, shutdown, or runtime-admission
+  work, go straight from `docs/plans/README.md` to
+  `docs/plans/execution-ownership-hardening-plan.md` and use it as the durable
+  control plan.
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
+- For execution-ownership work, resume from the `EO*` item ledger,
+  checkpoints, and execution log in
+  `docs/plans/execution-ownership-hardening-plan.md`.
 - Treat the roadmap plus the current git worktree as progress state. Do not rely on chat history to remember where work stopped.
 - If an item is already `in_progress` or the worktree is dirty, reconcile and resume that work before starting a new roadmap item.
 - Checkpoint roadmap state before stopping, handing off, or any likely context loss. Do not assume you will get an explicit compaction warning.
