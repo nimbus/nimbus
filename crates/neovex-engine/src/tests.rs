@@ -60,6 +60,28 @@ fn subscription_channel() -> (
     mpsc::channel(16)
 }
 
+async fn wait_for_subscription_delivery_stats(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    description: &str,
+    predicate: impl Fn(&crate::tenant::SubscriptionDeliveryStats) -> bool,
+) -> crate::tenant::SubscriptionDeliveryStats {
+    let started_at = tokio::time::Instant::now();
+    loop {
+        let stats = service
+            .subscription_delivery_stats_for_testing(tenant_id)
+            .expect("subscription delivery stats should load");
+        if predicate(&stats) {
+            return stats;
+        }
+        assert!(
+            started_at.elapsed() < Duration::from_secs(1),
+            "timed out waiting for {description}; last subscription delivery stats: {stats:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn filter(field: &str, op: FilterOp, value: serde_json::Value) -> Filter {
     Filter {
         field: field.to_string(),
@@ -1255,9 +1277,13 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
         other => panic!("unexpected subscription update: {other:?}"),
     }
 
-    let stats = service
-        .subscription_delivery_stats_for_testing(&tenant_id)
-        .expect("subscription delivery stats should load");
+    let stats = wait_for_subscription_delivery_stats(
+        &service,
+        &tenant_id,
+        "blocked worker reevaluation stats",
+        |stats| stats.reevaluation_count >= 1 && stats.total_reevaluation_nanos > 0,
+    )
+    .await;
     assert_eq!(stats.queue_depth, 0);
     assert_eq!(
         stats.queue_capacity,
@@ -1364,9 +1390,16 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         "older queued deliveries should be skipped once a newer sequence has already been delivered"
     );
 
-    let stats = service
-        .subscription_delivery_stats_for_testing(&tenant_id)
-        .expect("subscription delivery stats should load");
+    let stats = wait_for_subscription_delivery_stats(
+        &service,
+        &tenant_id,
+        "overflow delivery stats",
+        |stats| {
+            stats.reevaluation_count >= 1
+                && stats.queue_level_merge_count + stats.coalesced_work_count >= 2
+        },
+    )
+    .await;
     assert_eq!(stats.queue_depth, 0);
     assert_eq!(stats.queue_capacity, 1);
     assert_eq!(stats.oldest_queue_age_nanos, 0);
@@ -1462,9 +1495,15 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         "merged delivery work should collapse the redundant second queue item"
     );
 
-    let stats = service
-        .subscription_delivery_stats_for_testing(&tenant_id)
-        .expect("subscription delivery stats should load");
+    let stats =
+        wait_for_subscription_delivery_stats(&service, &tenant_id, "queue merge stats", |stats| {
+            stats.queue_depth == 0
+                && stats.queue_level_merge_count == 1
+                && stats.coalesced_work_count == 0
+                && stats.reevaluation_count == 1
+                && stats.total_reevaluation_nanos > 0
+        })
+        .await;
     assert_eq!(stats.queue_depth, 0);
     assert_eq!(stats.queue_level_merge_count, 1);
     assert_eq!(stats.coalesced_work_count, 0);
@@ -1617,9 +1656,21 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
         "the journal batch should emit a single coalesced subscription wakeup"
     );
 
-    let stats = service
-        .subscription_delivery_stats_for_testing(&tenant_id)
-        .expect("subscription delivery stats should load");
+    let stats = wait_for_subscription_delivery_stats(
+        &service,
+        &tenant_id,
+        "journal batch coalescing stats",
+        |stats| {
+            stats.queue_depth == 0
+                && stats.coalesced_batch_count == 1
+                && stats.coalesced_commit_count == 3
+                && stats.merged_subscription_wakeup_count == 2
+                && stats.coalesced_work_count == 0
+                && stats.reevaluation_count == 1
+                && stats.total_reevaluation_nanos > 0
+        },
+    )
+    .await;
     assert_eq!(stats.queue_depth, 0);
     assert_eq!(
         stats.queue_capacity,
