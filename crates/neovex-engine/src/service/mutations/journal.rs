@@ -24,6 +24,16 @@ use super::{
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 
+struct PendingMutationResponseGuard {
+    runtime: Arc<TenantRuntime>,
+}
+
+impl Drop for PendingMutationResponseGuard {
+    fn drop(&mut self) {
+        self.runtime.finish_pending_mutation_response();
+    }
+}
+
 struct PlannedQueuedMutation {
     cancelled: Arc<AtomicBool>,
     _operation: TenantOperationGuard,
@@ -52,18 +62,22 @@ struct QueuedMutationBatchResult {
 impl Service {
     pub(super) fn spawn_journal_mutation_worker(self: &Arc<Self>, runtime: Arc<TenantRuntime>) {
         let service = self.clone();
-        tokio::spawn(async move {
+        runtime.record_mutation_worker_start();
+        self.spawn_background("mutation_journal", async move {
             service.run_journal_mutation_worker(runtime).await;
         });
     }
 
     async fn run_journal_mutation_worker(self: Arc<Self>, runtime: Arc<TenantRuntime>) {
+        #[cfg(any(test, debug_assertions))]
+        Service::assert_running_on_background_task("mutation_journal");
+
         loop {
             let batch = runtime
                 .drain_mutation_batch(MUTATION_JOURNAL_BATCH_SIZE)
                 .await;
             if batch.is_empty() {
-                if runtime.release_mutation_worker().await {
+                if runtime.release_mutation_worker() {
                     continue;
                 }
                 break;
@@ -83,12 +97,14 @@ impl Service {
                     self.process_applied_commit_batch(runtime.clone(), &batch_result.applied);
                 }
                 Ok(Err(error)) => {
+                    runtime.record_mutation_worker_failure();
                     warn!(error = %error, "mutation journal batch failed");
                     if let Ok(progress) = runtime.store.recover_durable_journal() {
                         runtime.sync_mutation_journal_progress(progress);
                     }
                 }
                 Err(error) => {
+                    runtime.record_mutation_worker_failure();
                     warn!(error = %error, "mutation journal worker panicked");
                     if let Ok(progress) = runtime.store.recover_durable_journal() {
                         runtime.sync_mutation_journal_progress(progress);
@@ -114,19 +130,22 @@ impl Service {
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request_cancelled = cancelled.clone();
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        let should_start_worker = runtime
-            .enqueue_mutation_request(QueuedMutationRequest {
-                mutation,
-                principal,
-                scheduled_execution_id: match mode {
-                    MutationExecutionMode::Immediate => None,
-                    MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
-                },
-                cancelled: request_cancelled,
-                _operation: operation,
-                response: response_tx,
-            })
-            .await;
+        runtime.begin_pending_mutation_response();
+        let _pending_response = PendingMutationResponseGuard {
+            runtime: runtime.clone(),
+        };
+        let should_start_worker = runtime.enqueue_mutation_request(QueuedMutationRequest {
+            mutation,
+            principal,
+            scheduled_execution_id: match mode {
+                MutationExecutionMode::Immediate => None,
+                MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
+            },
+            cancelled: request_cancelled,
+            _operation: operation,
+            response: response_tx,
+            enqueued_at: std::time::Instant::now(),
+        })?;
         if should_start_worker {
             self.spawn_journal_mutation_worker(runtime.clone());
         }
@@ -317,6 +336,7 @@ fn plan_queued_mutation_request(
         cancelled,
         _operation,
         response,
+        ..
     } = request;
 
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {

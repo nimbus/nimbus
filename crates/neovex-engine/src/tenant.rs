@@ -9,7 +9,8 @@ use neovex_core::{
     SequenceNumber, TableName, TenantId,
 };
 use neovex_storage::{JournalProgress, RedbTenantStorage, TenantStore};
-use tokio::sync::{Mutex as AsyncMutex, Notify, oneshot};
+use serde::Serialize;
+use tokio::sync::{Notify, oneshot};
 
 use crate::subscriptions::{
     QueuedSubscriptionWork, SubscriptionDispatchStats, SubscriptionRegistry,
@@ -26,6 +27,7 @@ pub(crate) struct DocumentCacheStats {
 }
 
 pub(crate) const DOCUMENT_CACHE_CAPACITY: usize = 256;
+pub(crate) const DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY: usize = 256;
 pub(crate) const DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY: usize = 256;
 pub(crate) const DEFAULT_MATERIALIZED_SURFACE_TABLE_CAPACITY: usize = 8;
 pub(crate) const DEFAULT_MATERIALIZED_SURFACE_BYTE_CAPACITY: usize = 16 * 1024 * 1024;
@@ -173,8 +175,7 @@ enum MaterializedWarmLoadDecision<'a> {
     Wait(Arc<MaterializedWarmLoadWaitState>),
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MaterializedReadSurfaceStats {
     pub loaded_table_count: usize,
     pub resident_document_count: usize,
@@ -206,8 +207,7 @@ pub struct MaterializedTablePublicationStats {
     pub estimated_bytes: usize,
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ServingSnapshotManagerStats {
     pub retained_snapshot_count: usize,
     pub earliest_retained_sequence: Option<SequenceNumber>,
@@ -415,7 +415,6 @@ impl ServingSnapshotManager {
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
     fn stats(&self) -> ServingSnapshotManagerStats {
         let state = self
             .state
@@ -1036,7 +1035,6 @@ impl TenantMaterializedReadSurface {
             MaterializedReadAccessState::default();
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
     fn stats(&self) -> MaterializedReadSurfaceStats {
         let tables = self
             .tables
@@ -1212,23 +1210,36 @@ pub(crate) struct QueuedMutationRequest {
     pub cancelled: Arc<AtomicBool>,
     pub _operation: TenantOperationGuard,
     pub response: oneshot::Sender<Result<QueuedMutationResult>>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub enqueued_at: Instant,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MutationJournalStats {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MutationJournalStats {
     pub durable_head: SequenceNumber,
     pub applied_head: SequenceNumber,
     pub apply_lag: u64,
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub oldest_queue_age_nanos: u64,
+    pub pending_response_count: u64,
+    pub worker_running: bool,
+    pub worker_start_count: u64,
+    pub worker_restart_count: u64,
+    pub queue_rejection_count: u64,
+    pub worker_failure_count: u64,
     pub read_wait_count: u64,
     pub total_read_wait_nanos: u64,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SubscriptionDeliveryStats {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SubscriptionDeliveryStats {
     pub queue_depth: usize,
+    pub queue_capacity: usize,
     pub oldest_queue_age_nanos: u64,
+    pub worker_running: bool,
+    pub worker_start_count: u64,
+    pub worker_restart_count: u64,
     pub overflow_sync_fallback_count: u64,
     pub coalesced_batch_count: u64,
     pub coalesced_commit_count: u64,
@@ -1238,8 +1249,7 @@ pub(crate) struct SubscriptionDeliveryStats {
     pub total_reevaluation_nanos: u64,
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct QueryPlanningStats {
     pub query_full_scan_count: u64,
     pub query_single_field_index_count: u64,
@@ -1247,6 +1257,15 @@ pub struct QueryPlanningStats {
     pub paginated_full_scan_count: u64,
     pub paginated_single_field_index_count: u64,
     pub paginated_composite_index_count: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TenantEngineDiagnosticsSnapshot {
+    pub mutation_journal: MutationJournalStats,
+    pub subscription_delivery: SubscriptionDeliveryStats,
+    pub materialized_read_surface: MaterializedReadSurfaceStats,
+    pub serving_snapshot_manager: ServingSnapshotManagerStats,
+    pub query_planning: QueryPlanningStats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1307,7 +1326,6 @@ impl QueryPlanningMetrics {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
     fn stats(&self) -> QueryPlanningStats {
         QueryPlanningStats {
             query_full_scan_count: self.query_full_scan_count.load(Ordering::Relaxed),
@@ -1580,8 +1598,13 @@ impl MutationJournalPauseHandle {
 }
 
 struct MutationJournalState {
-    queue: AsyncMutex<VecDeque<QueuedMutationRequest>>,
+    queue: Mutex<VecDeque<QueuedMutationRequest>>,
+    capacity: AtomicUsize,
     worker_running: AtomicBool,
+    worker_start_count: AtomicU64,
+    queue_rejection_count: AtomicU64,
+    worker_failure_count: AtomicU64,
+    pending_response_count: AtomicU64,
     sequence_gate: Mutex<()>,
     applied_wait_lock: Mutex<()>,
     applied_wait: Condvar,
@@ -1600,6 +1623,7 @@ struct SubscriptionDeliveryState {
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     shutdown: AtomicBool,
     capacity: AtomicUsize,
+    worker_start_count: AtomicU64,
     overflow_sync_fallback_count: AtomicU64,
     coalesced_batch_count: AtomicU64,
     coalesced_commit_count: AtomicU64,
@@ -1696,8 +1720,13 @@ impl Drop for TenantOperationGuard {
 impl MutationJournalState {
     fn new(progress: JournalProgress) -> Self {
         Self {
-            queue: AsyncMutex::new(VecDeque::new()),
+            queue: Mutex::new(VecDeque::new()),
+            capacity: AtomicUsize::new(DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY),
             worker_running: AtomicBool::new(false),
+            worker_start_count: AtomicU64::new(0),
+            queue_rejection_count: AtomicU64::new(0),
+            worker_failure_count: AtomicU64::new(0),
+            pending_response_count: AtomicU64::new(0),
             sequence_gate: Mutex::new(()),
             applied_wait_lock: Mutex::new(()),
             applied_wait: Condvar::new(),
@@ -1711,29 +1740,64 @@ impl MutationJournalState {
         }
     }
 
-    async fn enqueue(&self, request: QueuedMutationRequest) -> bool {
-        self.queue.lock().await.push_back(request);
-        self.worker_running
+    fn enqueue(&self, request: QueuedMutationRequest) -> Result<bool> {
+        let mut queue = self
+            .queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned");
+        let capacity = self.capacity.load(Ordering::Acquire).max(1);
+        if queue.len() >= capacity {
+            self.queue_rejection_count.fetch_add(1, Ordering::Relaxed);
+            return Err(Error::ResourceExhausted(format!(
+                "mutation journal queue full (capacity {capacity})"
+            )));
+        }
+        queue.push_back(request);
+        Ok(self
+            .worker_running
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+            .is_ok())
     }
 
     async fn drain_batch(&self, max_batch_size: usize) -> Vec<QueuedMutationRequest> {
         #[cfg(test)]
         self.pause_before_drain.wait_if_armed().await;
-        let mut queue = self.queue.lock().await;
+        let mut queue = self
+            .queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned");
         let batch_size = queue.len().min(max_batch_size.max(1));
         queue.drain(..batch_size).collect()
     }
 
-    async fn release_worker(&self) -> bool {
+    fn release_worker(&self) -> bool {
         self.worker_running.store(false, Ordering::Release);
-        let queue_has_more = !self.queue.lock().await.is_empty();
+        let queue_has_more = !self
+            .queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned")
+            .is_empty();
         queue_has_more
             && self
                 .worker_running
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
+    }
+
+    fn record_worker_start(&self) {
+        self.worker_start_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_worker_failure(&self) {
+        self.worker_failure_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn begin_pending_response(&self) {
+        self.pending_response_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn finish_pending_response(&self) {
+        self.pending_response_count.fetch_sub(1, Ordering::Relaxed);
     }
 
     fn durable_head(&self) -> SequenceNumber {
@@ -1823,17 +1887,40 @@ impl MutationJournalState {
         );
     }
 
-    #[cfg(test)]
     fn stats(&self) -> MutationJournalStats {
         let durable_head = self.durable_head();
         let applied_head = self.applied_head();
+        let queue = self
+            .queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned");
+        let oldest_queue_age_nanos = queue
+            .front()
+            .map(|request| request.enqueued_at.elapsed().as_nanos())
+            .unwrap_or(0)
+            .min(u128::from(u64::MAX)) as u64;
+        let worker_start_count = self.worker_start_count.load(Ordering::Relaxed);
         MutationJournalStats {
             durable_head,
             applied_head,
             apply_lag: durable_head.0.saturating_sub(applied_head.0),
+            queue_depth: queue.len(),
+            queue_capacity: self.capacity.load(Ordering::Relaxed),
+            oldest_queue_age_nanos,
+            pending_response_count: self.pending_response_count.load(Ordering::Relaxed),
+            worker_running: self.worker_running.load(Ordering::Relaxed),
+            worker_start_count,
+            worker_restart_count: worker_start_count.saturating_sub(1),
+            queue_rejection_count: self.queue_rejection_count.load(Ordering::Relaxed),
+            worker_failure_count: self.worker_failure_count.load(Ordering::Relaxed),
             read_wait_count: self.read_wait_count.load(Ordering::Relaxed),
             total_read_wait_nanos: self.total_read_wait_nanos.load(Ordering::Relaxed),
         }
+    }
+
+    #[cfg(test)]
+    fn set_capacity_for_testing(&self, capacity: usize) {
+        self.capacity.store(capacity.max(1), Ordering::Release);
     }
 }
 
@@ -1891,6 +1978,7 @@ impl SubscriptionDeliveryQueue {
                 worker: Mutex::new(None),
                 shutdown: AtomicBool::new(false),
                 capacity: AtomicUsize::new(DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY),
+                worker_start_count: AtomicU64::new(0),
                 overflow_sync_fallback_count: AtomicU64::new(0),
                 coalesced_batch_count: AtomicU64::new(0),
                 coalesced_commit_count: AtomicU64::new(0),
@@ -1914,7 +2002,14 @@ impl SubscriptionDeliveryQueue {
             return;
         }
         self.state.shutdown.store(false, Ordering::Release);
+        self.state
+            .worker_start_count
+            .fetch_add(1, Ordering::Relaxed);
         let state = self.state.clone();
+        // Delivery intentionally uses a tenant-owned dedicated thread instead of
+        // the shared Tokio background runtime. The key invariant is ownership:
+        // this worker must outlive any request/task that enqueues delivery work,
+        // remain explicitly bounded, and shut down via the tenant lifecycle.
         // The worker should not keep a tenant alive during deletion; the
         // explicit shutdown path joins first, and the weak upgrade lets the
         // worker exit cleanly if teardown wins the race.
@@ -2023,7 +2118,6 @@ impl SubscriptionDeliveryQueue {
         }
     }
 
-    #[cfg(test)]
     fn stats(&self) -> SubscriptionDeliveryStats {
         let queue = self
             .state
@@ -2035,9 +2129,20 @@ impl SubscriptionDeliveryQueue {
             .map(|work| work.enqueued_at.elapsed().as_nanos())
             .unwrap_or(0)
             .min(u128::from(u64::MAX)) as u64;
+        let worker_running = self
+            .state
+            .worker
+            .lock()
+            .expect("subscription delivery worker lock should not be poisoned")
+            .is_some();
+        let worker_start_count = self.state.worker_start_count.load(Ordering::Relaxed);
         SubscriptionDeliveryStats {
             queue_depth: queue.len(),
+            queue_capacity: self.state.capacity.load(Ordering::Relaxed),
             oldest_queue_age_nanos,
+            worker_running,
+            worker_start_count,
+            worker_restart_count: worker_start_count.saturating_sub(1),
             overflow_sync_fallback_count: self
                 .state
                 .overflow_sync_fallback_count
@@ -2368,8 +2473,8 @@ impl TenantRuntime {
         self.subscription_delivery.shutdown();
     }
 
-    pub(crate) async fn enqueue_mutation_request(&self, request: QueuedMutationRequest) -> bool {
-        self.mutation_journal.enqueue(request).await
+    pub(crate) fn enqueue_mutation_request(&self, request: QueuedMutationRequest) -> Result<bool> {
+        self.mutation_journal.enqueue(request)
     }
 
     pub(crate) async fn drain_mutation_batch(
@@ -2379,8 +2484,24 @@ impl TenantRuntime {
         self.mutation_journal.drain_batch(max_batch_size).await
     }
 
-    pub(crate) async fn release_mutation_worker(&self) -> bool {
-        self.mutation_journal.release_worker().await
+    pub(crate) fn release_mutation_worker(&self) -> bool {
+        self.mutation_journal.release_worker()
+    }
+
+    pub(crate) fn record_mutation_worker_start(&self) {
+        self.mutation_journal.record_worker_start();
+    }
+
+    pub(crate) fn record_mutation_worker_failure(&self) {
+        self.mutation_journal.record_worker_failure();
+    }
+
+    pub(crate) fn begin_pending_mutation_response(&self) {
+        self.mutation_journal.begin_pending_response();
+    }
+
+    pub(crate) fn finish_pending_mutation_response(&self) {
+        self.mutation_journal.finish_pending_response();
     }
 
     pub(crate) fn durable_head(&self) -> SequenceNumber {
@@ -2431,7 +2552,6 @@ impl TenantRuntime {
         self.document_cache.stats()
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn materialized_read_surface_stats(&self) -> MaterializedReadSurfaceStats {
         self.materialized_reads.stats()
     }
@@ -2452,7 +2572,6 @@ impl TenantRuntime {
         self.materialized_serving_snapshot(required_sequence)
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn serving_snapshot_manager_stats(&self) -> ServingSnapshotManagerStats {
         self.materialized_reads.snapshots.stats()
     }
@@ -2476,25 +2595,37 @@ impl TenantRuntime {
             .set_version_capacity_for_testing(version_capacity);
     }
 
-    #[cfg(test)]
     pub(crate) fn mutation_journal_stats(&self) -> MutationJournalStats {
         self.mutation_journal.stats()
     }
 
-    #[cfg(test)]
     pub(crate) fn subscription_delivery_stats(&self) -> SubscriptionDeliveryStats {
         self.subscription_delivery.stats()
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn query_planning_stats(&self) -> QueryPlanningStats {
         self.query_planning.stats()
+    }
+
+    pub(crate) fn engine_diagnostics_snapshot(&self) -> TenantEngineDiagnosticsSnapshot {
+        TenantEngineDiagnosticsSnapshot {
+            mutation_journal: self.mutation_journal_stats(),
+            subscription_delivery: self.subscription_delivery_stats(),
+            materialized_read_surface: self.materialized_read_surface_stats(),
+            serving_snapshot_manager: self.serving_snapshot_manager_stats(),
+            query_planning: self.query_planning_stats(),
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn set_subscription_delivery_queue_capacity_for_testing(&self, capacity: usize) {
         self.subscription_delivery
             .set_capacity_for_testing(capacity);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_mutation_journal_queue_capacity_for_testing(&self, capacity: usize) {
+        self.mutation_journal.set_capacity_for_testing(capacity);
     }
 
     #[cfg(test)]

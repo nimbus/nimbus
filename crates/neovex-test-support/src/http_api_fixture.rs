@@ -72,6 +72,18 @@ impl<'a> HttpApiFixture<'a> {
             .expect("tenant consistency request should succeed")
     }
 
+    pub async fn tenant_engine_metrics(&self, tenant_id: &str) -> Response {
+        self.server
+            .client()
+            .get(
+                self.server
+                    .http_url(&format!("/debug/tenants/{tenant_id}/engine/metrics")),
+            )
+            .send()
+            .await
+            .expect("tenant engine metrics request should succeed")
+    }
+
     pub async fn convex_query(&self, tenant_id: &str, query: Value) -> Response {
         self.server
             .client()

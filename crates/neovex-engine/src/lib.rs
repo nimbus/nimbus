@@ -25,8 +25,10 @@ pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,
     SubscriptionUpdate,
 };
-#[cfg(any(test, feature = "test-hooks"))]
-pub use tenant::{MaterializedReadSurfaceStats, QueryPlanningStats, ServingSnapshotManagerStats};
+pub use tenant::{
+    MaterializedReadSurfaceStats, MutationJournalStats, QueryPlanningStats,
+    ServingSnapshotManagerStats, SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
+};
 pub use verification::{
     BootstrapFingerprint, ConsistencyMismatch, ConsistencyScope, ConsistencyVerificationReport,
     SnapshotFingerprint,

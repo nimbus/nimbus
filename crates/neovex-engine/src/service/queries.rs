@@ -1051,6 +1051,18 @@ impl Service {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_mutation_journal_queue_capacity_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        capacity: usize,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.set_mutation_journal_queue_capacity_for_testing(capacity);
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_materialized_read_surface_limits_for_testing(
         &self,
         tenant_id: &TenantId,

@@ -11,6 +11,7 @@ server starts with `--convex-app-dir`.
 | --- | --- | --- |
 | `GET` | `/health` | health check |
 | `GET` | `/debug/license/status` | current license snapshot and usage state |
+| `GET` | `/debug/tenants/{tenant_id}/engine/metrics` | per-tenant engine durability, worker, and serving diagnostics |
 | `GET` | `/demos` | redirects to the demo index |
 | `GET` | `/demos/` | serves the demo directory |
 

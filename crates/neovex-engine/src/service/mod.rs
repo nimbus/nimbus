@@ -1,3 +1,4 @@
+mod diagnostics;
 mod execution_units;
 mod mutations;
 mod queries;
@@ -8,17 +9,22 @@ mod tenants;
 mod usage;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::{Arc, OnceLock};
 
 use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
     Clock, FaultInjector, NoopFaultInjector, RedbStorageEngine, RedbUsageStorage, SystemClock,
     TenantStore, UsageStore,
 };
+use tokio::runtime::{
+    Builder as TokioRuntimeBuilder, Handle as TokioRuntimeHandle, Runtime as TokioRuntime,
+};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
+use tokio::task::JoinHandle;
 
 use crate::tenant::TenantRuntime;
 
@@ -44,6 +50,26 @@ pub struct Service {
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
+    background_runtime: TokioRuntimeHandle,
+}
+
+tokio::task_local! {
+    static SERVICE_BACKGROUND_TASK: &'static str;
+}
+
+fn service_background_runtime_handle() -> TokioRuntimeHandle {
+    static SERVICE_BACKGROUND_RUNTIME: OnceLock<TokioRuntime> = OnceLock::new();
+    SERVICE_BACKGROUND_RUNTIME
+        .get_or_init(|| {
+            TokioRuntimeBuilder::new_multi_thread()
+                .worker_threads(1)
+                .thread_name("neovex-engine-bg")
+                .enable_all()
+                .build()
+                .expect("service background runtime should build")
+        })
+        .handle()
+        .clone()
 }
 
 impl Service {
@@ -77,6 +103,7 @@ impl Service {
             clock,
             storage_fault_injector,
             scheduler_wakeup: Notify::new(),
+            background_runtime: service_background_runtime_handle(),
         })
     }
 
@@ -86,6 +113,24 @@ impl Service {
 
     pub(crate) fn scheduler_notifier(&self) -> &Notify {
         &self.scheduler_wakeup
+    }
+
+    pub(crate) fn spawn_background<F>(&self, name: &'static str, future: F) -> JoinHandle<()>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.background_runtime
+            .spawn(SERVICE_BACKGROUND_TASK.scope(name, future))
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn assert_running_on_background_task(expected: &'static str) {
+        let actual = SERVICE_BACKGROUND_TASK.try_with(|name| *name).ok();
+        assert_eq!(
+            actual,
+            Some(expected),
+            "long-lived engine worker must run on the Service-owned background runtime"
+        );
     }
 
     pub(crate) fn now(&self) -> Timestamp {

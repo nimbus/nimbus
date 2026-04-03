@@ -41,6 +41,23 @@ pub(crate) async fn runtime_diagnostics(
     })
 }
 
+/// Returns per-tenant engine durability, worker, and serving diagnostics.
+pub(crate) async fn tenant_engine_diagnostics(
+    State(state): State<Arc<AppState>>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<TenantEngineDiagnosticsResponse>, AppError> {
+    let tenant_id = TenantId::new(tenant_id)?;
+    let diagnostics = state
+        .service
+        .clone()
+        .tenant_engine_diagnostics_async(tenant_id.clone())
+        .await?;
+    Ok(Json(TenantEngineDiagnosticsResponse {
+        tenant_id: tenant_id.to_string(),
+        diagnostics,
+    }))
+}
+
 /// Runs the on-demand tenant consistency verifier and returns the diagnostic report.
 pub(crate) async fn tenant_consistency_report(
     State(state): State<Arc<AppState>>,

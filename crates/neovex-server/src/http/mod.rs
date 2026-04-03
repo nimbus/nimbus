@@ -14,8 +14,8 @@ use crate::protocol::{
     DocumentDataResponse, DocumentResponse, HealthResponse, InsertDocumentRequest,
     JournalBootstrapResponse, JournalStreamRequest, JournalStreamResponse,
     MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse, RuntimeLimitsResponse,
-    ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse, TenantListResponse,
-    TenantResponse, UpdateDocumentRequest,
+    ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
+    TenantEngineDiagnosticsResponse, TenantListResponse, TenantResponse, UpdateDocumentRequest,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
 
@@ -31,6 +31,7 @@ pub(crate) use documents::{
 };
 pub(crate) use metadata::{
     demos_redirect, health, license_status, runtime_diagnostics, tenant_consistency_report,
+    tenant_engine_diagnostics,
 };
 pub(crate) use queries::{
     bootstrap_journal, query_documents, query_documents_paginated, read_commit_log, read_journal,
