@@ -1,0 +1,16 @@
+{
+  "name": "convex-node",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "convex codegen --app .",
+    "demo": "npm run codegen && node --experimental-strip-types ./script.ts",
+    "test": "npm run codegen && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "convex": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

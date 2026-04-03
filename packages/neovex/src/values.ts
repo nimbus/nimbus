@@ -1,4 +1,4 @@
-import type { JsonValue } from "./internal/shared";
+import type { JsonValue } from "./internal/shared.ts";
 
 export type GenericId<TableName extends string> = string & {
   readonly __tableName?: TableName;

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::routing::{any, delete, get, post};
 use neovex_engine::Service;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 use crate::adapters::convex::{self, ConvexRegistry};
@@ -20,7 +21,9 @@ pub fn build_router(service: Arc<Service>) -> Router {
 /// Builds the Neovex HTTP/WebSocket router with an explicit license state.
 pub fn build_router_with_license(service: Arc<Service>, license_state: LicenseState) -> Router {
     let state = Arc::new(AppState::with_license_state(service, license_state));
-    build_core_router().with_state(state)
+    build_core_router()
+        .layer(build_cors_layer())
+        .with_state(state)
 }
 
 /// Builds the Neovex HTTP/WebSocket router with Convex support enabled.
@@ -41,7 +44,15 @@ pub fn build_router_with_convex_and_license(
     ));
     build_core_router()
         .merge(build_convex_router())
+        .layer(build_cors_layer())
         .with_state(state)
+}
+
+fn build_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_headers(Any)
+        .allow_methods(Any)
 }
 
 fn build_core_router() -> Router<Arc<AppState>> {

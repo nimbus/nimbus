@@ -44,6 +44,7 @@ Why this directory exists:
 Current demos:
 
 - `neovex/html/`: single-page browser playground for tenant setup, schema install, document inserts, scheduled inserts, and live subscriptions
+- `convex/node/`: Convex-style Node demo using generated refs, an injected Node WebSocket implementation, point-in-time reads, and live subscriptions
 - `convex/html/`: Convex-style React demo using `convex/react`, generated `_generated/api.ts`, and Neovex's convex transport
   - the demo now authors functions through `convex/_generated/server`, `convex/values`, and `convex/schema.ts`
   - codegen now emits `_generated/dataModel.d.ts` and `_generated/scheduled_functions.ts` for the supported subset
@@ -57,6 +58,7 @@ Browser note:
 - native browser `WebSocket` clients cannot send the custom `X-Tenant-Id` header
 - the demo uses `GET /ws?tenant_id=...` while non-browser clients can still use the header form
 - the convex browser client now reconnects and resubscribes live queries automatically after a dropped socket
+- the plain HTML variant at `/demos/convex/html/vanilla.html` is served directly by Neovex and expects `npm run build --workspace convex` to have generated `/demos/convex/vendor/browser.bundle.js`
 
 Planned next demos:
 
@@ -73,6 +75,12 @@ Run the Convex support server for the React demo:
 
 ```bash
 npm run convex:server:html
+```
+
+Run the Convex support server for the Node demo:
+
+```bash
+npm run convex:server:node
 ```
 
 Run the Convex support server for the HTTP demo:
@@ -92,8 +100,31 @@ For the React convex demo, in a second terminal run:
 npm run convex:demo:html
 ```
 
+For the Node convex demo, in a second terminal run:
+
+```bash
+npm run convex:demo:node
+```
+
 For the HTTP convex demo, in a second terminal run:
 
 ```bash
 npm run convex:demo:http
 ```
+
+For the plain HTML variant, build the browser bundle first and then open:
+
+```bash
+npm run build --workspace convex
+```
+
+- <http://localhost:8080/demos/convex/html/vanilla.html>
+
+Running upstream `convex-demos` against Neovex:
+
+1. Clone <https://github.com/get-convex/convex-demos> somewhere on your machine.
+2. Copy `.env.example` to `.env` and set `CONVEX_DEMOS_DIR` to that clone path.
+3. Run `make convex-demo-node`, `make convex-demo-html`, or `make convex-demo-http`.
+
+Those targets build a temporary overlay app that forces `convex/*` imports to
+resolve to this repo's workspace packages before running codegen and Neovex.

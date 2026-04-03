@@ -9,7 +9,7 @@ import type {
   ActionShape,
   MutationShape,
   QueryShape,
-} from "./internal/shared";
+} from "./internal/shared.ts";
 import {
   createApiError,
   defineAction,
@@ -24,7 +24,7 @@ import {
   stripTrailingSlash,
   validateDeploymentUrl,
   websocketUrlFromBase,
-} from "./internal/shared";
+} from "./internal/shared.ts";
 
 export {
   defineAction,
@@ -35,7 +35,7 @@ export {
   makeMutationReference,
   makePaginatedQueryReference,
   makeQueryReference,
-} from "./internal/shared";
+} from "./internal/shared.ts";
 
 export type ConnectionState = {
   hasInflightRequests: boolean;
@@ -59,6 +59,13 @@ type FetchLike = typeof globalThis.fetch;
 export type AuthTokenFetcher = (args: {
   forceRefreshToken: boolean;
 }) => Promise<string | null | undefined>;
+export type WebSocketLike = {
+  addEventListener?: (type: string, listener: (event: any) => void) => void;
+  on?: (type: string, listener: (event: any) => void) => void;
+  send(data: string): void;
+  close(): void;
+};
+export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
 type AuthChangeListener = (isAuthenticated: boolean) => void;
 
@@ -318,17 +325,18 @@ export class NeovexClient {
   private readonly httpClient: NeovexHttpClient;
   private readonly address: string;
   private readonly authRefreshTokenLeewaySeconds: number;
+  private readonly webSocketImpl?: WebSocketConstructor;
   private readonly connectionListeners = new Set<() => void>();
   private readonly pendingSubscriptions = new Map<
     string,
     SubscriptionEntry<unknown>
   >();
   private readonly activeSubscriptions = new Map<number, SubscriptionEntry<unknown>>();
-  private socket: WebSocket | null = null;
+  private socket: WebSocketLike | null = null;
   private socketPromise: Promise<void> | null = null;
   private socketAuthentication:
     | {
-        socket: WebSocket;
+        socket: WebSocketLike;
         token: string;
         resolve: () => void;
         reject: (error: Error) => void;
@@ -357,6 +365,7 @@ export class NeovexClient {
       fetch?: FetchLike;
       disabled?: boolean;
       authRefreshTokenLeewaySeconds?: number;
+      webSocket?: WebSocketConstructor;
     } = {},
   ) {
     if (options.skipDeploymentUrlCheck !== true) {
@@ -366,6 +375,7 @@ export class NeovexClient {
     this.httpClient = new NeovexHttpClient(address, options);
     this.authRefreshTokenLeewaySeconds =
       options.authRefreshTokenLeewaySeconds ?? DEFAULT_AUTH_REFRESH_TOKEN_LEEWAY_SECONDS;
+    this.webSocketImpl = options.webSocket;
     if (options.disabled) {
       this.closed = true;
     }
@@ -564,18 +574,23 @@ export class NeovexClient {
     }
 
     this.socketPromise = new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(websocketUrlFromBase(this.address));
+      const SocketImpl = this.webSocketImpl ?? (globalThis.WebSocket as WebSocketConstructor);
+      if (!SocketImpl) {
+        reject(new Error("No WebSocket implementation is available for this environment."));
+        return;
+      }
+      const socket = new SocketImpl(websocketUrlFromBase(this.address));
       this.socket = socket;
 
-      socket.addEventListener("open", () => {
+      attachSocketListener(socket, "open", () => {
         void this.finishSocketOpen(socket, resolve, reject);
       });
 
-      socket.addEventListener("message", (event) => {
+      attachSocketListener(socket, "message", (event) => {
         this.handleSocketMessage(event.data);
       });
 
-      socket.addEventListener("close", () => {
+      attachSocketListener(socket, "close", () => {
         this.clearScheduledAuthRefresh();
         if (this.socketAuthentication?.socket === socket) {
           this.socketAuthentication.reject(
@@ -594,7 +609,7 @@ export class NeovexClient {
         this.scheduleReconnect();
       });
 
-      socket.addEventListener("error", () => {
+      attachSocketListener(socket, "error", () => {
         this.state = {
           ...this.state,
           isWebSocketConnected: false,
@@ -770,7 +785,7 @@ export class NeovexClient {
   }
 
   private async finishSocketOpen(
-    socket: WebSocket,
+    socket: WebSocketLike,
     resolve: () => void,
     reject: (error: Error) => void,
   ) {
@@ -796,7 +811,7 @@ export class NeovexClient {
     }
   }
 
-  private async authenticateSocket(socket: WebSocket) {
+  private async authenticateSocket(socket: WebSocketLike) {
     const token = await this.httpClient.getAuthToken(false);
     if (token === null) {
       this.httpClient.notifyAuthState(false);
@@ -819,7 +834,7 @@ export class NeovexClient {
     }
   }
 
-  private sendAuthenticate(socket: WebSocket, token: string) {
+  private sendAuthenticate(socket: WebSocketLike, token: string) {
     return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (this.socketAuthentication?.socket === socket) {
@@ -962,6 +977,32 @@ function hasResolver<Args, Result>(
       resolve: (args: Args) => ActionShape;
     }) {
   return typeof reference.resolve === "function";
+}
+
+function attachSocketListener(
+  socket: WebSocketLike,
+  type: string,
+  listener: (event: any) => void,
+) {
+  if (typeof socket.addEventListener === "function") {
+    socket.addEventListener(type, listener);
+    return;
+  }
+  if (typeof socket.on === "function") {
+    socket.on(type, (event) => {
+      if (type === "message") {
+        const payload =
+          event && typeof event === "object" && "data" in event
+            ? (event as { data: unknown }).data
+            : event;
+        listener({ data: typeof payload === "string" ? payload : String(payload) });
+        return;
+      }
+      listener(event);
+    });
+    return;
+  }
+  throw new Error(`Configured WebSocket implementation does not support "${type}" listeners.`);
 }
 
 function buildSubscribeMessage<Args, Result>(

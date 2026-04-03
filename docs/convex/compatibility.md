@@ -20,6 +20,8 @@ useful subset cleanly rather than claim blanket Convex parity.
 ## Supported Areas
 
 - generated refs for the supported declarative subset
+- string-based named refs plus a first-slice `anyApi` proxy for query,
+  mutation, action, scheduling, and standard live-query flows
 - compiled `ctx.db.query(...)` flows including filter, index, ordering, and
   common result shapes such as `collect()`, `take()`, `first()`, and `unique()`
 - compiled `ctx.db.get(id)` reads
@@ -42,6 +44,8 @@ useful subset cleanly rather than claim blanket Convex parity.
   lowering into Neovex plans
 - `convex/react` and `convex/browser` automatically reconnect and resubscribe
   after dropped sockets
+- string refs and `anyApi` do not yet cover paginated live-query flows; use
+  generated refs or `makePaginatedQueryReference(...)` there
 - unchanged subscription payloads are suppressed to reduce unnecessary rerenders
 - `useQueries` keeps failures local as `Error` values, while `useQuery` and
   `usePaginatedQuery` still throw into React error boundaries
@@ -114,6 +118,11 @@ coverage for this suite rather than part of the first landed slice.
 From the repo root:
 
 ```bash
+npm run convex:server:node
+npm run convex:demo:node
+```
+
+```bash
 npm run convex:server:html
 npm run convex:demo:html
 ```
@@ -122,6 +131,15 @@ npm run convex:demo:html
 npm run convex:server:http
 npm run convex:demo:http
 ```
+
+For the plain HTML bundle variant:
+
+```bash
+npm run build --workspace convex
+```
+
+Then open
+[http://localhost:8080/demos/convex/html/vanilla.html](http://localhost:8080/demos/convex/html/vanilla.html).
 
 See [demos/README.md](../../demos/README.md)
 for the demo layout and run flow.

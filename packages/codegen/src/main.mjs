@@ -35,6 +35,7 @@ async function generateConvexArtifacts({ appDir }) {
         schedulable: fn.kind === "mutation",
         plan: fn.plan,
         runtime_handler: fn.runtimeHandler ?? null,
+        runtime_bindings: fn.runtimeHandler ? (fn.runtimeBindings ?? {}) : undefined,
       });
     }
   }

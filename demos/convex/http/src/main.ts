@@ -5,8 +5,9 @@ import type { Doc } from "../convex/_generated/dataModel";
 
 type Message = Doc<"messages">;
 
-const nativeUrl = import.meta.env.VITE_NEOVEX_NATIVE_URL ?? "http://localhost:8080";
-const convexUrl = import.meta.env.VITE_NEOVEX_CONVEX_URL ?? "http://localhost:8080/convex/demo";
+const nativeUrl = import.meta.env.VITE_NEOVEX_NATIVE_URL ?? window.location.origin;
+const convexUrl =
+  import.meta.env.VITE_NEOVEX_CONVEX_URL ?? `${window.location.origin}/convex/demo`;
 const client = new ConvexHttpClient(convexUrl);
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -99,15 +100,28 @@ const messagesView = messagesList;
 const detailView = detailBody;
 
 async function ensureTenant() {
-  await fetch(`${nativeUrl}/api/tenants`, {
+  const listResponse = await fetch(`${nativeUrl}/api/tenants`);
+  if (!listResponse.ok) {
+    throw new Error(`failed to list tenants: ${listResponse.status}`);
+  }
+  const payload = (await listResponse.json()) as { tenants?: string[] };
+  if (payload.tenants?.includes("demo")) {
+    return;
+  }
+
+  const response = await fetch(`${nativeUrl}/api/tenants`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: "demo" }),
   });
+  if (!response.ok) {
+    throw new Error(`failed to ensure demo tenant: ${response.status}`);
+  }
 }
 
 function renderMessages(messages: Message[]) {
-  messagesView.innerHTML = messages
+  messagesView.innerHTML = [...messages]
+    .reverse()
     .map(
       (message) => `
         <li data-message-id="${escapeHtml(message._id)}" style="border: 1px solid #ddd; border-radius: 0.75rem; padding: 0.9rem 1rem; cursor: pointer;">
@@ -130,6 +144,42 @@ async function loadMessages() {
     : await client.query(api.messages.maybeByAuthor, { author: null });
   renderMessages(messages);
   statusLine.textContent = `${messages.length} message${messages.length === 1 ? "" : "s"} loaded`;
+  return messages;
+}
+
+function describeError(error: unknown) {
+  return error instanceof Error ? error.message : "Request failed";
+}
+
+async function countMatchingMessages(author: string, body: string) {
+  const messages = await client.query(api.messages.maybeByAuthor, { author });
+  return messages.filter((message) => message.body === body).length;
+}
+
+async function refreshUntilMessageLands(
+  author: string,
+  body: string,
+  previousCount: number,
+  timeoutMs = 5_000,
+  intervalMs = 250,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const authorMessages = await client.query(api.messages.maybeByAuthor, { author });
+    const currentCount = authorMessages.filter((message) => message.body === body).length;
+    if (currentCount > previousCount) {
+      const visibleMessages = await loadMessages();
+      return visibleMessages.some(
+        (message) => message.author === author && message.body === body,
+      )
+        ? "visible"
+        : "hidden";
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+  }
+
+  await loadMessages();
+  return "timeout";
 }
 
 function renderMessageDetail(message: Message | null) {
@@ -163,10 +213,24 @@ composerForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  statusLine.textContent = "Sending message through action...";
-  await client.action(api.messages.sendViaAction, { author, body });
-  bodyField.value = "";
-  await loadMessages();
+  try {
+    const priorCount = await countMatchingMessages(author, body);
+    statusLine.textContent = "Sending message through action...";
+    await client.action(api.messages.sendViaAction, { author, body });
+    bodyField.value = "";
+    const result = await refreshUntilMessageLands(author, body, priorCount);
+    if (result === "visible") {
+      statusLine.textContent = "Action completed and the new message is now visible.";
+      return;
+    }
+    if (result === "hidden") {
+      statusLine.textContent = "Action completed, but the current filter is hiding the new message.";
+      return;
+    }
+    statusLine.textContent = "Action completed, but the new message did not appear within 5 seconds.";
+  } catch (error) {
+    statusLine.textContent = describeError(error);
+  }
 });
 
 scheduleSendButton.addEventListener("click", async () => {
@@ -177,17 +241,29 @@ scheduleSendButton.addEventListener("click", async () => {
     return;
   }
 
-  statusLine.textContent = "Scheduling message for 2 seconds from now...";
-  const jobId = await client.mutation(api.messages.scheduleSend, {
-    author,
-    body,
-    delayMs: 2_000,
-  });
-  bodyField.value = "";
-  statusLine.textContent = `Scheduled job ${jobId}. Refreshing after it runs...`;
-  window.setTimeout(() => {
-    void loadMessages();
-  }, 2_200);
+  try {
+    const priorCount = await countMatchingMessages(author, body);
+    statusLine.textContent = "Scheduling message for 2 seconds from now...";
+    const jobId = await client.mutation(api.messages.scheduleSend, {
+      author,
+      body,
+      delayMs: 2_000,
+    });
+    bodyField.value = "";
+    statusLine.textContent = `Scheduled job ${jobId}. Waiting for delayed write...`;
+    const result = await refreshUntilMessageLands(author, body, priorCount);
+    if (result === "visible") {
+      statusLine.textContent = `Scheduled job ${jobId} executed and the delayed message is now visible.`;
+      return;
+    }
+    if (result === "hidden") {
+      statusLine.textContent = `Scheduled job ${jobId} executed, but the current filter is hiding the delayed message.`;
+      return;
+    }
+    statusLine.textContent = `Scheduled job ${jobId} was created, but the delayed message did not appear within 5 seconds.`;
+  } catch (error) {
+    statusLine.textContent = describeError(error);
+  }
 });
 
 sendAndScheduleRuntimeButton.addEventListener("click", async () => {
@@ -198,17 +274,29 @@ sendAndScheduleRuntimeButton.addEventListener("click", async () => {
     return;
   }
 
-  statusLine.textContent = "Running runtime-only multi-step mutation...";
-  const id = await client.mutation(api.messages.sendAndSchedule, {
-    author,
-    body,
-  });
-  bodyField.value = "";
-  statusLine.textContent = `Runtime-only mutation created ${id} and scheduled a follow-up write.`;
-  await loadMessages();
-  window.setTimeout(() => {
-    void loadMessages();
-  }, 1_200);
+  try {
+    const scheduledBody = `${body} (scheduled)`;
+    const priorScheduledCount = await countMatchingMessages(author, scheduledBody);
+    statusLine.textContent = "Running runtime-only multi-step mutation...";
+    const id = await client.mutation(api.messages.sendAndSchedule, {
+      author,
+      body,
+    });
+    bodyField.value = "";
+    await loadMessages();
+    const result = await refreshUntilMessageLands(author, scheduledBody, priorScheduledCount);
+    if (result === "visible") {
+      statusLine.textContent = `Runtime-only mutation created ${id}, and the scheduled follow-up message is now visible.`;
+      return;
+    }
+    if (result === "hidden") {
+      statusLine.textContent = `Runtime-only mutation created ${id}, and the scheduled follow-up message landed but is hidden by the current filter.`;
+      return;
+    }
+    statusLine.textContent = `Runtime-only mutation created ${id}, but the scheduled follow-up did not appear within 5 seconds.`;
+  } catch (error) {
+    statusLine.textContent = describeError(error);
+  }
 });
 
 sendViaHttpButton.addEventListener("click", async () => {
@@ -219,16 +307,32 @@ sendViaHttpButton.addEventListener("click", async () => {
     return;
   }
 
-  statusLine.textContent = "Sending message through compiled httpAction route...";
-  const response = await fetch(`${convexUrl}/http/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ author, body }),
-  });
-  const payload = (await response.json()) as { id: string };
-  bodyField.value = "";
-  statusLine.textContent = `httpAction created ${payload.id}.`;
-  await loadMessages();
+  try {
+    const priorCount = await countMatchingMessages(author, body);
+    statusLine.textContent = "Sending message through compiled httpAction route...";
+    const response = await fetch(`${convexUrl}/http/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ author, body }),
+    });
+    if (!response.ok) {
+      throw new Error(`httpAction failed: ${response.status}`);
+    }
+    const payload = (await response.json()) as { id: string };
+    bodyField.value = "";
+    const result = await refreshUntilMessageLands(author, body, priorCount);
+    if (result === "visible") {
+      statusLine.textContent = `httpAction created ${payload.id}, and the new message is now visible.`;
+      return;
+    }
+    if (result === "hidden") {
+      statusLine.textContent = `httpAction created ${payload.id}, but the current filter is hiding the new message.`;
+      return;
+    }
+    statusLine.textContent = `httpAction created ${payload.id}, but the new message did not appear within 5 seconds.`;
+  } catch (error) {
+    statusLine.textContent = describeError(error);
+  }
 });
 
 loadViaHttpButton.addEventListener("click", async () => {

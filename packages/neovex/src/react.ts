@@ -18,12 +18,12 @@ import type {
   QueryReference,
   InferArgs,
   InferResult,
-} from "./internal/shared";
-import type { AuthTokenFetcher, ConnectionState } from "./browser";
-import { NeovexReactClient } from "./browser";
+} from "./internal/shared.ts";
+import type { AuthTokenFetcher, ConnectionState } from "./browser.ts";
+import { NeovexReactClient } from "./browser.ts";
 
-export { NeovexReactClient } from "./browser";
-export type { ConnectionState } from "./browser";
+export { NeovexReactClient } from "./browser.ts";
+export type { ConnectionState } from "./browser.ts";
 
 export type PaginationStatus =
   | "LoadingFirstPage"
