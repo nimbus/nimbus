@@ -673,11 +673,14 @@ async fn create_service_with_durable_unapplied_task(
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    let document_id = timeout(Duration::from_secs(1), insert_handle)
-        .await
-        .expect("mutation should acknowledge after durable append")
-        .expect("mutation task should join successfully")
-        .expect("mutation should succeed");
+    drop(insert_handle);
+    let document_id = service
+        .read_commit_log(&tenant_id, SequenceNumber(0))
+        .expect("commit log should read while apply is blocked")
+        .first()
+        .and_then(|commit| commit.writes.first())
+        .map(|write| write.doc_id)
+        .expect("durable commit should include the inserted document id");
 
     (service, tenant_id, faults, document_id)
 }
@@ -5380,7 +5383,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let blocker = tokio::spawn({
+    let mut blocker = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -5397,11 +5400,19 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("first write should block after durable append and before apply");
-    let blocker_id = timeout(Duration::from_secs(1), blocker)
-        .await
-        .expect("first mutation should acknowledge while apply is blocked")
-        .expect("blocker task should join successfully")
-        .expect("first mutation should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut blocker)
+            .await
+            .is_err(),
+        "first mutation should remain pending while apply is blocked"
+    );
+    let blocker_id = service
+        .read_commit_log(&tenant_id, SequenceNumber(0))
+        .expect("commit log should read while apply is blocked")
+        .first()
+        .and_then(|commit| commit.writes.first())
+        .map(|write| write.doc_id)
+        .expect("durable blocker commit should include the inserted document id");
 
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
@@ -5426,6 +5437,12 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     cancel.notify_one();
     tokio::time::sleep(Duration::from_millis(25)).await;
     faults.release();
+
+    timeout(Duration::from_secs(1), blocker)
+        .await
+        .expect("first mutation should finish after apply resumes")
+        .expect("blocker task should join successfully")
+        .expect("first mutation should succeed");
 
     let error = timeout(Duration::from_secs(1), handle)
         .await
@@ -5468,7 +5485,7 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
 
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
-    let handle = tokio::spawn({
+    let mut handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -5491,12 +5508,18 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
         .expect("write should block after durable append and before apply");
     cancel.notify_one();
 
+    assert!(
+        timeout(Duration::from_millis(100), &mut handle)
+            .await
+            .is_err(),
+        "post-commit cancellation should not complete before apply resumes"
+    );
+    faults.release();
     let document_id = timeout(Duration::from_secs(1), handle)
         .await
-        .expect("async mutation should resolve after post-commit cancellation")
+        .expect("async mutation should resolve after apply resumes")
         .expect("mutation task should join successfully")
         .expect("post-commit cancellation should still return success");
-    faults.release();
     let documents = timeout(
         Duration::from_secs(1),
         service.query_documents_async(tenant_id.clone(), query_for("tasks")),
@@ -5557,7 +5580,7 @@ async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_aft
 }
 
 #[tokio::test]
-async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibility() {
+async fn mutation_journal_returns_only_after_apply_visibility() {
     let data_dir = tempdir().expect("service tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
     let service = Arc::new(
@@ -5573,7 +5596,7 @@ async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibil
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let handle = tokio::spawn({
+    let mut handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -5591,11 +5614,33 @@ async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibil
         .await
         .expect("journal worker should block after durable append and before apply");
 
-    let document_id = timeout(Duration::from_secs(1), handle)
+    assert!(
+        timeout(Duration::from_millis(100), &mut handle)
+            .await
+            .is_err(),
+        "async mutation should remain pending while apply is blocked"
+    );
+    let document_id = service
+        .read_commit_log(&tenant_id, SequenceNumber(0))
+        .expect("commit log should read while apply is blocked")
+        .first()
+        .and_then(|commit| commit.writes.first())
+        .map(|write| write.doc_id)
+        .expect("durable commit should include the inserted document id");
+    faults.release();
+    let completed_id = timeout(Duration::from_secs(1), handle)
         .await
-        .expect("async mutation should acknowledge promptly once durable")
+        .expect("mutation should finish after apply resumes")
         .expect("mutation task should join successfully")
-        .expect("durable mutation should acknowledge successfully");
+        .expect("mutation should succeed");
+
+    let documents = timeout(
+        Duration::from_secs(1),
+        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
+    )
+    .await
+    .expect("query should resolve after apply")
+    .expect("query should succeed");
     assert_eq!(
         service
             .latest_sequence_async(tenant_id.clone())
@@ -5610,18 +5655,9 @@ async fn mutation_journal_acknowledges_after_durable_append_before_apply_visibil
             .len(),
         1
     );
-
-    faults.release();
-
-    let documents = timeout(
-        Duration::from_secs(1),
-        service.query_documents_async(tenant_id.clone(), query_for("tasks")),
-    )
-    .await
-    .expect("query should resolve after apply")
-    .expect("query should succeed");
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, document_id);
+    assert_eq!(completed_id, document_id);
     assert_eq!(
         documents[0].fields.get("title"),
         Some(&json!("durable-first"))
@@ -5645,7 +5681,7 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let insert_handle = tokio::spawn({
+    let mut insert_handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -5662,11 +5698,12 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    timeout(Duration::from_secs(1), insert_handle)
-        .await
-        .expect("mutation should acknowledge after durable append")
-        .expect("mutation task should join successfully")
-        .expect("mutation should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_handle)
+            .await
+            .is_err(),
+        "mutation should remain pending while apply is blocked"
+    );
 
     let (query_tx, mut query_rx) = mpsc::unbounded_channel();
     tokio::task::spawn_blocking({
@@ -5685,6 +5722,12 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
     );
 
     faults.release();
+
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should finish after apply resumes")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
 
     let documents = timeout(Duration::from_secs(1), query_rx.recv())
         .await
@@ -5724,7 +5767,7 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let insert_handle = tokio::spawn({
+    let mut insert_handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -5741,11 +5784,12 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    timeout(Duration::from_secs(1), insert_handle)
-        .await
-        .expect("mutation should acknowledge after durable append")
-        .expect("mutation task should join successfully")
-        .expect("mutation should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_handle)
+            .await
+            .is_err(),
+        "mutation should remain pending while apply is blocked"
+    );
 
     let stats = service
         .mutation_journal_stats_for_testing(&tenant_id)
@@ -5775,6 +5819,12 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     );
 
     faults.release();
+
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should finish after apply resumes")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
 
     let documents = timeout(Duration::from_secs(1), query_rx.recv())
         .await
@@ -5950,7 +6000,7 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let insert_handle = tokio::spawn({
+    let mut insert_handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -5967,11 +6017,19 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    let document_id = timeout(Duration::from_secs(1), insert_handle)
-        .await
-        .expect("mutation should acknowledge after durable append")
-        .expect("mutation task should join successfully")
-        .expect("mutation should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_handle)
+            .await
+            .is_err(),
+        "mutation should remain pending while apply is blocked"
+    );
+    let document_id = service
+        .read_commit_log(&tenant_id, SequenceNumber(0))
+        .expect("commit log should read while apply is blocked")
+        .first()
+        .and_then(|commit| commit.writes.first())
+        .map(|write| write.doc_id)
+        .expect("durable commit should include the inserted document id");
 
     let (get_tx, mut get_rx) = mpsc::unbounded_channel();
     tokio::task::spawn_blocking({
@@ -5990,6 +6048,12 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
     );
 
     faults.release();
+
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should finish after apply resumes")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
 
     let document = timeout(Duration::from_secs(1), get_rx.recv())
         .await
@@ -6044,7 +6108,7 @@ async fn subscription_updates_publish_only_after_journal_apply() {
         other => panic!("unexpected initial subscription event: {other:?}"),
     }
 
-    let insert_handle = tokio::spawn({
+    let mut insert_handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -6061,11 +6125,12 @@ async fn subscription_updates_publish_only_after_journal_apply() {
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    timeout(Duration::from_secs(1), insert_handle)
-        .await
-        .expect("mutation should acknowledge while apply is blocked")
-        .expect("mutation task should join successfully")
-        .expect("mutation should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_handle)
+            .await
+            .is_err(),
+        "mutation should remain pending while apply is blocked"
+    );
 
     assert!(
         timeout(Duration::from_millis(100), rx.recv())
@@ -6075,6 +6140,12 @@ async fn subscription_updates_publish_only_after_journal_apply() {
     );
 
     faults.release();
+
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should finish after apply resumes")
+        .expect("mutation task should join successfully")
+        .expect("mutation should succeed");
 
     let update = timeout(Duration::from_secs(1), rx.recv())
         .await
@@ -6285,7 +6356,7 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let insert_task = tokio::spawn({
+    let mut insert_task = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -6302,11 +6373,12 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("write should block after durable append");
-    timeout(Duration::from_secs(1), insert_task)
-        .await
-        .expect("insert should acknowledge while apply is blocked")
-        .expect("insert task should join successfully")
-        .expect("insert should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_task)
+            .await
+            .is_err(),
+        "insert should remain pending while apply is blocked"
+    );
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = service
@@ -6333,6 +6405,12 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
     }
 
     faults.release();
+
+    timeout(Duration::from_secs(1), insert_task)
+        .await
+        .expect("insert should finish after apply resumes")
+        .expect("insert task should join successfully")
+        .expect("insert should succeed");
 
     let update = timeout(Duration::from_secs(1), rx.recv())
         .await
@@ -6563,7 +6641,7 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
 
-    let insert_handle = tokio::spawn({
+    let mut insert_handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -6580,11 +6658,12 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    timeout(Duration::from_secs(1), insert_handle)
-        .await
-        .expect("mutation should acknowledge while apply is blocked")
-        .expect("mutation task should join")
-        .expect("mutation should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_handle)
+            .await
+            .is_err(),
+        "mutation should remain pending while apply is blocked"
+    );
 
     let bootstrap = service
         .export_durable_journal_bootstrap_async(tenant_id.clone())
@@ -6603,6 +6682,13 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
         .expect("journal tail should read");
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.records[0].sequence, SequenceNumber(1));
+
+    faults.release();
+    timeout(Duration::from_secs(1), insert_handle)
+        .await
+        .expect("mutation should finish after apply resumes")
+        .expect("mutation task should join")
+        .expect("mutation should succeed");
 
     let rebuilt = TenantStore::create_in_memory().expect("rebuild store should open");
     rebuilt
@@ -9105,7 +9191,7 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
         .expect("tenant should create");
     let table = messages_table("messages_occ_apply_lag");
 
-    let outside_update = tokio::spawn({
+    let mut outside_update = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         let table = table.clone();
@@ -9126,11 +9212,12 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
-    timeout(Duration::from_secs(1), outside_update)
-        .await
-        .expect("outside update should acknowledge after durable append")
-        .expect("outside update task should join successfully")
-        .expect("outside update should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), &mut outside_update)
+            .await
+            .is_err(),
+        "outside update should remain pending while apply is blocked"
+    );
 
     let execution_unit = service
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
@@ -9170,6 +9257,11 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
         .expect("commit should resolve promptly while the journal worker is still blocked")
         .expect("commit task should join successfully");
     faults.release();
+    timeout(Duration::from_secs(1), outside_update)
+        .await
+        .expect("outside update should finish after apply resumes")
+        .expect("outside update task should join successfully")
+        .expect("outside update should succeed");
 
     let error = commit_result.expect_err(
         "commit should conflict with the durable journal write that was not part of the applied snapshot",

@@ -11,6 +11,7 @@ async function extractFunctionDefinitions(
   moduleName,
   schema,
   compileBindings,
+  runtimeBindings,
 ) {
   const functions = [];
   const assignmentPattern =
@@ -45,6 +46,7 @@ async function extractFunctionDefinitions(
       visibility: helper.visibility,
       plan: parsed.plan,
       runtimeHandler: parsed.runtimeHandler,
+      runtimeBindings,
       argsSchema: parsed.argsSchema ?? {},
       returnsSchema: parsed.returnsSchema,
     });

@@ -1,4 +1,7 @@
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness-pr verify-harness-nightly verify-harness-repro
+-include .env
+export
+
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness-pr verify-harness-nightly verify-harness-repro convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -62,6 +65,27 @@ verify-harness-repro:
 	@test -n "$(MODE)" || (echo "set MODE=pr|nightly" && exit 1)
 	@test -n "$(CASE)" || (echo "set CASE=<named-seed-case>" && exit 1)
 	bash scripts/verification-harness.sh repro "$(SURFACE)" "$(MODE)" "$(CASE)"
+
+# Prepare an upstream convex-demos overlay, then run codegen + Neovex against it
+convex-demo: convex-demo-stop
+	@test -n "$(CONVEX_DEMOS_DIR)" || (echo "Set CONVEX_DEMOS_DIR in .env first" && exit 1)
+	@test -n "$(DEMO)" || (echo "Usage: make convex-demo DEMO=node|html|http" && exit 1)
+	@overlay_dir="$$(node ./scripts/convex-demo-overlay.mjs "$(CONVEX_DEMOS_DIR)" "$(DEMO)")"; \
+	echo "Prepared overlay at $$overlay_dir"; \
+	npx convex codegen --app "$$overlay_dir"; \
+	cargo run -p neovex-bin -- --port 8080 --convex-app-dir "$$overlay_dir"
+
+convex-demo-node: DEMO=node
+convex-demo-node: convex-demo
+
+convex-demo-html: DEMO=html
+convex-demo-html: convex-demo
+
+convex-demo-http: DEMO=http
+convex-demo-http: convex-demo
+
+convex-demo-stop:
+	bash scripts/stop-demo-processes.sh
 
 # Full CI check (runs locally what CI runs remotely)
 ci: lint deny test build-js test-js

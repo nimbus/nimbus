@@ -9,18 +9,16 @@ use axum::extract::OriginalUri;
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use neovex_core::{Error, TenantId};
-use neovex_runtime::{HostCallCancellation, InvocationAuth, InvocationKind, InvocationRequest};
+use neovex_runtime::{HostCallCancellation, InvocationAuth};
 use serde_json::{Value, json};
 
 #[cfg(test)]
 use super::execution::execute_convex_action;
 use super::execution::{
     check_host_cancellation, execute_convex_action_async,
-    execute_convex_action_cancellable_with_auth, invoke_named_convex_function_async_cancellable,
-    next_runtime_server_request_id,
+    execute_convex_action_cancellable_with_auth,
 };
 use super::*;
-use crate::state::RequestCancellationGuard;
 
 mod dispatch;
 mod execution;

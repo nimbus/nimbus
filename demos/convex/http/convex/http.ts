@@ -1,15 +1,18 @@
 import { httpRouter } from "convex/server";
 
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
-import { sendViaHttp } from "./messages";
 
 const http = httpRouter();
 
 http.route({
   path: "/messages",
   method: "POST",
-  handler: sendViaHttp,
+  handler: httpAction(async (ctx, request) => {
+    const { author, body } = await request.json();
+    const id = await ctx.runMutation(internal.messages.sendInternal, { author, body });
+    return Response.json({ id }, { status: 201 });
+  }),
 });
 
 http.route({

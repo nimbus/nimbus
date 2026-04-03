@@ -1,5 +1,5 @@
 import { internalScheduledFunctions } from "./_generated/scheduled_functions";
-import { action, httpAction, internalMutation, mutation, query } from "./_generated/server";
+import { action, internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -92,12 +92,6 @@ export const sendViaAction = action({
   },
   handler: async (ctx, { author, body }) =>
     await ctx.runMutation(internal.messages.sendInternal, { author, body }),
-});
-
-export const sendViaHttp = httpAction(async (ctx, request) => {
-  const { author, body } = await request.json();
-  const id = await ctx.runMutation(internal.messages.sendInternal, { author, body });
-  return Response.json({ id }, { status: 201 });
 });
 
 export const scheduleSend = mutation({

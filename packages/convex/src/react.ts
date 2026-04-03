@@ -14,11 +14,11 @@ import {
   useQuery as useNeovexQuery,
 } from "neovex/react";
 
-import { ConvexReactClient } from "./browser";
+import { ConvexReactClient } from "./browser.ts";
 import type {
   AuthTokenFetcher,
   ConnectionState,
-} from "./browser";
+} from "./browser.ts";
 import type {
   ConvexActionReference,
   ConvexMutationReference,
@@ -26,10 +26,10 @@ import type {
   ConvexQueryReference,
   InferArgs,
   InferResult,
-} from "./internal/shared";
+} from "./internal/shared.ts";
 
-export { ConvexReactClient } from "./browser";
-export type { ConnectionState } from "./browser";
+export { ConvexReactClient } from "./browser.ts";
+export type { ConnectionState } from "./browser.ts";
 
 export type PaginationStatus =
   | "LoadingFirstPage"

@@ -7,14 +7,14 @@ import type {
   JsonValue,
   MutationShape,
   QueryShape,
-} from "./internal/shared";
+} from "./internal/shared.ts";
 import {
   makeActionReference,
   makeMutationReference,
   makePaginatedQueryReference,
   makeQueryReference,
-} from "./internal/shared";
-import { v, type GenericId, type Infer, type Validator } from "./values";
+} from "./internal/shared.ts";
+import { v, type GenericId, type Infer, type Validator } from "./values.ts";
 
 export type DefaultFunctionArgs = Record<string, unknown>;
 
@@ -326,12 +326,14 @@ export type GenericQueryCtx = {
   readonly db: GenericDatabaseReader;
   readonly auth: Auth;
 };
+export type QueryCtx = GenericQueryCtx;
 
 export type GenericMutationCtx = {
   readonly db: GenericDatabaseWriter;
   readonly scheduler: Scheduler;
   readonly auth: Auth;
 };
+export type MutationCtx = GenericMutationCtx;
 
 export type GenericActionCtx = {
   readonly scheduler: Scheduler;
@@ -349,6 +351,7 @@ export type GenericActionCtx = {
     args?: Args,
   ): Promise<Returns>;
 };
+export type ActionCtx = GenericActionCtx;
 
 export function query<
   Args extends ArgValidators | undefined = undefined,

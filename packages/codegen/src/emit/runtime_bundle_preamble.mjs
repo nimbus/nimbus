@@ -28,12 +28,73 @@ function compileRuntimeHandler(definition) {
     return null;
   }
 
-  return new Function(
+  const runtimeBindings = materializeRuntimeBindings(definition.runtime_bindings);
+  const bindingNames = Object.keys(runtimeBindings);
+  const bindingValues = bindingNames.map((name) => runtimeBindings[name]);
+  const invoke = new Function(
+    ...bindingNames,
     "ctx",
     "args",
     "request",
     "return (" + source + ")(ctx, args, request);",
   );
+
+  return (ctx, args, request) => invoke(...bindingValues, ctx, args, request);
+}
+
+function materializeRuntimeBindings(bindingDescriptors) {
+  const bindings = {};
+  for (const [name, descriptor] of Object.entries(bindingDescriptors ?? {})) {
+    bindings[name] = materializeRuntimeBinding(descriptor);
+  }
+  return bindings;
+}
+
+function materializeRuntimeBinding(descriptor) {
+  if (descriptor === null || typeof descriptor !== "object") {
+    throw new Error("invalid runtime binding descriptor");
+  }
+  switch (descriptor.type) {
+    case "generated_reference_tree":
+      return createGeneratedReferenceTree({
+        visibility: descriptor.visibility,
+        kind: descriptor.reference_kind ?? undefined,
+      });
+    default:
+      throw new Error(\`unsupported runtime binding descriptor: \${descriptor.type}\`);
+  }
+}
+
+function createGeneratedReferenceTree(config, pathParts = []) {
+  return new Proxy(
+    {},
+    {
+      get(_target, property) {
+        if (property === "kind" && pathParts.length > 0 && config.kind !== undefined) {
+          return config.kind;
+        }
+        if (property === "name" && pathParts.length > 0) {
+          return referenceNameFromPath(pathParts);
+        }
+        if (property === "visibility" && pathParts.length > 0) {
+          return config.visibility;
+        }
+        if (typeof property === "symbol") {
+          return undefined;
+        }
+        return createGeneratedReferenceTree(config, [
+          ...pathParts,
+          String(property),
+        ]);
+      },
+    },
+  );
+}
+
+function referenceNameFromPath(pathParts) {
+  return pathParts.length > 1
+    ? \`\${pathParts.slice(0, -1).join(".")}:\${pathParts.at(-1)}\`
+    : pathParts[0];
 }
 
 function isPlainObject(value) {

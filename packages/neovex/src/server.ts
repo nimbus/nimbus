@@ -7,14 +7,14 @@ import type {
   JsonValue,
   MutationShape,
   QueryShape,
-} from "./internal/shared";
+} from "./internal/shared.ts";
 import {
   makeActionReference,
   makeMutationReference,
   makePaginatedQueryReference,
   makeQueryReference,
-} from "./internal/shared";
-import { v, type GenericId, type Infer, type Validator } from "./values";
+} from "./internal/shared.ts";
+import { v, type GenericId, type Infer, type Validator } from "./values.ts";
 
 export type DefaultFunctionArgs = Record<string, unknown>;
 

@@ -27,9 +27,13 @@ dist
 **/dist
 .DS_Store
 **/.DS_Store
+.env
 .claude/settings.local.json
 .neovex
 **/.neovex
+demos/convex/vendor/browser.bundle.js
+data/*.redb
+data/*.db
 
 # Private docs (pricing, strategy, competitive research)
 docs/private

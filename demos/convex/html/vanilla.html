@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Neovex Convex Vanilla HTML Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at top, rgba(212, 167, 98, 0.18), transparent 36%),
+          linear-gradient(180deg, #f7f1e3 0%, #efe4d1 100%);
+        color: #2b2118;
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      main {
+        margin: 0 auto;
+        max-width: 48rem;
+        padding: 3rem 1rem 4rem;
+      }
+
+      h1 {
+        font-size: clamp(2.25rem, 5vw, 3.5rem);
+        line-height: 1;
+        margin-bottom: 0.75rem;
+      }
+
+      p,
+      label,
+      input,
+      button {
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+      }
+
+      .panel {
+        backdrop-filter: blur(10px);
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(90, 66, 41, 0.12);
+        border-radius: 1rem;
+        box-shadow: 0 1rem 3rem rgba(77, 54, 32, 0.12);
+        padding: 1.25rem;
+      }
+
+      form {
+        display: grid;
+        gap: 0.75rem;
+        margin: 1.5rem 0;
+      }
+
+      input,
+      button {
+        border-radius: 999px;
+        border: 1px solid rgba(90, 66, 41, 0.18);
+        font-size: 1rem;
+        padding: 0.8rem 1rem;
+      }
+
+      button {
+        background: #2b2118;
+        color: #f7f1e3;
+        cursor: pointer;
+      }
+
+      ul {
+        display: grid;
+        gap: 0.75rem;
+        list-style: none;
+        padding: 0;
+      }
+
+      li {
+        background: rgba(255, 255, 255, 0.78);
+        border: 1px solid rgba(90, 66, 41, 0.14);
+        border-radius: 1rem;
+        padding: 1rem;
+      }
+
+      small {
+        color: #6e5a46;
+      }
+    </style>
+    <script src="/demos/convex/vendor/browser.bundle.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Convex Vanilla HTML Demo</h1>
+      <p>
+        This page uses the served browser bundle plus string refs and
+        <code>convex.anyApi</code>.
+      </p>
+
+      <section class="panel">
+        <form id="composer">
+          <label>
+            Author
+            <input id="author" value="Vanilla HTML" />
+          </label>
+          <label>
+            Message
+            <input id="body" placeholder="Write a message..." />
+          </label>
+          <button type="submit">Send</button>
+        </form>
+        <p id="status"></p>
+      </section>
+
+      <ul id="messages"></ul>
+    </main>
+
+    <script>
+      const nativeUrl = `${window.location.origin}`;
+      const convexUrl = `${window.location.origin}/convex/demo`;
+      const client = new convex.ConvexClient(convexUrl);
+      const statusEl = document.querySelector("#status");
+      const listEl = document.querySelector("#messages");
+      const authorEl = document.querySelector("#author");
+      const bodyEl = document.querySelector("#body");
+      const formEl = document.querySelector("#composer");
+
+      async function ensureTenant() {
+        await fetch(`${nativeUrl}/api/tenants`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: "demo" }),
+        });
+      }
+
+      function renderMessages(messages) {
+        listEl.innerHTML = messages
+          .map(
+            (message) => `
+              <li>
+                <div><strong>${escapeHtml(message.author)}</strong></div>
+                <div>${escapeHtml(message.body)}</div>
+                <small>${new Date(message._creationTime).toLocaleTimeString()}</small>
+              </li>
+            `,
+          )
+          .join("");
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      async function main() {
+        await ensureTenant();
+        const unsubscribe = client.onUpdate(convex.anyApi.messages.list, {}, renderMessages);
+
+        formEl.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          statusEl.textContent = "Sending...";
+          try {
+            await client.mutation("messages:send", {
+              author: authorEl.value || "Vanilla HTML",
+              body: bodyEl.value || "Hello from vanilla HTML",
+            });
+            bodyEl.value = "";
+            statusEl.textContent = "Sent.";
+          } catch (error) {
+            statusEl.textContent = error instanceof Error ? error.message : String(error);
+          }
+        });
+
+        window.addEventListener("beforeunload", () => {
+          unsubscribe();
+          client.close();
+        });
+      }
+
+      main().catch((error) => {
+        statusEl.textContent = error instanceof Error ? error.message : String(error);
+      });
+    </script>
+  </body>
+</html>

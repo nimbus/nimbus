@@ -1,6 +1,14 @@
 import { convexValidators } from "../schema.mjs";
 
 function createCompileBindings(source) {
+  return collectKnownImportBindings(source, "compileValue");
+}
+
+function createRuntimeBindingDescriptors(source) {
+  return collectKnownImportBindings(source, "runtimeDescriptor");
+}
+
+function collectKnownImportBindings(source, field) {
   const bindings = {};
   const importPattern = /import\s*\{([\s\S]*?)\}\s*from\s*["']([^"']+)["'];?/g;
   for (const match of source.matchAll(importPattern)) {
@@ -10,10 +18,12 @@ function createCompileBindings(source) {
       .filter(Boolean);
     const sourcePath = match[2];
     for (const specifier of specifiers) {
-      const [importedName, localName = importedName] = specifier
+      const [rawImportedName, rawLocalName = rawImportedName] = specifier
         .split(/\s+as\s+/)
         .map((part) => part.trim());
-      const binding = createKnownImportBinding(sourcePath, importedName);
+      const importedName = rawImportedName.replace(/^type\s+/, "").trim();
+      const localName = rawLocalName.replace(/^type\s+/, "").trim();
+      const binding = createKnownImportBindingRecord(sourcePath, importedName)?.[field];
       if (binding !== undefined) {
         bindings[localName] = binding;
       }
@@ -22,38 +32,49 @@ function createCompileBindings(source) {
   return bindings;
 }
 
-function createKnownImportBinding(sourcePath, importedName) {
+function createKnownImportBindingRecord(sourcePath, importedName) {
   if (sourcePath === "convex/server" || sourcePath === "neovex/server") {
     if (importedName === "paginationOptsValidator") {
-      return createPaginationOptionsValidator();
+      return { compileValue: createPaginationOptionsValidator() };
     }
     if (importedName === "paginationResultValidator") {
-      return createPaginationResultValidator;
+      return { compileValue: createPaginationResultValidator };
     }
   }
   if (sourcePath.endsWith("/_generated/api")) {
     if (importedName === "api") {
-      return createGeneratedReferenceTree({ visibility: "public" });
+      return createGeneratedReferenceBinding({ visibility: "public" });
     }
     if (importedName === "internal") {
-      return createGeneratedReferenceTree({ visibility: "internal" });
+      return createGeneratedReferenceBinding({ visibility: "internal" });
     }
   }
   if (sourcePath.endsWith("/_generated/scheduled_functions")) {
     if (importedName === "scheduledFunctions") {
-      return createGeneratedReferenceTree({
+      return createGeneratedReferenceBinding({
         visibility: "public",
         kind: "mutation",
       });
     }
     if (importedName === "internalScheduledFunctions") {
-      return createGeneratedReferenceTree({
+      return createGeneratedReferenceBinding({
         visibility: "internal",
         kind: "mutation",
       });
     }
   }
   return undefined;
+}
+
+function createGeneratedReferenceBinding(config) {
+  return {
+    compileValue: createGeneratedReferenceTree(config),
+    runtimeDescriptor: {
+      type: "generated_reference_tree",
+      visibility: config.visibility,
+      ...(config.kind === undefined ? {} : { reference_kind: config.kind }),
+    },
+  };
 }
 
 function createPaginationOptionsValidator() {
@@ -119,4 +140,4 @@ function referenceNameFromPath(pathParts) {
     : pathParts[0];
 }
 
-export { createCompileBindings };
+export { createCompileBindings, createRuntimeBindingDescriptors };

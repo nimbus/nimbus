@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   createAppFixture,
@@ -12,6 +14,7 @@ async function runRuntimeFixtures() {
   await testUnsupportedMultiOperationFixture();
   await testRuntimeOnlyQueryFixture();
   await testRuntimeOnlyPaginatedQueryFixture();
+  await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
   await testImportedServerValidatorsFixture();
   await testUnsupportedPatchWithoutIdValidatorFixture();
 }
@@ -120,6 +123,100 @@ export const listPage = paginatedQuery({
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /op_neovex_ctx_query_paginate/);
   assert.match(runtimeBundle, /__builderId/);
+}
+
+async function testRuntimeOnlyMutationImportedScheduledFunctionsFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { internalMutation, mutation } from "./_generated/server";
+import { internalScheduledFunctions } from "./_generated/scheduled_functions";
+import { v } from "convex/values";
+
+export const sendInternal = internalMutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => await ctx.db.insert("messages", { body }),
+});
+
+export const sendAndSchedule = mutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => {
+    const id = await ctx.db.insert("messages", { body });
+    await ctx.scheduler.runAfter(
+      1_000,
+      internalScheduledFunctions.messages.sendInternal,
+      { body: \`\${body} later\` },
+    );
+    return id;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[1].plan, null);
+  assert.match(manifest.functions[1].runtime_handler, /internalScheduledFunctions/);
+  assert.deepEqual(manifest.functions[1].runtime_bindings, {
+    internalScheduledFunctions: {
+      type: "generated_reference_tree",
+      visibility: "internal",
+      reference_kind: "mutation",
+    },
+  });
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.match(runtimeBundle, /materializeRuntimeBindings/);
+  assert.match(runtimeBundle, /generated_reference_tree/);
+
+  const bundleUrl =
+    `${pathToFileURL(path.join(appDir, ".neovex", "convex", "bundle.mjs")).href}?runtimeBindings=1`;
+  const previousInvoke = globalThis.__neovexInvoke;
+  const previousCreateContext = globalThis.__neovexCreateContext;
+
+  let scheduledCall = null;
+  globalThis.__neovexCreateContext = () => ({
+    db: {
+      insert: async (_table, document) => document.body === "hello" ? "message-id" : "scheduled-id",
+    },
+    scheduler: {
+      runAfter: async (delayMs, mutationRef, args) => {
+        scheduledCall = { delayMs, mutationRef, args };
+        return "job-id";
+      },
+    },
+  });
+
+  try {
+    await import(bundleUrl);
+    const response = await globalThis.__neovexInvoke({
+      kind: "mutation",
+      function_name: "messages:sendAndSchedule",
+      args: { body: "hello" },
+    });
+    assert.deepEqual(response, { status: "ok", value: "message-id" });
+    assert.equal(scheduledCall?.delayMs, 1_000);
+    assert.equal(scheduledCall?.mutationRef?.name, "messages:sendInternal");
+    assert.equal(scheduledCall?.mutationRef?.visibility, "internal");
+    assert.equal(scheduledCall?.mutationRef?.kind, "mutation");
+    assert.deepEqual(scheduledCall?.args, { body: "hello later" });
+  } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__neovexInvoke;
+    } else {
+      globalThis.__neovexInvoke = previousInvoke;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__neovexCreateContext;
+    } else {
+      globalThis.__neovexCreateContext = previousCreateContext;
+    }
+  }
 }
 
 async function testImportedServerValidatorsFixture() {

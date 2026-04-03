@@ -5,6 +5,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
+    "build": "node ./build.mjs",
     "test": "node ./src/selftest.mjs",
     "test:differential": "node ./src/differential.mjs"
   },

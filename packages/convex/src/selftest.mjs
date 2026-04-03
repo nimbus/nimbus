@@ -4,8 +4,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import vm from "node:vm";
 
 import { build } from "esbuild";
+import { buildBrowserBundle } from "../build.mjs";
 import {
   assertSupportedDifferentialSurface,
   collectDifferentialMismatches,
@@ -27,7 +29,11 @@ async function main() {
   await testDifferentialPageNormalization();
   await testDifferentialMismatchAggregation();
   await testDifferentialFixtureEmission();
+  await testIifeBundleBuild();
   const browserModule = await loadBundledBrowserModule();
+  await testStringRefsAndAnyApiUseNamedRequests(browserModule);
+  await testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule);
+  await testNamedLiveQueriesRejectPaginationOptions(browserModule);
   await testHttpClientAuthFetcherRetriesUnauthorized(browserModule);
   await testSocketAuthenticatesBeforeSubscriptions(browserModule);
   await testSocketAuthErrorForcesTokenRefresh(browserModule);
@@ -69,10 +75,17 @@ export const list = defineQuery("messages:list", () => ({
     path.join(appDir, "convex", "_generated", "api.ts"),
     "utf8",
   );
+  const generatedServer = await fs.readFile(
+    path.join(appDir, "convex", "_generated", "server.ts"),
+    "utf8",
+  );
   assert.match(
     generatedApi,
     /makeQueryReference<\{\}, unknown\[]>\("messages:list", "public"\)/,
   );
+  assert.match(generatedServer, /ActionCtx/);
+  assert.match(generatedServer, /MutationCtx/);
+  assert.match(generatedServer, /QueryCtx/);
 }
 
 async function typecheckConvexSurface() {
@@ -115,7 +128,7 @@ async function typecheckConvexSurface() {
   await fs.writeFile(
     path.join(fixtureDir, "fixture.ts"),
     `
-import { ConvexHttpClient, ConvexReactClient } from "convex/browser";
+	import { ConvexHttpClient, ConvexReactClient, anyApi } from "convex/browser";
 import {
   ConvexProvider,
   ConvexProviderWithAuth,
@@ -124,14 +137,17 @@ import {
   useConvexConnectionState,
   type ConvexAuthState,
 } from "convex/react";
-import {
-  action,
-  httpAction,
-  paginationOptsValidator,
-  query,
-  type Auth,
-  type PaginationResult,
-  type UserIdentity,
+	import {
+	  action,
+	  type ActionCtx,
+	  httpAction,
+	  paginationOptsValidator,
+	  query,
+	  type MutationCtx,
+	  type QueryCtx,
+	  type Auth,
+	  type PaginationResult,
+	  type UserIdentity,
 } from "convex/server";
 import { v } from "convex/values";
 
@@ -144,15 +160,23 @@ const _convexReactClient = new ConvexReactClient("http://localhost:8080/convex/d
 const _provider = ConvexProvider;
 const _providerWithAuth = ConvexProviderWithAuth;
 const _useConvex = useConvex;
-const _useConvexAuth = useConvexAuth;
-const _useConvexConnectionState = useConvexConnectionState;
-const _authState = null as ConvexAuthState | null;
+	const _useConvexAuth = useConvexAuth;
+	const _useConvexConnectionState = useConvexConnectionState;
+	const _authState = null as ConvexAuthState | null;
+	const _anyApi = anyApi;
 
-declare const auth: Auth;
-declare const identity: UserIdentity | null;
+	declare const auth: Auth;
+	declare const queryCtx: QueryCtx;
+	declare const mutationCtx: MutationCtx;
+	declare const actionCtx: ActionCtx;
+	declare const identity: UserIdentity | null;
 
-const _updatedAt: string | undefined = identity?.updatedAt;
-void auth;
+	const _updatedAt: string | undefined = identity?.updatedAt;
+	void auth;
+	void queryCtx;
+	void mutationCtx;
+	void actionCtx;
+	void _anyApi;
 
 export const whoami = query({
   args: {
@@ -178,18 +202,26 @@ export const identityHttp = httpAction(async (ctx) => {
   return new Response(user?.tokenIdentifier ?? "anonymous");
 });
 
-export const paginatedWhoami = query({
+	export const paginatedWhoami = query({
   args: {
     id: v.string(),
     paginationOpts: paginationOptsValidator,
   },
-  async handler(ctx, args) {
-    const page = await ctx.db.query("messages").paginate(args.paginationOpts);
-    const _page: PaginationResult<unknown> = page;
-    return page;
-  },
-});
-`,
+	  async handler(ctx, args) {
+	    const page = await ctx.db.query("messages").paginate(args.paginationOpts);
+	    const _page: PaginationResult<unknown> = page;
+	    return page;
+	  },
+	});
+
+	async function exerciseNamedRefs() {
+	  await _convexHttpClient.query("messages:list", {});
+	  await _convexHttpClient.query(anyApi.messages.list, {});
+	  await _convexHttpClient.scheduleAfter("messages:send", {}, 10);
+	}
+
+	void exerciseNamedRefs;
+	`,
     "utf8",
   );
 
@@ -338,6 +370,141 @@ async function testDifferentialFixtureEmission() {
   assert.match(packageJson, /"convex": "\*"/);
   assert.match(schemaSource, /\.index\("by_rank", \["rank"\]\)/);
   assert.match(schemaSource, /from "convex\/server"/);
+}
+
+async function testIifeBundleBuild() {
+  const { distFile, servedFile } = await buildBrowserBundle();
+  const bundleSource = await fs.readFile(servedFile, "utf8");
+  const distSource = await fs.readFile(distFile, "utf8");
+  const context = {};
+
+  vm.runInNewContext(bundleSource, context);
+
+  assert.equal(typeof context.convex.ConvexClient, "function");
+  assert.equal(typeof context.convex.anyApi, "object");
+  assert.match(distSource, /var convex/);
+}
+
+async function testStringRefsAndAnyApiUseNamedRequests(browserModule) {
+  const { ConvexHttpClient, anyApi } = browserModule;
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    requests.push({
+      url: String(url),
+      method: init?.method ?? "POST",
+      body: init?.body ? JSON.parse(init.body) : null,
+    });
+    if (String(url).endsWith("/schedule/run_after") || String(url).endsWith("/schedule/run_at")) {
+      return jsonResponse(200, { job_id: "job-1" });
+    }
+    return jsonResponse(200, { ok: true });
+  };
+
+  const client = new ConvexHttpClient("http://localhost:8080/convex/demo", {
+    skipConvexDeploymentUrlCheck: true,
+    fetch: fetchImpl,
+  });
+
+  await client.query("messages:list", { author: "Ada" });
+  await client.mutation(anyApi.messages.send, { author: "Ada", body: "hello" });
+  await client.action(anyApi.dashboard.messages.run, { author: "Ada" });
+  await client.scheduleAfter("messages:send", { author: "Ada", body: "later" }, 50);
+  await client.scheduleAt(anyApi.dashboard.messages.send, { author: "Ada", body: "at" }, 100);
+
+  assert.deepEqual(requests, [
+    {
+      url: "http://localhost:8080/convex/demo/query",
+      method: "POST",
+      body: { name: "messages:list", args: { author: "Ada" } },
+    },
+    {
+      url: "http://localhost:8080/convex/demo/mutation",
+      method: "POST",
+      body: { name: "messages:send", args: { author: "Ada", body: "hello" } },
+    },
+    {
+      url: "http://localhost:8080/convex/demo/action",
+      method: "POST",
+      body: { name: "dashboard/messages:run", args: { author: "Ada" } },
+    },
+    {
+      url: "http://localhost:8080/convex/demo/schedule/run_after",
+      method: "POST",
+      body: {
+        name: "messages:send",
+        args: { author: "Ada", body: "later" },
+        run_after_ms: 50,
+      },
+    },
+    {
+      url: "http://localhost:8080/convex/demo/schedule/run_at",
+      method: "POST",
+      body: {
+        name: "dashboard/messages:send",
+        args: { author: "Ada", body: "at" },
+        run_at_ms: 100,
+      },
+    },
+  ]);
+}
+
+async function testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule) {
+  const { ConvexClient, anyApi } = browserModule;
+  FakeNodeWebSocket.reset();
+  const values = [];
+
+  const client = new ConvexClient("http://localhost:8080/convex/demo", {
+    skipConvexDeploymentUrlCheck: true,
+    webSocket: FakeNodeWebSocket,
+  });
+
+  client.onUpdate(anyApi.messages.list, {}, (value) => {
+    values.push(value);
+  });
+
+  await delay(75);
+  assert.equal(FakeNodeWebSocket.instances.length, 1);
+  const socket = FakeNodeWebSocket.instances[0];
+  socket.open();
+  await delay(0);
+
+  assert.deepEqual(socket.sent[0], {
+    type: "subscribe_named",
+    request_id: "convex-1",
+    name: "messages:list",
+    args: {},
+  });
+
+  socket.message({
+    type: "subscription_result",
+    request_id: "convex-1",
+    subscription_id: 7,
+    data: [{ body: "hello" }],
+  });
+  await delay(0);
+
+  assert.deepEqual(values, [[{ body: "hello" }]]);
+  client.close();
+}
+
+async function testNamedLiveQueriesRejectPaginationOptions(browserModule) {
+  const { ConvexClient } = browserModule;
+  const client = new ConvexClient("http://localhost:8080/convex/demo", {
+    skipConvexDeploymentUrlCheck: true,
+    disabled: true,
+  });
+
+  assert.throws(
+    () =>
+      client.onUpdate(
+        "messages:listPage",
+        {},
+        () => {},
+        undefined,
+        { pageSize: 10, cursor: null },
+      ),
+    /do not support paginated live queries yet/,
+  );
 }
 
 async function testReconnectResubscribesActiveQueries(browserModule) {
@@ -932,6 +1099,49 @@ class FakeWebSocket {
 
   message(payload) {
     this.dispatch("message", { data: JSON.stringify(payload) });
+  }
+
+  dispatch(type, event) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+}
+
+class FakeNodeWebSocket {
+  static instances = [];
+
+  static reset() {
+    FakeNodeWebSocket.instances = [];
+  }
+
+  constructor(url) {
+    this.url = url;
+    this.sent = [];
+    this.listeners = new Map();
+    FakeNodeWebSocket.instances.push(this);
+  }
+
+  on(type, listener) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  send(payload) {
+    this.sent.push(JSON.parse(payload));
+  }
+
+  close() {
+    this.dispatch("close", undefined);
+  }
+
+  open() {
+    this.dispatch("open", undefined);
+  }
+
+  message(payload) {
+    this.dispatch("message", JSON.stringify(payload));
   }
 
   dispatch(type, event) {

@@ -13,3 +13,4 @@ export {
   paginatedQuery,
   query,
 } from "convex/server";
+export type { ActionCtx, MutationCtx, QueryCtx } from "convex/server";

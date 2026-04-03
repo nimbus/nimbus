@@ -39,8 +39,14 @@ struct ActiveQueuedMutation {
     result: QueuedMutationResult,
 }
 
+struct PendingQueuedMutationResponse {
+    response: oneshot::Sender<Result<QueuedMutationResult>>,
+    result: QueuedMutationResult,
+}
+
 struct QueuedMutationBatchResult {
     applied: Vec<CommitEntry>,
+    responses: Vec<PendingQueuedMutationResponse>,
 }
 
 impl Service {
@@ -71,6 +77,9 @@ impl Service {
 
             match batch_result {
                 Ok(Ok(batch_result)) => {
+                    for pending_response in batch_result.responses {
+                        let _ = pending_response.response.send(Ok(pending_response.result));
+                    }
                     self.process_applied_commit_batch(runtime.clone(), &batch_result.applied);
                 }
                 Ok(Err(error)) => {
@@ -193,7 +202,7 @@ fn process_queued_mutation_batch(
     runtime: Arc<TenantRuntime>,
     batch: Vec<QueuedMutationRequest>,
 ) -> Result<QueuedMutationBatchResult> {
-    let _sequence_guard = runtime.lock_mutation_sequence();
+    let sequence_guard = runtime.lock_mutation_sequence();
     let mut overlay = HashMap::<(TableName, DocumentId), Option<Document>>::new();
     let mut scheduled_execution_overlay = HashSet::new();
     let mut planned = Vec::new();
@@ -249,6 +258,7 @@ fn process_queued_mutation_batch(
     if active.is_empty() {
         return Ok(QueuedMutationBatchResult {
             applied: Vec::new(),
+            responses: Vec::new(),
         });
     }
 
@@ -267,8 +277,12 @@ fn process_queued_mutation_batch(
     }
 
     let mut applied = Vec::with_capacity(records.len());
+    let mut responses = Vec::with_capacity(records.len());
     for (active_request, record) in active.into_iter().zip(records.iter()) {
-        let _ = active_request.response.send(Ok(active_request.result));
+        responses.push(PendingQueuedMutationResponse {
+            response: active_request.response,
+            result: active_request.result,
+        });
         applied.push(record.as_commit_entry());
     }
 
@@ -285,8 +299,9 @@ fn process_queued_mutation_batch(
     };
     runtime.invalidate_document_cache_for_commits(applied.iter());
     runtime.mark_applied_head(applied_head);
+    drop(sequence_guard);
 
-    Ok(QueuedMutationBatchResult { applied })
+    Ok(QueuedMutationBatchResult { applied, responses })
 }
 
 fn plan_queued_mutation_request(

@@ -1,53 +1,98 @@
 use super::*;
 
 #[tokio::test]
-async fn convex_http_routes_use_runtime_bundle_when_available() {
+async fn convex_http_routes_still_dispatch_compiled_plans_when_runtime_bundle_is_present() {
     let registry = convex_registry_with_routes_and_bundle(
-        json!([]),
         json!([
             {
-                "method": "GET",
-                "path": "/healthz",
+                "name": "messages:byAuthor",
+                "kind": "query",
+                "visibility": "public",
+                "plan": {
+                    "table": "messages",
+                    "filters": [
+                        {
+                            "field": "author",
+                            "op": "eq",
+                            "value": { "$arg": "author" }
+                        }
+                    ],
+                    "order": null,
+                    "limit": null
+                }
+            },
+            {
+                "name": "messages:storeInternal",
+                "kind": "mutation",
+                "visibility": "internal",
+                "plan": {
+                    "type": "insert",
+                    "table": "messages",
+                    "fields": {
+                        "author": { "$arg": "author" },
+                        "body": { "$arg": "body" }
+                    }
+                }
+            }
+        ]),
+        json!([
+            {
+                "method": "POST",
+                "path": "/messages",
                 "name": "http:inline:0",
                 "plan": {
+                    "operation": {
+                        "type": "call_mutation",
+                        "name": "messages:storeInternal",
+                        "visibility": "internal",
+                        "args": {
+                            "author": {
+                                "$request": { "source": "json", "path": "author" }
+                            },
+                            "body": {
+                                "$request": { "source": "json", "path": "body" }
+                            }
+                        }
+                    },
                     "response": {
                         "kind": "json",
-                        "body": { "ok": true }
+                        "body": {
+                            "id": {
+                                "$result": { "index": 0, "path": "" }
+                            }
+                        },
+                        "status": 201
+                    }
+                }
+            },
+            {
+                "method": "GET",
+                "path_prefix": "/messages/by-author",
+                "name": "http:inline:1",
+                "plan": {
+                    "operation": {
+                        "type": "call_query",
+                        "name": "messages:byAuthor",
+                        "visibility": "public",
+                        "args": {
+                            "author": {
+                                "$request": { "source": "query", "name": "author" }
+                            }
+                        }
+                    },
+                    "response": {
+                        "kind": "json",
+                        "body": {
+                            "$result": { "index": 0, "path": "" }
+                        }
                     }
                 }
             }
         ]),
         Some(
             r#"
-const routesByName = new Map([
-  ["http:inline:0", {
-    name: "http:inline:0",
-    method: "GET",
-    path: "/healthz",
-    plan: {
-      response: {
-        kind: "json",
-        body: { ok: true },
-      },
-    },
-  }],
-]);
-
 globalThis.__neovexInvoke = async function(request) {
-  const value = await globalThis.__neovexAsyncHostValue("op_neovex_http_route", {
-    request,
-    route: routesByName.get(request.function_name),
-  });
-  return {
-    status: "ok",
-    value: {
-      ...value,
-      body: {
-        runtime: true,
-        value: value.body,
-      },
-    },
-  };
+  throw new Error(`runtime bundle should not be used for compiled http routes: ${request.function_name}`);
 };
 
 export {};
@@ -63,14 +108,36 @@ export {};
         StatusCode::CREATED
     );
 
-    let response = api
-        .convex_http("demo", reqwest::Method::GET, "/healthz")
+    let inserted = api
+        .convex_http_json(
+            "demo",
+            reqwest::Method::POST,
+            "/messages",
+            json!({ "author": "Ada", "body": "Hello from compiled httpAction" }),
+        )
         .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response
+    assert_eq!(inserted.status(), StatusCode::CREATED);
+    let inserted_body = inserted
         .json::<serde_json::Value>()
         .await
-        .expect("runtime-backed convex http response should parse");
-    assert_eq!(body["runtime"], json!(true));
-    assert_eq!(body["value"]["ok"], json!(true));
+        .expect("convex http post response should parse");
+    assert!(inserted_body["id"].as_str().is_some());
+
+    let listed = api
+        .convex_http(
+            "demo",
+            reqwest::Method::GET,
+            "/messages/by-author?author=Ada",
+        )
+        .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed_body = listed
+        .json::<serde_json::Value>()
+        .await
+        .expect("convex http get response should parse");
+    assert_eq!(listed_body[0]["author"], json!("Ada"));
+    assert_eq!(
+        listed_body[0]["body"],
+        json!("Hello from compiled httpAction")
+    );
 }
