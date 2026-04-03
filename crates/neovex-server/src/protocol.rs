@@ -1,5 +1,5 @@
 use neovex_core::{Document, DurableMutationRecord, Query, Schema};
-use neovex_engine::MaterializedJournalSnapshot;
+use neovex_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use neovex_runtime::RuntimeMetricsSnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -59,6 +59,12 @@ pub(crate) struct HealthResponse {
 pub(crate) struct RuntimeDiagnosticsResponse {
     pub limits: RuntimeLimitsResponse,
     pub metrics: RuntimeMetricsSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TenantEngineDiagnosticsResponse {
+    pub tenant_id: String,
+    pub diagnostics: TenantEngineDiagnosticsSnapshot,
 }
 
 #[derive(Debug, Serialize)]

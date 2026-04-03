@@ -1,5 +1,7 @@
 pub(super) use super::*;
 
+#[path = "core_http/diagnostics.rs"]
+mod diagnostics;
 #[path = "core_http/documents_and_commits.rs"]
 mod documents_and_commits;
 #[path = "core_http/queries/mod.rs"]

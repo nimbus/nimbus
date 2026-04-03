@@ -65,6 +65,10 @@ fn build_core_router() -> Router<Arc<AppState>> {
             "/debug/tenants/{tenant_id}/consistency",
             get(http::tenant_consistency_report),
         )
+        .route(
+            "/debug/tenants/{tenant_id}/engine/metrics",
+            get(http::tenant_engine_diagnostics),
+        )
         .route("/demos", get(http::demos_redirect))
         .nest_service("/demos/", demos)
         .route(

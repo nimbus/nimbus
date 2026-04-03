@@ -82,8 +82,6 @@ pub(crate) struct QueuedSubscriptionWork {
     pub delivery_sequence: SequenceNumber,
     pub commit: Option<CommitEntry>,
     pub deleted_documents: Vec<Document>,
-    #[allow(dead_code)]
-    #[cfg(test)]
     pub enqueued_at: Instant,
 }
 
@@ -98,7 +96,6 @@ impl QueuedSubscriptionWork {
             delivery_sequence: commit.sequence,
             commit: Some(commit),
             deleted_documents,
-            #[cfg(test)]
             enqueued_at: Instant::now(),
         }
     }
@@ -114,7 +111,6 @@ impl QueuedSubscriptionWork {
             delivery_sequence,
             commit,
             deleted_documents,
-            #[cfg(test)]
             enqueued_at: Instant::now(),
         }
     }

@@ -187,7 +187,7 @@ file links (links go stale; symbol search does not).
 
 **`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
-- `service/mod.rs` — `Service` struct: tenant registry plus the async storage boundary (`RedbStorageEngine`, tenant storage handles, usage storage handle), simulation seams, and scheduler wakeups. Lazy-loads tenants from disk on first access.
+- `service/mod.rs` — `Service` struct: tenant registry plus the async storage boundary (`RedbStorageEngine`, tenant storage handles, usage storage handle), simulation seams, scheduler wakeups, and a process-wide background Tokio runtime handle used for long-lived engine workers. Lazy-loads tenants from disk on first access.
 - `service/mutations.rs` — `apply_mutation`: schema validation, declarative
   access-policy enforcement, durable journal append, ordered materialization
   into document or index state, and subscription work enqueue after the applied
@@ -196,6 +196,11 @@ file links (links go stale; symbol search does not).
   The durable-journal batch path coalesces cache invalidation and subscription
   wakeups across multi-record apply batches before handing work to that
   background queue. This is the core write path.
+- `service/mutations/journal.rs` — Queued async mutation path. Tenant-local
+  queued writes are drained by a journal worker task that is spawned on the
+  Service-owned background runtime rather than on request-scoped runtimes. That
+  worker owns durable append, ordered apply, and resolution of queued async
+  mutation futures.
 - `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Sync paths call it directly; async read paths route the same planner and evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
@@ -225,14 +230,60 @@ file links (links go stale; symbol search does not).
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
 
 - `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: V8 isolate creation, heap/timeout limits, process-global bootstrap snapshot initialization, and the `invoke_bundle_unmanaged` entry point. `RuntimeBundle` holds the ESM source + SHA-256 integrity hash. `InvocationRequest` describes the function name, kind, and args.
-- `executor.rs` — `RuntimeExecutor`: a fixed-size worker thread pool that dispatches `InvocationRequest`s to V8 isolates. Each worker owns one current-thread tokio runtime that is reused across jobs. Supports both direct invocation and worker-pool-mediated invocation with cancellation.
-- `host_executor.rs` — `RuntimeHostExecutor`: a companion thread pool for synchronous host-side operations (db reads/writes) dispatched from inside V8. Keeps host work off the V8 isolate thread.
+- `executor.rs` — `RuntimeExecutor`: a fixed-size worker thread pool that dispatches `InvocationRequest`s to V8 isolates. Each worker owns one current-thread tokio runtime that is reused across jobs. Supports both direct invocation and worker-pool-mediated invocation with cancellation. These runtimes are request-execution runtimes; long-lived engine workers must not be owned by them.
+- `host_executor.rs` — `RuntimeHostExecutor`: an optional helper for queueing synchronous host-side work off a caller thread. It exists in the runtime crate, but the live Convex async host-call path does not currently route through it; async host calls await engine/storage futures directly.
 - `host.rs` — `HostBridge` trait and `HostCallRequest` struct defining the contract between V8 guest code and Rust host operations (db queries, mutations, scheduler commands, `ctx.run*` delegation).
 - `context.rs` — `RuntimeInvocationContext`: per-request metadata (invocation ID, function name, kind, auth identity) threaded through the runtime and host bridge.
 - `limits.rs` — `RuntimeLimits` (heap, timeout, max isolates, max nested calls) and `RuntimePolicy` (enforces limits + owns the isolate concurrency semaphore).
 - `metrics.rs` — `RuntimeMetrics` / `RuntimeMetricsSnapshot`: live counters for active isolates, queued invocations, worker dispatches, cancellations, timeouts, host ops, and same-isolate nested dispatches.
 - `module_loader.rs` — Custom `deno_core` module loader that restricts ESM imports to the bundle root.
 - `error.rs` — `NeovexRuntimeError` and `ConvexRuntimeError` with variants for timeout, cancellation, heap exceeded, contract violations, and user-thrown errors.
+
+### Async Ownership Boundaries
+
+```mermaid
+flowchart LR
+    subgraph Request["Request-scoped execution"]
+        Native["Native HTTP/WS request future"]
+        V8["RuntimeExecutor worker runtime"]
+    end
+
+    subgraph ServiceOwned["Service-owned background execution"]
+        Bg["Service background Tokio runtime"]
+        JW["Journal worker"]
+        SD["Subscription delivery worker"]
+        Sch["Scheduler loop"]
+    end
+
+    Native -->|async mutation| JW
+    V8 -->|ctx.runMutation / host op| JW
+    Bg --> JW
+    JW --> SD
+    Bg --> Sch
+```
+
+Request executors may enqueue work onto Service-owned background workers, but
+they must not own the lifetime of those workers. Runtime executor threads are
+for request execution. Journal apply, queued async mutation completion, and
+similar durable background work are Service responsibilities.
+
+### Execution Domains
+
+| Domain | Owner | Primitive | Live responsibility |
+| --- | --- | --- | --- |
+| Main server runtime | `neovex-bin` | process Tokio runtime from `#[tokio::main]` | axum HTTP/WS request handling and the root scheduler task |
+| Scheduler loop | `neovex-bin` + `Service` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then dispatches via `Service` |
+| Service background runtime | `Service` | process-wide Tokio runtime handle | stable home for long-lived engine async workers |
+| Mutation journal worker | `Service` + `TenantRuntime` | service-owned async task | drains queued async mutations, durably appends, applies in order, resolves mutation futures |
+| Subscription delivery worker | `TenantRuntime` | tenant-owned dedicated OS thread with `Condvar` queue | bounded subscription reevaluation and delivery preparation |
+| Runtime executor | Convex adapter | fixed OS worker threads, each with one reused current-thread Tokio runtime | V8 invocation execution plus async host-call awaiting |
+| Storage async boundary | `RedbTenantStorage` / `RedbUsageStorage` | semaphore admission plus `spawn_blocking(...)` on the caller runtime | bounded redb reads, writes, and usage operations |
+| Session child tasks | WebSocket session / runtime subscription | `OwnedTaskSet` over Tokio `JoinSet` | sender, forwarder, bridge, and bootstrap tasks owned by the parent session |
+| Invocation watchdogs | `neovex-runtime` | short-lived OS threads per active invocation | timeout and external-cancellation termination of a V8 isolate |
+
+The most important ownership split is between request execution and durable
+background work. Request-scoped paths may wait on Service-owned work, but they
+must not be the lifetime owner of that work.
 
 **`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
@@ -242,7 +293,7 @@ file links (links go stale; symbol search does not).
   cleanup. The native session explicitly unsubscribes active subscriptions on
   disconnect and owns its forwarder and sender tasks through `OwnedTaskSet`.
 - `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `.neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
-- `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor` and `RuntimeHostExecutor` instances.
+- `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor`, runtime policy, auth verifier, registry state, and the server-side `HostBridge` implementation.
 - `convex/auth/` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
 - `convex/registry/` and `convex/manifest.rs` — Manifest loading, runtime bundle discovery, function lookup, and Convex support route resolution.
 - `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex engine operations into the contract the runtime expects. Async host-call routes now await real engine or storage futures directly; only inherently synchronous host-side setup stays on the sync bridge path.
@@ -332,6 +383,12 @@ architecture discussion.
    calls.** `ctx.db.insert(...)` inside a V8 handler ultimately calls the
    same `Service::apply_mutation` as an HTTP `POST`. No bypass.
 
+11. **Long-lived async engine workers are service-owned.** Journal workers and
+   similar background write-path tasks must be spawned from a stable runtime
+   owned by `Service`, not from request-scoped executors or per-invocation
+   current-thread runtimes. Otherwise queued durable writes can outlive the
+   runtime that was supposed to resolve their futures.
+
 ---
 
 ## Key Data Flows
@@ -342,22 +399,25 @@ architecture discussion.
 sequenceDiagram
     participant C as Client
     participant Svc as Service
+    participant JW as Journal Worker (service-owned)
     participant St as TenantStore
     participant Sub as SubscriptionRegistry
     participant WS as Subscribed Client
 
-    C->>Svc: insert_document
+    C->>Svc: insert_document_async / ctx.runMutation
     Svc->>Svc: Schema validation + access policy
-    Svc->>St: Append durable mutation record
+    Svc->>JW: enqueue queued mutation request
+    Note over Svc,JW: Worker lifetime is owned by Service,<br/>not by the caller runtime
+    JW->>St: Append durable mutation record
     Note over St: Durable ordered journal append
-    St-->>Svc: Acknowledged sequence
-    Svc-->>C: DocumentId
+    St-->>JW: Acknowledged sequence
 
-    Svc->>St: Materialize document + index changes
+    JW->>St: Materialize document + index changes
     Note over St: Ordered apply advances applied watermark
-    Svc->>Sub: affected subscriptions for applied batch
+    JW->>Sub: affected subscriptions for applied batch
     Sub-->>Svc: matching subscription ids
     Svc->>Svc: enqueue one coalesced bounded subscription work item
+    JW-->>Svc: resolve queued mutation future
     Svc-->>C: mutation returns
 
     loop Background delivery worker
@@ -375,16 +435,16 @@ sequenceDiagram
     participant Srv as Server (Convex adapter)
     participant Exec as RuntimeExecutor
     participant V8 as V8 Isolate
-    participant HExec as RuntimeHostExecutor
+    participant HB as HostBridge async path
     participant Svc as Service
 
     C->>Srv: Convex mutation/query/action
     Srv->>Exec: invoke(bundle, request)
     Exec->>V8: Run ESM handler
-    V8->>HExec: host op (ctx.db.insert, ctx.db.query, ...)
-    HExec->>Svc: Service method (same write/read path)
-    Svc-->>HExec: Result
-    HExec-->>V8: host op result
+    V8->>HB: async host op (ctx.db.insert, ctx.db.query, ...)
+    HB->>Svc: await Service / storage future
+    Svc-->>HB: Result
+    HB-->>V8: host op result
     V8-->>Exec: handler return value
     Exec-->>Srv: JSON result
     Srv-->>C: Response
@@ -403,7 +463,7 @@ sequenceDiagram
     Svc->>St: SCHEDULED_JOBS.insert
     Svc-->>C: job_id
 
-    Note over Sch: Tick every 1s via spawn_blocking
+    Note over Sch: Sleep until next due work<br/>or a `Notify` wakeup
 
     Sch->>St: claim_due_jobs
     Note over St: Atomic move from<br/>SCHEDULED to RUNNING
@@ -845,11 +905,11 @@ any special code path.
 
 **Why a dedicated thread pool for V8?** V8 isolates are not `Send` — they
 must run on the thread that created them. The `RuntimeExecutor` spawns a
-fixed-size pool of OS threads, each creating a per-job current-thread tokio
-runtime. This keeps V8 off the main async executor. The companion
-`RuntimeHostExecutor` runs synchronous host-side operations (db reads/writes
-triggered by `ctx.db.*` calls) on a separate thread pool so the V8 thread is
-not blocked by Rust I/O.
+fixed-size pool of OS threads, each reusing one current-thread Tokio runtime
+across jobs. This keeps V8 off the main async executor. Async host operations
+from inside V8 currently await engine and storage futures directly through the
+server-side `HostBridge`; they do not bounce through a separate live
+`RuntimeHostExecutor` pool.
 
 **Why dependency inversion for the runtime?** The runtime crate has zero
 workspace dependencies so it can be tested, fuzzed, and evolved independently.
@@ -879,8 +939,11 @@ transport concern instead of rewriting the engine result. Runtime-backed async
 host calls await those engine or storage futures directly instead of wrapping
 them in an extra blocking task. The scheduler loop sleeps until the next due
 work or a wakeup notification. The `RuntimeExecutor` runs V8 on dedicated OS
-threads with worker-local current-thread tokio runtimes. The `RuntimeHostExecutor`
-runs host-side sync work on a separate thread pool. An isolate concurrency
+threads with worker-local current-thread Tokio runtimes. Long-lived engine
+workers such as the mutation journal run on the Service-owned background
+runtime, while subscription delivery remains a tenant-owned dedicated thread.
+Storage blocking work is executed through `spawn_blocking(...)` on the caller
+runtime, bounded by semaphores at the storage layer. An isolate concurrency
 semaphore caps the number of simultaneous V8 invocations.
 
 **Error handling.** All fallible operations return `neovex_core::Result<T>`.
@@ -1066,3 +1129,10 @@ representations: `to_msgpack()` for disk, `to_json()` for clients.
 active isolates, queued invocations, worker dispatches, cancellations,
 timeouts, same-isolate nested dispatches, and cross-isolate fallback
 dispatches. This endpoint is not available in the native-only router.
+
+**Engine observability.** On both the native-only and Convex-enabled routers,
+`GET /debug/tenants/{tenant_id}/engine/metrics` exposes per-tenant engine
+health: mutation journal progress and queue state, subscription-delivery queue
+state, materialized-serving residency and coverage, serving-snapshot retention,
+and query-planning counters. This is the canonical operator-facing snapshot for
+tenant-local durability and derived-state health.
