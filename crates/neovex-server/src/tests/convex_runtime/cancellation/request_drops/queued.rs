@@ -53,12 +53,10 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     )
     .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(
-        registry
-            .runtime_metrics_snapshot()
-            .worker_dispatched_invocations,
-        1
-    );
+    let queued_snapshot = registry.runtime_metrics_snapshot();
+    assert_eq!(queued_snapshot.active_isolates, 1);
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
+    assert_eq!(queued_snapshot.started_invocations, 1);
 
     drop(queued_mutation);
     drop(blocker);
@@ -69,9 +67,9 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert_eq!(metrics.worker_dispatched_invocations, 1);
-    assert_eq!(metrics.queued_canceled_invocations, 1);
-    assert_eq!(metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(metrics.worker_dispatched_invocations, 2);
+    assert_eq!(metrics.queued_canceled_invocations, 0);
+    assert_eq!(metrics.in_flight_canceled_invocations, 2);
     assert_eq!(metrics.disconnect_canceled_invocations, 2);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
     assert_eq!(metrics.isolate_pool_misses, 1);
@@ -83,8 +81,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         .expect("tenant runtime metrics should be present");
     assert_eq!(tenant_metrics.started_invocations, 1);
     assert_eq!(tenant_metrics.completed_invocations, 1);
-    assert_eq!(tenant_metrics.queued_canceled_invocations, 1);
-    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.queued_canceled_invocations, 0);
+    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 2);
     assert_eq!(tenant_metrics.disconnect_canceled_invocations, 2);
     assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
     assert!(
@@ -173,12 +171,10 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     )
     .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(
-        registry
-            .runtime_metrics_snapshot()
-            .worker_dispatched_invocations,
-        1
-    );
+    let queued_snapshot = registry.runtime_metrics_snapshot();
+    assert_eq!(queued_snapshot.active_isolates, 1);
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
+    assert_eq!(queued_snapshot.started_invocations, 1);
 
     drop(queued_mutation);
     drop(blocker);
@@ -189,9 +185,9 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert_eq!(canceled.worker_dispatched_invocations, 1);
-    assert_eq!(canceled.queued_canceled_invocations, 1);
-    assert_eq!(canceled.in_flight_canceled_invocations, 1);
+    assert_eq!(canceled.worker_dispatched_invocations, 2);
+    assert_eq!(canceled.queued_canceled_invocations, 0);
+    assert_eq!(canceled.in_flight_canceled_invocations, 2);
 
     let recovery_response = api
         .convex_named_mutation(
@@ -207,16 +203,21 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         "runtime recovery after queued request drop",
         |metrics| {
             metrics.active_isolates == 0
-                && metrics.worker_dispatched_invocations == 2
+                && metrics.worker_dispatched_invocations == 3
                 && metrics.started_invocations == 2
                 && metrics.completed_invocations == 2
         },
     )
     .await;
-    assert_eq!(recovered.isolate_pool_hits, 1);
-    assert_eq!(recovered.queued_canceled_invocations, 1);
-    assert_eq!(recovered.in_flight_canceled_invocations, 1);
+    assert_eq!(
+        recovered.isolate_pool_hits + recovered.isolate_pool_misses,
+        2,
+        "two started invocations should account for two pool outcomes"
+    );
+    assert_eq!(recovered.queued_canceled_invocations, 0);
+    assert_eq!(recovered.in_flight_canceled_invocations, 2);
     assert_eq!(recovered.disconnect_canceled_invocations, 2);
+    assert_eq!(recovered.isolate_pool_replacements, 1);
 
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
     let documents = service

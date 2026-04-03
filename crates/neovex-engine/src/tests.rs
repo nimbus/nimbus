@@ -1374,11 +1374,102 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
     assert_eq!(stats.worker_start_count, 1);
     assert_eq!(stats.worker_restart_count, 0);
     assert_eq!(stats.overflow_sync_fallback_count, 1);
+    assert_eq!(stats.queue_level_merge_count, 1);
     assert!(
-        stats.coalesced_work_count >= 2,
-        "stale queued deliveries should be recorded as coalesced work"
+        stats.queue_level_merge_count + stats.coalesced_work_count >= 2,
+        "superseded queued deliveries should be accounted for by queue merges or stale-delivery skips"
     );
     assert!(stats.reevaluation_count >= 1);
+}
+
+#[tokio::test]
+async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = service
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "queue-merge-sub".to_string(),
+            tx,
+        )
+        .expect("subscribe should succeed");
+    let _ = rx
+        .recv()
+        .await
+        .expect("initial subscription update should arrive");
+
+    let pause = service
+        .subscription_delivery_pause_handle_for_testing(&tenant_id)
+        .expect("pause handle should load");
+    pause.arm();
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
+        )
+        .expect("first update should succeed");
+    assert!(
+        pause.wait_until_entered(Duration::from_secs(1)),
+        "worker should pause after popping the first delivery item"
+    );
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
+        )
+        .expect("second update should enqueue a later delivery item");
+
+    pause.release();
+
+    let update = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("merged subscription update should arrive")
+        .expect("subscription channel should stay open");
+    match update {
+        SubscriptionUpdate::Result { commit, data, .. } => {
+            assert!(
+                commit.is_none(),
+                "queue-level merged deliveries should omit per-commit metadata"
+            );
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("second"));
+        }
+        other => panic!("unexpected merged subscription update: {other:?}"),
+    }
+
+    assert!(
+        timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .is_err(),
+        "merged delivery work should collapse the redundant second queue item"
+    );
+
+    let stats = service
+        .subscription_delivery_stats_for_testing(&tenant_id)
+        .expect("subscription delivery stats should load");
+    assert_eq!(stats.queue_depth, 0);
+    assert_eq!(stats.queue_level_merge_count, 1);
+    assert_eq!(stats.coalesced_work_count, 0);
+    assert_eq!(stats.reevaluation_count, 1);
+    assert!(stats.total_reevaluation_nanos > 0);
 }
 
 #[tokio::test]
@@ -5892,7 +5983,8 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
 }
 
 #[tokio::test]
-async fn mutation_journal_queue_rejects_overflow_without_losing_in_flight_response() {
+async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
+{
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
@@ -5942,31 +6034,52 @@ async fn mutation_journal_queue_rejects_overflow_without_losing_in_flight_respon
     assert_eq!(blocked_stats.queue_rejection_count, 0);
     assert_eq!(blocked_stats.worker_failure_count, 0);
 
-    let overflow = service
-        .insert_document_async(
-            tenant_id.clone(),
-            tasks_table(),
-            serde_json::Map::from_iter([("title".to_string(), json!("queued-overflow"))]),
-        )
-        .await
-        .expect_err("second queued mutation should fail fast once the bounded queue is full");
+    let mut second_insert = tokio::spawn({
+        let service = Arc::clone(&service);
+        let tenant_id = tenant_id.clone();
+        async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("queued-second"))]),
+                )
+                .await
+        }
+    });
+
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let stats = service
+                .mutation_admission_stats_for_testing(&tenant_id)
+                .expect("admission stats should load while the journal is paused");
+            if stats.queue_depth == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("second mutation should remain buffered at the admission gate");
+
     assert!(
-        matches!(overflow, Error::ResourceExhausted(message) if message.contains("mutation journal queue full")),
-        "overflow should surface a resource-exhausted error"
+        timeout(Duration::from_millis(150), &mut second_insert)
+            .await
+            .is_err(),
+        "second mutation should stay pending while the journal worker is paused"
     );
 
-    let rejected_stats = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load after the overflow rejection");
-    assert_eq!(rejected_stats.queue_depth, 1);
-    assert_eq!(rejected_stats.queue_capacity, 1);
-    assert!(rejected_stats.oldest_queue_age_nanos > 0);
-    assert_eq!(rejected_stats.pending_response_count, 1);
-    assert!(rejected_stats.worker_running);
-    assert_eq!(rejected_stats.worker_start_count, 1);
-    assert_eq!(rejected_stats.worker_restart_count, 0);
-    assert_eq!(rejected_stats.queue_rejection_count, 1);
-    assert_eq!(rejected_stats.worker_failure_count, 0);
+    let buffered_stats = service
+        .mutation_admission_stats_for_testing(&tenant_id)
+        .expect("admission stats should load after the second mutation is buffered");
+    assert_eq!(buffered_stats.queue_depth, 1);
+    assert_eq!(
+        buffered_stats.queue_capacity,
+        crate::tenant::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY
+    );
+    assert!(buffered_stats.oldest_queue_age_nanos > 0);
+    assert_eq!(buffered_stats.shed_count, 0);
+    assert_eq!(buffered_stats.queue_rejection_count, 0);
 
     pause.release();
 
@@ -5975,18 +6088,30 @@ async fn mutation_journal_queue_rejects_overflow_without_losing_in_flight_respon
         .expect("first mutation should resolve after the pause is released")
         .expect("first mutation task should join successfully")
         .expect("first mutation should succeed");
+    let second_id = timeout(Duration::from_secs(1), second_insert)
+        .await
+        .expect("second mutation should resolve after the journal drains")
+        .expect("second mutation task should join successfully")
+        .expect("second mutation should succeed");
+
     let visible = service
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
         .await
-        .expect("final query should succeed after the paused mutation drains");
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].id, first_id);
+        .expect("final query should succeed after the buffered mutation drains");
+    assert_eq!(visible.len(), 2);
+    assert_eq!(
+        visible
+            .into_iter()
+            .map(|document| document.id)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([first_id, second_id])
+    );
 
     let final_stats = service
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load after the queue drains");
-    assert_eq!(final_stats.durable_head, SequenceNumber(1));
-    assert_eq!(final_stats.applied_head, SequenceNumber(1));
+    assert_eq!(final_stats.durable_head, SequenceNumber(2));
+    assert_eq!(final_stats.applied_head, SequenceNumber(2));
     assert_eq!(final_stats.apply_lag, 0);
     assert_eq!(final_stats.queue_depth, 0);
     assert_eq!(final_stats.queue_capacity, 1);
@@ -5995,8 +6120,88 @@ async fn mutation_journal_queue_rejects_overflow_without_losing_in_flight_respon
     assert!(!final_stats.worker_running);
     assert_eq!(final_stats.worker_start_count, 1);
     assert_eq!(final_stats.worker_restart_count, 0);
-    assert_eq!(final_stats.queue_rejection_count, 1);
+    assert_eq!(final_stats.queue_rejection_count, 0);
     assert_eq!(final_stats.worker_failure_count, 0);
+
+    let final_admission_stats = service
+        .mutation_admission_stats_for_testing(&tenant_id)
+        .expect("admission stats should load after the gate drains");
+    assert_eq!(final_admission_stats.queue_depth, 0);
+    assert_eq!(final_admission_stats.shed_count, 0);
+    assert_eq!(final_admission_stats.queue_rejection_count, 0);
+}
+
+#[tokio::test]
+async fn mutation_journal_never_expires_admitted_work() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    service
+        .set_mutation_admission_codel_for_testing(
+            &tenant_id,
+            Duration::from_millis(5),
+            Duration::from_millis(10),
+        )
+        .expect("admission CoDel should be configurable for tests");
+    let pause = service
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("journal pause handle should load");
+    pause.arm();
+
+    let admitted_insert = {
+        let service = Arc::clone(&service);
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            service
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("admitted"))]),
+                )
+                .await
+        })
+    };
+
+    assert!(
+        tokio::task::spawn_blocking({
+            let pause = pause.clone();
+            move || pause.wait_until_entered(Duration::from_secs(1))
+        })
+        .await
+        .expect("pause wait should join"),
+        "journal worker should pause after admitting the mutation to the journal queue"
+    );
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    pause.release();
+
+    let document_id = timeout(Duration::from_secs(1), admitted_insert)
+        .await
+        .expect("admitted mutation should resolve after the pause is released")
+        .expect("admitted mutation task should join successfully")
+        .expect("admitted mutation should still succeed");
+
+    let visible = service
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("final query should succeed after the admitted mutation drains");
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].id, document_id);
+
+    let admission_stats = service
+        .mutation_admission_stats_for_testing(&tenant_id)
+        .expect("admission stats should load after the queue drains");
+    assert_eq!(admission_stats.queue_depth, 0);
+    assert_eq!(admission_stats.shed_count, 0);
+    assert_eq!(admission_stats.queue_rejection_count, 0);
+
+    let journal_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load after the admitted mutation commits");
+    assert_eq!(journal_stats.durable_head, SequenceNumber(1));
+    assert_eq!(journal_stats.applied_head, SequenceNumber(1));
+    assert_eq!(journal_stats.queue_depth, 0);
 }
 
 #[tokio::test]
@@ -8795,6 +9000,97 @@ async fn scheduler_wakes_promptly_when_earlier_work_arrives() {
 
     let _ = shutdown_tx.send(true);
     scheduler_handle.await.expect("scheduler should shut down");
+}
+
+#[tokio::test]
+async fn scheduler_tick_processes_other_tenants_while_one_tenant_is_paused() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_a = fixture.create_tenant("tenant-a", Service::create_tenant);
+    let tenant_b = fixture.create_tenant("tenant-b", Service::create_tenant);
+
+    let tenant_a_pause = service
+        .mutation_journal_pause_handle_for_testing(&tenant_a)
+        .expect("tenant-a journal pause handle should load");
+    tenant_a_pause.arm();
+
+    service
+        .schedule_mutation(
+            &tenant_a,
+            ScheduleRequest {
+                run_after_ms: 0,
+                mutation: insert_task_mutation("tenant-a paused"),
+            },
+        )
+        .expect("tenant-a schedule should succeed");
+    service
+        .schedule_mutation(
+            &tenant_b,
+            ScheduleRequest {
+                run_after_ms: 0,
+                mutation: insert_task_mutation("tenant-b ready"),
+            },
+        )
+        .expect("tenant-b schedule should succeed");
+
+    let tick_task = tokio::spawn({
+        let service = service.clone();
+        async move { crate::scheduler::tick_at_async(&service, Timestamp::now()).await }
+    });
+
+    let pause_wait = tenant_a_pause.clone();
+    assert!(
+        tokio::task::spawn_blocking(move || pause_wait.wait_until_entered(Duration::from_secs(1)))
+            .await
+            .expect("pause wait should join"),
+        "tenant-a scheduled mutation should pause before the journal drain"
+    );
+
+    let tenant_b_documents = timeout(Duration::from_secs(2), async {
+        loop {
+            let documents = service
+                .list_documents(&tenant_b, &tasks_table())
+                .expect("tenant-b documents should list");
+            if !documents.is_empty() {
+                return documents;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("tenant-b scheduled work should not be blocked by tenant-a");
+
+    assert_eq!(tenant_b_documents.len(), 1);
+    assert_eq!(
+        tenant_b_documents[0].fields.get("title"),
+        Some(&json!("tenant-b ready"))
+    );
+    assert!(
+        service
+            .list_documents(&tenant_a, &tasks_table())
+            .expect("tenant-a documents should list")
+            .is_empty(),
+        "tenant-a should still be blocked while its journal pause is armed"
+    );
+    assert!(
+        !tick_task.is_finished(),
+        "the scheduler tick should still be waiting for the paused tenant after tenant-b completes"
+    );
+
+    tenant_a_pause.release();
+    tick_task
+        .await
+        .expect("scheduler tick should join")
+        .expect("scheduler tick should succeed");
+
+    let tenant_a_documents = service
+        .list_documents(&tenant_a, &tasks_table())
+        .expect("tenant-a documents should list after release");
+    assert_eq!(tenant_a_documents.len(), 1);
+    assert_eq!(
+        tenant_a_documents[0].fields.get("title"),
+        Some(&json!("tenant-a paused"))
+    );
 }
 
 #[test]

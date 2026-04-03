@@ -32,7 +32,9 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["limits"]["initial_heap_mb"], json!(8));
     assert_eq!(body["limits"]["execution_timeout_ms"], json!(30_000));
     assert!(body["limits"]["max_concurrent_isolates"].is_u64());
-    assert!(body["limits"]["max_top_level_invocations_per_tenant"].is_u64());
+    assert!(body["limits"]["worker_threads"].is_u64());
+    assert!(body["limits"]["max_active_top_level_invocations_per_tenant"].is_u64());
+    assert!(body["limits"]["max_in_flight_top_level_invocations_per_tenant"].is_u64());
     assert!(body["limits"]["max_queued_top_level_invocations_per_tenant"].is_u64());
     assert_eq!(body["limits"]["max_nested_runtime_invocations"], json!(64));
     assert_eq!(body["metrics"]["worker_dispatched_invocations"], json!(0));

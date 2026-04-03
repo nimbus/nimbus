@@ -7,10 +7,15 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/execution-ownership-hardening-plan.md`
-  - control plan for event loop ownership, worker lifecycle, backpressure, and
-    shutdown hardening — cross-referenced against Convex, TigerBeetle, and
-    CockroachDB
+- `docs/plans/v8-locker-fork-plan.md`
+  - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
+    Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
+
+## Deferred design and experiment plans
+
+- `docs/plans/layered-admission-control-plan.md`
+  - current owner of future layered admission-control and `EO8` promotion work;
+    use it before promoting any new admission-control boundary
 
 ## How To Use This Folder
 

@@ -32,7 +32,11 @@ pub(crate) async fn runtime_diagnostics(
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64,
             max_concurrent_isolates: limits.max_concurrent_isolates,
-            max_top_level_invocations_per_tenant: limits.max_top_level_invocations_per_tenant,
+            worker_threads: limits.worker_threads,
+            max_active_top_level_invocations_per_tenant: limits
+                .max_active_top_level_invocations_per_tenant,
+            max_in_flight_top_level_invocations_per_tenant: limits
+                .max_in_flight_top_level_invocations_per_tenant,
             max_queued_top_level_invocations_per_tenant: limits
                 .max_queued_top_level_invocations_per_tenant,
             max_nested_runtime_invocations: limits.max_nested_runtime_invocations,

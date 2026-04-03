@@ -73,6 +73,7 @@ impl Service {
         Service::assert_running_on_background_task("mutation_journal");
 
         loop {
+            runtime.drain_mutation_admission_queue();
             let batch = runtime
                 .drain_mutation_batch(MUTATION_JOURNAL_BATCH_SIZE)
                 .await;
@@ -134,18 +135,19 @@ impl Service {
         let _pending_response = PendingMutationResponseGuard {
             runtime: runtime.clone(),
         };
-        let should_start_worker = runtime.enqueue_mutation_request(QueuedMutationRequest {
-            mutation,
-            principal,
-            scheduled_execution_id: match mode {
-                MutationExecutionMode::Immediate => None,
-                MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
-            },
-            cancelled: request_cancelled,
-            _operation: operation,
-            response: response_tx,
-            enqueued_at: std::time::Instant::now(),
-        })?;
+        let should_start_worker =
+            runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
+                mutation,
+                principal,
+                scheduled_execution_id: match mode {
+                    MutationExecutionMode::Immediate => None,
+                    MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
+                },
+                cancelled: request_cancelled,
+                _operation: operation,
+                response: response_tx,
+                enqueued_at: std::time::Instant::now(),
+            })?;
         if should_start_worker {
             self.spawn_journal_mutation_worker(runtime.clone());
         }

@@ -287,7 +287,7 @@ async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keep
     assert_eq!(initial["request_id"], json!("initial"));
     assert_eq!(initial["data"], json!([]));
 
-    let insert_task = tokio::spawn({
+    let mut insert_task = tokio::spawn({
         let client = server.client().clone();
         let url = server.http_url("/api/tenants/demo/documents");
         async move {
@@ -306,11 +306,12 @@ async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keep
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("write should block after durable append but before apply");
-    let insert_response = timeout(Duration::from_secs(1), insert_task)
-        .await
-        .expect("insert should acknowledge while apply is blocked")
-        .expect("insert task should join");
-    assert_eq!(insert_response.status(), StatusCode::CREATED);
+    assert!(
+        timeout(Duration::from_millis(100), &mut insert_task)
+            .await
+            .is_err(),
+        "insert should remain pending until journal apply resumes"
+    );
 
     drop(socket);
 
@@ -348,6 +349,11 @@ async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keep
     }
 
     faults.release();
+    let insert_response = timeout(Duration::from_secs(1), insert_task)
+        .await
+        .expect("insert should complete after journal apply resumes")
+        .expect("insert task should join");
+    assert_eq!(insert_response.status(), StatusCode::CREATED);
 
     let caught_up = reconnected
         .next_json_with_timeout(Duration::from_secs(2))

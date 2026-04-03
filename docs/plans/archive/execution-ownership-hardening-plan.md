@@ -1,8 +1,13 @@
-# Plan: Execution Ownership Hardening
+# Archived Execution Ownership Hardening Plan
 
-Canonical execution plan for bringing Neovex's event loop, worker ownership, and
-backpressure architecture to enterprise-grade parity with battle-tested open-source
-database systems.
+This archived document was the canonical execution roadmap for the completed
+EO1 through EO7 execution-ownership hardening cycle. It is now retained as the
+historical execution record for that cycle.
+
+Future layered admission-control work that was previously tracked as `EO8` now
+lives in `docs/plans/layered-admission-control-plan.md`. The landed runtime,
+executor, shutdown, and backpressure invariants from this completed cycle now
+live in `ARCHITECTURE.md`.
 
 Reviewed against (local repos):
 
@@ -84,10 +89,10 @@ The source of truth is not the prior chat transcript.
 - update `ARCHITECTURE.md` in the same change set when the session lands an
   architecture-level behavior change promised by this plan
 
-### Recommended autonomous prompt
+### Historical autonomous prompt
 
 ```text
-Use docs/plans/execution-ownership-hardening-plan.md as the control plan.
+Use docs/plans/archive/execution-ownership-hardening-plan.md as the control plan.
 Reread Control Plan Rules, Roadmap Status Ledger, Implementation Checkpoints,
 Dependency Graph, Recommended Delivery Order, Execution Log, and the current git
 worktree. If any item is in_progress, resume it first. Reconcile dirty worktree
@@ -103,14 +108,14 @@ rely on chat history as progress state.
 
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 |------|--------|---------|-------------------|-----------|
-| EO1 | `todo` | Owned `BackgroundExecutor` lifecycle for engine and storage | none | none |
-| EO2 | `todo` | Outer admission gate with CoDel before journal ownership | none | none |
-| EO3 | `todo` | Extend subscription delivery coalescing at queue level | none | none |
-| EO4 | `todo` | Shared invocation watchdog timer | none | none |
-| EO5 | `todo` | Decouple V8 workers from JS permits with suspend/resume | EO4 | none |
-| EO6 | `todo` | Delete dead `RuntimeHostExecutor` path | none | none |
-| EO7 | `todo` | Concurrent tenant scheduling | EO1 | none |
-| EO8 | `deferred` | Broader layered admission control | EO1, EO2 | start only when load testing identifies the next binding admission boundary |
+| EO1 | `done` | Owned `BackgroundExecutor` lifecycle for engine and storage | none | none |
+| EO2 | `done` | Outer admission gate with CoDel before journal ownership | none | none |
+| EO3 | `done` | Extend subscription delivery coalescing at queue level | none | none |
+| EO4 | `done` | Shared invocation watchdog timer | none | none |
+| EO5 | `done` | Decouple V8 workers from JS permits with suspend/resume | EO4 | none |
+| EO6 | `done` | Delete dead `RuntimeHostExecutor` path | none | none |
+| EO7 | `done` | Concurrent tenant scheduling | EO1 | none |
+| EO8 | `deferred` | Broader layered admission control | EO1, EO2 | start only after the EO8 experiment report in `docs/plans/layered-admission-control-plan.md` identifies a concrete binding admission boundary and the specific first gate to promote |
 
 Keep each roadmap item's header `Status` field in sync with this ledger.
 
@@ -122,14 +127,14 @@ Update this section whenever an item is left partially complete across sessions.
 
 | Item | Checkpoint | Next Step |
 |------|------------|-----------|
-| EO1 | none yet | start by replacing the static service runtime with owned executor fields |
-| EO2 | none yet | start by adding a separate `MutationAdmissionGate` before journal enqueue |
-| EO3 | none yet | start by batching and merging queue items in the delivery worker |
-| EO4 | none yet | start by introducing `WatchdogTimer` and routing registration through it |
-| EO5 | none yet | start by adding `worker_threads`, worker-local backend factory, and `SharedInvocationPermit` |
-| EO6 | none yet | delete `host_executor.rs` and remove re-exports |
-| EO7 | none yet | replace sequential tenant iteration with bounded concurrent fan-out |
-| EO8 | deferred | wait for load-testing evidence and a concrete admission hotspot |
+| EO1 | completed on 2026-04-03: `Service` now owns engine/storage `BackgroundExecutor` fields, async storage uses the service-owned storage handle for all blocking work, `neovex-bin` drains via `service.quiesce().await`, and executor quiesce semantics are covered by targeted tests. | start `EO2` by adding a separate `MutationAdmissionGate` before journal enqueue |
+| EO2 | completed on 2026-04-03: async mutations now enter a separate per-tenant `MutationAdmissionGate`; the journal worker drains that gate before commit-path processing, sheds stale gate items via CoDel, preserves admitted work once it reaches the journal path, and can top off the current batch from gate work that arrives before the batch snapshot closes. Coverage now includes gate shedding, gate buffering while the journal is paused, admitted-work durability, and the full `neovex-engine` crate. | start `EO3` by merging queue-level subscription delivery work across distinct journal batches |
+| EO3 | completed on 2026-04-03: the subscription delivery worker now drains a small ready batch, merges `QueuedSubscriptionWork` items before dispatch, preserves the existing journal-batch coalescing behavior, and records `queue_level_merge_count` alongside the existing stale-delivery skip metrics. | start `EO4` by introducing the shared watchdog timer and routing registration through it |
+| EO4 | completed on 2026-04-03: `RuntimeExecutor` now owns a shared `WatchdogTimer`; runtime invocations register timeout and external-cancellation termination against that timer, disarm those registrations before `JsRuntime` teardown, and no longer spawn dedicated watchdog OS threads per invocation. Added unit coverage for timeout firing, disarm, and external-cancellation polling. | start `EO5` by decoupling `worker_threads` from JS permits and adding suspend/resume |
+| EO5 | completed on 2026-04-03: `RuntimeExecutor` now runs worker threads through `WorkerLoopFactory` / `RunToCompletionWorkerLoop`, uses a worker-local `DenoRuntimeBackend`, decouples `worker_threads` from `max_concurrent_isolates`, and tracks per-tenant active/in-flight/queued admission separately. `SharedInvocationPermit` now lives in `OpState`, async host ops suspend and re-acquire permits through that shared controller, and timeout accounting pauses while an invocation waits to re-acquire its permit. Coverage now includes freed-permit capacity across workers, same-tenant in-flight accounting, parked-invocation resume, timeout exclusion for permit re-acquire wait, the full `neovex-runtime` suite, the Convex demo server flow, and workspace clippy. | start `EO6` by deleting the dead `RuntimeHostExecutor` path |
+| EO6 | completed on 2026-04-03: deleted `crates/neovex-runtime/src/host_executor.rs`, removed the dead `mod` / public re-export from `neovex-runtime`, and scrubbed the architecture reference that still described it as a live runtime surface. The runtime crate verification stayed green after the deletion. | start `EO7` by replacing sequential scheduler tenant iteration with bounded concurrent fan-out |
+| EO7 | completed on 2026-04-03: `tick_at_async` now fans out loaded tenants with bounded `for_each_concurrent(...)` parallelism, so one tenant's paused or slow scheduled mutation no longer blocks due work for other tenants. Added coverage for a paused-tenant regression and reconciled the server/runtime test suite with the new oversubscribed-worker and applied-visibility contracts before closing the item with workspace-wide verification. | keep `EO8` deferred until load testing identifies the next real admission boundary |
+| EO8 | deferred: the full background, prior art, observability map, and experiment design now live in `docs/plans/layered-admission-control-plan.md`. Existing runtime and engine diagnostics provide part of the needed signal surface, but promotion still requires a focused EO8 experiment report that proves which work class is causing cross-class interference and whether the next gate should be query slots, scheduled-job slots, storage sub-budgets, or stronger tenant isolation. | keep deferred until a measurement run selects the first EO8 implementation slice |
 
 ---
 
@@ -146,7 +151,9 @@ Update this section whenever an item is left partially complete across sessions.
   clean.
 - `EO7` depends on `EO1` because scheduler fan-out needs the owned shutdown
   model.
-- `EO8` is deferred until load testing identifies a concrete need beyond `EO2`.
+- `EO8` is deferred until the companion layered-admission-control plan's
+  experiment run identifies a concrete next admission boundary beyond `EO2`
+  and `EO5`.
 
 ---
 
@@ -171,6 +178,19 @@ an item.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 |------|------|---------|---------|--------------|-----------|
 | 2026-04-03 | meta | documented | Converted this document into a durable control plan with stable item IDs, status ledger, checkpoints, recovery loop, and execution log so autonomous Codex runs can resume after handoffs or compaction without relying on chat history. | document review | start `EO1` unless a future worktree reconciliation marks another earlier item `in_progress` |
+| 2026-04-03 | EO1 | in_progress | Started the owned-executor workstream from a clean worktree. This session owns replacing the service `OnceLock<TokioRuntime>` pattern with owned executor fields, threading a storage-owned executor into async storage, and landing the first verification-backed shutdown slice. | worktree reconciliation and control-plan review | inspect current engine/storage runtime ownership code, implement EO1, run targeted verification, then mark done or checkpoint the remaining gap |
+| 2026-04-03 | EO1 | done | Replaced the static service runtime with owned engine/storage `BackgroundExecutor` fields, threaded the storage executor handle through async storage and storage-engine constructors, added `Service::quiesce()`, and wired the bin shutdown path to drain service-owned work before exit. Added targeted executor quiesce tests and synced architecture docs to the new ownership model. | `cargo fmt --all --check`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server convex_http_demo_ -- --nocapture`; `make clippy` | start `EO2` |
+| 2026-04-03 | EO2 | done | Added a per-tenant `MutationAdmissionGate` ahead of the journal queue, routed async mutations through that outer gate, added CoDel shedding plus gate diagnostics, preserved admitted journal work, and tightened the worker handoff so newly admitted gate work can join the current batch before the batch snapshot closes without being transiently rejected by momentary inner-queue fullness. Rewrote the old overflow test around the new buffered-gate semantics and kept the existing journal batch coalescing and reopen recovery behavior green under the new worker loop. | `cargo fmt --all --check`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-admission cargo test -p neovex-engine mutation_admission_gate_codel_ -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-buffered cargo test -p neovex-engine mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-admitted cargo test -p neovex-engine mutation_journal_never_expires_admitted_work -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-queued cargo test -p neovex-engine queued_ -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-queued cargo test -p neovex-engine` | start `EO3` |
+| 2026-04-03 | EO3 | done | Extended the subscription delivery worker to drain a small ready batch, merge overlapping `QueuedSubscriptionWork` items before reevaluation, and expose `queue_level_merge_count` in diagnostics. Preserved journal-batch coalescing and overflow monotonicity while removing redundant second-pass delivery work. | `cargo fmt --all --check`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine subscription_delivery_queue_merge_coalesces_overlapping_work_items -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine journal_batch_coalesces_subscription_delivery_into_one_update -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine` | start `EO4` |
+| 2026-04-03 | EO4 | in_progress | Reconciled the dirty worktree and inspected the current `neovex-runtime` watchdog/executor seams. Confirmed the current per-invocation timeout and external-cancellation watchdog threads in `runtime.rs`, and scoped EO4 around a shared executor-owned `WatchdogTimer` that will replace those dedicated threads while preserving timeout and cancellation termination semantics. | control-plan review; `sed -n '860,1015p' docs/plans/execution-ownership-hardening-plan.md`; `sed -n '1380,1585p' crates/neovex-runtime/src/runtime.rs`; `sed -n '300,860p' crates/neovex-runtime/src/executor.rs` | implement the shared watchdog module, wire it through `RuntimeExecutor`, replace runtime thread spawning, then run EO4 verification |
+| 2026-04-03 | EO4 | done | Added `neovex-runtime/src/watchdog.rs`, moved timeout and external-cancellation watchdog ownership into a shared `RuntimeExecutor`-owned `WatchdogTimer`, replaced per-invocation `std::thread::spawn` watchdogs in `runtime.rs` with explicit registration/disarm, and shut the shared watchdog down from `RuntimeExecutorInner::drop()` after worker join. Added unit coverage for timeout firing, disarm, and shared cancellation polling. The first isolated runtime test run hit restricted-network `rusty_v8` archive download failure; rerunning with network access succeeded. | `cargo fmt --all --check`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime` (first attempt failed under restricted network while fetching `rusty_v8`); `cargo test -p neovex-runtime`; `cargo test -p neovex-server convex_http_demo_ -- --nocapture` | start `EO5` |
+| 2026-04-03 | meta | documented | Re-scoped EO5 before implementation so the primary extensibility seam is now `WorkerLoop` / `WorkerLoopFactory`, with the current deno_core `RuntimeBackend::invoke(...)` kept as a worker-local helper below that seam. This keeps the current run-to-completion model intact while making later cooperative Locker, workerd-style, and WASM runtime models a clean follow-on instead of an executor retrofit. | document review against `docs/plans/v8-locker-fork-plan.md` and EO5 | update the locker fork plan to match the worker-loop seam before starting EO5 code |
+| 2026-04-03 | EO5 | in_progress | Reconciled the current dirty worktree to EO5, re-read the EO5 control-plan section, and inspected the concrete runtime seams in `executor.rs`, `runtime.rs`, `limits.rs`, and `watchdog.rs`. Confirmed the current gaps the implementation must close: executor logic is still embedded directly in `RuntimeExecutor`, tenant fairness still uses a single `in_flight` counter, and host async ops still have no shared permit/timeout controller in `OpState`. | control-plan review; `sed -n '960,1235p' docs/plans/execution-ownership-hardening-plan.md`; `sed -n '1,760p' crates/neovex-runtime/src/executor.rs`; `sed -n '300,380p' crates/neovex-runtime/src/runtime.rs`; `sed -n '1240,1305p' crates/neovex-runtime/src/runtime.rs`; `sed -n '1450,1685p' crates/neovex-runtime/src/runtime.rs`; `sed -n '1,260p' crates/neovex-runtime/src/limits.rs`; `sed -n '1,520p' crates/neovex-runtime/src/watchdog.rs` | implement the worker-loop seam and updated tenant admission accounting first, then wire permit suspend/resume and timeout pause through the runtime host-op path |
+| 2026-04-03 | EO5 | done | Introduced `worker_loop.rs` and `backend.rs` so `RuntimeExecutor` now owns an oversubscribed worker pool through `WorkerLoopFactory` / `RunToCompletionWorkerLoop` while the deno-specific `DenoRuntimeBackend` stays worker-local. Split runtime admission into per-tenant active/in-flight/queued accounting, added `worker_threads`, `max_active_top_level_invocations_per_tenant`, and `max_in_flight_top_level_invocations_per_tenant`, and threaded `SharedInvocationPermit` plus `RuntimeInvocationTimeoutController` through `OpState` so async host ops suspend and re-acquire permits with timeout pause during permit re-acquire. Added focused coverage for freed-permit capacity, parked resume, in-flight-limit accounting, and timeout exclusion for permit re-acquire wait. | `cargo fmt --all --check`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `bash scripts/cargo-isolated.sh -- test -p neovex-server convex_http_demo_ -- --nocapture` (first attempt failed under restricted network while fetching `rusty_v8`; reran with network access and passed); `make clippy` | start `EO6` |
+| 2026-04-03 | EO6 | done | Deleted the dead `RuntimeHostExecutor` module and its unit test, removed the stale public re-export from `neovex-runtime/src/lib.rs`, and removed the remaining architecture reference that still documented it as a live runtime surface. This leaves async host work on the real engine/storage futures only, matching the post-EO1-through-EO5 runtime design. | `cargo check -p neovex-runtime`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime` | start `EO7` |
+| 2026-04-03 | EO7 | done | Replaced sequential scheduler tenant iteration with bounded `for_each_concurrent(...)` fan-out in `crates/neovex-engine/src/scheduler.rs` and added a paused-tenant regression test proving one tenant's scheduled mutation no longer blocks another tenant's due work. EO7 closeout also fixed follow-on server assertions to match the landed EO5 runtime model: execution metrics are recorded in the worker-loop path, oversubscribed workers can dispatch more jobs than active isolates, and HTTP/WebSocket write acknowledgements still wait for journal apply visibility. | `cargo test -p neovex-engine scheduler_tick_processes_other_tenants_while_one_tenant_is_paused -- --nocapture`; `cargo test -p neovex-engine scheduler_ -- --nocapture`; `cargo fmt --all --check`; `make clippy`; `make test` | keep `EO8` deferred until load testing identifies a concrete next admission bottleneck |
+| 2026-04-03 | EO8 | documented | Expanded EO8 from a design placeholder into a deferred promotion plan with three explicit decision inputs: existing Neovex architecture, battle-tested prior art, and a required experiment report. Added candidate per-work-class gates, mapped the observability already available via `/debug/runtime/metrics` and `/debug/tenants/{tenant}/engine/metrics`, documented instrumentation gaps, and defined a workload matrix plus promotion criteria so a future EO8 implementation is selected by evidence rather than guesswork. | control-plan review; local prior-art review in CockroachDB, Convex, and TigerBeetle sources; official CockroachDB admission-control docs review | keep deferred until an EO8 experiment run produces a concrete first implementation target |
+| 2026-04-03 | EO8 | documented | Split the deferred EO8 background into `docs/plans/layered-admission-control-plan.md` so the main execution-ownership control plan can keep only the status and promotion gate while the standalone companion plan holds the codebase review, prior art, observability surfaces, experiment workflow, and promotion matrix. | document review against the EO8 section, current debug endpoints, and local prior-art sources | keep EO8 deferred until a measurement run names the first concrete slice to promote |
 
 ---
 
@@ -180,8 +200,8 @@ an item.
 
 | Pattern | Neovex implementation | Industry match |
 |---------|----------------------|----------------|
-| Service-owned background runtime | `OnceLock<TokioRuntime>` singleton, 1 worker thread (`service/mod.rs:60-73`) | Convex `ProdRuntime::spawn_background` (`local_backend/src/lib.rs:266`) |
-| Centralized spawn helper | `Service::spawn_background()` (`service/mod.rs:118-124`) | CockroachDB `Stopper.RunAsyncTask` (`pkg/util/stop/stopper.go`) |
+| Service-owned background executors | `Service` owns engine/storage `BackgroundExecutor` fields with explicit `quiesce()` (`service/mod.rs:42-119`, `background_executor.rs:14-97`) | Convex `ProdRuntime::spawn_background` (`local_backend/src/lib.rs:266`) |
+| Centralized spawn helper | `Service::spawn_background()` delegates to the owned engine executor (`service/mod.rs:107-114`) | CockroachDB `Stopper.RunAsyncTask` (`pkg/util/stop/stopper.go`) |
 | Ownership assertions | `assert_running_on_background_task` debug guard (`journal.rs:72-73`) | TigerBeetle assertion density >= 2/function (`docs/TIGER_STYLE.md:100`) |
 | Single mutation path | All mutations flow through `Service::apply_mutation` (`ARCHITECTURE.md:349-352`) | Convex `Committer` single-task serialization (`committer.rs`) |
 | Bounded journal queue | `DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY = 256` (`tenant.rs:30`) | Convex committer channel capacity 128 |
@@ -195,11 +215,11 @@ an item.
 
 | Pattern | Convex | TigerBeetle | CockroachDB | Neovex gap |
 |---------|--------|-------------|-------------|------------|
-| Owned executor lifecycle | `TokioRuntime` on stack in `main()`, dropped on exit | Process kill + crash recovery | `Stopper.Quiesce()` then `Stop()` | `OnceLock` singleton, no shutdown |
-| Storage-owned executor | Committer serializes writes through dedicated task | Single thread owns all I/O | Pebble owns goroutine pool | `spawn_blocking` borrows caller runtime |
-| Outer admission control | CoDel queue expires items before V8 execution starts | Static IOPS budgets | Slots + tokens + IO tokens | No admission control at any layer |
+| Owned executor lifecycle | `TokioRuntime` on stack in `main()`, dropped on exit | Process kill + crash recovery | `Stopper.Quiesce()` then `Stop()` | resolved by `EO1`: `Service` now owns engine/storage executors with explicit quiesce |
+| Storage-owned executor | Committer serializes writes through dedicated task | Single thread owns all I/O | Pebble owns goroutine pool | resolved by `EO1`: async storage now runs on the service-owned storage executor handle |
+| Outer admission control | CoDel queue expires items before V8 execution starts | Static IOPS budgets | Slots + tokens + IO tokens | resolved by `EO2`: async mutations now enter a per-tenant `MutationAdmissionGate` with CoDel shedding before journal ownership |
 | Suspend/resume concurrency | V8 releases isolate slot during async I/O | N/A (single thread) | Admission slots returned on completion | V8 holds slot through entire invocation |
-| Shared watchdog timer | N/A | Timer wheel in main loop | N/A | 2 OS threads per V8 invocation |
+| Shared watchdog timer | N/A | Timer wheel in main loop | N/A | resolved by `EO4`: shared `WatchdogTimer` thread owned by `RuntimeExecutor` |
 | Concurrent tenant scheduling | Workers process tenants in parallel | Single thread, deterministic order | Sharded raft scheduler | Serial per-tenant in `tick_at_async` |
 
 ---
@@ -210,24 +230,25 @@ an item.
 flowchart TB
     subgraph Process["Process Lifetime"]
         MainRT["Main Tokio Runtime<br/><code>neovex-bin #[tokio::main]</code><br/>main.rs:79"]
-        BgRT["Service Background Runtime<br/><code>OnceLock&lt;TokioRuntime&gt;</code><br/>service/mod.rs:61"]
     end
 
     subgraph MainRT_Tasks["On Main Runtime"]
         HTTP["axum HTTP/WS handlers"]
         Sched["Scheduler loop<br/>scheduler.rs:10<br/>spawned at main.rs:79"]
         Sessions["WS session tasks<br/>OwnedTaskSet<br/>owned_tasks.rs:7"]
-        StorageBlk["spawn_blocking pool<br/>(Tokio default, unbounded growth)<br/>async_storage.rs:117,147,203,233,456,477"]
     end
 
-    subgraph BgRT_Tasks["On Background Runtime"]
+    subgraph ServiceOwned["Service-Owned BackgroundExecutors"]
+        EngineExec["Engine BackgroundExecutor<br/>service/mod.rs:52,74-75<br/>owned field on Service"]
+        StorageExec["Storage BackgroundExecutor<br/>service/mod.rs:53,74-80<br/>owned field on Service"]
         JW["Journal worker(s)<br/>journal.rs:63-69<br/>demand-spawned per tenant"]
+        StorageBlk["Storage blocking tasks<br/>async_storage.rs:121-127,152-169,211-217,242-261,477-518"]
     end
 
     subgraph Dedicated_Threads["Dedicated OS Threads"]
-        V8Pool["RuntimeExecutor pool<br/>executor.rs:325-334<br/>fixed size, each with current-thread RT"]
+        V8Pool["RuntimeExecutor pool<br/>executor.rs:326-336<br/>fixed size, each with current-thread RT"]
         SubDelivery["Subscription delivery<br/>tenant.rs:2018-2020<br/>one per subscription-active tenant"]
-        Watchdogs["Invocation watchdogs<br/>runtime.rs:1468, 1504<br/>up to 2 per active invocation"]
+        Watchdogs["Shared WatchdogTimer<br/>executor.rs:323,832 + watchdog.rs<br/>one shared thread per RuntimeExecutor"]
     end
 
     subgraph Dead["Dead Code"]
@@ -236,49 +257,28 @@ flowchart TB
 
     HTTP -->|"enqueue mutation"| JW
     V8Pool -->|"ctx.runMutation host op"| JW
+    EngineExec --> JW
     JW -->|"subscription work"| SubDelivery
     HTTP -->|"storage read/write"| StorageBlk
     V8Pool -->|"host bridge storage"| StorageBlk
+    StorageExec --> StorageBlk
     Sched -->|"Service::execute_scheduled_mutation_async"| JW
-    V8Pool -->|"spawn watchdog"| Watchdogs
+    V8Pool -->|"register timeout / cancel termination"| Watchdogs
 ```
 
 ### Ownership violations and anti-patterns
 
-1. **P1 — Storage borrows caller runtime.** `RedbTenantStorage` calls
-   `tokio::task::spawn_blocking` on whatever Tokio runtime the caller happens to
-   be on (`async_storage.rs:117,147,203,233,456,477`). When V8 host bridge code
-   triggers a storage read, that blocking work lands on the V8 worker's
-   current-thread runtime blocking pool. This violates the principle that durable
-   work should be owned by a stable executor.
-   - Convex comparison: all writes go through a single `Committer` task.
-   - CockroachDB comparison: Pebble owns its own goroutine pool.
-
-2. **P1 — No explicit lifecycle for background runtime.** The `OnceLock` at
-   `service/mod.rs:61` lives until process exit. Tokio's `Runtime::shutdown_timeout`
-   and `Runtime::shutdown_background` both consume `self` by value — you cannot call
-   them through the borrowed `&TokioRuntime` that `OnceLock` provides. There is no
-   `Service::shutdown()` and in-flight journal workers are abandoned on exit.
-   - Convex comparison: `TokioRuntime` owned on `main()`'s stack; `Application::shutdown()`
-     cooperatively drains workers before `main` returns and `Drop` runs.
-   - CockroachDB comparison: `Stopper.Quiesce()` + `Stop()` with task counting under RLock.
-
-3. **P2 — Per-tenant subscription threads don't idle-shutdown.** Each
+1. **P2 — Per-tenant subscription threads don't idle-shutdown.** Each
    subscription-active tenant holds a dedicated OS thread
    (`tenant.rs:2018-2020`). Under high tenant count with low subscription
    activity, this wastes OS threads.
    - Convex comparison: fixed `NUM_SUBSCRIPTION_MANAGERS` workers with
      round-robin dispatch.
 
-4. **P2 — Per-invocation watchdog thread churn.** Up to 2 OS threads per V8
-   invocation (`runtime.rs:1468,1504`). Under high concurrency this creates
-   thread churn proportional to isolate count.
-   - TigerBeetle comparison: single event loop with timer checks.
-
-5. **P3 — RuntimeHostExecutor is dead code.** Defined at `host_executor.rs:20`,
+2. **P3 — RuntimeHostExecutor is dead code.** Defined at `host_executor.rs:20`,
    not imported anywhere in `neovex-server`. Pre-launch repo — delete it.
 
-6. **P3 — Scheduler processes tenants sequentially.** One slow tenant blocks all
+3. **P3 — Scheduler processes tenants sequentially.** One slow tenant blocks all
    others in `tick_at_async`.
    - CockroachDB comparison: sharded raft scheduler with per-shard workers.
 
@@ -289,7 +289,7 @@ flowchart TB
 ### EO1. Owned BackgroundExecutor + Storage Executor
 
 **Priority:** P1
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** Nothing
 **Estimated scope:** ~300 LOC
 
@@ -519,7 +519,7 @@ cargo test -p neovex-engine
 cargo test -p neovex-server convex_http_demo_ -- --nocapture
 # New test: shutdown during active journal work completes in-flight batch
 cargo test -p neovex-engine shutdown_ -- --nocapture
-# New test: spawn after quiesce returns Unavailable
+# New test: spawn after quiesce returns ResourceExhausted
 cargo test -p neovex-engine quiesce_ -- --nocapture
 # Existing restart/recovery tests still pass
 cargo test -p neovex-engine service_reload_ -- --nocapture
@@ -538,7 +538,7 @@ cargo test -p neovex-engine service_reload_ -- --nocapture
 ### EO2. Outer Admission Gate with CoDel Load Shedding
 
 **Priority:** P1
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** Nothing (can run parallel with EO1)
 **Estimated scope:** ~300 LOC
 
@@ -550,12 +550,12 @@ a real execution reason — the system never expires admitted journal work.
 
 #### Why the admission gate must be separate from the journal queue
 
-In the current code, `submit_journaled_async_mutation` (`journal.rs:117`) calls
-`enqueue_mutation_request` (`tenant.rs:2476`, which delegates to the internal
-`MutationJournalState::enqueue` at `tenant.rs:1743`) which pushes directly into
-the journal-owned `VecDeque`. At that point, ownership transfers to the journal
-system: the request has a `oneshot::Sender` response channel, and the journal
-worker will drain it, apply it, and resolve the future.
+Before `EO2`, `submit_journaled_async_mutation` (`journal.rs:117`) called
+`enqueue_mutation_request` (`tenant.rs:2476`, delegating to the internal
+`MutationJournalState::enqueue`) directly and pushed straight into the
+journal-owned `VecDeque`. At that point, ownership transferred to the journal
+system: the request had a `oneshot::Sender` response channel, and the journal
+worker would drain it, apply it, and resolve the future.
 
 Putting CoDel inside the journal queue — even at drain time — creates a
 semantic problem: the journal system accepted ownership of the work, then
@@ -581,14 +581,19 @@ overload safety valve. The inner queue is the commit-path buffer.
 
 #### Mutation admission path (traced)
 
-All async mutation paths converge at one function:
+All async mutation paths still converge at one function, but now hit the outer
+admission gate first:
 
 ```
 HTTP handler (http/documents.rs:4-43)
   -> Service::apply_mutation_with_mode_async_cancellable (mutations.rs:608-632)
     -> Service::submit_journaled_async_mutation (journal.rs:117-171)
-      -> TenantRuntime::enqueue_mutation_request (tenant.rs:2476)       // <-- inner gate
-        -> MutationJournalState::enqueue (tenant.rs:1743-1760)         //     (internal)
+      -> TenantRuntime::enqueue_mutation_admission_request (...)        // <-- outer gate
+      -> ensure journal worker is running
+Journal worker loop
+  -> TenantRuntime::drain_mutation_admission_queue ()
+  -> TenantRuntime::drain_mutation_batch (...)                          // may top off the current batch from the gate before snapshot closes
+    -> MutationJournalState::enqueue (...)                              // <-- inner gate, when buffering through the journal queue
 ```
 
 ```
@@ -618,8 +623,8 @@ this work." The admission gate must sit **before** the call to
 
 #### Design
 
-Add a per-tenant `MutationAdmissionGate` that is structurally separate from
-`MutationJournalState`. The gate owns its own bounded queue with CoDel
+`EO2` lands a per-tenant `MutationAdmissionGate` that is structurally separate
+from `MutationJournalState`. The gate owns its own bounded queue with CoDel
 semantics. The journal queue behind it retains its existing simple
 capacity-bounded `VecDeque`.
 
@@ -658,23 +663,34 @@ enum CoDelPhase {
 ```
 Caller (HTTP / Convex / Scheduler)
   -> submit_journaled_async_mutation (journal.rs:117)
-    -> admission_gate.submit(request)            // OUTER GATE: CoDel
+    -> admission_gate.submit(request)            // OUTER GATE: CoDel queue
       -> If gate queue full: reject ResourceExhausted (immediate, no wait)
       -> Push request into gate queue, stamped with enqueued_at
-    -> admission_gate.try_drain_to_journal()     // Pop from gate, CoDel expire, push to journal
-      -> Pop items from gate queue
-      -> Check sojourn time per CoDel algorithm
-      -> Expired items: send Err(Overloaded) on their oneshot, increment shed_count
-      -> Surviving items: pass to enqueue_mutation_request  // INNER GATE: capacity
-        -> If journal queue full: return Err(ResourceExhausted) (back to caller)
-        -> Otherwise: accepted into journal, will be committed
+    -> ensure journal worker is running
+
+Journal worker loop
+  -> admission_gate.drain_to_journal()           // Pop from gate, CoDel expire, push to journal
+    -> Pop items from gate queue
+    -> Check sojourn time per CoDel algorithm
+    -> Expired items: send Err(ResourceExhausted("mutation shed by admission gate")) on their oneshot
+    -> Surviving items: pass to enqueue_mutation_request  // INNER GATE: capacity
+      -> If journal queue full: send Err(ResourceExhausted("mutation journal queue full"))
+      -> Otherwise: accepted into journal, will be committed
+  -> drain_batch() / process_queued_mutation_batch()      // existing commit path
 ```
+
+When the worker has already reached the pre-drain handoff boundary, freshly
+admitted gate work may be pulled directly into the current batch snapshot
+instead of being transiently rejected against an inner queue that is about to
+be drained. This preserves batching without expiring or abandoning admitted
+journal work.
 
 **Key semantics:**
 
 1. **Gate rejection (CoDel shed):** The caller's `oneshot` receives
-   `Err(Overloaded("mutation shed by admission gate"))`. The request never
-   entered the journal. This is the outer safety valve under sustained load.
+   `Err(ResourceExhausted("mutation shed by admission gate"))`. The request
+   never entered the journal. This is the outer safety valve under sustained
+   load.
 
 2. **Journal rejection (capacity):** The caller's `oneshot` receives
    `Err(ResourceExhausted("mutation journal queue full"))`. Same as today.
@@ -687,8 +703,8 @@ Caller (HTTP / Convex / Scheduler)
 
 **CoDel algorithm at `try_drain_to_journal`:**
 
-The CoDel algorithm runs each time the gate is drained (called from
-`submit_journaled_async_mutation` and/or periodically by the journal worker):
+The CoDel algorithm runs each time the journal worker drains the outer gate
+before touching the inner journal queue:
 
 1. Pop the head of the gate queue.
 2. Compute `sojourn = now - enqueued_at`.
@@ -734,10 +750,11 @@ journal's `MutationJournalState`. That was wrong for two reasons:
   alongside `MutationJournalState` (separate fields on `TenantRuntime`). The
   journal state keeps its existing `VecDeque` with capacity-only rejection.
 - `crates/neovex-engine/src/service/mutations/journal.rs` — Modify
-  `submit_journaled_async_mutation` (`journal.rs:117`) to route through
-  `admission_gate.submit()` then `admission_gate.try_drain_to_journal()`
-  before calling `enqueue_mutation_request`. No changes to
-  `process_queued_mutation_batch` or the journal worker loop.
+  `submit_journaled_async_mutation` (`journal.rs:117`) to enqueue into the
+  admission gate and ensure the journal worker is running. Update the journal
+  worker loop so it drains the admission gate into the journal before
+  `drain_batch()` / `process_queued_mutation_batch()`. The commit path itself
+  remains unchanged.
 - `crates/neovex-engine/src/service/diagnostics.rs` — Expose gate metrics:
   `admitted_count`, `shed_count`, `codel_phase`, `gate_queue_depth`,
   `gate_oldest_age`.
@@ -761,10 +778,12 @@ journal's `MutationJournalState`. That was wrong for two reasons:
 cargo test -p neovex-engine mutation_admission_gate_codel_ -- --nocapture
 # New test: journal queue is never CoDel-expired (only capacity-rejected)
 cargo test -p neovex-engine mutation_journal_never_expires_admitted_work -- --nocapture
-# Existing capacity test still passes (hard reject when journal full)
-cargo test -p neovex-engine mutation_journal_queue_rejects_overflow -- --nocapture
+# New test: work can remain buffered at the outer gate while the inner journal is paused
+cargo test -p neovex-engine mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response -- --nocapture
 # Existing journal tests still pass
 cargo test -p neovex-engine queued_ -- --nocapture
+# Broader crate-level verification after the worker-loop handoff changes
+cargo test -p neovex-engine
 ```
 
 ---
@@ -772,7 +791,7 @@ cargo test -p neovex-engine queued_ -- --nocapture
 ### EO3. Extend Subscription Delivery Coalescing
 
 **Priority:** P2
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** Nothing
 **Estimated scope:** ~100 LOC
 
@@ -818,7 +837,8 @@ Modify the delivery worker to drain-and-merge:
 3. Dispatch the merged set as a single `dispatch_subscription_work` call.
 
 This is a small optimization, not an architecture change. The staleness-skip
-layer is the real safety net — this just reduces the loop overhead.
+layer remains the safety net; queue-level merging reduces redundant queue pops
+and redundant stale-check passes before reevaluation.
 
 #### Files to change
 
@@ -834,7 +854,11 @@ layer is the real safety net — this just reduces the loop overhead.
 # Existing coalescing test still passes
 cargo test -p neovex-engine journal_batch_coalesces -- --nocapture
 # New test: two journal batches with overlapping subscriptions merge in delivery
-cargo test -p neovex-engine subscription_delivery_queue_merge -- --nocapture
+cargo test -p neovex-engine subscription_delivery_queue_merge_coalesces_overlapping_work_items -- --nocapture
+# Existing overflow monotonicity test still passes with queue-level merge accounting
+cargo test -p neovex-engine subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity -- --nocapture
+# Broader crate-level verification after the delivery worker changes
+cargo test -p neovex-engine
 ```
 
 ---
@@ -842,16 +866,16 @@ cargo test -p neovex-engine subscription_delivery_queue_merge -- --nocapture
 ### EO4. Shared Invocation Watchdog Timer
 
 **Priority:** P2
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** Nothing
 **Estimated scope:** ~200 LOC
 
 **Goal:** Replace per-invocation watchdog OS threads with a shared timer worker,
 reducing thread churn under high V8 concurrency.
 
-**Current state:** Each V8 invocation spawns up to 2 OS threads for timeout and
-external-cancellation watchdogs (`runtime.rs:1468,1504`). Each polls every 10ms.
-With N concurrent isolates, this creates 2N short-lived OS threads.
+**Current state before EO4:** Each V8 invocation spawned up to 2 OS threads for
+timeout and external-cancellation watchdogs. Each polled every 10ms, so with N
+concurrent isolates the runtime created 2N short-lived OS threads.
 
 **Design:**
 
@@ -866,8 +890,9 @@ pub struct WatchdogTimer {
 }
 
 enum WatchdogCommand {
-    Register { id: u64, deadline: Instant, cancel: Box<dyn FnOnce() + Send> },
-    Cancel { id: u64 },
+    RegisterTimeout { id: u64, deadline: Instant, cancel: Box<dyn FnOnce() + Send> },
+    RegisterCancellation { id: u64, cancellation: HostCallCancellation, cancel: Box<dyn FnOnce() + Send> },
+    Cancel { id: u64, ack: Option<oneshot::Sender<()>> },
     Shutdown,
 }
 ```
@@ -881,11 +906,18 @@ loop {
         .map(|d| d.deadline.saturating_duration_since(Instant::now()))
         .unwrap_or(Duration::MAX);
     match receiver.recv_timeout(timeout) {
-        Ok(WatchdogCommand::Register { id, deadline, cancel }) => {
+        Ok(WatchdogCommand::RegisterTimeout { id, deadline, cancel }) => {
             heap.push(Reverse((deadline, id)));
             handlers.insert(id, cancel);
         }
-        Ok(WatchdogCommand::Cancel { id }) => { handlers.remove(&id); }
+        Ok(WatchdogCommand::RegisterCancellation { id, cancellation, cancel }) => {
+            cancellation_handlers.insert(id, (cancellation, cancel));
+        }
+        Ok(WatchdogCommand::Cancel { id, ack }) => {
+            handlers.remove(&id);
+            cancellation_handlers.remove(&id);
+            if let Some(ack) = ack { let _ = ack.send(()); }
+        }
         Ok(WatchdogCommand::Shutdown) => break,
         Err(RecvTimeoutError::Timeout) => { /* fire expired entries */ }
         Err(RecvTimeoutError::Disconnected) => break,
@@ -896,6 +928,10 @@ loop {
         let (_, id) = heap.pop().unwrap().0;
         if let Some(cancel) = handlers.remove(&id) { cancel(); }
     }
+    // Fire all externally cancelled registrations
+    for id in cancelled_ids(&cancellation_handlers) {
+        if let Some((_, cancel)) = cancellation_handlers.remove(&id) { cancel(); }
+    }
 }
 ```
 
@@ -903,6 +939,14 @@ Uses `BinaryHeap<Reverse<(Instant, u64)>>` (min-heap) — the same data structur
 libuv uses for its production timer facility in every Node.js process. Timer
 wheel crates (`hierarchical_hash_wheel_timer`, etc.) are over-engineered for
 this scale (tens-to-hundreds of concurrent watchdogs, not millions).
+
+**Landed implementation:** `RuntimeExecutor` now constructs one shared
+`WatchdogTimer` in `RuntimeExecutor::new()`, passes it through both worker and
+direct executor invocation paths, and shuts it down in `RuntimeExecutorInner::drop()`
+after workers have joined. `runtime.rs` registers timeout and external-cancellation
+termination callbacks instead of spawning per-invocation watchdog threads, and
+explicitly disarms those registrations before `JsRuntime` teardown so late timer
+delivery cannot outlive the isolate lifecycle.
 
 **Prior art references:**
 
@@ -914,19 +958,24 @@ this scale (tens-to-hundreds of concurrent watchdogs, not millions).
 - Node.js `vm` watchdog (`node_watchdog.cc`): spawns one thread per
   `runInContext()` — the exact anti-pattern this phase replaces.
 
-**Files to change:**
+**Files changed:**
 
-- `crates/neovex-runtime/src/watchdog.rs` (new) — `WatchdogTimer` struct.
-- `crates/neovex-runtime/src/runtime.rs` — Replace `std::thread::spawn` at
-  lines 1468 and 1504 with registration on `WatchdogTimer`.
-- `crates/neovex-runtime/src/executor.rs` — Construct `WatchdogTimer` in
-  `RuntimeExecutor::new()` and pass to workers. Shut down in `Drop`.
+- `crates/neovex-runtime/src/watchdog.rs` (new) — `WatchdogTimer`,
+  `WatchdogRegistration`, and targeted unit tests.
+- `crates/neovex-runtime/src/runtime.rs` — Replaced per-invocation
+  `std::thread::spawn(...)` timeout and external-cancellation watchdogs with
+  shared watchdog registration and acknowledged disarm.
+- `crates/neovex-runtime/src/executor.rs` — Constructed the shared
+  `WatchdogTimer` in `RuntimeExecutor::new()`, threaded it through worker and
+  direct invocation paths, and shut it down in `Drop`.
+- `crates/neovex-runtime/src/lib.rs` — Declared the new `watchdog` module.
 
 **Verification:**
 
 ```bash
-cargo test -p neovex-runtime
+cargo fmt --all --check
 cargo test -p neovex-server convex_http_demo_ -- --nocapture
+cargo test -p neovex-runtime
 ```
 
 ---
@@ -934,9 +983,9 @@ cargo test -p neovex-server convex_http_demo_ -- --nocapture
 ### EO5. Decouple V8 Workers from JS Permits with Suspend/Resume
 
 **Priority:** P2
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** EO4 (shared watchdog simplifies thread lifecycle)
-**Estimated scope:** ~400-500 LOC
+**Estimated scope:** ~500-700 LOC
 
 **Goal:** Decouple the worker thread count from the JS concurrency permit count
 so that I/O-bound invocations release their permit without releasing their
@@ -944,6 +993,13 @@ thread. More workers than permits means a waiting worker can acquire a freed
 permit and start a new invocation on a different thread while the original
 thread remains blocked on host I/O. The original thread resumes its invocation
 when the host call completes and it re-acquires a permit.
+
+EO5 also establishes the **primary runtime extensibility seam** for Neovex:
+the executor should extend by swapping per-thread worker-loop strategies, not
+by assuming every runtime model can be expressed as a single run-to-completion
+`invoke(...)` call. Today's deno_core path uses a run-to-completion worker loop.
+Future cooperative Locker, workerd-style, or other runtime models plug in by
+adding new worker-loop implementations above narrower runtime-specific helpers.
 
 This is the canonical architecture for deno_core embedders. Parked invocations
 **hold their thread** — they cannot yield it because `JsRuntime` is `!Send`
@@ -977,18 +1033,28 @@ The permit gates new work, so holding it during I/O starves queued invocations.
 ```
 RuntimeExecutor (global)
   owns incoming work queue, JS permit semaphore, worker thread handles
+  owns Arc<dyn WorkerLoopFactory>
   worker_threads > max_concurrent_isolates (e.g. 2:1 ratio)
 
-Worker thread lifecycle:
-  1. Receive job from global mpsc channel (blocking_recv)
-  2. Acquire JS permit from semaphore (may block if all permits held)
-  3. Create or reuse JsRuntime, drive with_event_loop_promise
-  4. During host I/O: permit suspend/resume via SharedInvocationPermit
-     - When first async host op starts: release JS permit
+WorkerLoopFactory (primary seam)
+  creates one WorkerLoop per worker thread
+
+RunToCompletionWorkerLoop (EO5 implementation)
+  owns one worker-local runtime backend
+  receives admitted jobs from RuntimeExecutor
+  acquires/re-acquires JS permits
+  invokes the runtime to completion for the current deno_core model
+
+Worker thread lifecycle in EO5:
+  1. Create one RunToCompletionWorkerLoop at worker startup
+  2. Receive admitted job from the global mpsc channel (blocking_recv)
+  3. Acquire JS permit from semaphore (may block if all permits held)
+  4. Drive the invocation to completion through the worker-local backend
+  5. During host I/O: SharedInvocationPermit releases the permit
      - Thread remains blocked in its Tokio runtime (cannot accept new jobs)
      - When last async host op completes: re-acquire JS permit (may block)
-  5. Invocation completes: release permit, drop or recycle JsRuntime
-  6. Return to step 1
+  6. Invocation completes: release permit, drop or recycle JsRuntime
+  7. Return to step 2
 ```
 
 **What the freed permit enables:** While thread A is blocked on host I/O
@@ -1013,6 +1079,48 @@ thread ([deno_core issue #708](https://github.com/denoland/deno_core/issues/708)
 | V8 Locker unavailable | [rusty_v8 #643](https://github.com/denoland/rusty_v8/issues/643) | Cannot unlock/relock isolates across threads |
 | `with_event_loop_promise` is opaque | `jsruntime.rs:2098` | No turn-boundary hooks inside deno_core's event loop |
 
+#### Layering and future runtime support
+
+EO5 needs two layers, with different responsibilities:
+
+```rust
+trait WorkerLoopFactory: Send + Sync + 'static {
+    fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop>;
+}
+
+trait WorkerLoop: Send + 'static {
+    fn run(
+        &mut self,
+        jobs: RuntimeWorkerJobReceiver,
+        shutdown: RuntimeWorkerShutdown,
+    );
+}
+```
+
+- **Primary seam: `WorkerLoopFactory` / `WorkerLoop`.** This is the executor
+  boundary. The executor spawns threads and hands each thread one worker loop.
+  Future cooperative runtimes change behavior here.
+- **Secondary seam: `RuntimeBackendFactory` / `RuntimeBackend`.** This is a
+  worker-local helper used by the current run-to-completion loop. It is not the
+  executor's primary extension point.
+
+Concrete shapes:
+
+- **EO5 now:** `RunToCompletionWorkerLoopFactory` creates
+  `RunToCompletionWorkerLoop`, which owns a worker-local
+  `DenoRuntimeBackend`. That backend still exposes a single
+  `invoke(...) -> Result<Value>` helper for today's deno_core model.
+- **Future Locker/workerd-style path:** `CooperativeWorkerLoopFactory` creates
+  a `CooperativeWorkerLoop` that owns runnable/parked queues, warm-runtime
+  pools, and routing. It may still use runtime-specific helpers underneath, but
+  it cannot be expressed as a single `invoke(...)` call.
+- **Future Wasmtime/WASM path:** Neovex can either reuse
+  `RunToCompletionWorkerLoop` with a `WasmtimeRuntimeBackend`, or add a
+  different loop if benchmarking justifies it.
+
+This keeps today's implementation clean without forcing tomorrow's cooperative
+models through the wrong abstraction.
+
 #### Implementation steps
 
 1. **Decouple worker pool sizing from JS permit count.**
@@ -1020,18 +1128,30 @@ thread ([deno_core issue #708](https://github.com/denoland/deno_core/issues/708)
    `RuntimeLimits`. Default: `worker_threads = 2 * max_concurrent_isolates`.
    Workers acquire JS permits before starting each invocation; extra workers
    sit blocked on permit acquisition until a parked invocation releases one.
-2. **Add permit suspend/resume to the host bridge path.**
+2. **Introduce the worker-loop seam at the executor boundary.**
+   Add `WorkerLoopFactory` and `WorkerLoop` as the executor's primary
+   extension point. EO5 should implement
+   `RunToCompletionWorkerLoopFactory` / `RunToCompletionWorkerLoop` only.
+   `RuntimeExecutor` creates one worker loop per worker thread and calls
+   `worker_loop.run(...)` instead of embedding the run-to-completion logic
+   directly in `executor.rs`.
+3. **Keep the runtime-specific backend seam worker-local and secondary.**
+   Add `RuntimeBackendFactory` / `RuntimeBackend` below the worker loop. The
+   current `DenoRuntimeBackend` keeps the single `invoke(...)` helper, but only
+   `RunToCompletionWorkerLoop` consumes it. The executor must not call
+   `backend.invoke(...)` directly.
+4. **Add permit suspend/resume to the host bridge path.**
    Create a `SharedInvocationPermit` (stored in deno_core `OpState`) that
    tracks in-flight async host ops. In `op_neovex_async_host_call`
    (`runtime.rs:1251`), wrap the host bridge future: increment in-flight
    count on start (release permit if 0→1), decrement on completion
    (re-acquire permit if 1→0). Use `Rc<RefCell<...>>` (safe because
    single-threaded) with an `Arc<Semaphore>` reference for the permit.
-3. **Add timeout pausing during permit re-acquire.**
+5. **Add timeout pausing during permit re-acquire.**
    When the last host op completes and the invocation needs to re-acquire
    its JS permit, the user-visible timeout should pause. The re-acquire wait
    is backpressure, not user code execution.
-4. **Split per-tenant admission into active, in-flight, and queued limits.**
+6. **Split per-tenant admission into active, in-flight, and queued limits.**
    Replace the current single `max_top_level_invocations_per_tenant` knob with
    two explicit limits:
    - `max_active_top_level_invocations_per_tenant`: invocations currently
@@ -1060,7 +1180,7 @@ preemptively as an architecture invariant.
 3. **Timeout semantics must account for permit re-acquire.** Pause user
    timeout during re-acquire wait (backpressure, not user code).
 
-#### Forward compatibility: cooperative time-slicing
+#### Forward compatibility: worker loops first, runtime helpers second
 
 The oversubscribed-workers-with-permit-suspend model is the correct and
 complete architecture for deno_core today. Two future changes could unlock
@@ -1073,39 +1193,42 @@ per-thread cooperative multi-isolate switching:
 
 To avoid painting ourselves into a corner, keep two boundaries clean:
 
-- **Do not hardcode `deno_core::JsRuntime` in the executor.** Put a thin
-  worker-local backend seam between the executor and the runtime. The
-  executor should own an `Arc<dyn RuntimeBackendFactory>` and each worker
-  thread should create its own `Box<dyn RuntimeBackend>` at startup. Today
-  `DenoRuntimeBackendFactory` creates a worker-local `DenoRuntimeBackend`
-  whose single `invoke(...)` method wraps the existing `invoke_loaded_bundle`
-  + `with_event_loop_promise` path. This is not a turn-driver or
-  capability-negotiation framework — it is a single-method seam that keeps
-  deno_core types out of executor scheduling logic without sharing one
-  mutable backend across all workers.
+- **Do not hardcode one execution model into the executor.** Put the primary
+  seam at the worker-loop level. The executor should own an
+  `Arc<dyn WorkerLoopFactory>` and each worker thread should create its own
+  `Box<dyn WorkerLoop>`. Today's run-to-completion deno path is one loop
+  implementation; future cooperative Locker or workerd-like runtimes are other
+  loop implementations.
+- **Do not leak runtime-specific types across the worker-loop boundary.**
+  `RunToCompletionWorkerLoop` may own a worker-local
+  `RuntimeBackendFactory` / `RuntimeBackend` helper so deno_core types stay out
+  of the executor. Future cooperative loops can use different runtime helpers
+  without pretending they are just another `invoke(...)` backend.
 - **Do not hardcode `worker_threads == 1 per isolate` assumptions in
   admission control.** Track permits and threads as independent resources so
   a future backend that supports cooperative switching can use fewer threads
   than permits without restructuring the admission controller.
 
-When V8 Locker lands in rusty_v8, a future phase can keep this backend seam
-but still introduce executor changes for runnable/parked scheduling. The thin
-trait reduces deno_core-specific blast radius; it does **not** eliminate the
-need for executor work if Neovex later adopts true cooperative switching.
+When V8 Locker lands in rusty_v8, a future phase can keep the current
+run-to-completion loop for standard deno tenants/functions, add a separate
+cooperative worker-loop implementation for Locker-enabled V8 backends, and make
+routing/config decide which loop model is used per tenant or function. That is
+the level where future V8, workerd, and WASM backends should plug in.
 
 #### Files to change
 
-- `crates/neovex-runtime/src/backend.rs` (new) — `RuntimeBackend` trait with
-  a single `invoke` method plus `RuntimeBackendFactory` that creates one
-  backend per worker thread. `DenoRuntimeBackendFactory` creates worker-local
+- `crates/neovex-runtime/src/worker_loop.rs` (new) — `WorkerLoop`,
+  `WorkerLoopFactory`, `RunToCompletionWorkerLoop`, and
+  `RunToCompletionWorkerLoopFactory`. This is the executor's primary seam.
+- `crates/neovex-runtime/src/backend.rs` (new) — worker-local
+  `RuntimeBackendFactory` / `RuntimeBackend` helper for the current
+  run-to-completion loop. `DenoRuntimeBackendFactory` creates worker-local
   `DenoRuntimeBackend` instances that delegate to the existing
-  `invoke_loaded_bundle` + `with_event_loop_promise` path. No capability
-  negotiation, no turn-driver, no generic `TurnOutcome`.
+  `invoke_loaded_bundle` + `with_event_loop_promise` path.
 - `crates/neovex-runtime/src/executor.rs` — Accept
-  `Arc<dyn RuntimeBackendFactory>` (or generic factory). Each worker thread
-  creates its own backend instance at startup, then calls `backend.invoke(...)`
-  instead of directly calling runtime functions. Decouple `worker_threads`
-  from `max_concurrent_isolates`.
+  `Arc<dyn WorkerLoopFactory>` (or generic factory). Each worker thread creates
+  one worker loop at startup and calls `worker_loop.run(...)`. Decouple
+  `worker_threads` from `max_concurrent_isolates`.
 - `crates/neovex-runtime/src/limits.rs` — Add `worker_threads` to
   `RuntimeLimits`. Replace `max_top_level_invocations_per_tenant` with
   `max_active_top_level_invocations_per_tenant` and
@@ -1125,6 +1248,7 @@ need for executor work if Neovex later adopts true cooperative switching.
 | Permit re-acquire on resume | Convex | `isolate/src/concurrency_limiter.rs:183-186` |
 | UDF suspend during DB syscall | Convex | `isolate/src/environment/udf/mod.rs:875-906` |
 | Decoupled workers from permits | Convex | `isolate/src/client.rs:1135-1192` |
+| Thread-level cooperative worker loop | Cloudflare | [workerd](https://github.com/cloudflare/workerd) |
 | One isolate per thread (production) | Supabase | [edge-runtime](https://github.com/supabase/edge-runtime) |
 | Cooperative switching via C++ Locker | Cloudflare | [workerd](https://github.com/cloudflare/workerd) |
 | `JsRuntime` is `!Send` | deno_core 0.395.0 | `runtime/jsruntime.rs` struct definition |
@@ -1144,8 +1268,8 @@ cargo test -p neovex-runtime parked_invocation_resumes_after_host_completion -- 
 # New test: parked invocation no longer counts toward active limit but still
 # counts toward the tenant in-flight limit
 cargo test -p neovex-runtime parked_invocation_counts_toward_in_flight_limit -- --nocapture
-# New test: timeout accounting excludes parked host-wait time
-cargo test -p neovex-runtime timeout_excludes_parked_host_wait -- --nocapture
+# New test: timeout accounting excludes permit re-acquire wait
+cargo test -p neovex-runtime timeout_excludes_permit_reacquire_wait -- --nocapture
 ```
 
 ---
@@ -1153,7 +1277,7 @@ cargo test -p neovex-runtime timeout_excludes_parked_host_wait -- --nocapture
 ### EO6. Delete RuntimeHostExecutor
 
 **Priority:** P3
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** Nothing
 **Estimated scope:** ~50 LOC (deletion)
 
@@ -1180,7 +1304,7 @@ cargo test -p neovex-runtime
 ### EO7. Concurrent Tenant Scheduling
 
 **Priority:** P3
-**Status:** `todo`
+**Status:** `done`
 **Depends on:** EO1 (shutdown needed for scheduler drain)
 **Estimated scope:** ~200 LOC
 
@@ -1227,33 +1351,31 @@ cargo test -p neovex-engine scheduler_ -- --nocapture
 **Status:** `deferred`
 **Depends on:** EO1, EO2
 
-**Goal:** Layered admission control with different grant mechanisms per work type,
-following CockroachDB's model.
+**Goal:** Isolate latency and overload between work classes by admitting each
+class at the correct resource boundary, with sane default limits and operator
+knobs only after the boundary itself is justified by evidence.
 
-**Design sketch:**
+**Companion plan:** `docs/plans/layered-admission-control-plan.md`
 
-| Work type | Grant mechanism | Bound |
-|-----------|----------------|-------|
-| Mutations (HTTP, WS) | CoDel at outer gate (EO2) + capacity at inner gate | `mutation_journal_queue_capacity` |
-| Queries (HTTP, WS) | Slots (returned on completion) | `max_concurrent_queries` |
-| V8 invocations | Oversubscribed worker pool with permit suspend/resume during host I/O (EO5) | `max_concurrent_isolates`, `worker_threads`, per-tenant active/in-flight caps |
-| Storage I/O | IOPS budget (semaphore, EO1) | Read/write semaphore counts |
-| Scheduled jobs | Slots | `max_concurrent_scheduled_jobs` |
+Keep this section short. The standalone companion plan owns the full EO8
+background:
 
-**Prior art references:**
+- codebase architecture review
+- battle-tested prior art
+- current Neovex observability surfaces
+- instrumentation gaps
+- experiment workflow
+- promotion matrix and default-setting guidance
 
-- CockroachDB admission control:
-  `cockroachdb/cockroach/pkg/util/admission/admission.go` — slots for KV,
-  tokens for SQL, IO tokens for LSM health. Grant chaining for feedback.
-- TigerBeetle `IOPSType`:
-  `tigerbeetle/tigerbeetle/src/stdx/iops.zig` — fixed-size array with bitmap.
-  `acquire()` returns null when full.
-- Convex per-client isolate fairness:
-  `get-convex/convex-backend/crates/isolate/src/client.rs` —
-  `max_percent_per_client` prevents single-tenant monopolization.
+EO8 remains **design-only** until an experiment report identifies the first
+specific boundary to promote. The leading candidate slices remain:
 
-This phase is design-only. Implementation should be driven by load testing
-results that reveal which admission boundary matters most.
+- query slots
+- scheduled-job slots
+- storage sub-budgets
+- stronger tenant isolation
+
+If the experiment does not clearly identify one of those, keep `EO8` deferred.
 
 ---
 
@@ -1267,8 +1389,9 @@ After each roadmap item, update `ARCHITECTURE.md`:
 | EO2 | Execution domains table: note CoDel admission at outer gate, capacity at inner gate |
 | EO3 | Subscription delivery description: note queue-level work-item merging |
 | EO4 | Execution domains table (line 282): change "short-lived OS threads per active invocation" to "shared `WatchdogTimer`" |
-| EO5 | Execution domains table: note oversubscribed worker pool with permit suspend/resume during host I/O. Document `JsRuntime` `!Send` and one-isolate-per-thread as architecture invariants. Add worker-local `RuntimeBackend` / `RuntimeBackendFactory` seam plus per-tenant active/in-flight runtime admission limits to crate-level docs. |
+| EO5 | Execution domains table: note oversubscribed worker pool with permit suspend/resume during host I/O. Document `JsRuntime` `!Send` and one-isolate-per-thread as architecture invariants. Add `WorkerLoop` / `WorkerLoopFactory` as the primary executor seam, keep the worker-local `RuntimeBackend` helper below it, and document per-tenant active/in-flight runtime admission limits. |
 | EO6 | Remove `host_executor.rs` entry (line 234) |
+| EO8 | When promoted, document the specific new gate in the execution domains table: protected resource, work class, default bound, overload behavior, and whether the limit is global, per-tenant, or both. |
 
 Add a new architecture invariant after `EO1`:
 
@@ -1429,11 +1552,11 @@ CockroachDB that should guide all implementation in this plan:
    a mixed system with V8, HTTP, WebSocket, and storage execution domains that
    genuinely have different lifecycles.
 
-10. **Keep a thin worker-local seam between the executor and the runtime.**
-    Today's constraints (deno_core `JsRuntime` is `!Send`, no V8 Locker, one
-    isolate per thread) are current limitations, not permanent architecture. A
-    single-method `RuntimeBackend` plus `RuntimeBackendFactory` prevents
-    deno_core types from leaking into executor scheduling logic while still
-    giving each worker its own backend instance. A future backend (V8 with
-    Locker, WASM, workerd) can reuse that seam, but true cooperative switching
-    would still be a follow-on executor phase rather than a backend-only swap.
+10. **Put the primary runtime seam at the worker-loop level.** Today's
+    constraints (deno_core `JsRuntime` is `!Send`, no V8 Locker, one isolate
+    per thread) are current limitations, not permanent architecture. The
+    executor should extend through `WorkerLoop` / `WorkerLoopFactory`, with any
+    worker-local `RuntimeBackend` helper living below that seam. That keeps the
+    current run-to-completion deno path clean while letting future Locker V8,
+    workerd, or WASM runtimes add different execution models without retrofitting
+    the executor around a per-invocation `invoke(...)` abstraction.

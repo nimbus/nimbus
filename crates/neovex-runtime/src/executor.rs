@@ -1,8 +1,11 @@
+use std::cell::RefCell;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 #[cfg(test)]
@@ -10,32 +13,38 @@ use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot};
 use tracing::debug;
 
 use crate::context::RuntimeInvocationContext;
 use crate::error::{NeovexRuntimeError, Result};
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
-use crate::runtime::{InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeWorkerIsolatePool};
+use crate::runtime::{
+    InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeInvocationExecution,
+    RuntimeInvocationTimeoutController,
+};
+use crate::watchdog::WatchdogTimer;
+use crate::worker_loop::{RunToCompletionWorkerLoopFactory, WorkerLoopFactory};
 
-struct RuntimeWorkerJob {
-    runtime: NeovexRuntime,
-    bundle: RuntimeBundle,
-    request: InvocationRequest,
-    context: RuntimeInvocationContext,
-    cancellation: Option<HostCallCancellation>,
-    enqueued_at: Instant,
-    result_tx: RuntimeWorkerResultSender,
+pub(crate) struct RuntimeWorkerJob {
+    pub(crate) runtime: NeovexRuntime,
+    pub(crate) bundle: RuntimeBundle,
+    pub(crate) request: InvocationRequest,
+    pub(crate) context: RuntimeInvocationContext,
+    pub(crate) cancellation: Option<HostCallCancellation>,
+    pub(crate) enqueued_at: Instant,
+    pub(crate) result_tx: RuntimeWorkerResultSender,
+    pub(crate) dispatch_handle: Option<RuntimeInvocationDispatchHandle>,
 }
 
-enum RuntimeWorkerResultSender {
+pub(crate) enum RuntimeWorkerResultSender {
     Async(oneshot::Sender<Result<Value>>),
     Blocking(std::sync::mpsc::SyncSender<Result<Value>>),
 }
 
 impl RuntimeWorkerResultSender {
-    fn send(self, result: Result<Value>) {
+    pub(crate) fn send(self, result: Result<Value>) {
         match self {
             Self::Async(result_tx) => {
                 let _ = result_tx.send(result);
@@ -47,6 +56,38 @@ impl RuntimeWorkerResultSender {
     }
 }
 
+pub(crate) trait RuntimeWorkerQueue: Send + Sync + 'static {
+    fn recv_blocking(&self) -> Option<RuntimeWorkerJob>;
+
+    fn complete_job(
+        &self,
+        job: RuntimeWorkerJob,
+        result: Result<Value>,
+        ready_jobs: Vec<RuntimeWorkerJob>,
+    );
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeWorkerShutdown {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RuntimeWorkerShutdown {
+    fn new() -> Self {
+        Self {
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeExecutor {
     inner: Arc<RuntimeExecutorInner>,
@@ -54,8 +95,10 @@ pub struct RuntimeExecutor {
 
 struct RuntimeExecutorInner {
     policy: Arc<RuntimePolicy>,
-    sender: Arc<Mutex<Option<mpsc::Sender<RuntimeWorkerJob>>>>,
+    queue: Arc<RuntimeWorkerQueueController>,
     admission: Arc<RuntimeExecutorAdmission>,
+    shutdown: RuntimeWorkerShutdown,
+    watchdog: WatchdogTimer,
     worker_count: usize,
     queue_capacity: usize,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
@@ -64,7 +107,7 @@ struct RuntimeExecutorInner {
 }
 
 #[cfg(test)]
-struct RuntimeExecutorTestState {
+pub(crate) struct RuntimeExecutorTestState {
     next_worker_runtime_id: AtomicUsize,
     worker_runtime_builds: AtomicUsize,
     worker_thread_runtime_ids: Mutex<HashMap<ThreadId, usize>>,
@@ -80,7 +123,7 @@ impl RuntimeExecutorTestState {
         }
     }
 
-    fn register_current_worker_runtime(&self) {
+    pub(crate) fn register_current_worker_runtime(&self) {
         let worker_runtime_id = self.next_worker_runtime_id.fetch_add(1, Ordering::Relaxed);
         self.worker_runtime_builds.fetch_add(1, Ordering::Relaxed);
         self.worker_thread_runtime_ids
@@ -102,6 +145,444 @@ impl RuntimeExecutorTestState {
     }
 }
 
+struct RuntimeWorkerQueueController {
+    receiver: Arc<Mutex<mpsc::Receiver<RuntimeWorkerJob>>>,
+    sender: Arc<Mutex<Option<mpsc::Sender<RuntimeWorkerJob>>>>,
+}
+
+impl RuntimeWorkerQueueController {
+    fn new(
+        receiver: Arc<Mutex<mpsc::Receiver<RuntimeWorkerJob>>>,
+        sender: Arc<Mutex<Option<mpsc::Sender<RuntimeWorkerJob>>>>,
+    ) -> Self {
+        Self { receiver, sender }
+    }
+
+    async fn dispatch_job(&self, job: RuntimeWorkerJob) -> Result<()> {
+        let dispatch_handle = job.dispatch_handle.clone();
+        let sender = self
+            .sender
+            .lock()
+            .expect("runtime executor sender lock should not be poisoned")
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
+            })?;
+        sender.send(job).await.map_err(|error| {
+            if let Some(dispatch_handle) = dispatch_handle {
+                dispatch_handle.rollback_dispatch();
+            }
+            drop(error);
+            NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
+        })
+    }
+
+    fn dispatch_job_blocking(&self, job: RuntimeWorkerJob) -> Result<()> {
+        let dispatch_handle = job.dispatch_handle.clone();
+        let sender = self
+            .sender
+            .lock()
+            .expect("runtime executor sender lock should not be poisoned")
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
+            })?;
+        sender.blocking_send(job).map_err(|error| {
+            if let Some(dispatch_handle) = dispatch_handle {
+                dispatch_handle.rollback_dispatch();
+            }
+            drop(error);
+            NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
+        })
+    }
+
+    fn close(&self) {
+        self.sender
+            .lock()
+            .expect("runtime executor sender lock should not be poisoned")
+            .take();
+    }
+}
+
+impl RuntimeWorkerQueue for RuntimeWorkerQueueController {
+    fn recv_blocking(&self) -> Option<RuntimeWorkerJob> {
+        let mut receiver = self
+            .receiver
+            .lock()
+            .expect("runtime executor receiver lock should not be poisoned");
+        receiver.blocking_recv()
+    }
+
+    fn complete_job(
+        &self,
+        job: RuntimeWorkerJob,
+        result: Result<Value>,
+        ready_jobs: Vec<RuntimeWorkerJob>,
+    ) {
+        job.result_tx.send(result);
+        for ready_job in ready_jobs {
+            let dispatch_handle = ready_job.dispatch_handle.clone();
+            let dispatch_sender = self
+                .sender
+                .lock()
+                .expect("runtime executor sender lock should not be poisoned")
+                .as_ref()
+                .cloned();
+            match dispatch_sender {
+                Some(dispatch_sender) => match dispatch_sender.blocking_send(ready_job) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        let failed_job = error.0;
+                        if let Some(dispatch_handle) = dispatch_handle {
+                            dispatch_handle.rollback_dispatch();
+                        }
+                        failed_job.result_tx.send(Err(NeovexRuntimeError::Contract(
+                            "runtime executor unexpectedly closed".to_string(),
+                        )));
+                    }
+                },
+                None => {
+                    if let Some(dispatch_handle) = dispatch_handle {
+                        dispatch_handle.rollback_dispatch();
+                    }
+                    ready_job.result_tx.send(Err(NeovexRuntimeError::Contract(
+                        "runtime executor unexpectedly closed".to_string(),
+                    )));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeInvocationDispatchHandle {
+    admission: Arc<RuntimeExecutorAdmission>,
+    tenant_label: String,
+    active_semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+impl RuntimeInvocationDispatchHandle {
+    async fn acquire_active_permit(&self) -> Result<OwnedSemaphorePermit> {
+        self.admission
+            .acquire_active_permit(&self.tenant_label, self.active_semaphore.clone())
+            .await
+    }
+
+    fn mark_active_entered(&self) {
+        self.admission.mark_active_entered(&self.tenant_label);
+    }
+
+    fn mark_active_suspended(&self) {
+        self.admission.mark_active_suspended(&self.tenant_label);
+    }
+
+    fn complete_invocation(&self, was_active: bool) -> Vec<RuntimeWorkerJob> {
+        self.admission
+            .complete_dispatched_job(&self.tenant_label, was_active)
+    }
+
+    fn rollback_dispatch(&self) {
+        self.admission.rollback_dispatched_job(&self.tenant_label);
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SharedInvocationPermit {
+    inner: Rc<RefCell<SharedInvocationPermitState>>,
+}
+
+struct SharedInvocationPermitState {
+    policy: Arc<RuntimePolicy>,
+    tenant_label: Option<String>,
+    dispatch_handle: Option<RuntimeInvocationDispatchHandle>,
+    bypasses_concurrency_limit: bool,
+    cancellation: Option<HostCallCancellation>,
+    initial_queue_started_at: Option<Instant>,
+    js_permit: Option<OwnedSemaphorePermit>,
+    active_permit: Option<OwnedSemaphorePermit>,
+    active_entered: bool,
+    invocation_started: bool,
+    in_flight_host_ops: usize,
+    invocation_finished: bool,
+    timeout_controller: Option<RuntimeInvocationTimeoutController>,
+}
+
+impl SharedInvocationPermit {
+    pub(crate) fn new(
+        policy: Arc<RuntimePolicy>,
+        tenant_label: Option<String>,
+        dispatch_handle: Option<RuntimeInvocationDispatchHandle>,
+        bypasses_concurrency_limit: bool,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(SharedInvocationPermitState {
+                policy,
+                tenant_label,
+                dispatch_handle,
+                bypasses_concurrency_limit,
+                cancellation,
+                initial_queue_started_at: None,
+                js_permit: None,
+                active_permit: None,
+                active_entered: false,
+                invocation_started: false,
+                in_flight_host_ops: 0,
+                invocation_finished: false,
+                timeout_controller: None,
+            })),
+        }
+    }
+
+    pub(crate) fn set_timeout_controller(&self, controller: RuntimeInvocationTimeoutController) {
+        self.inner.borrow_mut().timeout_controller = Some(controller);
+    }
+
+    pub(crate) fn clear_timeout_controller(&self) {
+        self.inner.borrow_mut().timeout_controller = None;
+    }
+
+    pub(crate) async fn acquire_initial(&mut self, queue_started_at: Instant) -> Result<()> {
+        self.inner.borrow_mut().initial_queue_started_at = Some(queue_started_at);
+        let (policy, tenant_label, dispatch_handle, cancellation, bypasses_concurrency_limit) = {
+            let state = self.inner.borrow();
+            (
+                state.policy.clone(),
+                state.tenant_label.clone(),
+                state.dispatch_handle.clone(),
+                state.cancellation.clone(),
+                state.bypasses_concurrency_limit,
+            )
+        };
+
+        if bypasses_concurrency_limit {
+            policy
+                .metrics()
+                .record_invocation_started_for_tenant(tenant_label.as_deref());
+            policy
+                .metrics()
+                .increment_active_isolates_for_tenant(tenant_label.as_deref());
+            let mut state = self.inner.borrow_mut();
+            state.active_entered = true;
+            state.invocation_started = true;
+            return Ok(());
+        }
+
+        policy.metrics().increment_queued_invocations();
+        let active_permit = match dispatch_handle.clone() {
+            Some(dispatch_handle) => {
+                let permit = dispatch_handle.acquire_active_permit().await?;
+                if cancellation
+                    .as_ref()
+                    .is_some_and(HostCallCancellation::is_cancelled)
+                {
+                    drop(permit);
+                    policy.metrics().decrement_queued_invocations();
+                    return Err(NeovexRuntimeError::Cancelled);
+                }
+                Some(permit)
+            }
+            None => None,
+        };
+
+        let js_permit = policy
+            .isolate_semaphore()
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                NeovexRuntimeError::Contract(
+                    "runtime isolate semaphore unexpectedly closed".to_string(),
+                )
+            })?;
+        policy.metrics().decrement_queued_invocations();
+
+        if let Some(dispatch_handle) = &dispatch_handle {
+            dispatch_handle.mark_active_entered();
+        }
+        policy
+            .metrics()
+            .record_queue_wait_for_tenant(tenant_label.as_deref(), queue_started_at.elapsed());
+        policy
+            .metrics()
+            .record_invocation_started_for_tenant(tenant_label.as_deref());
+        policy
+            .metrics()
+            .increment_active_isolates_for_tenant(tenant_label.as_deref());
+
+        let mut state = self.inner.borrow_mut();
+        state.active_permit = active_permit;
+        state.js_permit = Some(js_permit);
+        state.active_entered = true;
+        state.invocation_started = true;
+        Ok(())
+    }
+
+    pub(crate) fn begin_async_host_call(&self) {
+        let (policy, tenant_label, dispatch_handle, dropped_js_permit, dropped_active_permit) = {
+            let mut state = self.inner.borrow_mut();
+            state.in_flight_host_ops += 1;
+            if state.bypasses_concurrency_limit || state.in_flight_host_ops != 1 {
+                return;
+            }
+            let policy = state.policy.clone();
+            let tenant_label = state.tenant_label.clone();
+            let dispatch_handle = state.dispatch_handle.clone();
+            let js_permit = state.js_permit.take();
+            let active_permit = state.active_permit.take();
+            if state.active_entered {
+                state.active_entered = false;
+            }
+            (
+                policy,
+                tenant_label,
+                dispatch_handle,
+                js_permit,
+                active_permit,
+            )
+        };
+
+        if let Some(dispatch_handle) = dispatch_handle {
+            dispatch_handle.mark_active_suspended();
+        }
+        policy
+            .metrics()
+            .decrement_active_isolates_for_tenant(tenant_label.as_deref());
+        drop(dropped_js_permit);
+        drop(dropped_active_permit);
+    }
+
+    pub(crate) async fn complete_async_host_call(&self) -> Result<()> {
+        let (policy, tenant_label, dispatch_handle, cancellation, timeout_controller) = {
+            let mut state = self.inner.borrow_mut();
+            state.in_flight_host_ops = state.in_flight_host_ops.saturating_sub(1);
+            if state.bypasses_concurrency_limit
+                || state.invocation_finished
+                || state.in_flight_host_ops != 0
+            {
+                return Ok(());
+            }
+            (
+                state.policy.clone(),
+                state.tenant_label.clone(),
+                state.dispatch_handle.clone(),
+                state.cancellation.clone(),
+                state.timeout_controller.clone(),
+            )
+        };
+
+        if cancellation
+            .as_ref()
+            .is_some_and(HostCallCancellation::is_cancelled)
+        {
+            return Ok(());
+        }
+
+        if let Some(timeout_controller) = timeout_controller.clone() {
+            timeout_controller.pause().await;
+        }
+
+        policy.metrics().increment_queued_invocations();
+        let active_permit = match dispatch_handle.clone() {
+            Some(dispatch_handle) => {
+                let permit = dispatch_handle.acquire_active_permit().await?;
+                if cancellation
+                    .as_ref()
+                    .is_some_and(HostCallCancellation::is_cancelled)
+                {
+                    drop(permit);
+                    policy.metrics().decrement_queued_invocations();
+                    return Ok(());
+                }
+                Some(permit)
+            }
+            None => None,
+        };
+        let js_permit = policy
+            .isolate_semaphore()
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                NeovexRuntimeError::Contract(
+                    "runtime isolate semaphore unexpectedly closed".to_string(),
+                )
+            })?;
+        policy.metrics().decrement_queued_invocations();
+
+        if let Some(dispatch_handle) = &dispatch_handle {
+            dispatch_handle.mark_active_entered();
+        }
+        policy
+            .metrics()
+            .increment_active_isolates_for_tenant(tenant_label.as_deref());
+
+        {
+            let mut state = self.inner.borrow_mut();
+            state.active_permit = active_permit;
+            state.js_permit = Some(js_permit);
+            state.active_entered = true;
+        }
+
+        if let Some(timeout_controller) = timeout_controller {
+            timeout_controller.resume()?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn drop_async_host_call(&self) {
+        let mut state = self.inner.borrow_mut();
+        state.in_flight_host_ops = state.in_flight_host_ops.saturating_sub(1);
+    }
+
+    pub(crate) async fn finish_invocation(&self) -> Vec<RuntimeWorkerJob> {
+        let (
+            policy,
+            tenant_label,
+            dispatch_handle,
+            js_permit,
+            active_permit,
+            was_active,
+            invocation_started,
+        ) = {
+            let mut state = self.inner.borrow_mut();
+            if state.invocation_finished {
+                return Vec::new();
+            }
+            state.invocation_finished = true;
+            (
+                state.policy.clone(),
+                state.tenant_label.clone(),
+                state.dispatch_handle.clone(),
+                state.js_permit.take(),
+                state.active_permit.take(),
+                std::mem::take(&mut state.active_entered),
+                state.invocation_started,
+            )
+        };
+
+        drop(js_permit);
+        drop(active_permit);
+
+        let ready_jobs = match dispatch_handle {
+            Some(dispatch_handle) => dispatch_handle.complete_invocation(was_active),
+            None => Vec::new(),
+        };
+        if was_active {
+            policy
+                .metrics()
+                .decrement_active_isolates_for_tenant(tenant_label.as_deref());
+        }
+        if invocation_started {
+            policy
+                .metrics()
+                .record_invocation_completed_for_tenant(tenant_label.as_deref());
+        }
+        ready_jobs
+    }
+}
+
 struct RuntimeExecutorAdmission {
     policy: Arc<RuntimePolicy>,
     state: Mutex<RuntimeExecutorAdmissionState>,
@@ -113,11 +594,28 @@ struct RuntimeExecutorAdmissionState {
     queued_tenants: VecDeque<String>,
 }
 
-#[derive(Default)]
 struct RuntimeExecutorTenantAdmissionState {
-    in_flight: usize,
+    active_invocations: usize,
+    parked_invocations: usize,
+    active_semaphore: Arc<tokio::sync::Semaphore>,
     queued_jobs: VecDeque<RuntimeWorkerJob>,
     queued_in_rotation: bool,
+}
+
+impl RuntimeExecutorTenantAdmissionState {
+    fn new(max_active: usize) -> Self {
+        Self {
+            active_invocations: 0,
+            parked_invocations: 0,
+            active_semaphore: Arc::new(tokio::sync::Semaphore::new(max_active.max(1))),
+            queued_jobs: VecDeque::new(),
+            queued_in_rotation: false,
+        }
+    }
+
+    fn total_in_flight(&self) -> usize {
+        self.active_invocations + self.parked_invocations
+    }
 }
 
 enum RuntimeExecutorAdmissionDecision {
@@ -133,21 +631,33 @@ impl RuntimeExecutorAdmission {
         }
     }
 
-    fn admit_job(&self, job: RuntimeWorkerJob) -> Result<RuntimeExecutorAdmissionDecision> {
+    fn admit_job(
+        self: &Arc<Self>,
+        mut job: RuntimeWorkerJob,
+    ) -> Result<RuntimeExecutorAdmissionDecision> {
         let Some(tenant_label) = Self::fairness_tenant_label(&job).map(str::to_owned) else {
             return Ok(RuntimeExecutorAdmissionDecision::Dispatch(Box::new(job)));
         };
 
         let limits = self.policy.limits();
-        let max_in_flight = limits.max_top_level_invocations_per_tenant;
+        let max_active = limits.max_active_top_level_invocations_per_tenant;
+        let max_in_flight = limits.max_in_flight_top_level_invocations_per_tenant;
         let max_queued = limits.max_queued_top_level_invocations_per_tenant;
         let mut state = self
             .state
             .lock()
             .expect("runtime executor admission lock should not be poisoned");
-        let tenant_state = state.tenants.entry(tenant_label.clone()).or_default();
-        if tenant_state.in_flight < max_in_flight && tenant_state.queued_jobs.is_empty() {
-            tenant_state.in_flight += 1;
+        let tenant_state = state
+            .tenants
+            .entry(tenant_label.clone())
+            .or_insert_with(|| RuntimeExecutorTenantAdmissionState::new(max_active));
+        if tenant_state.total_in_flight() < max_in_flight && tenant_state.queued_jobs.is_empty() {
+            tenant_state.parked_invocations += 1;
+            job.dispatch_handle = Some(RuntimeInvocationDispatchHandle {
+                admission: self.clone(),
+                tenant_label,
+                active_semaphore: tenant_state.active_semaphore.clone(),
+            });
             return Ok(RuntimeExecutorAdmissionDecision::Dispatch(Box::new(job)));
         }
         if tenant_state.queued_jobs.len() >= max_queued {
@@ -169,50 +679,6 @@ impl RuntimeExecutorAdmission {
         Ok(RuntimeExecutorAdmissionDecision::Queued)
     }
 
-    fn release_dispatched_job(
-        &self,
-        tenant_label: Option<&str>,
-        bypasses_concurrency_limit: bool,
-    ) -> Vec<RuntimeWorkerJob> {
-        let Some(tenant_label) = (!bypasses_concurrency_limit)
-            .then_some(tenant_label)
-            .flatten()
-        else {
-            return Vec::new();
-        };
-        let max_in_flight = self.policy.limits().max_top_level_invocations_per_tenant;
-        let mut state = self
-            .state
-            .lock()
-            .expect("runtime executor admission lock should not be poisoned");
-        if let Some(tenant_state) = state.tenants.get_mut(tenant_label) {
-            tenant_state.in_flight = tenant_state.in_flight.saturating_sub(1);
-        }
-        Self::cleanup_tenant_locked(&mut state, tenant_label);
-        Self::promote_ready_jobs_locked(&mut state, max_in_flight)
-    }
-
-    fn rollback_dispatched_job(
-        &self,
-        tenant_label: Option<&str>,
-        bypasses_concurrency_limit: bool,
-    ) {
-        let Some(tenant_label) = (!bypasses_concurrency_limit)
-            .then_some(tenant_label)
-            .flatten()
-        else {
-            return;
-        };
-        let mut state = self
-            .state
-            .lock()
-            .expect("runtime executor admission lock should not be poisoned");
-        if let Some(tenant_state) = state.tenants.get_mut(tenant_label) {
-            tenant_state.in_flight = tenant_state.in_flight.saturating_sub(1);
-        }
-        Self::cleanup_tenant_locked(&mut state, tenant_label);
-    }
-
     fn drain_queued_jobs(&self) -> Vec<RuntimeWorkerJob> {
         let mut state = self
             .state
@@ -227,6 +693,75 @@ impl RuntimeExecutorAdmission {
         queued_jobs
     }
 
+    async fn acquire_active_permit(
+        &self,
+        tenant_label: &str,
+        active_semaphore: Arc<tokio::sync::Semaphore>,
+    ) -> Result<OwnedSemaphorePermit> {
+        active_semaphore.acquire_owned().await.map_err(|_| {
+            NeovexRuntimeError::Contract(format!(
+                "runtime tenant active semaphore unexpectedly closed for tenant {tenant_label}"
+            ))
+        })
+    }
+
+    fn mark_active_entered(&self, tenant_label: &str) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned");
+        if let Some(tenant_state) = state.tenants.get_mut(tenant_label) {
+            tenant_state.parked_invocations = tenant_state.parked_invocations.saturating_sub(1);
+            tenant_state.active_invocations += 1;
+        }
+    }
+
+    fn mark_active_suspended(&self, tenant_label: &str) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned");
+        if let Some(tenant_state) = state.tenants.get_mut(tenant_label) {
+            tenant_state.active_invocations = tenant_state.active_invocations.saturating_sub(1);
+            tenant_state.parked_invocations += 1;
+        }
+    }
+
+    fn complete_dispatched_job(
+        self: &Arc<Self>,
+        tenant_label: &str,
+        was_active: bool,
+    ) -> Vec<RuntimeWorkerJob> {
+        let max_in_flight = self
+            .policy
+            .limits()
+            .max_in_flight_top_level_invocations_per_tenant;
+        let mut state = self
+            .state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned");
+        if let Some(tenant_state) = state.tenants.get_mut(tenant_label) {
+            if was_active {
+                tenant_state.active_invocations = tenant_state.active_invocations.saturating_sub(1);
+            } else {
+                tenant_state.parked_invocations = tenant_state.parked_invocations.saturating_sub(1);
+            }
+        }
+        Self::cleanup_tenant_locked(&mut state, tenant_label);
+        self.promote_ready_jobs_locked(&mut state, max_in_flight)
+    }
+
+    fn rollback_dispatched_job(self: &Arc<Self>, tenant_label: &str) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned");
+        if let Some(tenant_state) = state.tenants.get_mut(tenant_label) {
+            tenant_state.parked_invocations = tenant_state.parked_invocations.saturating_sub(1);
+        }
+        Self::cleanup_tenant_locked(&mut state, tenant_label);
+    }
+
     fn fairness_tenant_label(job: &RuntimeWorkerJob) -> Option<&str> {
         (!job.runtime.bypasses_concurrency_limit())
             .then_some(job.context.tenant_label.as_deref())
@@ -234,6 +769,7 @@ impl RuntimeExecutorAdmission {
     }
 
     fn promote_ready_jobs_locked(
+        self: &Arc<Self>,
         state: &mut RuntimeExecutorAdmissionState,
         max_in_flight: usize,
     ) -> Vec<RuntimeWorkerJob> {
@@ -254,13 +790,20 @@ impl RuntimeExecutorAdmission {
                 if let Some(tenant_state) = state.tenants.get_mut(&tenant_label) {
                     if tenant_state.queued_jobs.is_empty() {
                         tenant_state.queued_in_rotation = false;
-                        remove_tenant = tenant_state.in_flight == 0;
-                    } else if tenant_state.in_flight < max_in_flight {
-                        promoted_job = tenant_state.queued_jobs.pop_front();
-                        tenant_state.in_flight += 1;
+                        remove_tenant = tenant_state.total_in_flight() == 0;
+                    } else if tenant_state.total_in_flight() < max_in_flight {
+                        promoted_job = tenant_state.queued_jobs.pop_front().map(|mut job| {
+                            tenant_state.parked_invocations += 1;
+                            job.dispatch_handle = Some(RuntimeInvocationDispatchHandle {
+                                admission: self.clone(),
+                                tenant_label: tenant_label.clone(),
+                                active_semaphore: tenant_state.active_semaphore.clone(),
+                            });
+                            job
+                        });
                         if tenant_state.queued_jobs.is_empty() {
                             tenant_state.queued_in_rotation = false;
-                            remove_tenant = tenant_state.in_flight == 0;
+                            remove_tenant = tenant_state.total_in_flight() == 0;
                         } else {
                             requeue_tenant = true;
                         }
@@ -289,7 +832,7 @@ impl RuntimeExecutorAdmission {
 
     fn cleanup_tenant_locked(state: &mut RuntimeExecutorAdmissionState, tenant_label: &str) {
         let should_remove = state.tenants.get(tenant_label).is_some_and(|tenant_state| {
-            tenant_state.in_flight == 0
+            tenant_state.total_in_flight() == 0
                 && tenant_state.queued_jobs.is_empty()
                 && !tenant_state.queued_in_rotation
         });
@@ -312,100 +855,35 @@ impl std::fmt::Debug for RuntimeExecutor {
 
 impl RuntimeExecutor {
     pub fn new(policy: Arc<RuntimePolicy>) -> Self {
-        let worker_count = policy.limits().max_concurrent_isolates.max(1);
+        let worker_count = policy.limits().worker_threads.max(1);
         let queue_capacity = worker_count.saturating_mul(4).max(1);
         let (worker_sender, receiver) = mpsc::channel::<RuntimeWorkerJob>(queue_capacity);
         let sender = Arc::new(Mutex::new(Some(worker_sender)));
         let receiver = Arc::new(Mutex::new(receiver));
+        let queue = Arc::new(RuntimeWorkerQueueController::new(receiver, sender));
         let admission = Arc::new(RuntimeExecutorAdmission::new(policy.clone()));
+        let shutdown = RuntimeWorkerShutdown::new();
+        let watchdog = WatchdogTimer::new();
         #[cfg(test)]
         let test_state = Arc::new(RuntimeExecutorTestState::new());
+        let worker_loop_factory: Arc<dyn WorkerLoopFactory> = {
+            let factory = RunToCompletionWorkerLoopFactory::new(watchdog.clone());
+            #[cfg(test)]
+            let factory = factory.with_test_state(test_state.clone());
+            Arc::new(factory)
+        };
         let mut worker_handles = Vec::with_capacity(worker_count);
 
         for worker_id in 0..worker_count {
-            let receiver = receiver.clone();
+            let queue: Arc<dyn RuntimeWorkerQueue> = queue.clone();
             let policy = policy.clone();
-            let sender = sender.clone();
-            let admission = admission.clone();
-            #[cfg(test)]
-            let test_state = test_state.clone();
+            let shutdown = shutdown.clone();
+            let worker_loop_factory = worker_loop_factory.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("neovex-runtime-worker-{worker_id}"))
                 .spawn(move || {
-                    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
-                    let worker_runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|error| {
-                            format!("runtime worker failed to build tokio runtime: {error}")
-                        });
-                    #[cfg(test)]
-                    if worker_runtime.is_ok() {
-                        test_state.register_current_worker_runtime();
-                    }
-
-                    loop {
-                        let job = {
-                            let mut receiver = receiver
-                                .lock()
-                                .expect("runtime executor receiver lock should not be poisoned");
-                            receiver.blocking_recv()
-                        };
-                        let Some(job) = job else {
-                            break;
-                        };
-                        let tenant_label = job.context.tenant_label.clone();
-                        let bypasses_concurrency_limit = job.runtime.bypasses_concurrency_limit();
-
-                        if job
-                            .cancellation
-                            .as_ref()
-                            .is_some_and(HostCallCancellation::is_cancelled)
-                        {
-                            policy
-                                .metrics()
-                                .record_queued_canceled_invocation_for_tenant(
-                                    job.context.tenant_label.as_deref(),
-                                    job.cancellation
-                                        .as_ref()
-                                        .and_then(HostCallCancellation::cause),
-                                );
-                            job.result_tx.send(Err(NeovexRuntimeError::Cancelled));
-                            Self::dispatch_ready_jobs_blocking(
-                                &sender,
-                                &admission,
-                                admission.release_dispatched_job(
-                                    tenant_label.as_deref(),
-                                    bypasses_concurrency_limit,
-                                ),
-                            );
-                            continue;
-                        }
-
-                        policy.metrics().record_worker_dispatch();
-
-                        let result = match &worker_runtime {
-                            Ok(worker_runtime) => worker_runtime.block_on(Self::invoke_job(
-                                Some(&mut isolate_pool),
-                                job.runtime.into_policy(policy.clone()),
-                                job.bundle,
-                                job.request,
-                                job.context,
-                                job.cancellation,
-                                job.enqueued_at,
-                            )),
-                            Err(error) => Err(NeovexRuntimeError::Contract(error.clone())),
-                        };
-                        job.result_tx.send(result);
-                        Self::dispatch_ready_jobs_blocking(
-                            &sender,
-                            &admission,
-                            admission.release_dispatched_job(
-                                tenant_label.as_deref(),
-                                bypasses_concurrency_limit,
-                            ),
-                        );
-                    }
+                    let mut worker_loop = worker_loop_factory.create(worker_id, policy);
+                    worker_loop.run(queue, shutdown);
                 })
                 .expect("runtime executor worker thread should start");
             worker_handles.push(handle);
@@ -414,8 +892,10 @@ impl RuntimeExecutor {
         Self {
             inner: Arc::new(RuntimeExecutorInner {
                 policy,
-                sender,
+                queue,
                 admission,
+                shutdown,
+                watchdog,
                 worker_count,
                 queue_capacity,
                 worker_handles: Mutex::new(worker_handles),
@@ -435,91 +915,15 @@ impl RuntimeExecutor {
     }
 
     async fn dispatch_admitted_job_async(&self, job: RuntimeWorkerJob) -> Result<()> {
-        let tenant_label = job.context.tenant_label.clone();
-        let bypasses_concurrency_limit = job.runtime.bypasses_concurrency_limit();
-        let sender = self
-            .inner
-            .sender
-            .lock()
-            .expect("runtime executor sender lock should not be poisoned")
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| {
-                NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
-            })?;
-        sender.send(job).await.map_err(|error| {
-            self.inner
-                .admission
-                .rollback_dispatched_job(tenant_label.as_deref(), bypasses_concurrency_limit);
-            drop(error);
-            NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
-        })
+        self.inner.queue.dispatch_job(job).await
     }
 
     fn dispatch_admitted_job_blocking(&self, job: RuntimeWorkerJob) -> Result<()> {
-        let tenant_label = job.context.tenant_label.clone();
-        let bypasses_concurrency_limit = job.runtime.bypasses_concurrency_limit();
-        let sender = self
-            .inner
-            .sender
-            .lock()
-            .expect("runtime executor sender lock should not be poisoned")
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| {
-                NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
-            })?;
-        sender.blocking_send(job).map_err(|error| {
-            self.inner
-                .admission
-                .rollback_dispatched_job(tenant_label.as_deref(), bypasses_concurrency_limit);
-            drop(error);
-            NeovexRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
-        })
-    }
-
-    fn dispatch_ready_jobs_blocking(
-        sender: &Arc<Mutex<Option<mpsc::Sender<RuntimeWorkerJob>>>>,
-        admission: &RuntimeExecutorAdmission,
-        ready_jobs: Vec<RuntimeWorkerJob>,
-    ) {
-        for job in ready_jobs {
-            let tenant_label = job.context.tenant_label.clone();
-            let bypasses_concurrency_limit = job.runtime.bypasses_concurrency_limit();
-            let dispatch_sender = sender
-                .lock()
-                .expect("runtime executor sender lock should not be poisoned")
-                .as_ref()
-                .cloned();
-            match dispatch_sender {
-                Some(dispatch_sender) => match dispatch_sender.blocking_send(job) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        let failed_job = error.0;
-                        admission.rollback_dispatched_job(
-                            tenant_label.as_deref(),
-                            bypasses_concurrency_limit,
-                        );
-                        failed_job.result_tx.send(Err(NeovexRuntimeError::Contract(
-                            "runtime executor unexpectedly closed".to_string(),
-                        )));
-                    }
-                },
-                None => {
-                    admission.rollback_dispatched_job(
-                        tenant_label.as_deref(),
-                        bypasses_concurrency_limit,
-                    );
-                    job.result_tx.send(Err(NeovexRuntimeError::Contract(
-                        "runtime executor unexpectedly closed".to_string(),
-                    )));
-                }
-            }
-        }
+        self.inner.queue.dispatch_job_blocking(job)
     }
 
     async fn invoke_job(
-        isolate_pool: Option<&mut RuntimeWorkerIsolatePool>,
+        watchdog: WatchdogTimer,
         runtime: NeovexRuntime,
         bundle: RuntimeBundle,
         request: InvocationRequest,
@@ -529,79 +933,72 @@ impl RuntimeExecutor {
     ) -> Result<Value> {
         let policy = runtime.policy();
         let metrics = policy.metrics();
-        let _permit = if runtime.bypasses_concurrency_limit() {
-            None
-        } else {
-            metrics.increment_queued_invocations();
-            Some(
-                policy
-                    .isolate_semaphore()
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| {
-                        NeovexRuntimeError::Contract(
-                            "runtime isolate semaphore unexpectedly closed".to_string(),
-                        )
-                    })?,
-            )
-        };
-        if !runtime.bypasses_concurrency_limit() {
-            metrics.decrement_queued_invocations();
-            let queue_wait = queue_started_at.elapsed();
-            metrics.record_queue_wait_for_tenant(context.tenant_label.as_deref(), queue_wait);
+        let mut permit = SharedInvocationPermit::new(
+            policy.clone(),
+            context.tenant_label.clone(),
+            None,
+            runtime.bypasses_concurrency_limit(),
+            cancellation.clone(),
+        );
+        let execution_started_at = Instant::now();
+        let cancellation_for_metrics = cancellation.clone();
+        let result = async {
+            permit.acquire_initial(queue_started_at).await?;
             debug!(
                 invocation_id = context.invocation_id,
                 request_id = ?context.server_request_id,
                 tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
                 function = %context.function_name,
                 kind = context.kind,
-                queue_wait_ms = queue_wait.as_secs_f64() * 1000.0,
                 queued_invocations = metrics.snapshot().queued_invocations,
                 "runtime invocation admitted"
             );
+            runtime
+                .invoke_bundle_unmanaged(
+                    None,
+                    RuntimeInvocationExecution {
+                        watchdog: watchdog.clone(),
+                        bundle: bundle.clone(),
+                        request: request.clone(),
+                        context: context.clone(),
+                        external_cancellation: cancellation,
+                        permit: permit.clone(),
+                    },
+                )
+                .await
         }
-
-        metrics.increment_active_isolates_for_tenant(context.tenant_label.as_deref());
-        let execution_started_at = Instant::now();
-        let cancellation_for_metrics = cancellation.clone();
-        runtime
-            .invoke_bundle_unmanaged(isolate_pool, &bundle, &request, &context, cancellation)
-            .await
-            .inspect_err(|error| match error {
-                NeovexRuntimeError::ExecutionTimeout(_) => metrics.record_timeout(),
-                NeovexRuntimeError::Cancelled => metrics
-                    .record_in_flight_canceled_invocation_for_tenant(
-                        context.tenant_label.as_deref(),
-                        cancellation_for_metrics
-                            .as_ref()
-                            .and_then(HostCallCancellation::cause),
-                    ),
-                _ => {}
-            })
-            .inspect(|_| {
-                let execution = execution_started_at.elapsed();
-                metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
-                debug!(
-                    invocation_id = context.invocation_id,
-                    request_id = ?context.server_request_id,
-                    tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
-                    function = %context.function_name,
-                    kind = context.kind,
-                    execution_ms = execution.as_secs_f64() * 1000.0,
-                    active_isolates = metrics.snapshot().active_isolates,
-                    "runtime invocation completed"
-                );
-            })
-            .inspect_err(|_| {
-                let execution = execution_started_at.elapsed();
-                metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
-            })
-            .inspect(|_| {
-                metrics.decrement_active_isolates_for_tenant(context.tenant_label.as_deref())
-            })
-            .inspect_err(|_| {
-                metrics.decrement_active_isolates_for_tenant(context.tenant_label.as_deref())
-            })
+        .await
+        .inspect_err(|error| match error {
+            NeovexRuntimeError::ExecutionTimeout(_) => metrics.record_timeout(),
+            NeovexRuntimeError::Cancelled => metrics
+                .record_in_flight_canceled_invocation_for_tenant(
+                    context.tenant_label.as_deref(),
+                    cancellation_for_metrics
+                        .as_ref()
+                        .and_then(HostCallCancellation::cause),
+                ),
+            _ => {}
+        })
+        .inspect(|_| {
+            let execution = execution_started_at.elapsed();
+            metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
+            debug!(
+                invocation_id = context.invocation_id,
+                request_id = ?context.server_request_id,
+                tenant = context.tenant_label.as_deref().unwrap_or("unknown"),
+                function = %context.function_name,
+                kind = context.kind,
+                execution_ms = execution.as_secs_f64() * 1000.0,
+                active_isolates = metrics.snapshot().active_isolates,
+                "runtime invocation completed"
+            );
+        })
+        .inspect_err(|_| {
+            let execution = execution_started_at.elapsed();
+            metrics.record_execution_for_tenant(context.tenant_label.as_deref(), execution);
+        });
+        let _ = permit.finish_invocation().await;
+        result
     }
 
     pub async fn invoke(
@@ -628,7 +1025,7 @@ impl RuntimeExecutor {
             .metrics()
             .record_request_correlation(&context);
         Self::invoke_job(
-            None,
+            self.inner.watchdog.clone(),
             runtime.into_policy(self.inner.policy.clone()),
             bundle,
             request,
@@ -674,6 +1071,7 @@ impl RuntimeExecutor {
             cancellation: cancellation.clone(),
             enqueued_at: Instant::now(),
             result_tx: RuntimeWorkerResultSender::Async(result_tx),
+            dispatch_handle: None,
         })?;
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_async(*job).await?;
@@ -767,6 +1165,7 @@ impl RuntimeExecutor {
             cancellation: cancellation.clone(),
             enqueued_at: Instant::now(),
             result_tx: RuntimeWorkerResultSender::Blocking(result_tx),
+            dispatch_handle: None,
         })?;
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_blocking(*job)?;
@@ -798,10 +1197,8 @@ impl RuntimeExecutor {
 
 impl Drop for RuntimeExecutorInner {
     fn drop(&mut self) {
-        self.sender
-            .lock()
-            .expect("runtime executor sender lock should not be poisoned")
-            .take();
+        self.shutdown.cancel();
+        self.queue.close();
         for queued_job in self.admission.drain_queued_jobs() {
             queued_job.result_tx.send(Err(NeovexRuntimeError::Contract(
                 "runtime executor unexpectedly closed".to_string(),
@@ -814,6 +1211,7 @@ impl Drop for RuntimeExecutorInner {
         for handle in worker_handles.drain(..) {
             let _ = handle.join();
         }
+        self.watchdog.shutdown();
     }
 }
 
@@ -918,6 +1316,127 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ControlledAsyncGetHost {
+        started_ids: StdMutex<Vec<String>>,
+        started_notify: Arc<Notify>,
+        release_slow: Arc<Notify>,
+    }
+
+    impl ControlledAsyncGetHost {
+        fn started_ids(&self) -> Vec<String> {
+            self.started_ids
+                .lock()
+                .expect("controlled async host lock should not be poisoned")
+                .clone()
+        }
+
+        async fn wait_until_started(&self, document_id: &str) {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    let notified = self.started_notify.notified();
+                    if self
+                        .started_ids()
+                        .iter()
+                        .any(|started| started == document_id)
+                    {
+                        return;
+                    }
+                    notified.await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("host request {document_id} should start"));
+        }
+
+        fn release_slow_jobs(&self) {
+            self.release_slow.notify_waiters();
+        }
+    }
+
+    impl HostBridge for ControlledAsyncGetHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Err(NeovexRuntimeError::Contract(
+                "controlled async host expects async db.get path".to_string(),
+            ))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            let document_id = request
+                .payload
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("db.get payload should carry an id")
+                .to_string();
+            self.started_ids
+                .lock()
+                .expect("controlled async host lock should not be poisoned")
+                .push(document_id.clone());
+            self.started_notify.notify_waiters();
+            let release_slow = self.release_slow.clone();
+            Box::pin(async move {
+                if document_id.starts_with("slow-") {
+                    release_slow.notified().await;
+                }
+                Ok(json!({
+                    "status": "ok",
+                    "value": {
+                        "id": document_id,
+                    },
+                }))
+            })
+        }
+    }
+
+    struct SlowSyncQueryHost {
+        delay: Duration,
+        started: Arc<Notify>,
+    }
+
+    impl SlowSyncQueryHost {
+        fn new(delay: Duration) -> Self {
+            Self {
+                delay,
+                started: Arc::new(Notify::new()),
+            }
+        }
+
+        async fn wait_until_started(&self) {
+            tokio::time::timeout(Duration::from_secs(1), self.started.notified())
+                .await
+                .expect("slow sync query host should start");
+        }
+    }
+
+    impl HostBridge for SlowSyncQueryHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            assert_eq!(request.operation, "convex.ctx.db.query.start");
+            self.started.notify_waiters();
+            std::thread::sleep(self.delay);
+            Ok(json!({
+                "status": "ok",
+                "value": "builder-1",
+            }))
+        }
+
+        fn call_async(
+            &self,
+            _request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            Box::pin(async move {
+                Err(NeovexRuntimeError::Contract(
+                    "async host bridge path should not be used for sync query builder setup"
+                        .to_string(),
+                ))
+            })
+        }
+    }
+
     fn write_runtime_id_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
         let bundle_dir = tempdir().expect("tempdir should build");
         let bundle_path = bundle_dir.path().join("bundle.mjs");
@@ -968,6 +1487,25 @@ globalThis.__neovexInvoke = async function (request) {
     sessionId: `${request.kind}:${request.function_name}`,
   });
   return await ctx.db.get("messages", request.function_name);
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+        (bundle_dir, bundle_path)
+    }
+
+    fn write_sync_query_builder_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
+        let bundle_dir = tempdir().expect("tempdir should build");
+        let bundle_path = bundle_dir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function () {
+  const ctx = globalThis.__neovexCreateContext();
+  const builder = ctx.db.query("messages");
+  return { builderId: builder.__builderId };
 };
 
 export {};
@@ -1067,6 +1605,7 @@ export {};
         let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             max_concurrent_isolates: 1,
+            worker_threads: 1,
             ..RuntimeLimits::default()
         }));
         let executor = RuntimeExecutor::new(policy.clone());
@@ -1118,6 +1657,7 @@ export {};
                 std::thread::spawn(move || {
                     let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
                         max_concurrent_isolates: 1,
+                        worker_threads: 1,
                         ..RuntimeLimits::default()
                     }));
                     let executor = RuntimeExecutor::new(policy.clone());
@@ -1170,6 +1710,7 @@ export {};
         let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             max_concurrent_isolates: 1,
+            worker_threads: 1,
             ..RuntimeLimits::default()
         }));
         let executor = RuntimeExecutor::new(policy.clone());
@@ -1204,6 +1745,7 @@ export {};
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             execution_timeout: Duration::from_millis(50),
             max_concurrent_isolates: 1,
+            worker_threads: 1,
             ..RuntimeLimits::default()
         }));
         let executor = RuntimeExecutor::new(policy.clone());
@@ -1240,12 +1782,320 @@ export {};
     }
 
     #[tokio::test]
+    async fn permit_suspend_frees_capacity() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            max_concurrent_isolates: 1,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(ControlledAsyncGetHost::default());
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let slow_request = test_request("slow-1");
+        let slow_task = tokio::spawn({
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&slow_request, "tenant-a", "req-permit-slow");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        slow_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+        host.wait_until_started("slow-1").await;
+
+        let fast_request = test_request("fast-1");
+        let fast_result = tokio::time::timeout(
+            Duration::from_secs(1),
+            executor.invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                bundle.clone(),
+                fast_request.clone(),
+                test_context_for_tenant(&fast_request, "tenant-b", "req-permit-fast"),
+                None,
+            ),
+        )
+        .await
+        .expect("fast invocation should use the freed permit")
+        .expect("fast invocation should succeed");
+
+        assert_eq!(fast_result, json!({ "id": "fast-1" }));
+        assert!(
+            !slow_task.is_finished(),
+            "slow invocation should still be parked while the second worker uses the freed permit"
+        );
+
+        host.release_slow_jobs();
+        assert_eq!(
+            slow_task
+                .await
+                .expect("slow task should join")
+                .expect("slow invocation should succeed after resume"),
+            json!({ "id": "slow-1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn parked_invocation_resumes_after_host_completion() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(ControlledAsyncGetHost::default());
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = test_request("slow-1");
+        let parked_task = tokio::spawn({
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&request, "tenant-a", "req-parked-resume");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+
+        host.wait_until_started("slow-1").await;
+        assert!(
+            !parked_task.is_finished(),
+            "parked invocation should remain pending until host work completes"
+        );
+
+        host.release_slow_jobs();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), parked_task)
+                .await
+                .expect("parked invocation should resume after host completion")
+                .expect("parked task should join")
+                .expect("parked invocation should succeed"),
+            json!({ "id": "slow-1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn parked_invocation_counts_toward_in_flight_limit() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            max_concurrent_isolates: 1,
+            worker_threads: 2,
+            max_active_top_level_invocations_per_tenant: 1,
+            max_in_flight_top_level_invocations_per_tenant: 2,
+            max_queued_top_level_invocations_per_tenant: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(ControlledAsyncGetHost::default());
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let first_request = test_request("slow-1");
+        let first_task = tokio::spawn({
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&first_request, "tenant-a", "req-inflight-1");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        first_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+        host.wait_until_started("slow-1").await;
+
+        let second_request = test_request("slow-2");
+        let second_task = tokio::spawn({
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&second_request, "tenant-a", "req-inflight-2");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        second_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+        host.wait_until_started("slow-2").await;
+
+        let third_request = test_request("fast-1");
+        let third_task = tokio::spawn({
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&third_request, "tenant-a", "req-inflight-3");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        third_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !host.started_ids().iter().any(|id| id == "fast-1"),
+            "third invocation should remain queued while two parked invocations consume the tenant in-flight limit"
+        );
+
+        host.release_slow_jobs();
+        assert_eq!(
+            first_task
+                .await
+                .expect("first slow task should join")
+                .expect("first slow invocation should succeed"),
+            json!({ "id": "slow-1" })
+        );
+        assert_eq!(
+            second_task
+                .await
+                .expect("second slow task should join")
+                .expect("second slow invocation should succeed"),
+            json!({ "id": "slow-2" })
+        );
+        assert_eq!(
+            third_task
+                .await
+                .expect("third task should join")
+                .expect("third invocation should succeed after queue promotion"),
+            json!({ "id": "fast-1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_excludes_permit_reacquire_wait() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_async_bundle_dir, async_bundle_path) = write_function_named_get_bundle();
+        let (_sync_bundle_dir, sync_bundle_path) = write_sync_query_builder_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_timeout: Duration::from_millis(120),
+            max_concurrent_isolates: 1,
+            worker_threads: 2,
+            max_active_top_level_invocations_per_tenant: 1,
+            max_in_flight_top_level_invocations_per_tenant: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let parked_host = Arc::new(ControlledAsyncGetHost::default());
+        let blocker_host = Arc::new(SlowSyncQueryHost::new(Duration::from_millis(80)));
+        let async_bundle = RuntimeBundle::new(&async_bundle_path);
+        let sync_bundle = RuntimeBundle::new(&sync_bundle_path);
+
+        let slow_request = test_request("slow-1");
+        let slow_started_at = std::time::Instant::now();
+        let parked_task = tokio::spawn({
+            let executor = executor.clone();
+            let async_bundle = async_bundle.clone();
+            let parked_host = parked_host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&slow_request, "tenant-a", "req-timeout-parked");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(parked_host, policy),
+                        async_bundle,
+                        slow_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+        parked_host.wait_until_started("slow-1").await;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        let blocker_request = test_request("messages:list");
+        let blocker_task = tokio::spawn({
+            let executor = executor.clone();
+            let sync_bundle = sync_bundle.clone();
+            let blocker_host = blocker_host.clone();
+            let policy = policy.clone();
+            let context =
+                test_context_for_tenant(&blocker_request, "tenant-b", "req-timeout-blocker");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(blocker_host, policy),
+                        sync_bundle,
+                        blocker_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+        blocker_host.wait_until_started().await;
+        parked_host.release_slow_jobs();
+
+        assert_eq!(
+            blocker_task
+                .await
+                .expect("blocker task should join")
+                .expect("blocker invocation should succeed"),
+            json!({ "builderId": "builder-1" })
+        );
+        assert_eq!(
+            parked_task
+                .await
+                .expect("parked task should join")
+                .expect("parked invocation should succeed after waiting to re-acquire the permit"),
+            json!({ "id": "slow-1" })
+        );
+        assert!(
+            slow_started_at.elapsed() >= Duration::from_millis(140),
+            "parked invocation wall time should exceed the execution timeout while still succeeding because permit re-acquire wait is paused"
+        );
+    }
+
+    #[tokio::test]
     async fn tenant_queue_limit_rejections_record_metrics() {
         let _test_lock = runtime_executor_test_lock().lock().await;
         let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             max_concurrent_isolates: 1,
-            max_top_level_invocations_per_tenant: 1,
+            max_active_top_level_invocations_per_tenant: 1,
+            max_in_flight_top_level_invocations_per_tenant: 1,
             max_queued_top_level_invocations_per_tenant: 1,
             ..RuntimeLimits::default()
         }));
@@ -1350,7 +2200,8 @@ export {};
         let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             max_concurrent_isolates: 2,
-            max_top_level_invocations_per_tenant: 1,
+            max_active_top_level_invocations_per_tenant: 1,
+            max_in_flight_top_level_invocations_per_tenant: 1,
             max_queued_top_level_invocations_per_tenant: 1,
             ..RuntimeLimits::default()
         }));

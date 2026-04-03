@@ -179,10 +179,19 @@ impl RuntimeMetrics {
     pub fn increment_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
         self.active_isolates
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.update_tenant_metrics(tenant_label, |metrics| {
+            metrics.active_isolates += 1;
+        });
+    }
+
+    pub fn record_invocation_started(&self) {
+        self.record_invocation_started_for_tenant(None);
+    }
+
+    pub fn record_invocation_started_for_tenant(&self, tenant_label: Option<&str>) {
         self.started_invocations
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.active_isolates += 1;
             metrics.started_invocations += 1;
         });
     }
@@ -214,10 +223,19 @@ impl RuntimeMetrics {
     pub fn decrement_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
         self.active_isolates
             .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.update_tenant_metrics(tenant_label, |metrics| {
+            metrics.active_isolates = metrics.active_isolates.saturating_sub(1);
+        });
+    }
+
+    pub fn record_invocation_completed(&self) {
+        self.record_invocation_completed_for_tenant(None);
+    }
+
+    pub fn record_invocation_completed_for_tenant(&self, tenant_label: Option<&str>) {
         self.completed_invocations
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
         self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.active_isolates = metrics.active_isolates.saturating_sub(1);
             metrics.completed_invocations += 1;
         });
     }
@@ -579,6 +597,7 @@ mod tests {
     fn tenant_metrics_snapshot_tracks_distributions_and_cancellations() {
         let metrics = RuntimeMetrics::default();
 
+        metrics.record_invocation_started_for_tenant(Some("demo"));
         metrics.increment_active_isolates_for_tenant(Some("demo"));
         metrics.record_queue_wait_for_tenant(Some("demo"), Duration::from_micros(500));
         metrics.record_execution_for_tenant(Some("demo"), Duration::from_millis(7));
@@ -599,6 +618,7 @@ mod tests {
             server_request_id: Some("req-7".to_string()),
         });
         metrics.decrement_active_isolates_for_tenant(Some("demo"));
+        metrics.record_invocation_completed_for_tenant(Some("demo"));
 
         let snapshot = metrics.snapshot();
         assert_eq!(
@@ -645,6 +665,7 @@ mod tests {
     fn unattributed_metrics_do_not_create_tenant_entries() {
         let metrics = RuntimeMetrics::default();
 
+        metrics.record_invocation_started();
         metrics.increment_active_isolates();
         metrics.increment_queued_invocations();
         metrics.record_queue_wait(Duration::from_millis(1));
@@ -662,6 +683,7 @@ mod tests {
         metrics.record_fallback_cross_isolate_dispatch();
         metrics.decrement_queued_invocations();
         metrics.decrement_active_isolates();
+        metrics.record_invocation_completed();
 
         let snapshot = metrics.snapshot();
         assert_eq!(

@@ -1,3 +1,4 @@
+mod background_executor;
 mod diagnostics;
 mod execution_units;
 mod mutations;
@@ -12,21 +13,19 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::{Arc, OnceLock};
 
 use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
     Clock, FaultInjector, NoopFaultInjector, RedbStorageEngine, RedbUsageStorage, SystemClock,
     TenantStore, UsageStore,
 };
-use tokio::runtime::{
-    Builder as TokioRuntimeBuilder, Handle as TokioRuntimeHandle, Runtime as TokioRuntime,
-};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinHandle;
 
 use crate::tenant::TenantRuntime;
+use background_executor::BackgroundExecutor;
 
 pub use execution_units::MutationExecutionUnit;
 pub(crate) use queries::{
@@ -50,26 +49,12 @@ pub struct Service {
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
-    background_runtime: TokioRuntimeHandle,
+    engine_executor: BackgroundExecutor,
+    storage_executor: BackgroundExecutor,
 }
 
 tokio::task_local! {
     static SERVICE_BACKGROUND_TASK: &'static str;
-}
-
-fn service_background_runtime_handle() -> TokioRuntimeHandle {
-    static SERVICE_BACKGROUND_RUNTIME: OnceLock<TokioRuntime> = OnceLock::new();
-    SERVICE_BACKGROUND_RUNTIME
-        .get_or_init(|| {
-            TokioRuntimeBuilder::new_multi_thread()
-                .worker_threads(1)
-                .thread_name("neovex-engine-bg")
-                .enable_all()
-                .build()
-                .expect("service background runtime should build")
-        })
-        .handle()
-        .clone()
 }
 
 impl Service {
@@ -86,10 +71,13 @@ impl Service {
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir).map_err(|error| Error::Internal(error.to_string()))?;
+        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 1);
+        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
         let storage_engine = Arc::new(RedbStorageEngine::new(
             data_dir.clone(),
             clock.clone(),
             storage_fault_injector.clone(),
+            storage_executor.handle(),
         )?);
         let usage_store = storage_engine.usage_store();
         let usage_storage = storage_engine.usage_storage();
@@ -103,7 +91,8 @@ impl Service {
             clock,
             storage_fault_injector,
             scheduler_wakeup: Notify::new(),
-            background_runtime: service_background_runtime_handle(),
+            engine_executor,
+            storage_executor,
         })
     }
 
@@ -119,8 +108,14 @@ impl Service {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        self.background_runtime
+        self.engine_executor
             .spawn(SERVICE_BACKGROUND_TASK.scope(name, future))
+            .expect("engine executor should accept background work before quiesce")
+    }
+
+    pub async fn quiesce(&self) {
+        self.engine_executor.quiesce().await;
+        self.storage_executor.quiesce().await;
     }
 
     #[cfg(any(test, debug_assertions))]

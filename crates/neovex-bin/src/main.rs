@@ -43,6 +43,10 @@ struct Cli {
     #[arg(long, default_value_t = default_runtime_max_isolates())]
     runtime_max_isolates: usize,
 
+    /// Number of runtime worker threads.
+    #[arg(long, default_value_t = default_runtime_worker_threads())]
+    runtime_worker_threads: usize,
+
     /// Maximum number of nested runtime ctx.run* invocations allowed per request tree.
     #[arg(long, default_value_t = default_runtime_max_nested_calls())]
     runtime_max_nested_calls: usize,
@@ -64,6 +68,10 @@ fn default_runtime_max_isolates() -> usize {
     RuntimeLimits::default().max_concurrent_isolates
 }
 
+fn default_runtime_worker_threads() -> usize {
+    RuntimeLimits::default().worker_threads
+}
+
 fn default_runtime_max_nested_calls() -> usize {
     RuntimeLimits::default().max_nested_runtime_invocations
 }
@@ -73,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     let service = Arc::new(Service::new(cli.data_dir)?);
+    let shutdown_service = service.clone();
     service.load_tenants_with_scheduled_work()?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler_service = service.clone();
@@ -85,8 +94,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         initial_heap_mb: cli.runtime_initial_heap_mb,
         execution_timeout: Duration::from_secs(cli.runtime_timeout_secs),
         max_concurrent_isolates: cli.runtime_max_isolates,
-        max_top_level_invocations_per_tenant: RuntimeLimits::default()
-            .max_top_level_invocations_per_tenant,
+        worker_threads: cli.runtime_worker_threads,
+        max_active_top_level_invocations_per_tenant: RuntimeLimits::default()
+            .max_active_top_level_invocations_per_tenant,
+        max_in_flight_top_level_invocations_per_tenant: RuntimeLimits::default()
+            .max_in_flight_top_level_invocations_per_tenant,
         max_queued_top_level_invocations_per_tenant: RuntimeLimits::default()
             .max_queued_top_level_invocations_per_tenant,
         max_nested_runtime_invocations: cli.runtime_max_nested_calls,
@@ -121,6 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;
+    shutdown_service.quiesce().await;
     server_result?;
     Ok(())
 }

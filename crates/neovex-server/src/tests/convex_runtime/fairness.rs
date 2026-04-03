@@ -96,7 +96,8 @@ export {};
     )
     .with_runtime_limits(RuntimeLimits {
         max_concurrent_isolates: 1,
-        max_top_level_invocations_per_tenant: 1,
+        max_active_top_level_invocations_per_tenant: 1,
+        max_in_flight_top_level_invocations_per_tenant: 1,
         max_queued_top_level_invocations_per_tenant: 1,
         ..RuntimeLimits::default()
     })
