@@ -1,11 +1,10 @@
 use std::sync::Arc;
-use std::time::Instant;
-
-use tracing::debug;
 
 use crate::backend::{DenoRuntimeBackendFactory, RuntimeBackendFactory, RuntimeBackendInvocation};
 use crate::error::NeovexRuntimeError;
-use crate::executor::{RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit};
+use crate::executor::{
+    RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit, run_invocation_lifecycle,
+};
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
 use crate::watchdog::WatchdogTimer;
@@ -107,7 +106,7 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                 break;
             };
             let cancellation_for_metrics = job.cancellation.clone();
-            let mut permit = SharedInvocationPermit::new(
+            let permit = SharedInvocationPermit::new(
                 self.policy.clone(),
                 job.context.tenant_label.clone(),
                 job.dispatch_handle.clone(),
@@ -132,85 +131,25 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
             }
 
             self.policy.metrics().record_worker_dispatch();
-            let (result, ready_jobs) = self.worker_runtime.block_on(async {
-                let execution_started_at = Instant::now();
-                let result = async {
-                    permit.acquire_initial(job.enqueued_at).await?;
-                    debug!(
-                        worker_id = self.worker_id,
-                        invocation_id = job.context.invocation_id,
-                        request_id = ?job.context.server_request_id,
-                        tenant = job.context.tenant_label.as_deref().unwrap_or("unknown"),
-                        function = %job.context.function_name,
-                        kind = job.context.kind,
-                        "runtime worker invocation started"
-                    );
-                    self.backend
-                        .invoke(RuntimeBackendInvocation {
-                            watchdog: self.watchdog.clone(),
-                            runtime: job.runtime.clone().into_policy(self.policy.clone()),
-                            bundle: job.bundle.clone(),
-                            request: job.request.clone(),
-                            context: job.context.clone(),
-                            cancellation: job.cancellation.clone(),
-                            permit: permit.clone(),
-                        })
-                        .await
-                }
-                .await
-                .inspect(|_| {
-                    let execution = execution_started_at.elapsed();
-                    self.policy.metrics().record_execution_for_tenant(
-                        job.context.tenant_label.as_deref(),
-                        execution,
-                    );
-                    debug!(
-                        worker_id = self.worker_id,
-                        invocation_id = job.context.invocation_id,
-                        request_id = ?job.context.server_request_id,
-                        tenant = job.context.tenant_label.as_deref().unwrap_or("unknown"),
-                        function = %job.context.function_name,
-                        kind = job.context.kind,
-                        execution_ms = execution.as_secs_f64() * 1000.0,
-                        active_isolates = self.policy.metrics().snapshot().active_isolates,
-                        "runtime worker invocation completed"
-                    );
-                })
-                .inspect_err(|error| match error {
-                    NeovexRuntimeError::ExecutionTimeout(_) => {
-                        self.policy.metrics().record_timeout();
-                        let execution = execution_started_at.elapsed();
-                        self.policy.metrics().record_execution_for_tenant(
-                            job.context.tenant_label.as_deref(),
-                            execution,
-                        );
-                    }
-                    NeovexRuntimeError::Cancelled => {
-                        self.policy
-                            .metrics()
-                            .record_in_flight_canceled_invocation_for_tenant(
-                                job.context.tenant_label.as_deref(),
-                                cancellation_for_metrics
-                                    .as_ref()
-                                    .and_then(HostCallCancellation::cause),
-                            );
-                        let execution = execution_started_at.elapsed();
-                        self.policy.metrics().record_execution_for_tenant(
-                            job.context.tenant_label.as_deref(),
-                            execution,
-                        );
-                    }
-                    _ => {
-                        let execution = execution_started_at.elapsed();
-                        self.policy.metrics().record_execution_for_tenant(
-                            job.context.tenant_label.as_deref(),
-                            execution,
-                        );
-                    }
-                });
-                let ready_jobs = permit.finish_invocation().await;
-                (result, ready_jobs)
-            });
+            let (result, ready_jobs) = self.worker_runtime.block_on(run_invocation_lifecycle(
+                permit,
+                self.policy.clone(),
+                job.context.clone(),
+                cancellation_for_metrics,
+                job.enqueued_at,
+                Some(self.worker_id),
+                |permit| {
+                    self.backend.invoke(RuntimeBackendInvocation {
+                        watchdog: self.watchdog.clone(),
+                        runtime: job.runtime.clone().into_policy(self.policy.clone()),
+                        bundle: job.bundle.clone(),
+                        request: job.request.clone(),
+                        context: job.context.clone(),
+                        cancellation: job.cancellation.clone(),
+                        permit,
+                    })
+                },
+            ));
             queue.complete_job(job, result, ready_jobs);
         }
     }

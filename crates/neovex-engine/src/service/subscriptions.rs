@@ -3,7 +3,9 @@ mod bootstrap;
 use std::future::{Future, pending};
 use std::sync::Arc;
 
-use neovex_core::{Error, PrincipalContext, Query, Result, SequenceNumber, TenantId};
+use neovex_core::{
+    DependencySet, Document, Error, PrincipalContext, Query, Result, SequenceNumber, TenantId,
+};
 use tokio::sync::mpsc;
 
 use crate::subscriptions::{
@@ -30,6 +32,50 @@ fn subscription_send_failure(error: mpsc::error::TrySendError<SubscriptionUpdate
 }
 
 impl Service {
+    fn register_pending_subscription(
+        &self,
+        runtime: &Arc<TenantRuntime>,
+        query: &Query,
+        principal: &PrincipalContext,
+        sender: &mpsc::Sender<SubscriptionUpdate>,
+    ) -> Result<SubscriptionRegistration> {
+        let schema = runtime.schema();
+        principal.snapshot()?;
+        let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
+        Ok(runtime.subscriptions.register(
+            query.clone(),
+            principal.clone(),
+            policy_revision,
+            sender.clone(),
+            false,
+        ))
+    }
+
+    fn publish_subscription_bootstrap(
+        &self,
+        runtime: &Arc<TenantRuntime>,
+        query: &Query,
+        subscription_id: u64,
+        request_id: String,
+        sender: &mpsc::Sender<SubscriptionUpdate>,
+        documents: Vec<Document>,
+    ) -> Result<DependencySet> {
+        runtime.cache_documents(&documents);
+        let dependencies = subscription_dependencies(query, &documents);
+        let update = SubscriptionUpdate::Result {
+            subscription_id,
+            request_id: Some(request_id),
+            commit: None,
+            deleted_documents: Vec::new(),
+            data: documents_to_json(documents),
+        };
+        if let Err(error) = sender.try_send(update) {
+            runtime.subscriptions.remove(subscription_id);
+            return Err(subscription_send_failure(error));
+        }
+        Ok(dependencies)
+    }
+
     fn activate_bootstrapped_subscription(
         &self,
         runtime: Arc<TenantRuntime>,
@@ -86,17 +132,8 @@ impl Service {
     ) -> Result<SubscriptionRegistration> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        let schema = runtime.schema();
-        let principal_snapshot = principal.snapshot()?;
-        let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
-        let registration = runtime.subscriptions.register(
-            query.clone(),
-            principal.clone(),
-            principal_snapshot,
-            policy_revision,
-            sender.clone(),
-            false,
-        );
+        let registration =
+            self.register_pending_subscription(&runtime, &query, principal, &sender)?;
         let subscription_id = registration.id();
         let mut check_cancel = || Ok(());
         match evaluate_subscription_bootstrap_cancellable_for_principal(
@@ -106,19 +143,14 @@ impl Service {
             &mut check_cancel,
         ) {
             Ok((documents, covered_sequence)) => {
-                runtime.cache_documents(&documents);
-                let dependencies = subscription_dependencies(&query, &documents);
-                let update = SubscriptionUpdate::Result {
+                let dependencies = self.publish_subscription_bootstrap(
+                    &runtime,
+                    &query,
                     subscription_id,
-                    request_id: Some(request_id),
-                    commit: None,
-                    deleted_documents: Vec::new(),
-                    data: documents_to_json(documents),
-                };
-                if let Err(error) = sender.try_send(update) {
-                    runtime.subscriptions.remove(subscription_id);
-                    return Err(subscription_send_failure(error));
-                }
+                    request_id,
+                    &sender,
+                    documents,
+                )?;
                 self.activate_bootstrapped_subscription(
                     runtime,
                     subscription_id,
@@ -219,17 +251,8 @@ impl Service {
         let check_cancel = Arc::new(check_cancel);
         let query_for_bootstrap = query.clone();
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
-        let schema = runtime.schema();
-        let principal_snapshot = principal.snapshot()?;
-        let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
-        let registration = runtime.subscriptions.register(
-            query.clone(),
-            principal.clone(),
-            principal_snapshot,
-            policy_revision,
-            sender.clone(),
-            false,
-        );
+        let registration =
+            self.register_pending_subscription(&runtime, &query, &principal, &sender)?;
         let subscription_id = registration.id();
         let (documents, covered_sequence) = evaluate_subscription_bootstrap_async_for_principal(
             runtime.clone(),
@@ -247,19 +270,14 @@ impl Service {
             runtime.subscriptions.remove(subscription_id);
             return Err(error);
         }
-        runtime.cache_documents(&documents);
-        let dependencies = subscription_dependencies(&query, &documents);
-        let update = SubscriptionUpdate::Result {
+        let dependencies = self.publish_subscription_bootstrap(
+            &runtime,
+            &query,
             subscription_id,
-            request_id: Some(request_id),
-            commit: None,
-            deleted_documents: Vec::new(),
-            data: documents_to_json(documents),
-        };
-        if let Err(error) = sender.try_send(update) {
-            runtime.subscriptions.remove(subscription_id);
-            return Err(subscription_send_failure(error));
-        }
+            request_id,
+            &sender,
+            documents,
+        )?;
         #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_if_subscription_bootstrap_pause_armed().await;
         if let Err(error) = (check_cancel.as_ref())() {

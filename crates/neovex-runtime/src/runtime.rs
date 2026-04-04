@@ -1,1476 +1,37 @@
-use std::cell::RefCell;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::OnceLock;
-#[cfg(test)]
-use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
-use deno_core::JsRuntimeForSnapshot;
-use deno_core::{
-    CancelFuture, CancelHandle, JsRuntime, ModuleSpecifier, OpState, PollEventLoopOptions,
-    RuntimeOptions, extension, op2, scope, serde_v8, v8,
-};
-use deno_error::JsErrorBox;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
+use deno_core::{JsRuntime, PollEventLoopOptions, RuntimeOptions, scope, serde_v8, v8};
+use serde_json::Value;
 
 use crate::RuntimeInvocationContext;
 use crate::error::{NeovexRuntimeError, Result};
 use crate::executor::{RuntimeExecutor, SharedInvocationPermit};
-use crate::host::{HostBridge, HostCallCancellation, HostCallOperation, HostCallRequest};
+use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::{RuntimeLimits, RuntimePolicy};
 use crate::module_loader::SandboxedModuleLoader;
-use crate::watchdog::{WatchdogRegistration, WatchdogTimer};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InvocationKind {
-    Query,
-    PaginatedQuery,
-    Mutation,
-    Action,
-}
-
-impl InvocationKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Query => "query",
-            Self::PaginatedQuery => "paginated_query",
-            Self::Mutation => "mutation",
-            Self::Action => "action",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InvocationRequest {
-    pub kind: InvocationKind,
-    pub function_name: String,
-    #[serde(default)]
-    pub args: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<InvocationAuth>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeUserIdentity {
-    pub token_identifier: String,
-    pub subject: String,
-    pub issuer: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub given_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub family_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nickname: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preferred_username: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub picture_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email_verified: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gender: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub birthday: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timezone: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone_number: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone_number_verified: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-    #[serde(flatten)]
-    pub custom_claims: Map<String, Value>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifiedUserIdentityKind {
-    Oidc,
-    CustomJwt,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VerifiedUserIdentity {
-    pub kind: VerifiedUserIdentityKind,
-    pub token_identifier: String,
-    pub subject: String,
-    pub issuer: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub given_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub family_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nickname: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preferred_username: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub picture_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email_verified: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gender: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub birthday: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timezone: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone_number: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone_number_verified: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-    #[serde(flatten)]
-    pub custom_claims: Map<String, Value>,
-}
-
-impl VerifiedUserIdentity {
-    pub fn token_identifier(&self) -> &str {
-        &self.token_identifier
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct InvocationAuth {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity: Option<RuntimeUserIdentity>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verified_identity: Option<VerifiedUserIdentity>,
-    #[serde(default)]
-    pub throw_on_missing_identity: bool,
-}
-
-impl InvocationAuth {
-    pub fn with_identities(
-        identity: RuntimeUserIdentity,
-        verified_identity: VerifiedUserIdentity,
-        throw_on_missing_identity: bool,
-    ) -> Self {
-        Self {
-            identity: Some(identity),
-            verified_identity: Some(verified_identity),
-            throw_on_missing_identity,
-        }
-    }
-
-    pub fn token_identifier(&self) -> Option<&str> {
-        self.verified_identity
-            .as_ref()
-            .map(VerifiedUserIdentity::token_identifier)
-            .or_else(|| {
-                self.identity
-                    .as_ref()
-                    .map(|identity| identity.token_identifier.as_str())
-            })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RuntimeBundleIdentity {
-    entrypoint: PathBuf,
-    expected_sha256: Option<String>,
-}
-
-impl RuntimeBundleIdentity {
-    pub fn entrypoint(&self) -> &Path {
-        &self.entrypoint
-    }
-
-    pub fn expected_sha256(&self) -> Option<&str> {
-        self.expected_sha256.as_deref()
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct RuntimeBundleShared {
-    entrypoint: PathBuf,
-    canonical_entrypoint: Option<PathBuf>,
-    expected_sha256: Option<String>,
-    identity: RuntimeBundleIdentity,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeBundle {
-    shared: Arc<RuntimeBundleShared>,
-}
-
-impl RuntimeBundle {
-    pub fn new(entrypoint: impl AsRef<Path>) -> Self {
-        Self::from_parts(entrypoint.as_ref().to_path_buf(), None)
-    }
-
-    pub fn with_expected_sha256(
-        entrypoint: impl AsRef<Path>,
-        expected_sha256: impl AsRef<str>,
-    ) -> Result<Self> {
-        Ok(Self::from_parts(
-            entrypoint.as_ref().to_path_buf(),
-            Some(normalize_sha256(expected_sha256.as_ref())?),
-        ))
-    }
-
-    pub fn entrypoint(&self) -> &Path {
-        &self.shared.entrypoint
-    }
-
-    pub fn canonical_entrypoint(&self) -> Option<&Path> {
-        self.shared.canonical_entrypoint.as_deref()
-    }
-
-    pub fn bundle_identity(&self) -> &RuntimeBundleIdentity {
-        &self.shared.identity
-    }
-
-    pub fn compute_sha256_for_path(path: impl AsRef<Path>) -> Result<String> {
-        let bytes = std::fs::read(path)?;
-        Ok(compute_sha256_hex(&bytes))
-    }
-
-    fn module_specifier(&self) -> Result<ModuleSpecifier> {
-        ModuleSpecifier::from_file_path(self.entrypoint()).map_err(|_| {
-            NeovexRuntimeError::Contract(format!(
-                "bundle entrypoint is not a valid file URL: {}",
-                self.entrypoint().display()
-            ))
-        })
-    }
-
-    fn module_root(&self) -> Result<PathBuf> {
-        self.entrypoint()
-            .parent()
-            .ok_or_else(|| {
-                NeovexRuntimeError::Contract(format!(
-                    "bundle entrypoint does not have a parent directory: {}",
-                    self.entrypoint().display()
-                ))
-            })?
-            .canonicalize()
-            .map_err(NeovexRuntimeError::from)
-    }
-
-    fn verify_integrity(&self) -> Result<()> {
-        // Stable bundle identity is only for pooling, metrics, and provenance bookkeeping.
-        // Path-backed bundles remain mutable, so every invocation must re-hash bundle contents.
-        let Some(expected_sha256) = &self.shared.expected_sha256 else {
-            return Ok(());
-        };
-        let actual_sha256 = Self::compute_sha256_for_path(self.entrypoint())?;
-        if &actual_sha256 == expected_sha256 {
-            return Ok(());
-        }
-        Err(NeovexRuntimeError::BundleIntegrityMismatch(format!(
-            "{} (expected {}, got {})",
-            self.entrypoint().display(),
-            expected_sha256,
-            actual_sha256
-        )))
-    }
-
-    fn from_parts(entrypoint: PathBuf, expected_sha256: Option<String>) -> Self {
-        let canonical_entrypoint = entrypoint.canonicalize().ok();
-        let identity = RuntimeBundleIdentity {
-            entrypoint: canonical_entrypoint
-                .clone()
-                .unwrap_or_else(|| entrypoint.clone()),
-            expected_sha256: expected_sha256.clone(),
-        };
-        Self {
-            shared: Arc::new(RuntimeBundleShared {
-                entrypoint,
-                canonical_entrypoint,
-                expected_sha256,
-                identity,
-            }),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct RuntimeHostState {
-    bridge: Arc<dyn HostBridge>,
-}
-
-#[derive(Clone)]
-struct RuntimeCancellationState {
-    cancel_handle: Rc<CancelHandle>,
-    signal: HostCallCancellation,
-}
-
-#[derive(Clone)]
-pub(crate) struct RuntimeInvocationTimeoutController {
-    inner: Arc<Mutex<RuntimeInvocationTimeoutControllerState>>,
-}
-
-struct RuntimeInvocationTimeoutControllerState {
-    timer: WatchdogTimer,
-    remaining: Duration,
-    armed_at: Option<Instant>,
-    registration: Option<WatchdogRegistration>,
-    callback: Arc<dyn Fn() + Send + Sync>,
-    disarmed: bool,
-}
-
-impl RuntimeInvocationTimeoutController {
-    fn new(
-        timer: WatchdogTimer,
-        timeout: Duration,
-        callback: Arc<dyn Fn() + Send + Sync>,
-    ) -> Result<Self> {
-        let registration = if timeout.is_zero() {
-            None
-        } else {
-            Some(Self::register(&timer, timeout, callback.clone())?)
-        };
-        Ok(Self {
-            inner: Arc::new(Mutex::new(RuntimeInvocationTimeoutControllerState {
-                timer,
-                remaining: timeout,
-                armed_at: (!timeout.is_zero()).then_some(Instant::now()),
-                registration,
-                callback,
-                disarmed: false,
-            })),
-        })
-    }
-
-    fn register(
-        timer: &WatchdogTimer,
-        timeout: Duration,
-        callback: Arc<dyn Fn() + Send + Sync>,
-    ) -> Result<WatchdogRegistration> {
-        timer.register_timeout(Instant::now() + timeout, move || {
-            callback();
-        })
-    }
-
-    pub(crate) async fn pause(&self) {
-        let registration = {
-            let mut state = self
-                .inner
-                .lock()
-                .expect("runtime timeout controller lock should not be poisoned");
-            if state.disarmed {
-                return;
-            }
-            let Some(armed_at) = state.armed_at.take() else {
-                return;
-            };
-            state.remaining = state.remaining.saturating_sub(armed_at.elapsed());
-            state.registration.take()
-        };
-        if let Some(registration) = registration {
-            registration.disarm().await;
-        }
-    }
-
-    pub(crate) fn resume(&self) -> Result<()> {
-        let mut state = self
-            .inner
-            .lock()
-            .expect("runtime timeout controller lock should not be poisoned");
-        if state.disarmed || state.remaining.is_zero() || state.registration.is_some() {
-            return Ok(());
-        }
-        let registration = Self::register(&state.timer, state.remaining, state.callback.clone())?;
-        state.armed_at = Some(Instant::now());
-        state.registration = Some(registration);
-        Ok(())
-    }
-
-    pub(crate) async fn disarm(&self) {
-        let registration = {
-            let mut state = self
-                .inner
-                .lock()
-                .expect("runtime timeout controller lock should not be poisoned");
-            state.disarmed = true;
-            state.armed_at = None;
-            state.registration.take()
-        };
-        if let Some(registration) = registration {
-            registration.disarm().await;
-        }
-    }
-}
-
-struct RuntimeStartupSnapshot {
-    bytes: &'static [u8],
-}
-
-impl RuntimeStartupSnapshot {
-    fn new(bytes: Box<[u8]>) -> Self {
-        // deno_core currently accepts startup snapshots as &'static [u8]. The
-        // worker pool keeps a single bootstrap snapshot for its own lifetime,
-        // so leaking one buffer per worker matches the pool's lifetime and
-        // avoids unsound lifetime extension tricks.
-        Self {
-            bytes: Box::leak(bytes),
-        }
-    }
-
-    fn as_startup_snapshot(&self) -> &'static [u8] {
-        self.bytes
-    }
-}
-
-#[cfg(test)]
-static RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
-
-pub(crate) struct RuntimeWorkerIsolatePool {
-    warmed: bool,
-}
-
-impl RuntimeWorkerIsolatePool {
-    pub(crate) fn new() -> Self {
-        Self { warmed: false }
-    }
-
-    fn take_runtime(
-        &mut self,
-        runtime_owner: &NeovexRuntime,
-        bundle: &RuntimeBundle,
-    ) -> Result<JsRuntime> {
-        let snapshot = runtime_owner.bootstrap_snapshot()?;
-        if self.warmed {
-            runtime_owner.policy.metrics().record_isolate_pool_hit();
-            runtime_owner.create_runtime_from_snapshot(bundle, snapshot)
-        } else {
-            runtime_owner.policy.metrics().record_isolate_pool_miss();
-            let runtime = runtime_owner.create_runtime_from_snapshot(bundle, snapshot)?;
-            self.warmed = true;
-            Ok(runtime)
-        }
-    }
-
-    fn record_replacement(&self, runtime_owner: &NeovexRuntime) {
-        runtime_owner
-            .policy
-            .metrics()
-            .record_isolate_pool_replacement();
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum RuntimeHostCallEnvelope {
-    Ok { value: Value },
-    Error { error: Value },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncQueryPayload {
-    query: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncPaginatedQueryPayload {
-    query: Value,
-    page_size: usize,
-    #[serde(default)]
-    cursor: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncDbGetPayload {
-    table: String,
-    id: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncMutationPayload {
-    mutation: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncActionPayload {
-    action: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncHttpRoutePayload {
-    request: Value,
-    route: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncDbInsertPayload {
-    table: String,
-    fields: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncDbPatchPayload {
-    table: String,
-    id: String,
-    patch: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncDbDeletePayload {
-    table: String,
-    id: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeSyncQueryStartPayload {
-    table: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeSyncQueryWithIndexPayload {
-    builder_id: String,
-    index_name: String,
-    #[serde(default)]
-    filters: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeSyncQueryFilterPayload {
-    builder_id: String,
-    #[serde(default)]
-    filters: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeSyncQueryOrderPayload {
-    builder_id: String,
-    direction: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncSchedulerRunAfterPayload {
-    delay_ms: u64,
-    name: String,
-    visibility: String,
-    #[serde(default)]
-    args: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncSchedulerRunAtPayload {
-    timestamp_ms: u64,
-    name: String,
-    visibility: String,
-    #[serde(default)]
-    args: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncSchedulerCancelPayload {
-    job_id: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncFunctionCallPayload {
-    name: String,
-    visibility: String,
-    #[serde(default)]
-    args: Value,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    auth: Option<InvocationAuth>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeSyncNestedCallPayload {
-    name: String,
-    visibility: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncQueryTerminalPayload {
-    builder_id: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncQueryTakePayload {
-    builder_id: String,
-    limit: usize,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeAsyncQueryPaginatePayload {
-    builder_id: String,
-    page_size: usize,
-    #[serde(default)]
-    cursor: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-extension!(
-    neovex_runtime_ext,
-    ops = [
-        op_neovex_ctx_query_start,
-        op_neovex_ctx_query_with_index,
-        op_neovex_ctx_query_filter,
-        op_neovex_ctx_query_order,
-        op_neovex_ctx_query,
-        op_neovex_ctx_paginated_query,
-        op_neovex_ctx_mutation,
-        op_neovex_ctx_action,
-        op_neovex_http_route,
-        op_neovex_ctx_db_get,
-        op_neovex_ctx_db_insert,
-        op_neovex_ctx_db_patch,
-        op_neovex_ctx_db_delete,
-        op_neovex_ctx_query_collect,
-        op_neovex_ctx_query_take,
-        op_neovex_ctx_query_paginate,
-        op_neovex_ctx_query_first,
-        op_neovex_ctx_query_unique,
-        op_neovex_ctx_scheduler_run_after,
-        op_neovex_ctx_scheduler_run_at,
-        op_neovex_ctx_scheduler_cancel,
-        op_neovex_ctx_runtime_enter_nested_call,
-        op_neovex_ctx_run_query,
-        op_neovex_ctx_run_mutation,
-        op_neovex_ctx_run_action
-    ],
-);
-const BOOTSTRAP_SOURCE: &str = r#"
-const __neovexCoreOps = Deno.core.ops;
-globalThis.__neovexSyncHostValue = function(opName, payload) {
-  const operation = __neovexCoreOps[opName];
-  if (typeof operation !== "function") {
-    throw new Error(`Neovex runtime sync host op not found: ${opName}`);
-  }
-  const response = operation(payload);
-  if (!response || response.status !== "ok") {
-    const error = new Error(
-      `Neovex runtime sync host call failed for ${opName}: ${__neovexFormatHostError(response?.error)}`,
-    );
-    error.neovexHostError = response?.error ?? null;
-    throw error;
-  }
-  return response.value;
+use crate::watchdog::WatchdogTimer;
+
+mod bootstrap;
+mod bundle;
+mod invocation;
+
+use self::bootstrap::{RuntimeCancellationState, RuntimeStartupSnapshot};
+pub(crate) use self::bootstrap::{RuntimeInvocationTimeoutController, RuntimeWorkerIsolatePool};
+pub use self::bundle::RuntimeBundle;
+pub use self::invocation::{
+    InvocationAuth, InvocationKind, InvocationRequest, RuntimeUserIdentity, VerifiedUserIdentity,
+    VerifiedUserIdentityKind,
 };
-
-function __neovexFormatHostError(error) {
-  if (error === null || error === undefined) {
-    return "unknown host error";
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch (_error) {
-    return String(error);
-  }
-}
-
-globalThis.__neovexAsyncHostValue = async function(opName, payload) {
-  const operation = __neovexCoreOps[opName];
-  if (typeof operation !== "function") {
-    throw new Error(`Neovex runtime async host op not found: ${opName}`);
-  }
-  const response = await operation(payload);
-  if (!response || response.status !== "ok") {
-    const error = new Error(
-      `Neovex runtime async host call failed for ${opName}: ${__neovexFormatHostError(response?.error)}`,
-    );
-    error.neovexHostError = response?.error ?? null;
-    throw error;
-  }
-  return response.value;
-};
-
-function __neovexNormalizeFieldName(field) {
-  if (typeof field === "string" && field.length > 0) {
-    return field;
-  }
-  if (
-    field !== null &&
-    typeof field === "object" &&
-    typeof field.__fieldName === "string" &&
-    field.__fieldName.length > 0
-  ) {
-    return field.__fieldName;
-  }
-  throw new Error("ctx.db field constraints require a non-empty field name");
-}
-
-function __neovexCreateConstraintBuilder() {
-  const filters = [];
-  const builder = {
-    field(name) {
-      return { __fieldName: __neovexNormalizeFieldName(name) };
-    },
-    eq(field, value) {
-      filters.push({ field: __neovexNormalizeFieldName(field), op: "eq", value });
-      return builder;
-    },
-    neq(field, value) {
-      filters.push({ field: __neovexNormalizeFieldName(field), op: "neq", value });
-      return builder;
-    },
-    gt(field, value) {
-      filters.push({ field: __neovexNormalizeFieldName(field), op: "gt", value });
-      return builder;
-    },
-    gte(field, value) {
-      filters.push({ field: __neovexNormalizeFieldName(field), op: "gte", value });
-      return builder;
-    },
-    lt(field, value) {
-      filters.push({ field: __neovexNormalizeFieldName(field), op: "lt", value });
-      return builder;
-    },
-    lte(field, value) {
-      filters.push({ field: __neovexNormalizeFieldName(field), op: "lte", value });
-      return builder;
-    },
-  };
-  return Object.assign(builder, { __filters: filters });
-}
-
-function __neovexCollectConstraintFilters(builderFn, label) {
-  const builder = __neovexCreateConstraintBuilder();
-  const result = builderFn ? builderFn(builder) : builder;
-  if (result !== undefined && result !== builder && result?.__filters !== builder.__filters) {
-    throw new Error(`ctx.db.${label}(...) must return the provided builder`);
-  }
-  return [...builder.__filters];
-}
-
-function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
-  return Object.freeze({
-    __builderId: builderId,
-    withIndex(indexName, builderFn) {
-      syncHostValue("op_neovex_ctx_query_with_index", {
-        builder_id: builderId,
-        index_name: indexName,
-        filters: __neovexCollectConstraintFilters(builderFn, "withIndex"),
-      });
-      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
-    },
-    filter(builderFn) {
-      syncHostValue("op_neovex_ctx_query_filter", {
-        builder_id: builderId,
-        filters: __neovexCollectConstraintFilters(builderFn, "filter"),
-      });
-      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
-    },
-    order(direction) {
-      syncHostValue("op_neovex_ctx_query_order", {
-        builder_id: builderId,
-        direction,
-      });
-      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
-    },
-    collect() {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_collect", {
-        builder_id: builderId,
-        session_id: sessionId,
-      });
-    },
-    take(limit) {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_take", {
-        builder_id: builderId,
-        limit,
-        session_id: sessionId,
-      });
-    },
-    async paginate(paginationOpts) {
-      if (!paginationOpts || typeof paginationOpts !== "object") {
-        throw new Error("ctx.db.query(...).paginate(...) requires pagination options");
-      }
-      if (typeof paginationOpts.numItems !== "number") {
-        throw new Error("ctx.db.query(...).paginate(...) requires paginationOpts.numItems");
-      }
-      const cursor =
-        typeof paginationOpts.cursor === "string" ? paginationOpts.cursor : null;
-      const page = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
-        builder_id: builderId,
-        page_size: paginationOpts.numItems,
-        cursor,
-        session_id: sessionId,
-      });
-      const pageItems = Array.isArray(page?.data) ? page.data : [];
-      const hasContinuation =
-        typeof page?.next_cursor === "string" &&
-        pageItems.length === paginationOpts.numItems &&
-        pageItems.length > 0;
-      const continueCursor =
-        page && typeof page.next_cursor === "string"
-          ? page.next_cursor
-          : cursor ?? "";
-      return {
-        page: pageItems,
-        isDone: page?.has_more === true ? false : !hasContinuation,
-        continueCursor,
-        splitCursor: null,
-        pageStatus: null,
-      };
-    },
-    first() {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_first", {
-        builder_id: builderId,
-        session_id: sessionId,
-      });
-    },
-    unique() {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_unique", {
-        builder_id: builderId,
-        session_id: sessionId,
-      });
-    },
-  });
-}
-
-function __neovexNormalizeFunctionReference(functionRef, label) {
-  if (!functionRef || typeof functionRef !== "object") {
-    throw new Error(`ctx.${label}(...) requires a generated function reference`);
-  }
-  if (typeof functionRef.name !== "string" || functionRef.name.length === 0) {
-    throw new Error(`ctx.${label}(...) requires a named generated function reference`);
-  }
-  return {
-    name: functionRef.name,
-    visibility: typeof functionRef.visibility === "string" ? functionRef.visibility : "public",
-  };
-}
-
-async function __neovexRunNamedFunction(
-  syncHostValue,
-  asyncOpName,
-  sessionId,
-  authContext,
-  kind,
-  label,
-  functionRef,
-  args = {},
-) {
-  const normalized = __neovexNormalizeFunctionReference(functionRef, label);
-  const localInvoker = globalThis.__neovexInvokeNamedLocal;
-  const nestedAuthContext = authContext
-    ? {
-        ...authContext,
-        throw_on_missing_identity: false,
-      }
-    : null;
-  if (typeof localInvoker === "function") {
-    syncHostValue("op_neovex_ctx_runtime_enter_nested_call", {
-      name: normalized.name,
-      visibility: normalized.visibility,
-      session_id: sessionId,
-    });
-    return await localInvoker({
-      kind,
-      function_name: normalized.name,
-      args,
-      visibility: normalized.visibility,
-      ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
-    });
-  }
-  return globalThis.__neovexAsyncHostValue(asyncOpName, {
-    ...normalized,
-    args,
-    session_id: sessionId,
-    ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
-  });
-}
-
-let __neovexNextSessionId = 1;
-
-globalThis.__neovexCreateContext = function(options = {}) {
-  const sessionId =
-    typeof options.sessionId === "string" && options.sessionId.length > 0
-      ? options.sessionId
-      : `session-${__neovexNextSessionId++}`;
-  const requestAuth =
-    options.request !== null &&
-    typeof options.request === "object" &&
-    options.request.auth !== null &&
-    typeof options.request.auth === "object"
-      ? options.request.auth
-      : null;
-  const authIdentity =
-    requestAuth &&
-    requestAuth.identity !== null &&
-    typeof requestAuth.identity === "object"
-      ? requestAuth.identity
-      : null;
-  const verifiedAuthIdentity =
-    requestAuth &&
-    requestAuth.verified_identity !== null &&
-    typeof requestAuth.verified_identity === "object"
-      ? requestAuth.verified_identity
-      : null;
-  const throwOnMissingIdentity = requestAuth?.throw_on_missing_identity === true;
-
-  const syncHostValue = (opName, payload) =>
-    globalThis.__neovexSyncHostValue(opName, {
-      session_id: sessionId,
-      ...(payload ?? {}),
-    });
-
-  const asyncHostValue = (opName, payload) =>
-    globalThis.__neovexAsyncHostValue(opName, {
-      session_id: sessionId,
-      ...(payload ?? {}),
-    });
-
-  const cloneAuthIdentityOrThrow = (identity) => {
-    if (identity) {
-      return JSON.parse(JSON.stringify(identity));
-    }
-    if (throwOnMissingIdentity) {
-      throw new Error(
-        "convex httpAction requires an authenticated identity",
-      );
-    }
-    return null;
-  };
-
-  return {
-    auth: Object.freeze({
-      async getUserIdentity() {
-        return cloneAuthIdentityOrThrow(authIdentity);
-      },
-      async getVerifiedIdentity() {
-        return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
-      },
-    }),
-    db: {
-      async get(tableOrId, maybeId) {
-        if (maybeId === undefined) {
-          if (
-            tableOrId &&
-            typeof tableOrId === "object" &&
-            typeof tableOrId.table === "string" &&
-            typeof tableOrId.id === "string"
-          ) {
-            return globalThis.__neovexAsyncHostValue("op_neovex_ctx_db_get", {
-              table: tableOrId.table,
-              id: tableOrId.id,
-              session_id: sessionId,
-            });
-          }
-          throw new Error(
-            "Neovex runtime ctx.db.get currently requires table and id at runtime",
-          );
-        }
-        return globalThis.__neovexAsyncHostValue("op_neovex_ctx_db_get", {
-          table: tableOrId,
-          id: maybeId,
-          session_id: sessionId,
-        });
-      },
-      query(table) {
-        const builderId = syncHostValue("op_neovex_ctx_query_start", { table });
-        return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
-      },
-      insert(table, fields) {
-        return asyncHostValue("op_neovex_ctx_db_insert", {
-          table,
-          fields,
-        });
-      },
-      patch(table, id, patch) {
-        return asyncHostValue("op_neovex_ctx_db_patch", {
-          table,
-          id,
-          patch,
-        });
-      },
-      delete(table, id) {
-        return asyncHostValue("op_neovex_ctx_db_delete", {
-          table,
-          id,
-        });
-      },
-    },
-    scheduler: {
-      runAfter(delayMs, functionRef, args = {}) {
-        const normalized = __neovexNormalizeFunctionReference(functionRef, "scheduler.runAfter");
-        return asyncHostValue("op_neovex_ctx_scheduler_run_after", {
-          delay_ms: delayMs,
-          ...normalized,
-          args,
-        });
-      },
-      runAt(timestampMs, functionRef, args = {}) {
-        const normalized = __neovexNormalizeFunctionReference(functionRef, "scheduler.runAt");
-        return asyncHostValue("op_neovex_ctx_scheduler_run_at", {
-          timestamp_ms: timestampMs,
-          ...normalized,
-          args,
-        });
-      },
-      cancel(jobId) {
-        return asyncHostValue("op_neovex_ctx_scheduler_cancel", {
-          job_id: jobId,
-        });
-      },
-    },
-      runQuery(functionRef, args = {}) {
-        return __neovexRunNamedFunction(
-          syncHostValue,
-          "op_neovex_ctx_run_query",
-          sessionId,
-          requestAuth,
-          "query",
-        "runQuery",
-        functionRef,
-        args,
-      );
-    },
-      runMutation(functionRef, args = {}) {
-        return __neovexRunNamedFunction(
-          syncHostValue,
-          "op_neovex_ctx_run_mutation",
-          sessionId,
-          requestAuth,
-          "mutation",
-        "runMutation",
-        functionRef,
-        args,
-      );
-    },
-      runAction(functionRef, args = {}) {
-        return __neovexRunNamedFunction(
-          syncHostValue,
-          "op_neovex_ctx_run_action",
-          sessionId,
-          requestAuth,
-          "action",
-        "runAction",
-        functionRef,
-        args,
-      );
-    },
-  };
-};
-
-Object.freeze(globalThis.__neovexSyncHostValue);
-Object.freeze(globalThis.__neovexAsyncHostValue);
-Object.freeze(globalThis.__neovexCreateContext);
-"#;
-
-const POST_BOOTSTRAP_SOURCE: &str = "delete globalThis.Deno;";
-
-#[op2]
-#[serde]
-fn op_neovex_ctx_query_start(
-    state: &mut OpState,
-    #[serde] payload: RuntimeSyncQueryStartPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryStart, payload)
-}
-
-#[op2]
-#[serde]
-fn op_neovex_ctx_query_with_index(
-    state: &mut OpState,
-    #[serde] payload: RuntimeSyncQueryWithIndexPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryWithIndex, payload)
-}
-
-#[op2]
-#[serde]
-fn op_neovex_ctx_query_filter(
-    state: &mut OpState,
-    #[serde] payload: RuntimeSyncQueryFilterPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryFilter, payload)
-}
-
-#[op2]
-#[serde]
-fn op_neovex_ctx_query_order(
-    state: &mut OpState,
-    #[serde] payload: RuntimeSyncQueryOrderPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryOrder, payload)
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_query(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncQueryPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxQuery, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_paginated_query(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncPaginatedQueryPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxPaginatedQuery, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_mutation(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncMutationPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxMutation, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_action(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncActionPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxAction, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_http_route(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncHttpRoutePayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::HttpRoute, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_db_get(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncDbGetPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbGet, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_db_insert(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncDbInsertPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbInsert, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_db_patch(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncDbPatchPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbPatch, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_db_delete(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncDbDeletePayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbDelete, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_query_collect(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncQueryTerminalPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryCollect, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_query_take(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncQueryTakePayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryTake, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_query_paginate(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncQueryPaginatePayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryPaginate, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_query_first(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncQueryTerminalPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryFirst, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_query_unique(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncQueryTerminalPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryUnique, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_scheduler_run_after(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncSchedulerRunAfterPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxSchedulerRunAfter, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_scheduler_run_at(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncSchedulerRunAtPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxSchedulerRunAt, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_scheduler_cancel(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncSchedulerCancelPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxSchedulerCancel, payload).await
-}
-
-#[op2]
-#[serde]
-fn op_neovex_ctx_runtime_enter_nested_call(
-    state: &mut OpState,
-    #[serde] payload: RuntimeSyncNestedCallPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxRuntimeEnterNestedCall, payload)
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_run_query(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncFunctionCallPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxRunQuery, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_run_mutation(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncFunctionCallPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxRunMutation, payload).await
-}
-
-#[op2]
-#[serde]
-async fn op_neovex_ctx_run_action(
-    state: Rc<RefCell<OpState>>,
-    #[serde] payload: RuntimeAsyncFunctionCallPayload,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxRunAction, payload).await
-}
-
-async fn op_neovex_async_host_call<T>(
-    state: Rc<RefCell<OpState>>,
-    operation: HostCallOperation,
-    payload: T,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox>
-where
-    T: Serialize + Send + 'static,
-{
-    struct HostCallPermitLease {
-        permit: SharedInvocationPermit,
-        completed: bool,
-    }
-
-    impl HostCallPermitLease {
-        fn new(permit: SharedInvocationPermit) -> Self {
-            permit.begin_async_host_call();
-            Self {
-                permit,
-                completed: false,
-            }
-        }
-
-        async fn complete(&mut self) -> std::result::Result<(), JsErrorBox> {
-            self.completed = true;
-            self.permit
-                .complete_async_host_call()
-                .await
-                .map_err(|error| JsErrorBox::generic(error.to_string()))
-        }
-    }
-
-    impl Drop for HostCallPermitLease {
-        fn drop(&mut self) {
-            if !self.completed {
-                self.permit.drop_async_host_call();
-            }
-        }
-    }
-
-    let (host_state, cancel_handle, cancellation_signal, permit) = {
-        let state = state.borrow();
-        (
-            state.borrow::<RuntimeHostState>().clone(),
-            state
-                .borrow::<RuntimeCancellationState>()
-                .cancel_handle
-                .clone(),
-            state.borrow::<RuntimeCancellationState>().signal.clone(),
-            state.borrow::<SharedInvocationPermit>().clone(),
-        )
-    };
-    let mut permit_lease = HostCallPermitLease::new(permit);
-    let payload_value =
-        serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    let host_call = host_state
-        .bridge
-        .call_async(
-            HostCallRequest {
-                operation,
-                payload: payload_value,
-            },
-            cancellation_signal.clone(),
-        )
-        .or_cancel(cancel_handle.clone());
-    tokio::pin!(host_call);
-
-    tokio::select! {
-        result = &mut host_call => {
-            let result = normalize_host_call_value(
-                result
-                .map_err(JsErrorBox::from)?
-                .map_err(|error| JsErrorBox::generic(error.to_string()))?
-            );
-            permit_lease.complete().await?;
-            result
-        }
-        _ = cancellation_signal.cancelled() => {
-            cancel_handle.cancel();
-            let result = normalize_host_call_value(
-                host_call
-                .await
-                .map_err(JsErrorBox::from)?
-                .map_err(|error| JsErrorBox::generic(error.to_string()))?
-            );
-            permit_lease.complete().await?;
-            result
-        }
-    }
-}
-
-fn normalize_host_call_value(
-    value: Value,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    match serde_json::from_value::<RuntimeHostCallEnvelope>(value.clone()) {
-        Ok(envelope) => Ok(envelope),
-        Err(_) => Ok(RuntimeHostCallEnvelope::Ok { value }),
-    }
-}
-
-fn op_neovex_sync_host_call<T>(
-    state: &mut OpState,
-    operation: HostCallOperation,
-    payload: T,
-) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox>
-where
-    T: Serialize,
-{
-    let host_state = state.borrow::<RuntimeHostState>().clone();
-    let payload_value =
-        serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    let value = host_state
-        .bridge
-        .call(HostCallRequest {
-            operation,
-            payload: payload_value,
-        })
-        .map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    normalize_host_call_value(value)
-}
 
 #[derive(Clone)]
 pub struct NeovexRuntime {
     host: Arc<dyn HostBridge>,
     policy: Arc<RuntimePolicy>,
     bypass_concurrency_limit: bool,
+    owned_executor: Arc<OnceLock<RuntimeExecutor>>,
 }
 
 pub(crate) struct RuntimeInvocationExecution {
@@ -1499,6 +60,7 @@ impl NeovexRuntime {
             host,
             policy,
             bypass_concurrency_limit: false,
+            owned_executor: Arc::new(OnceLock::new()),
         }
     }
 
@@ -1510,11 +72,24 @@ impl NeovexRuntime {
             host,
             policy,
             bypass_concurrency_limit: true,
+            owned_executor: Arc::new(OnceLock::new()),
         }
     }
 
     pub(crate) fn into_policy(self, policy: Arc<RuntimePolicy>) -> Self {
-        Self { policy, ..self }
+        Self {
+            policy,
+            owned_executor: Arc::new(OnceLock::new()),
+            ..self
+        }
+    }
+
+    /// Returns the stable executor handle that powers this runtime's public
+    /// convenience invocation APIs.
+    pub fn executor(&self) -> RuntimeExecutor {
+        self.owned_executor
+            .get_or_init(|| RuntimeExecutor::new(self.policy.clone()))
+            .clone()
     }
 
     pub async fn invoke_bundle(
@@ -1532,8 +107,8 @@ impl NeovexRuntime {
         request: &InvocationRequest,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
-        RuntimeExecutor::new(self.policy.clone())
-            .invoke_with_cancellation(
+        self.executor()
+            .invoke_on_worker(
                 self.clone(),
                 bundle.clone(),
                 request.clone(),
@@ -1557,7 +132,7 @@ impl NeovexRuntime {
         request: &InvocationRequest,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
-        RuntimeExecutor::new(self.policy.clone()).invoke_blocking_with_cancellation(
+        self.executor().invoke_blocking_with_cancellation(
             self.clone(),
             bundle.clone(),
             request.clone(),
@@ -1750,11 +325,9 @@ impl NeovexRuntime {
     fn bootstrap_snapshot(&self) -> Result<&'static RuntimeStartupSnapshot> {
         static BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<RuntimeStartupSnapshot, String>> =
             OnceLock::new();
-        match BOOTSTRAP_SNAPSHOT.get_or_init(|| {
-            #[cfg(test)]
-            RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
-            Self::create_bootstrap_snapshot().map_err(|error| error.to_string())
-        }) {
+        match BOOTSTRAP_SNAPSHOT
+            .get_or_init(|| Self::create_bootstrap_snapshot().map_err(|error| error.to_string()))
+        {
             Ok(snapshot) => Ok(snapshot),
             Err(message) => Err(NeovexRuntimeError::Contract(format!(
                 "failed to initialize runtime bootstrap snapshot: {message}"
@@ -1763,12 +336,7 @@ impl NeovexRuntime {
     }
 
     fn create_bootstrap_snapshot() -> Result<RuntimeStartupSnapshot> {
-        let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
-            extensions: vec![neovex_runtime_ext::init()],
-            ..Default::default()
-        });
-        Self::install_bootstrap(&mut runtime)?;
-        Ok(RuntimeStartupSnapshot::new(runtime.snapshot()))
+        bootstrap::create_bootstrap_snapshot()
     }
 
     fn create_runtime_from_snapshot(
@@ -1787,7 +355,7 @@ impl NeovexRuntime {
         let mut runtime = JsRuntime::new(RuntimeOptions {
             create_params: Some(self.create_isolate_params()),
             module_loader: Some(Rc::new(SandboxedModuleLoader::new(bundle.module_root()?))),
-            extensions: vec![neovex_runtime_ext::init()],
+            extensions: vec![bootstrap::runtime_extension()],
             startup_snapshot: startup_snapshot.map(RuntimeStartupSnapshot::as_startup_snapshot),
             ..Default::default()
         });
@@ -1808,45 +376,21 @@ impl NeovexRuntime {
     }
 
     fn initialize_runtime_state(&self, runtime: &mut JsRuntime) {
-        {
-            let op_state = runtime.op_state();
-            let mut state = op_state.borrow_mut();
-            state.put(RuntimeHostState {
-                bridge: self.host.clone(),
-            });
-            let signal = HostCallCancellation::default();
-            state.put(RuntimeCancellationState {
-                cancel_handle: CancelHandle::new_rc(),
-                signal,
-            });
-            state.put(SharedInvocationPermit::new(
-                self.policy.clone(),
-                None,
-                None,
-                true,
-                None,
-            ));
-        }
+        bootstrap::initialize_runtime_state(runtime, self);
     }
 
     fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
-        runtime
-            .execute_script("<neovex-runtime:bootstrap>", BOOTSTRAP_SOURCE)
-            .map_err(runtime_js_error)?;
-        Ok(())
+        bootstrap::install_bootstrap(runtime)
     }
 
     fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
-        runtime
-            .execute_script("<neovex-runtime:bootstrap:finalize>", POST_BOOTSTRAP_SOURCE)
-            .map_err(runtime_js_error)?;
-        Ok(())
+        bootstrap::finalize_bootstrap(runtime)
     }
 }
 
 #[cfg(test)]
 pub(crate) fn bootstrap_snapshot_build_count_for_test() -> usize {
-    RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS.load(Ordering::Relaxed)
+    bootstrap::bootstrap_snapshot_build_count_for_test()
 }
 
 fn deserialize_json_value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
@@ -1897,38 +441,11 @@ fn is_host_call_canceled_error(message: &str) -> bool {
     message.contains("runtime host call canceled")
 }
 
-fn normalize_sha256(value: &str) -> Result<String> {
-    let normalized = value
-        .split_ascii_whitespace()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    let valid = normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit());
-    if valid {
-        Ok(normalized)
-    } else {
-        Err(NeovexRuntimeError::Contract(format!(
-            "runtime bundle sha256 must be a 64-character hex string, got {value:?}"
-        )))
-    }
-}
-
-fn compute_sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        output.push_str(&format!("{byte:02x}"));
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use serde_json::Map;
     use tempfile::tempdir;
 
     use super::*;
@@ -2780,6 +1297,58 @@ export {};
     }
 
     #[tokio::test]
+    async fn convenience_runtime_invocations_reuse_runtime_owned_executor() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__moduleLoadCount = (globalThis.__moduleLoadCount ?? 0) + 1;
+
+globalThis.__neovexInvoke = async function () {
+  return { moduleLoadCount: globalThis.__moduleLoadCount };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let runtime =
+            NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy.clone());
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:list".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+
+        let first = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .expect("first convenience invocation should succeed");
+        let second = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .expect("second convenience invocation should succeed");
+
+        assert_eq!(first, serde_json::json!({ "moduleLoadCount": 1 }));
+        assert_eq!(second, serde_json::json!({ "moduleLoadCount": 1 }));
+        let metrics = policy.metrics_snapshot();
+        assert_eq!(metrics.isolate_pool_misses, 1);
+        assert_eq!(metrics.isolate_pool_hits, 1);
+        assert_eq!(metrics.isolate_pool_replacements, 0);
+    }
+
+    #[tokio::test]
     async fn pooled_runtime_invocations_reset_auth_and_session_state() {
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
@@ -3490,7 +2059,7 @@ export {};
             .canonicalize()
             .expect("bundle path should canonicalize");
 
-        assert!(Arc::ptr_eq(&bundle.shared, &cloned.shared));
+        assert!(bundle.shares_storage_with(&cloned));
         assert_eq!(bundle.bundle_identity(), cloned.bundle_identity());
         assert_eq!(bundle.bundle_identity().entrypoint(), canonical_bundle_path);
         assert_eq!(

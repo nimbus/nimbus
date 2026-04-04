@@ -33,9 +33,9 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active or deferred execution plan
-- For the current runtime and engine modularity cleanup workstream, go from
-  `docs/plans/README.md` to
-  `docs/plans/modularity-and-idiomatic-rust-cleanup-plan.md`.
+- For the current deeper modularity, concept-ownership, and canonical cleanup
+  workstream, go from `docs/plans/README.md` to
+  `docs/plans/concept-owned-modularity-and-canonical-cleanup-plan.md`.
 - For future admission-control work, go from `docs/plans/README.md` to
   `docs/plans/layered-admission-control-plan.md`.
 
@@ -44,21 +44,22 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- For the current modularity and idiomatic Rust cleanup workstream, treat
-  `docs/plans/modularity-and-idiomatic-rust-cleanup-plan.md` as the durable
-  control plane and resume from it plus the current git worktree.
+- For the current concept-owned modularity and canonical cleanup workstream,
+  treat `docs/plans/concept-owned-modularity-and-canonical-cleanup-plan.md`
+  as the durable control plane and resume from it plus the current git
+  worktree.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly
   asks for historical review or follow-up on a completed workstream.
 - If archived work needs a new execution pass, create or promote a new active
   plan instead of treating the archived plan as live progress state.
 - For future layered admission work, use
   `docs/plans/layered-admission-control-plan.md`.
-- For the current modularity cleanup plan, reread `Cleanup Invariants`,
-  `Current Assessed State`, `Feature Preservation Matrix`,
-  `Control Plane Rules`, `Verification Contract`,
-  `Roadmap Status Ledger`, `Implementation Checkpoints`,
-  `Dependency Graph`, `Recommended Delivery Order`, and `Execution Log`
-  before changing code.
+- For the current concept-owned cleanup plan, reread `Cleanup Invariants`,
+  `Current Assessed State`, `Current Review Findings`,
+  `Feature Preservation Matrix`, `Control Plane Rules`,
+  `Verification Contract`, `Roadmap Status Ledger`,
+  `Implementation Checkpoints`, `Dependency Graph`,
+  `Recommended Delivery Order`, and `Execution Log` before changing code.
 - Treat the roadmap plus the current git worktree as progress state. Do not rely on chat history to remember where work stopped.
 - If an item is already `in_progress` or the worktree is dirty, reconcile and resume that work before starting a new roadmap item.
 - Checkpoint roadmap state before stopping, handing off, or any likely context loss. Do not assume you will get an explicit compaction warning.
