@@ -173,10 +173,24 @@ file links (links go stale; symbol search does not).
 **`neovex-storage`** — Persistence layer. One `TenantStore` per tenant redb file, plus a global `UsageStore` for cross-tenant metering.
 
 - `async_storage.rs` — Internal async storage boundary. Defines the redb-backed read and write executors, cooperative cancellation, queued-write admission, and the write outcome model that distinguishes canceled-before-commit from committed results.
-- `store.rs` — `TenantStore` wrapping a redb `Database`. Defines 10 redb
-  tables plus `TenantWriteTransaction`, journal progress tracking, and
-  materialized snapshot-plus-tail rebuild helpers for the authoritative journal
-  model.
+- `store.rs` — `TenantStore` wrapping a redb `Database`: the storage
+  composition root. It now keeps the shared table definitions and public store
+  types while routing the remaining storage concerns through the
+  `store/` module tree.
+- `store/write.rs` — `TenantWriteTransaction`, direct durable write helpers,
+  write-batch apply, and storage commit ownership for document writes and
+  execution-unit batches.
+- `store/journal.rs` — durable journal append, read, replay, apply, recovery,
+  and metadata-sequence ownership.
+- `store/read.rs` — `TenantReadSnapshot`, document reads, table scans,
+  sequence and journal progress reads, and read-snapshot ownership.
+- `store/scan.rs` — conservative scan pushdown, scan metrics, and low-level
+  MessagePack field probing for scan-time filtering.
+- `store/schema_rewrite.rs` — durable schema-aware index rewrite helpers used
+  during journal replay and recovery.
+- `store/journal_snapshot.rs` / `store/journal_stream.rs` — materialized
+  snapshot export/restore/rebuild and durable-journal bootstrap/streaming
+  helpers for the authoritative journal model.
 - `keys.rs` — Key construction for the DOCUMENTS table. Prefix-based range scans for table isolation.
 - `index.rs` — Order-preserving value encoding, index key construction, `index_scan_eq`, `index_scan_range`, index maintenance during writes.
 - `schema_store.rs` — Schema persistence. `replace_table_schema` atomically updates schema and rebuilds indexes in one transaction.
@@ -224,20 +238,32 @@ file links (links go stale; symbol search does not).
   principal snapshot capture, policy revision tracking, and covered-sequence
   bootstrap semantics for conservative auth invalidation and catch-up.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
-- `service/scheduler.rs` — Schedule/cron CRUD. `load_tenants_with_scheduled_work` eagerly loads tenants on startup.
+- `service/scheduler.rs` — Composition root for the scheduler service
+  surface. `service/scheduler/scheduled_jobs.rs` owns scheduled-job CRUD,
+  result persistence, and async/cancellable scheduled-write helpers;
+  `service/scheduler/cron.rs` owns cron CRUD; `service/scheduler/access.rs`
+  owns the shared tenant-runtime/store access wrappers used by scheduler
+  operations; and `service/scheduler/coordination.rs` owns loaded-tenant
+  scans, next-due work discovery, and startup recovery via
+  `load_tenants_with_scheduled_work`.
 - `service/tenants.rs` — Tenant CRUD and lifecycle management. Create/delete now use async storage-engine control APIs; deletion evicts the tenant from the registry, rejects new work through a tenant-local lifecycle primitive, waits for in-flight operations to drain, then removes the on-disk store.
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
 - `tenant.rs` — `TenantRuntime` is the tenant-local facade and composition root
   over `tenant/document_cache.rs`, `tenant/lifecycle.rs`,
   `tenant/materialized_reads.rs`, `tenant/mutation.rs`,
-  `tenant/query_planning.rs`, and `tenant/subscription_delivery.rs`. It still
-  holds `Arc<TenantStore>`, async storage handles, `SubscriptionRegistry`,
-  `RwLock<Schema>`, a tenant-local close-then-drain lifecycle primitive, a
-  bounded subscription-delivery worker queue, and per-tenant durable versus
-  applied mutation-journal progress. Operation entry still uses RAII guards to
-  keep the in-flight count correct; sync waiters use a `Condvar`, async waiters
-  use `Notify`, and both share the same deleted-plus-active-operations state.
-  The subscription-delivery queue still drains small ready batches, merges
+  `tenant/query_planning.rs`, and `tenant/subscription_delivery.rs`. That
+  subscription-delivery root now composes
+  `tenant/subscription_delivery/queue.rs` (queue state, bounded enqueue, and
+  drain batching), `worker.rs` (dedicated worker lifecycle and shutdown),
+  `stats.rs` (delivery metrics and stats snapshots), and `pause.rs`
+  (test-only pause control). `TenantRuntime` still holds `Arc<TenantStore>`,
+  async storage handles, `SubscriptionRegistry`, `RwLock<Schema>`, a
+  tenant-local close-then-drain lifecycle primitive, a bounded
+  subscription-delivery worker queue, and per-tenant durable versus applied
+  mutation-journal progress. Operation entry still uses RAII guards to keep
+  the in-flight count correct; sync waiters use a `Condvar`, async waiters use
+  `Notify`, and both share the same deleted-plus-active-operations state. The
+  subscription-delivery queue still drains small ready batches, merges
   overlapping queued delivery work before reevaluation, and tracks both
   journal-batch and queue-level coalescing metrics, while the journal worker
   still exposes an async-friendly test pause seam for deterministic
@@ -259,10 +285,15 @@ file links (links go stale; symbol search does not).
 
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
 
-- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: the runtime composition root. It now owns public runtime construction, the runtime-owned convenience executor boundary, V8 isolate creation, and the `invoke_bundle_unmanaged` execution path, while delegating invocation/auth types to `runtime/invocation.rs`, bundle identity and integrity handling to `runtime/bundle.rs`, and bootstrap snapshot plus host-op ABI registration to `runtime/bootstrap.rs`.
+- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: the runtime composition root. It now owns public runtime construction, the runtime-owned convenience executor boundary, V8 isolate creation, and the `invoke_bundle_unmanaged` execution path, while delegating invocation/auth types to `runtime/invocation.rs`, bundle identity and integrity handling to `runtime/bundle.rs`, and bootstrap ownership to the `runtime/bootstrap/` module tree.
 - `runtime/invocation.rs` — `InvocationKind`, `InvocationRequest`, `InvocationAuth`, `RuntimeUserIdentity`, and `VerifiedUserIdentity`: the public invocation and auth payload surface for runtime calls.
 - `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
-- `runtime/bootstrap.rs` — runtime bootstrap JavaScript, op payload schemas, op registration, startup snapshot creation, worker isolate-pool state, and installation of host bridge plus cancellation state into `OpState`.
+- `runtime/bootstrap/mod.rs` — thin bootstrap composition root that wires the runtime bootstrap module tree together.
+- `runtime/bootstrap/payloads.rs` — host-call payload schemas plus the runtime host-call envelope used by the bootstrap op surface.
+- `runtime/bootstrap/ops.rs` — op registration, op handlers, and shared sync or async host-call glue for bootstrap-owned runtime host operations.
+- `runtime/bootstrap/source.rs` — bootstrap JavaScript source and the installation/finalization helpers that load it into a `JsRuntime`.
+- `runtime/bootstrap/state.rs` — installation of host bridge, cancellation state, and shared permit state into `OpState`, plus runtime timeout-controller ownership.
+- `runtime/bootstrap/snapshot.rs` — startup snapshot creation, snapshot-build test accounting, and worker isolate-pool ownership.
 - `executor.rs` — `RuntimeExecutor`: the executor composition root. It now owns public executor construction, request entrypoints, worker-thread startup and shutdown, and routes the remaining executor concerns through `executor/queue.rs`, `executor/admission.rs`, and `executor/lifecycle.rs`.
 - `executor/queue.rs` — runtime worker job envelopes, result channels, queue dispatch plumbing, and executor shutdown state.
 - `executor/admission.rs` — tenant admission accounting, dispatch handles, shared JS permit state, and the active versus parked versus queued fairness model.
@@ -367,6 +398,12 @@ worker-local beneath that seam.
   now parses serialized host `operation` strings once into a typed internal
   `ConvexHostOperation` dispatcher so sync, cancellable, and async entrypoints
   share one operation registry without changing the external runtime contract.
+  The direct ctx-op surface now keeps
+  `function_ops/ctx_ops/direct/execution.rs` as the canonical home for direct
+  execution-context dispatch and execution-unit short-circuiting, while
+  `function_ops/ctx_ops/direct/invocation.rs` owns runtime payload
+  decode/validate/encode plus the default-cancellation wrapper flow for
+  `ctx.db`, `ctx.mutation`, pagination, and action entrypoints.
 - `convex/subscriptions/socket/` — Convex WebSocket session orchestration,
   message handling, runtime transform application, and active-subscription
   cleanup. The session now owns its sender and forwarder tasks through

@@ -37,7 +37,6 @@ Download the latest release for your platform from [GitHub Releases](https://git
 |----------|-------------|---------|
 | Linux | x86_64 | `neovex_linux_x86_64.tar.gz` |
 | Linux | ARM64 | `neovex_linux_arm64.tar.gz` |
-| macOS | Intel | `neovex_darwin_x86_64.tar.gz` |
 | macOS | Apple Silicon | `neovex_darwin_arm64.tar.gz` |
 | Windows | x86_64 | `neovex_windows_x86_64.zip` |
 
@@ -111,5 +110,5 @@ This checks the Sigstore-signed attestation against the [GitHub attestation ledg
 - [CLI reference](docs/reference/cli.md)
 - [Convex compatibility](docs/convex/compatibility.md)
 - [Demos](demos/README.md)
-- [Plans index](docs/plans/README.md) for active control planes, deferred
-  design work, and archived history
+- [Plans index](docs/plans/README.md) for active execution control planes,
+  deferred design work, and archived history

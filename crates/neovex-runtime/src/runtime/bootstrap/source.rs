@@ -1,0 +1,440 @@
+use deno_core::JsRuntime;
+
+use crate::error::{NeovexRuntimeError, Result};
+
+const BOOTSTRAP_SOURCE: &str = r#"
+const __neovexCoreOps = Deno.core.ops;
+globalThis.__neovexSyncHostValue = function(opName, payload) {
+  const operation = __neovexCoreOps[opName];
+  if (typeof operation !== "function") {
+    throw new Error(`Neovex runtime sync host op not found: ${opName}`);
+  }
+  const response = operation(payload);
+  if (!response || response.status !== "ok") {
+    const error = new Error(
+      `Neovex runtime sync host call failed for ${opName}: ${__neovexFormatHostError(response?.error)}`,
+    );
+    error.neovexHostError = response?.error ?? null;
+    throw error;
+  }
+  return response.value;
+};
+
+function __neovexFormatHostError(error) {
+  if (error === null || error === undefined) {
+    return "unknown host error";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch (_error) {
+    return String(error);
+  }
+}
+
+globalThis.__neovexAsyncHostValue = async function(opName, payload) {
+  const operation = __neovexCoreOps[opName];
+  if (typeof operation !== "function") {
+    throw new Error(`Neovex runtime async host op not found: ${opName}`);
+  }
+  const response = await operation(payload);
+  if (!response || response.status !== "ok") {
+    const error = new Error(
+      `Neovex runtime async host call failed for ${opName}: ${__neovexFormatHostError(response?.error)}`,
+    );
+    error.neovexHostError = response?.error ?? null;
+    throw error;
+  }
+  return response.value;
+};
+
+function __neovexNormalizeFieldName(field) {
+  if (typeof field === "string" && field.length > 0) {
+    return field;
+  }
+  if (
+    field !== null &&
+    typeof field === "object" &&
+    typeof field.__fieldName === "string" &&
+    field.__fieldName.length > 0
+  ) {
+    return field.__fieldName;
+  }
+  throw new Error("ctx.db field constraints require a non-empty field name");
+}
+
+function __neovexCreateConstraintBuilder() {
+  const filters = [];
+  const builder = {
+    field(name) {
+      return { __fieldName: __neovexNormalizeFieldName(name) };
+    },
+    eq(field, value) {
+      filters.push({ field: __neovexNormalizeFieldName(field), op: "eq", value });
+      return builder;
+    },
+    neq(field, value) {
+      filters.push({ field: __neovexNormalizeFieldName(field), op: "neq", value });
+      return builder;
+    },
+    gt(field, value) {
+      filters.push({ field: __neovexNormalizeFieldName(field), op: "gt", value });
+      return builder;
+    },
+    gte(field, value) {
+      filters.push({ field: __neovexNormalizeFieldName(field), op: "gte", value });
+      return builder;
+    },
+    lt(field, value) {
+      filters.push({ field: __neovexNormalizeFieldName(field), op: "lt", value });
+      return builder;
+    },
+    lte(field, value) {
+      filters.push({ field: __neovexNormalizeFieldName(field), op: "lte", value });
+      return builder;
+    },
+  };
+  return Object.assign(builder, { __filters: filters });
+}
+
+function __neovexCollectConstraintFilters(builderFn, label) {
+  const builder = __neovexCreateConstraintBuilder();
+  const result = builderFn ? builderFn(builder) : builder;
+  if (result !== undefined && result !== builder && result?.__filters !== builder.__filters) {
+    throw new Error(`ctx.db.${label}(...) must return the provided builder`);
+  }
+  return [...builder.__filters];
+}
+
+function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
+  return Object.freeze({
+    __builderId: builderId,
+    withIndex(indexName, builderFn) {
+      syncHostValue("op_neovex_ctx_query_with_index", {
+        builder_id: builderId,
+        index_name: indexName,
+        filters: __neovexCollectConstraintFilters(builderFn, "withIndex"),
+      });
+      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+    },
+    filter(builderFn) {
+      syncHostValue("op_neovex_ctx_query_filter", {
+        builder_id: builderId,
+        filters: __neovexCollectConstraintFilters(builderFn, "filter"),
+      });
+      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+    },
+    order(direction) {
+      syncHostValue("op_neovex_ctx_query_order", {
+        builder_id: builderId,
+        direction,
+      });
+      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+    },
+    collect() {
+      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_collect", {
+        builder_id: builderId,
+        session_id: sessionId,
+      });
+    },
+    take(limit) {
+      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_take", {
+        builder_id: builderId,
+        limit,
+        session_id: sessionId,
+      });
+    },
+    async paginate(paginationOpts) {
+      if (!paginationOpts || typeof paginationOpts !== "object") {
+        throw new Error("ctx.db.query(...).paginate(...) requires pagination options");
+      }
+      if (typeof paginationOpts.numItems !== "number") {
+        throw new Error("ctx.db.query(...).paginate(...) requires paginationOpts.numItems");
+      }
+      const cursor =
+        typeof paginationOpts.cursor === "string" ? paginationOpts.cursor : null;
+      const page = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
+        builder_id: builderId,
+        page_size: paginationOpts.numItems,
+        cursor,
+        session_id: sessionId,
+      });
+      const pageItems = Array.isArray(page?.data) ? page.data : [];
+      const hasContinuation =
+        typeof page?.next_cursor === "string" &&
+        pageItems.length === paginationOpts.numItems &&
+        pageItems.length > 0;
+      const continueCursor =
+        page && typeof page.next_cursor === "string"
+          ? page.next_cursor
+          : cursor ?? "";
+      return {
+        page: pageItems,
+        isDone: page?.has_more === true ? false : !hasContinuation,
+        continueCursor,
+        splitCursor: null,
+        pageStatus: null,
+      };
+    },
+    first() {
+      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_first", {
+        builder_id: builderId,
+        session_id: sessionId,
+      });
+    },
+    unique() {
+      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_unique", {
+        builder_id: builderId,
+        session_id: sessionId,
+      });
+    },
+  });
+}
+
+function __neovexNormalizeFunctionReference(functionRef, label) {
+  if (!functionRef || typeof functionRef !== "object") {
+    throw new Error(`ctx.${label}(...) requires a generated function reference`);
+  }
+  if (typeof functionRef.name !== "string" || functionRef.name.length === 0) {
+    throw new Error(`ctx.${label}(...) requires a named generated function reference`);
+  }
+  return {
+    name: functionRef.name,
+    visibility: typeof functionRef.visibility === "string" ? functionRef.visibility : "public",
+  };
+}
+
+async function __neovexRunNamedFunction(
+  syncHostValue,
+  asyncOpName,
+  sessionId,
+  authContext,
+  kind,
+  label,
+  functionRef,
+  args = {},
+) {
+  const normalized = __neovexNormalizeFunctionReference(functionRef, label);
+  const localInvoker = globalThis.__neovexInvokeNamedLocal;
+  const nestedAuthContext = authContext
+    ? {
+        ...authContext,
+        throw_on_missing_identity: false,
+      }
+    : null;
+  if (typeof localInvoker === "function") {
+    syncHostValue("op_neovex_ctx_runtime_enter_nested_call", {
+      name: normalized.name,
+      visibility: normalized.visibility,
+      session_id: sessionId,
+    });
+    return await localInvoker({
+      kind,
+      function_name: normalized.name,
+      args,
+      visibility: normalized.visibility,
+      ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
+    });
+  }
+  return globalThis.__neovexAsyncHostValue(asyncOpName, {
+    ...normalized,
+    args,
+    session_id: sessionId,
+    ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
+  });
+}
+
+let __neovexNextSessionId = 1;
+
+globalThis.__neovexCreateContext = function(options = {}) {
+  const sessionId =
+    typeof options.sessionId === "string" && options.sessionId.length > 0
+      ? options.sessionId
+      : `session-${__neovexNextSessionId++}`;
+  const requestAuth =
+    options.request !== null &&
+    typeof options.request === "object" &&
+    options.request.auth !== null &&
+    typeof options.request.auth === "object"
+      ? options.request.auth
+      : null;
+  const authIdentity =
+    requestAuth &&
+    requestAuth.identity !== null &&
+    typeof requestAuth.identity === "object"
+      ? requestAuth.identity
+      : null;
+  const verifiedAuthIdentity =
+    requestAuth &&
+    requestAuth.verified_identity !== null &&
+    typeof requestAuth.verified_identity === "object"
+      ? requestAuth.verified_identity
+      : null;
+  const throwOnMissingIdentity = requestAuth?.throw_on_missing_identity === true;
+
+  const syncHostValue = (opName, payload) =>
+    globalThis.__neovexSyncHostValue(opName, {
+      session_id: sessionId,
+      ...(payload ?? {}),
+    });
+
+  const asyncHostValue = (opName, payload) =>
+    globalThis.__neovexAsyncHostValue(opName, {
+      session_id: sessionId,
+      ...(payload ?? {}),
+    });
+
+  const cloneAuthIdentityOrThrow = (identity) => {
+    if (identity) {
+      return JSON.parse(JSON.stringify(identity));
+    }
+    if (throwOnMissingIdentity) {
+      throw new Error(
+        "convex httpAction requires an authenticated identity",
+      );
+    }
+    return null;
+  };
+
+  return {
+    auth: Object.freeze({
+      async getUserIdentity() {
+        return cloneAuthIdentityOrThrow(authIdentity);
+      },
+      async getVerifiedIdentity() {
+        return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
+      },
+    }),
+    db: {
+      async get(tableOrId, maybeId) {
+        if (maybeId === undefined) {
+          if (
+            tableOrId &&
+            typeof tableOrId === "object" &&
+            typeof tableOrId.table === "string" &&
+            typeof tableOrId.id === "string"
+          ) {
+            return globalThis.__neovexAsyncHostValue("op_neovex_ctx_db_get", {
+              table: tableOrId.table,
+              id: tableOrId.id,
+              session_id: sessionId,
+            });
+          }
+          throw new Error(
+            "Neovex runtime ctx.db.get currently requires table and id at runtime",
+          );
+        }
+        return globalThis.__neovexAsyncHostValue("op_neovex_ctx_db_get", {
+          table: tableOrId,
+          id: maybeId,
+          session_id: sessionId,
+        });
+      },
+      query(table) {
+        const builderId = syncHostValue("op_neovex_ctx_query_start", { table });
+        return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+      },
+      insert(table, fields) {
+        return asyncHostValue("op_neovex_ctx_db_insert", {
+          table,
+          fields,
+        });
+      },
+      patch(table, id, patch) {
+        return asyncHostValue("op_neovex_ctx_db_patch", {
+          table,
+          id,
+          patch,
+        });
+      },
+      delete(table, id) {
+        return asyncHostValue("op_neovex_ctx_db_delete", {
+          table,
+          id,
+        });
+      },
+    },
+    scheduler: {
+      runAfter(delayMs, functionRef, args = {}) {
+        const normalized = __neovexNormalizeFunctionReference(functionRef, "scheduler.runAfter");
+        return asyncHostValue("op_neovex_ctx_scheduler_run_after", {
+          delay_ms: delayMs,
+          ...normalized,
+          args,
+        });
+      },
+      runAt(timestampMs, functionRef, args = {}) {
+        const normalized = __neovexNormalizeFunctionReference(functionRef, "scheduler.runAt");
+        return asyncHostValue("op_neovex_ctx_scheduler_run_at", {
+          timestamp_ms: timestampMs,
+          ...normalized,
+          args,
+        });
+      },
+      cancel(jobId) {
+        return asyncHostValue("op_neovex_ctx_scheduler_cancel", {
+          job_id: jobId,
+        });
+      },
+    },
+      runQuery(functionRef, args = {}) {
+        return __neovexRunNamedFunction(
+          syncHostValue,
+          "op_neovex_ctx_run_query",
+          sessionId,
+          requestAuth,
+          "query",
+        "runQuery",
+        functionRef,
+        args,
+      );
+    },
+      runMutation(functionRef, args = {}) {
+        return __neovexRunNamedFunction(
+          syncHostValue,
+          "op_neovex_ctx_run_mutation",
+          sessionId,
+          requestAuth,
+          "mutation",
+        "runMutation",
+        functionRef,
+        args,
+      );
+    },
+      runAction(functionRef, args = {}) {
+        return __neovexRunNamedFunction(
+          syncHostValue,
+          "op_neovex_ctx_run_action",
+          sessionId,
+          requestAuth,
+          "action",
+        "runAction",
+        functionRef,
+        args,
+      );
+    },
+  };
+};
+
+Object.freeze(globalThis.__neovexSyncHostValue);
+Object.freeze(globalThis.__neovexAsyncHostValue);
+Object.freeze(globalThis.__neovexCreateContext);
+"#;
+
+const POST_BOOTSTRAP_SOURCE: &str = "delete globalThis.Deno;";
+
+pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
+    runtime
+        .execute_script("<neovex-runtime:bootstrap>", BOOTSTRAP_SOURCE)
+        .map_err(|error| NeovexRuntimeError::JavaScript(error.to_string()))?;
+    Ok(())
+}
+
+pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
+    runtime
+        .execute_script("<neovex-runtime:bootstrap:finalize>", POST_BOOTSTRAP_SOURCE)
+        .map_err(|error| NeovexRuntimeError::JavaScript(error.to_string()))?;
+    Ok(())
+}
