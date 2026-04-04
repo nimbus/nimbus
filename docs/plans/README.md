@@ -6,13 +6,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 - `docs/plans/convex-demos-compatibility-plan.md`
   - execution plan for closing the remaining Convex demo and compatibility gaps
+- `docs/plans/deep-module-ownership-and-canonical-cleanup-plan.md`
+  - canonical execution plan for the next deeper serving, indexing,
+    planner, direct-mutation, and concept-owned scenario cleanup pass
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/concept-owned-modularity-and-canonical-cleanup-plan.md`
-  - canonical execution plan for the current deeper modularity,
-    concept-ownership, canonical naming, and idiomatic Rust cleanup
-    workstream
 - `docs/plans/v8-locker-fork-plan.md`
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
@@ -28,6 +27,9 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/archive/modularity-and-idiomatic-rust-cleanup-plan.md`
   - completed control plane for the runtime and engine modularity cleanup
     workstream; historical record only
+- `docs/plans/archive/concept-owned-modularity-and-canonical-cleanup-plan.md`
+  - completed control plane for the deeper concept-ownership, canonical
+    naming, and idiomatic Rust cleanup pass; historical record only
 - `docs/plans/archive/refactor-and-cleanup-control-plane.md`
   - completed control plane for the behavior-preserving engine, server, and
     runtime refactor and cleanup pass; historical record only
@@ -44,9 +46,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
   of reviving a completed archived one.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
+- For the current deeper serving, indexing, planner, and canonical cleanup
+  workstream, start with
+  `deep-module-ownership-and-canonical-cleanup-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
-- For the current deeper modularity and canonical cleanup workstream, start
-  with `concept-owned-modularity-and-canonical-cleanup-plan.md`.
 - For the Locker fork and cooperative runtime workstream, start with
   `v8-locker-fork-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
