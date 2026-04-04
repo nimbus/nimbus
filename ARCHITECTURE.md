@@ -192,7 +192,13 @@ file links (links go stale; symbol search does not).
   snapshot export/restore/rebuild and durable-journal bootstrap/streaming
   helpers for the authoritative journal model.
 - `keys.rs` — Key construction for the DOCUMENTS table. Prefix-based range scans for table isolation.
-- `index.rs` — Order-preserving value encoding, index key construction, `index_scan_eq`, `index_scan_range`, index maintenance during writes.
+- `index/` — Composition root for storage indexing ownership. `encoding.rs`
+  owns order-preserving scalar and tuple encoding, `keyspace.rs` owns index
+  key construction and prefix layout, `bounds.rs` owns composite range-bound
+  synthesis, `scan.rs` owns exact/prefix/range scan execution plus
+  `TenantReadSnapshot` scan convenience methods, and `maintenance.rs` owns
+  transaction-side index maintenance, table index rebuild/clear helpers, and
+  the `TenantStore` write-facing index APIs.
 - `schema_store.rs` — Schema persistence. `replace_table_schema` atomically updates schema and rebuilds indexes in one transaction.
 - `scheduler.rs` — Scheduled job and cron job persistence. `claim_due_jobs` atomically moves due jobs from pending to running. `recover_running_jobs` handles crash recovery.
 - `commit_log.rs` — Durable mutation journal serialization plus the internal
@@ -205,8 +211,12 @@ file links (links go stale; symbol search does not).
 - `service/mutations.rs` — Composition root for the write path. Public
   `apply_mutation` behavior still flows through the same single durable contract
   while the implementation is split across
-  `service/mutations/direct.rs` (direct CRUD wrappers and direct store-apply
-  helpers), `service/mutations/authorization.rs` (shared mutation
+  `service/mutations/direct/`, where `api.rs` owns the direct CRUD service
+  surface plus async/principal/cancellable wrapper normalization, `execution.rs`
+  owns execution-mode dispatch and mutation auth staging, `store.rs` owns the
+  direct store-apply helpers, and `types.rs` owns the shared execution
+  mode/result contract. The remaining write implementation is split across
+  `service/mutations/authorization.rs` (shared mutation
   access-policy enforcement), `service/mutations/commit_processing.rs`
   (post-commit cache invalidation plus subscription work enqueue after the
   applied watermark advances), and `service/mutations/journal.rs` (queued async
@@ -227,11 +237,15 @@ file links (links go stale; symbol search does not).
   `journal.rs` (durable-journal and latest-sequence reads), `verification.rs`
   (shadow-materializer and consistency verification helpers), and
   `test_hooks.rs` (test-only read instrumentation and pause handles), while the
-  private capability tree stays in `authorization.rs`, `planner.rs`,
-  `prepared.rs`, `materialized.rs`, and `snapshot.rs`. Read planning still
-  merges declarative authorization predicates before selecting an index Eq
-  scan, range scan, or table scan, and async read paths still route the same
-  prepared planner/evaluator logic through the storage-owned async executor.
+  private capability tree stays in `authorization.rs`, `planner/`,
+  `prepared.rs`, `materialized.rs`, and `snapshot.rs`. The planner root now
+  composes `exact.rs` (exact-prefix planning), `range.rs` (range-bound
+  derivation and range-plan selection), `scoring.rs` (candidate scoring and
+  order support), and `loading.rs` (plan-backed index loading over stores,
+  snapshots, and in-memory document slices). Read planning still merges
+  declarative authorization predicates before selecting an index Eq scan, range
+  scan, or table scan, and async read paths still route the same prepared
+  planner/evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe` plus subscription
   lifecycle ownership. Initial evaluation and activation handoff now live under
   `service/subscriptions/bootstrap.rs`, which owns materialized-surface reuse,
@@ -250,8 +264,15 @@ file links (links go stale; symbol search does not).
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
 - `tenant.rs` — `TenantRuntime` is the tenant-local facade and composition root
   over `tenant/document_cache.rs`, `tenant/lifecycle.rs`,
-  `tenant/materialized_reads.rs`, `tenant/mutation.rs`,
+  `tenant/materialized_reads/`, `tenant/mutation.rs`,
   `tenant/query_planning.rs`, and `tenant/subscription_delivery.rs`. That
+  materialized-read root now composes `snapshot.rs`
+  (`ServingSnapshot`, tenant-scoped snapshot retention, waiter wakeups, and
+  reader pins), `backend.rs` (the in-memory `MaterializedServingBackend`
+  handling publication, residency, eviction, and commit catch-up),
+  `warm_load.rs` (shared warm-load coordination and waiter ownership),
+  `stats.rs` (public serving metrics snapshot types), and `pause.rs`
+  (test-only publish pause control). That
   subscription-delivery root now composes
   `tenant/subscription_delivery/queue.rs` (queue state, bounded enqueue, and
   drain batching), `worker.rs` (dedicated worker lifecycle and shutdown),
