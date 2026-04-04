@@ -475,19 +475,6 @@ impl<'a> HttpApiFixture<'a> {
             .expect("document get should succeed")
     }
 
-    pub async fn commit_log(&self, tenant_id: &str, after: Option<u64>) -> Response {
-        let path = match after {
-            Some(after) => format!("/api/tenants/{tenant_id}/commits?after={after}"),
-            None => format!("/api/tenants/{tenant_id}/commits"),
-        };
-        self.server
-            .client()
-            .get(self.server.http_url(&path))
-            .send()
-            .await
-            .expect("commit log request should succeed")
-    }
-
     pub async fn journal(
         &self,
         tenant_id: &str,

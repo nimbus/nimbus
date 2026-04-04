@@ -130,7 +130,7 @@ async fn operations_on_nonexistent_tenant_return_not_found() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        api.commit_log("missing", None).await.status(),
+        api.journal("missing", None, None).await.status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(

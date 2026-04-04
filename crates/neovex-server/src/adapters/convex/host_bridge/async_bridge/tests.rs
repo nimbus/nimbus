@@ -28,7 +28,7 @@ async fn async_host_call_records_precancel_metric() {
     let result = execute_async_host_call(
         RuntimeAsyncHostCallTrace::new(tracing::Span::none(), "convex runtime async host call"),
         policy.metrics(),
-        "convex.ctx.db.get".to_string(),
+        "convex.ctx.db.get",
         cancellation,
         async { Ok(json!("unexpected")) },
     )
@@ -68,7 +68,7 @@ async fn async_host_call_records_cooperative_read_cancellation() {
                     "convex runtime async host call",
                 ),
                 metrics,
-                "convex.ctx.db.get".to_string(),
+                "convex.ctx.db.get",
                 cancellation.clone(),
                 async move {
                     started.notify_one();
@@ -125,7 +125,7 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
                     "convex runtime async host call",
                 ),
                 metrics,
-                "convex.ctx.db.insert".to_string(),
+                "convex.ctx.db.insert",
                 cancellation,
                 async move {
                     started.notify_one();

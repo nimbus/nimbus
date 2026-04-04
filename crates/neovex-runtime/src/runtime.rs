@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::RuntimeInvocationContext;
 use crate::error::{NeovexRuntimeError, Result};
 use crate::executor::{RuntimeExecutor, SharedInvocationPermit};
-use crate::host::{HostBridge, HostCallCancellation, HostCallRequest};
+use crate::host::{HostBridge, HostCallCancellation, HostCallOperation, HostCallRequest};
 use crate::limits::{RuntimeLimits, RuntimePolicy};
 use crate::module_loader::SandboxedModuleLoader;
 use crate::watchdog::{WatchdogRegistration, WatchdogTimer};
@@ -1127,7 +1127,7 @@ fn op_neovex_ctx_query_start(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryStartPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, "convex.ctx.db.query.start", payload)
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryStart, payload)
 }
 
 #[op2]
@@ -1136,7 +1136,7 @@ fn op_neovex_ctx_query_with_index(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryWithIndexPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, "convex.ctx.db.query.with_index", payload)
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryWithIndex, payload)
 }
 
 #[op2]
@@ -1145,7 +1145,7 @@ fn op_neovex_ctx_query_filter(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryFilterPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, "convex.ctx.db.query.filter", payload)
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryFilter, payload)
 }
 
 #[op2]
@@ -1154,7 +1154,7 @@ fn op_neovex_ctx_query_order(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryOrderPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, "convex.ctx.db.query.order", payload)
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryOrder, payload)
 }
 
 #[op2]
@@ -1163,7 +1163,7 @@ async fn op_neovex_ctx_query(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.query", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxQuery, payload).await
 }
 
 #[op2]
@@ -1172,7 +1172,7 @@ async fn op_neovex_ctx_paginated_query(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncPaginatedQueryPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.paginated_query", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxPaginatedQuery, payload).await
 }
 
 #[op2]
@@ -1181,7 +1181,7 @@ async fn op_neovex_ctx_mutation(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncMutationPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.mutation", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxMutation, payload).await
 }
 
 #[op2]
@@ -1190,7 +1190,7 @@ async fn op_neovex_ctx_action(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncActionPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.action", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxAction, payload).await
 }
 
 #[op2]
@@ -1199,7 +1199,7 @@ async fn op_neovex_http_route(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncHttpRoutePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.http_route", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::HttpRoute, payload).await
 }
 
 #[op2]
@@ -1208,7 +1208,7 @@ async fn op_neovex_ctx_db_get(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbGetPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.get", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbGet, payload).await
 }
 
 #[op2]
@@ -1217,7 +1217,7 @@ async fn op_neovex_ctx_db_insert(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbInsertPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.insert", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbInsert, payload).await
 }
 
 #[op2]
@@ -1226,7 +1226,7 @@ async fn op_neovex_ctx_db_patch(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbPatchPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.patch", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbPatch, payload).await
 }
 
 #[op2]
@@ -1235,7 +1235,7 @@ async fn op_neovex_ctx_db_delete(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbDeletePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.delete", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbDelete, payload).await
 }
 
 #[op2]
@@ -1244,7 +1244,7 @@ async fn op_neovex_ctx_query_collect(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTerminalPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.query.collect", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryCollect, payload).await
 }
 
 #[op2]
@@ -1253,7 +1253,7 @@ async fn op_neovex_ctx_query_take(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTakePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.query.take", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryTake, payload).await
 }
 
 #[op2]
@@ -1262,7 +1262,7 @@ async fn op_neovex_ctx_query_paginate(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryPaginatePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.query.paginate", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryPaginate, payload).await
 }
 
 #[op2]
@@ -1271,7 +1271,7 @@ async fn op_neovex_ctx_query_first(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTerminalPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.query.first", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryFirst, payload).await
 }
 
 #[op2]
@@ -1280,7 +1280,7 @@ async fn op_neovex_ctx_query_unique(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTerminalPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.db.query.unique", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryUnique, payload).await
 }
 
 #[op2]
@@ -1289,7 +1289,7 @@ async fn op_neovex_ctx_scheduler_run_after(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncSchedulerRunAfterPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.scheduler.run_after", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxSchedulerRunAfter, payload).await
 }
 
 #[op2]
@@ -1298,7 +1298,7 @@ async fn op_neovex_ctx_scheduler_run_at(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncSchedulerRunAtPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.scheduler.run_at", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxSchedulerRunAt, payload).await
 }
 
 #[op2]
@@ -1307,7 +1307,7 @@ async fn op_neovex_ctx_scheduler_cancel(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncSchedulerCancelPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.scheduler.cancel", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxSchedulerCancel, payload).await
 }
 
 #[op2]
@@ -1316,7 +1316,7 @@ fn op_neovex_ctx_runtime_enter_nested_call(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncNestedCallPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, "convex.ctx.runtime.enter_nested_call", payload)
+    op_neovex_sync_host_call(state, HostCallOperation::CtxRuntimeEnterNestedCall, payload)
 }
 
 #[op2]
@@ -1325,7 +1325,7 @@ async fn op_neovex_ctx_run_query(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncFunctionCallPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.run_query", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxRunQuery, payload).await
 }
 
 #[op2]
@@ -1334,7 +1334,7 @@ async fn op_neovex_ctx_run_mutation(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncFunctionCallPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.run_mutation", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxRunMutation, payload).await
 }
 
 #[op2]
@@ -1343,12 +1343,12 @@ async fn op_neovex_ctx_run_action(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncFunctionCallPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, "convex.ctx.run_action", payload).await
+    op_neovex_async_host_call(state, HostCallOperation::CtxRunAction, payload).await
 }
 
 async fn op_neovex_async_host_call<T>(
     state: Rc<RefCell<OpState>>,
-    operation: &'static str,
+    operation: HostCallOperation,
     payload: T,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox>
 where
@@ -1400,7 +1400,6 @@ where
     let mut permit_lease = HostCallPermitLease::new(permit);
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    let operation = operation.to_string();
     let host_call = host_state
         .bridge
         .call_async(
@@ -1448,7 +1447,7 @@ fn normalize_host_call_value(
 
 fn op_neovex_sync_host_call<T>(
     state: &mut OpState,
-    operation: &'static str,
+    operation: HostCallOperation,
     payload: T,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox>
 where
@@ -1460,7 +1459,7 @@ where
     let value = host_state
         .bridge
         .call(HostCallRequest {
-            operation: operation.to_string(),
+            operation,
             payload: payload_value,
         })
         .map_err(|error| JsErrorBox::generic(error.to_string()))?;
@@ -1933,7 +1932,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::host::{HostBridgeFuture, HostCallCancellation, HostCallRequest};
+    use crate::host::{HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest};
 
     #[derive(Default)]
     struct RecordingHost {
@@ -2028,8 +2027,8 @@ mod tests {
                 .lock()
                 .expect("paginate host sync lock should not be poisoned")
                 .push(request.clone());
-            let value = match request.operation.as_str() {
-                "convex.ctx.db.query.start" => Value::String("builder-1".to_string()),
+            let value = match request.operation {
+                HostCallOperation::CtxDbQueryStart => Value::String("builder-1".to_string()),
                 _ => Value::Null,
             };
             Ok(serde_json::json!({
@@ -2067,8 +2066,8 @@ mod tests {
 
     impl HostBridge for PaginateContinuationHost {
         fn call(&self, request: HostCallRequest) -> Result<Value> {
-            let value = match request.operation.as_str() {
-                "convex.ctx.db.query.start" => Value::String("builder-1".to_string()),
+            let value = match request.operation {
+                HostCallOperation::CtxDbQueryStart => Value::String("builder-1".to_string()),
                 _ => Value::Null,
             };
             Ok(serde_json::json!({
@@ -2108,8 +2107,8 @@ mod tests {
                 .lock()
                 .expect("sync-only host lock should not be poisoned")
                 .push(request.clone());
-            let value = match request.operation.as_str() {
-                "convex.ctx.db.query.start" => Value::String("builder-1".to_string()),
+            let value = match request.operation {
+                HostCallOperation::CtxDbQueryStart => Value::String("builder-1".to_string()),
                 _ => Value::Null,
             };
             Ok(serde_json::json!({
@@ -2242,7 +2241,7 @@ export {};
         assert_eq!(
             calls,
             vec![HostCallRequest {
-                operation: "convex.ctx.db.get".to_string(),
+                operation: HostCallOperation::CtxDbGet,
                 payload: serde_json::json!({
                     "table": "messages",
                     "id": "doc-1",
@@ -2914,10 +2913,10 @@ export {};
                 .map(|call| call.operation)
                 .collect::<Vec<_>>(),
             vec![
-                "convex.ctx.db.query.start".to_string(),
-                "convex.ctx.db.query.with_index".to_string(),
-                "convex.ctx.db.query.filter".to_string(),
-                "convex.ctx.db.query.order".to_string(),
+                HostCallOperation::CtxDbQueryStart,
+                HostCallOperation::CtxDbQueryWithIndex,
+                HostCallOperation::CtxDbQueryFilter,
+                HostCallOperation::CtxDbQueryOrder,
             ]
         );
     }
@@ -3085,7 +3084,7 @@ export {};
             .expect("paginate host sync lock should not be poisoned")
             .clone();
         assert_eq!(sync_calls.len(), 1);
-        assert_eq!(sync_calls[0].operation, "convex.ctx.db.query.start");
+        assert_eq!(sync_calls[0].operation, HostCallOperation::CtxDbQueryStart);
 
         let async_calls = host
             .async_calls
@@ -3093,7 +3092,10 @@ export {};
             .expect("paginate host async lock should not be poisoned")
             .clone();
         assert_eq!(async_calls.len(), 1);
-        assert_eq!(async_calls[0].operation, "convex.ctx.db.query.paginate");
+        assert_eq!(
+            async_calls[0].operation,
+            HostCallOperation::CtxDbQueryPaginate
+        );
         assert_eq!(
             async_calls[0].payload,
             serde_json::json!({
@@ -3204,7 +3206,10 @@ export {};
             .expect("sync-only host lock should not be poisoned")
             .clone();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].operation, "convex.ctx.runtime.enter_nested_call");
+        assert_eq!(
+            calls[0].operation,
+            HostCallOperation::CtxRuntimeEnterNestedCall
+        );
         assert_eq!(
             calls[0].payload,
             serde_json::json!({

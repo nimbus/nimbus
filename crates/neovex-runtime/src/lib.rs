@@ -14,7 +14,8 @@ pub use context::RuntimeInvocationContext;
 pub use error::{ConvexRuntimeError, NeovexRuntimeError, Result};
 pub use executor::RuntimeExecutor;
 pub use host::{
-    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallCancellationCause, HostCallRequest,
+    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallCancellationCause,
+    HostCallOperation, HostCallRequest,
 };
 pub use limits::{RuntimeLimits, RuntimePolicy};
 pub use metrics::{

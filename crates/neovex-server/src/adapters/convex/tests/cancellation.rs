@@ -58,7 +58,7 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
 
     let result = bridge.dispatch_host_call_cancellable(
         HostCallRequest {
-            operation: "convex.ctx.db.get".to_string(),
+            operation: HostCallOperation::CtxDbGet,
             payload: json!({
                 "table": "messages",
                 "id": document_id.to_string(),
@@ -78,7 +78,7 @@ fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
 
     let result = bridge.dispatch_host_call_cancellable(
         HostCallRequest {
-            operation: "convex.http_route".to_string(),
+            operation: HostCallOperation::HttpRoute,
             payload: json!({
                 "request": {
                     "kind": "action",

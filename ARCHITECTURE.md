@@ -181,44 +181,63 @@ file links (links go stale; symbol search does not).
 - `index.rs` — Order-preserving value encoding, index key construction, `index_scan_eq`, `index_scan_range`, index maintenance during writes.
 - `schema_store.rs` — Schema persistence. `replace_table_schema` atomically updates schema and rebuilds indexes in one transaction.
 - `scheduler.rs` — Scheduled job and cron job persistence. `claim_due_jobs` atomically moves due jobs from pending to running. `recover_running_jobs` handles crash recovery.
-- `commit_log.rs` — Durable mutation journal serialization and compatibility
-  projection back to `CommitEntry`.
+- `commit_log.rs` — Durable mutation journal serialization plus the internal
+  `CommitEntry` projection used by legacy storage-facing helpers and tests.
 - `usage_store.rs` — `UsageStore` backed by a separate redb database (`neovex-control.db`). Tracks monthly active users (MAU) by token identifier with per-month counters.
 
 **`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
 - `service/mod.rs` — `Service` struct: tenant registry plus the async storage boundary (`RedbStorageEngine`, tenant storage handles, usage storage handle), simulation seams, scheduler wakeups, and a process-wide background Tokio runtime handle used for long-lived engine workers. Lazy-loads tenants from disk on first access.
-- `service/mutations.rs` — `apply_mutation`: schema validation, declarative
-  access-policy enforcement, durable journal append, ordered materialization
-  into document or index state, and subscription work enqueue after the applied
-  watermark advances. A tenant-local background worker owns reactive
+- `service/mutations.rs` — Composition root for the write path. Public
+  `apply_mutation` behavior still flows through the same single durable contract
+  while the implementation is split across
+  `service/mutations/direct.rs` (direct CRUD wrappers and direct store-apply
+  helpers), `service/mutations/authorization.rs` (shared mutation
+  access-policy enforcement), `service/mutations/commit_processing.rs`
+  (post-commit cache invalidation plus subscription work enqueue after the
+  applied watermark advances), and `service/mutations/journal.rs` (queued async
+  journal flow). A tenant-local background worker still owns reactive
   re-evaluation so committed writes no longer wait on full subscription fan-out.
-  The durable-journal batch path coalesces cache invalidation and subscription
-  wakeups across multi-record apply batches before handing work to that
-  background queue. This is the core write path.
+  The durable-journal batch path still coalesces cache invalidation and
+  subscription wakeups across multi-record apply batches before handing work to
+  that background queue.
 - `service/mutations/journal.rs` — Queued async mutation path. Async mutations
   first enter a tenant-local outer admission gate with CoDel shedding. A
   journal worker task spawned on the Service-owned background runtime drains
   that gate into the commit path, preserves admitted work once it crosses into
   the journal path, and owns durable append, ordered apply, and resolution of
   queued async mutation futures.
-- `service/queries.rs` — `evaluate_with_index`: merges declarative authorization predicates into planning, tries index Eq scan, then range scan, then falls back to table scan. Sync paths call it directly; async read paths route the same planner and evaluator logic through the storage-owned async executor.
-- `service/subscriptions.rs` — `subscribe`/`unsubscribe`. Initial evaluation uses the index-aware path and captures principal snapshots plus policy revisions for conservative auth invalidation.
+- `service/queries.rs` — Composition root for the read path. The implementation
+  now lives in `service/queries/authorization.rs`, `planner.rs`,
+  `prepared.rs`, `materialized.rs`, and `snapshot.rs`, while the public
+  `Service` read entrypoints stay stable. Read planning still merges
+  declarative authorization predicates before selecting an index Eq scan, range
+  scan, or table scan, and async read paths still route the same prepared
+  planner/evaluator logic through the storage-owned async executor.
+- `service/subscriptions.rs` — `subscribe`/`unsubscribe` plus subscription
+  lifecycle ownership. Initial evaluation and activation handoff now live under
+  `service/subscriptions/bootstrap.rs`, which owns materialized-surface reuse,
+  principal snapshot capture, policy revision tracking, and covered-sequence
+  bootstrap semantics for conservative auth invalidation and catch-up.
 - `service/schema.rs` — Schema CRUD. Setting a schema backfills indexes for existing documents.
 - `service/scheduler.rs` — Schedule/cron CRUD. `load_tenants_with_scheduled_work` eagerly loads tenants on startup.
 - `service/tenants.rs` — Tenant CRUD and lifecycle management. Create/delete now use async storage-engine control APIs; deletion evicts the tenant from the registry, rejects new work through a tenant-local lifecycle primitive, waits for in-flight operations to drain, then removes the on-disk store.
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
-- `tenant.rs` — `TenantRuntime`: holds `Arc<TenantStore>`, async storage
-  handles, `SubscriptionRegistry`, `RwLock<Schema>`, a tenant-local
-  close-then-drain lifecycle primitive, a bounded subscription-delivery worker
-  queue, and per-tenant durable versus applied mutation-journal progress.
-  Operation entry uses RAII guards to keep the in-flight count correct; sync
-  waiters use a `Condvar`, async waiters use `Notify`, and both share the same
-  deleted-plus-active-operations state. The subscription-delivery queue also
-  drains small ready batches, merges overlapping queued delivery work before
-  reevaluation, and tracks both journal-batch and queue-level coalescing
-  metrics, while the journal worker exposes an async-friendly test pause seam
-  for deterministic multi-record apply coverage.
+- `tenant.rs` — `TenantRuntime` is the tenant-local facade and composition root
+  over `tenant/document_cache.rs`, `tenant/lifecycle.rs`,
+  `tenant/materialized_reads.rs`, `tenant/mutation.rs`,
+  `tenant/query_planning.rs`, and `tenant/subscription_delivery.rs`. It still
+  holds `Arc<TenantStore>`, async storage handles, `SubscriptionRegistry`,
+  `RwLock<Schema>`, a tenant-local close-then-drain lifecycle primitive, a
+  bounded subscription-delivery worker queue, and per-tenant durable versus
+  applied mutation-journal progress. Operation entry still uses RAII guards to
+  keep the in-flight count correct; sync waiters use a `Condvar`, async waiters
+  use `Notify`, and both share the same deleted-plus-active-operations state.
+  The subscription-delivery queue still drains small ready batches, merges
+  overlapping queued delivery work before reevaluation, and tracks both
+  journal-batch and queue-level coalescing metrics, while the journal worker
+  still exposes an async-friendly test pause seam for deterministic
+  multi-record apply coverage.
 - `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
 - `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry.
   It identifies affected subscription ids at commit time, resolves current
@@ -327,7 +346,13 @@ worker-local beneath that seam.
 - `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor`, runtime policy, auth verifier, registry state, and the server-side `HostBridge` implementation.
 - `convex/auth/` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
 - `convex/registry/` and `convex/manifest.rs` — Manifest loading, runtime bundle discovery, function lookup, and Convex support route resolution.
-- `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex engine operations into the contract the runtime expects. Async host-call routes now await real engine or storage futures directly; only inherently synchronous host-side setup stays on the sync bridge path.
+- `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex
+  engine operations into the contract the runtime expects. Async host-call
+  routes now await real engine or storage futures directly; only inherently
+  synchronous host-side setup stays on the sync bridge path. The async bridge
+  now parses serialized host `operation` strings once into a typed internal
+  `ConvexHostOperation` dispatcher so sync, cancellable, and async entrypoints
+  share one operation registry without changing the external runtime contract.
 - `convex/subscriptions/socket/` — Convex WebSocket session orchestration,
   message handling, runtime transform application, and active-subscription
   cleanup. The session now owns its sender and forwarder tasks through
@@ -811,9 +836,14 @@ earliest tenant snapshot that safely covers their required frontier for the
 target table, which means retained exact-frontier snapshots win when they
 exist, while first-load publication can still satisfy an older reader safely if
 the table had not been warmed yet. The remaining gap to the north-star
-`ServingSnapshotManager` is backend maturity: the manager is real now, but it
-still rebuilds tenant snapshots from the current in-memory per-table
-publication backend rather than from a dedicated serving materializer.
+`ServingSnapshotManager` is alternative backend maturity, not internal
+ownership. The current in-memory path now sits behind an explicit
+`MaterializedServingBackend` that owns per-table publication, warm-load
+coordination, and retained table versions, while `ServingSnapshotManager`
+itself owns tenant-scoped snapshot retention, waiter wakeups, and reader pins.
+The next backend step is therefore to teach that same manager-facing contract
+to a dedicated serving materializer rather than to keep growing the current
+in-memory backend ad hoc.
 
 The next backend slice now removes one of the remaining waste paths in that
 in-memory implementation. Concurrent readers no longer rebuild the same table
@@ -900,19 +930,22 @@ task instead of holding tokio locks across awaits. Using `std::sync::RwLock`
 for tenant registry, schema, and lifecycle state keeps those critical sections
 small and lets the storage boundary control where blocking actually happens.
 
-**Why table-level subscription invalidation?** A write to any row in a table
-triggers re-evaluation of all subscriptions on that table — even if the
-subscription's filter would exclude the changed row. This is coarse but
-simple. Index-accelerated re-evaluation makes each re-evaluation fast, and the
-tenant-local delivery queue moves that work off the synchronous mutation return
-path while preserving per-subscription sequence monotonicity. Multi-record
-journal apply batches now reuse that same queue by coalescing repeated wakeups
-for the same subscription into one delivery unit whenever the visible result can
-be represented by the latest applied sequence plus current query output.
-Runtime-backed subscriptions use read-set tracking to narrow this: they track
-returned document IDs and visible-window boundaries so unrelated writes can be
-skipped. Full filter-level dependency tracking for non-runtime subscriptions
-is a future optimization.
+**Why conservative subscription invalidation?** Native subscriptions still
+prefer conservative correctness over fragile exactness, but they are no longer
+purely table-level. Unfiltered native subscriptions still re-evaluate on any
+write to the table, filtered native subscriptions register predicate
+dependencies so clearly non-matching writes can be skipped, and limited native
+subscriptions now retain a visible-window dependency so writes beyond the
+current ordered result boundary can also be skipped. Index-accelerated
+re-evaluation keeps the remaining wakeups fast, and the tenant-local delivery
+queue moves that work off the synchronous mutation return path while preserving
+per-subscription sequence monotonicity. Multi-record journal apply batches now
+reuse that same queue by coalescing repeated wakeups for the same subscription
+into one delivery unit whenever the visible result can be represented by the
+latest applied sequence plus current query output. Runtime-backed subscriptions
+still go further by using read-set tracking for returned document IDs and
+visible-window boundaries. Narrower native tracking for non-limited ordered
+queries remains future work.
 
 Runtime-backed subscriptions now also retain their last emitted runtime value
 and suppress duplicate pushes when an approximate wakeup or delayed catch-up

@@ -10,11 +10,10 @@ use neovex_engine::DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT;
 use std::sync::Arc;
 
 use crate::protocol::{
-    CommitLogRequest, CommitLogResponse, CreateTenantRequest, CronJobsResponse, DataResponse,
-    DocumentDataResponse, DocumentResponse, HealthResponse, InsertDocumentRequest,
-    JournalBootstrapResponse, JournalStreamRequest, JournalStreamResponse,
-    MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse, RuntimeLimitsResponse,
-    ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
+    CreateTenantRequest, CronJobsResponse, DataResponse, DocumentDataResponse, DocumentResponse,
+    HealthResponse, InsertDocumentRequest, JournalBootstrapResponse, JournalStreamRequest,
+    JournalStreamResponse, MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse,
+    RuntimeLimitsResponse, ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
     TenantEngineDiagnosticsResponse, TenantListResponse, TenantResponse, UpdateDocumentRequest,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
@@ -34,7 +33,7 @@ pub(crate) use metadata::{
     tenant_engine_diagnostics,
 };
 pub(crate) use queries::{
-    bootstrap_journal, query_documents, query_documents_paginated, read_commit_log, read_journal,
+    bootstrap_journal, query_documents, query_documents_paginated, read_journal,
 };
 pub(crate) use scheduling::{
     cancel_scheduled_job, create_cron_job, delete_cron_job, get_scheduled_job_result,

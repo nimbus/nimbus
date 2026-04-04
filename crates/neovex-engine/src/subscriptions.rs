@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use neovex_core::{
-    CommitEntry, DependencySet, Document, PrincipalContext, PrincipalSnapshot, Query,
-    SequenceNumber, TableName, commit_intersects_dependency_set,
+    CommitEntry, DependencySet, Document, PaginatedWindowDependency, PrincipalContext,
+    PrincipalSnapshot, Query, SequenceNumber, TableName, commit_intersects_dependency_set,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -74,6 +74,38 @@ impl SubscriptionDelivery {
             }
         }
     }
+}
+
+pub(crate) fn subscription_dependencies(query: &Query, documents: &[Document]) -> DependencySet {
+    let Some(page_size) = query.limit else {
+        return DependencySet::from_engine_query(query);
+    };
+
+    let (end_sort_values, end_doc_id) = documents
+        .last()
+        .map(|document| {
+            (
+                query.order.as_ref().map_or_else(Vec::new, |order| {
+                    vec![document.get_field(&order.field).cloned()]
+                }),
+                Some(document.id),
+            )
+        })
+        .unwrap_or_else(|| (Vec::new(), None));
+
+    let mut dependencies = DependencySet::default();
+    dependencies.record_paginated_window(PaginatedWindowDependency {
+        table: query.table.clone(),
+        filters: query.filters.clone(),
+        order: query.order.clone(),
+        start_sort_values: Vec::new(),
+        start_doc_id: None,
+        end_sort_values,
+        end_doc_id,
+        result_count: documents.len(),
+        page_size,
+    });
+    dependencies
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +327,7 @@ impl SubscriptionRegistry {
         self.state.remove(id);
     }
 
+    #[cfg(test)]
     pub fn activate(&self, id: u64, delivered_sequence: SequenceNumber) {
         if let Some(subscription) = self
             .state
@@ -304,6 +337,27 @@ impl SubscriptionRegistry {
             .get_mut(&id)
         {
             subscription.active = true;
+            subscription
+                .last_delivered_sequence
+                .store(delivered_sequence.0, Ordering::Release);
+        }
+    }
+
+    pub fn activate_with_dependencies(
+        &self,
+        id: u64,
+        delivered_sequence: SequenceNumber,
+        dependencies: DependencySet,
+    ) {
+        if let Some(subscription) = self
+            .state
+            .subscriptions
+            .write()
+            .expect("subscription lock should not be poisoned")
+            .get_mut(&id)
+        {
+            subscription.active = true;
+            subscription.dependencies = dependencies;
             subscription
                 .last_delivered_sequence
                 .store(delivered_sequence.0, Ordering::Release);
@@ -389,6 +443,26 @@ impl SubscriptionRegistry {
             sender: subscription.sender,
             last_delivered_sequence: subscription.last_delivered_sequence,
         })
+    }
+
+    pub(crate) fn record_delivery(
+        &self,
+        subscription_id: u64,
+        delivered_sequence: SequenceNumber,
+        dependencies: DependencySet,
+    ) {
+        if let Some(subscription) = self
+            .state
+            .subscriptions
+            .write()
+            .expect("subscription lock should not be poisoned")
+            .get_mut(&subscription_id)
+        {
+            subscription.dependencies = dependencies;
+            subscription
+                .last_delivered_sequence
+                .store(delivered_sequence.0, Ordering::Release);
+        }
     }
 
     /// Sends a terminal error to subscriptions on the provided table that were
@@ -493,6 +567,7 @@ pub(crate) fn dispatch_subscription_work(
 
         match result {
             Ok(documents) => {
+                let dependencies = subscription_dependencies(&subscription.query, &documents);
                 let update = SubscriptionUpdate::Result {
                     subscription_id: subscription.id,
                     request_id: None,
@@ -501,7 +576,9 @@ pub(crate) fn dispatch_subscription_work(
                     data: documents.into_iter().map(Document::into_json).collect(),
                 };
                 if subscription.sender.try_send(update).is_ok() {
-                    subscription.mark_delivered(sequence);
+                    runtime
+                        .subscriptions
+                        .record_delivery(subscription.id, sequence, dependencies);
                 } else {
                     runtime.subscriptions.remove(subscription.id);
                 }

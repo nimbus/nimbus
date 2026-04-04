@@ -1,18 +1,21 @@
+mod bootstrap;
+
 use std::future::{Future, pending};
 use std::sync::Arc;
 
 use neovex_core::{Error, PrincipalContext, Query, Result, SequenceNumber, TenantId};
 use tokio::sync::mpsc;
 
-use crate::subscriptions::{QueuedSubscriptionWork, SubscriptionRegistration, SubscriptionUpdate};
+use crate::subscriptions::{
+    QueuedSubscriptionWork, SubscriptionRegistration, SubscriptionUpdate, subscription_dependencies,
+};
 use crate::tenant::TenantRuntime;
 
-use super::{
-    Service, documents_to_json,
-    queries::{
-        evaluate_subscription_bootstrap_async_for_principal,
-        evaluate_subscription_bootstrap_cancellable_for_principal, table_policy_revision,
-    },
+use super::{Service, documents_to_json};
+pub use bootstrap::SubscriptionBootstrapCancellation;
+use bootstrap::{
+    evaluate_subscription_bootstrap_async_for_principal,
+    evaluate_subscription_bootstrap_cancellable_for_principal, table_policy_revision,
 };
 
 fn subscription_send_failure(error: mpsc::error::TrySendError<SubscriptionUpdate>) -> Error {
@@ -26,31 +29,19 @@ fn subscription_send_failure(error: mpsc::error::TrySendError<SubscriptionUpdate
     }
 }
 
-#[doc(hidden)]
-pub struct SubscriptionBootstrapCancellation<Fut, Check> {
-    cancel_wait: Fut,
-    check_cancel: Check,
-}
-
-impl<Fut, Check> SubscriptionBootstrapCancellation<Fut, Check> {
-    pub fn new(cancel_wait: Fut, check_cancel: Check) -> Self {
-        Self {
-            cancel_wait,
-            check_cancel,
-        }
-    }
-}
-
 impl Service {
     fn activate_bootstrapped_subscription(
         &self,
         runtime: Arc<TenantRuntime>,
         subscription_id: u64,
         covered_sequence: SequenceNumber,
+        dependencies: neovex_core::DependencySet,
     ) {
-        runtime
-            .subscriptions
-            .activate(subscription_id, covered_sequence);
+        runtime.subscriptions.activate_with_dependencies(
+            subscription_id,
+            covered_sequence,
+            dependencies,
+        );
         let current_applied = runtime.applied_head();
         if current_applied.0 <= covered_sequence.0 {
             return;
@@ -114,14 +105,15 @@ impl Service {
             principal,
             &mut check_cancel,
         ) {
-            Ok(bootstrap) => {
-                runtime.cache_documents(&bootstrap.documents);
+            Ok((documents, covered_sequence)) => {
+                runtime.cache_documents(&documents);
+                let dependencies = subscription_dependencies(&query, &documents);
                 let update = SubscriptionUpdate::Result {
                     subscription_id,
                     request_id: Some(request_id),
                     commit: None,
                     deleted_documents: Vec::new(),
-                    data: documents_to_json(bootstrap.documents),
+                    data: documents_to_json(documents),
                 };
                 if let Err(error) = sender.try_send(update) {
                     runtime.subscriptions.remove(subscription_id);
@@ -130,7 +122,8 @@ impl Service {
                 self.activate_bootstrapped_subscription(
                     runtime,
                     subscription_id,
-                    bootstrap.covered_sequence,
+                    covered_sequence,
+                    dependencies,
                 );
                 Ok(registration)
             }
@@ -222,10 +215,7 @@ impl Service {
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + Sync + 'static,
     {
-        let SubscriptionBootstrapCancellation {
-            cancel_wait,
-            check_cancel,
-        } = cancellation;
+        let (cancel_wait, check_cancel) = cancellation.into_parts();
         let check_cancel = Arc::new(check_cancel);
         let query_for_bootstrap = query.clone();
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
@@ -241,7 +231,7 @@ impl Service {
             false,
         );
         let subscription_id = registration.id();
-        let bootstrap = evaluate_subscription_bootstrap_async_for_principal(
+        let (documents, covered_sequence) = evaluate_subscription_bootstrap_async_for_principal(
             runtime.clone(),
             tenant_id,
             query_for_bootstrap,
@@ -257,13 +247,14 @@ impl Service {
             runtime.subscriptions.remove(subscription_id);
             return Err(error);
         }
-        runtime.cache_documents(&bootstrap.documents);
+        runtime.cache_documents(&documents);
+        let dependencies = subscription_dependencies(&query, &documents);
         let update = SubscriptionUpdate::Result {
             subscription_id,
             request_id: Some(request_id),
             commit: None,
             deleted_documents: Vec::new(),
-            data: documents_to_json(bootstrap.documents),
+            data: documents_to_json(documents),
         };
         if let Err(error) = sender.try_send(update) {
             runtime.subscriptions.remove(subscription_id);
@@ -278,7 +269,8 @@ impl Service {
         self.activate_bootstrapped_subscription(
             runtime,
             subscription_id,
-            bootstrap.covered_sequence,
+            covered_sequence,
+            dependencies,
         );
         Ok(registration)
     }
