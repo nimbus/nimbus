@@ -13,9 +13,9 @@ use neovex_core::{
 };
 use neovex_engine::SubscriptionUpdate;
 use neovex_runtime::{
-    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
-    InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle, RuntimeExecutor,
-    RuntimePolicy,
+    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest,
+    InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle,
+    RuntimeExecutor, RuntimePolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

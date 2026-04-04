@@ -16,39 +16,43 @@ mod messages;
 mod named_subscriptions;
 
 #[derive(Debug)]
-struct ActiveSubscription {
-    cleanup_handles: Vec<SubscriptionCleanupHandle>,
-    bridge_tasks: Option<OwnedTaskSet>,
+enum ActiveSubscription {
+    Direct {
+        cleanup_handles: Vec<SubscriptionCleanupHandle>,
+    },
+    Runtime(crate::runtime::subscriptions::RuntimeSubscriptionHandle),
 }
 
 impl ActiveSubscription {
     fn from_registration(registration: SubscriptionRegistration) -> Self {
         let (_, cleanup_handle) = registration.into_parts();
-        Self {
+        Self::Direct {
             cleanup_handles: vec![cleanup_handle],
-            bridge_tasks: None,
         }
     }
 
     fn from_runtime_handle(
         handle: crate::runtime::subscriptions::RuntimeSubscriptionHandle,
     ) -> Self {
-        Self {
-            cleanup_handles: handle.cleanup_handles,
-            bridge_tasks: Some(handle.bridge_tasks),
+        Self::Runtime(handle)
+    }
+
+    fn underlying_ids(&self) -> Vec<u64> {
+        match self {
+            Self::Direct { cleanup_handles } => cleanup_handles
+                .iter()
+                .map(SubscriptionCleanupHandle::subscription_id)
+                .collect(),
+            Self::Runtime(handle) => handle.underlying_subscription_ids(),
         }
     }
 
-    fn underlying_ids(&self) -> impl Iterator<Item = u64> + '_ {
-        self.cleanup_handles
-            .iter()
-            .map(SubscriptionCleanupHandle::subscription_id)
-    }
-
     async fn shutdown_and_drain(self) {
-        drop(self.cleanup_handles);
-        if let Some(tasks) = self.bridge_tasks {
-            tasks.shutdown_and_drain().await;
+        match self {
+            Self::Direct { cleanup_handles } => drop(cleanup_handles),
+            Self::Runtime(handle) => {
+                handle.shutdown_and_drain().await;
+            }
         }
     }
 }

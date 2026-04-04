@@ -111,4 +111,4 @@ This checks the Sigstore-signed attestation against the [GitHub attestation ledg
 - [CLI reference](docs/reference/cli.md)
 - [Convex compatibility](docs/convex/compatibility.md)
 - [Demos](demos/README.md)
-- [Plans](docs/plans/README.md)
+- [Plans index](docs/plans/README.md)

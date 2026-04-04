@@ -81,17 +81,6 @@ pub(crate) struct RuntimeLimitsResponse {
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub(crate) struct CommitLogRequest {
-    pub after: Option<u64>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct CommitLogResponse {
-    pub commits: Vec<neovex_core::CommitEntry>,
-    pub latest_sequence: u64,
-}
-
-#[derive(Debug, Deserialize, Default)]
 pub(crate) struct JournalStreamRequest {
     pub after: Option<u64>,
     pub limit: Option<usize>,

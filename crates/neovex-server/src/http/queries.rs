@@ -56,26 +56,6 @@ pub(crate) async fn query_documents_paginated(
     Ok(Json(page))
 }
 
-/// Reads commit log entries for a tenant.
-pub(crate) async fn read_commit_log(
-    State(state): State<Arc<AppState>>,
-    Path(tenant_id): Path<String>,
-    QueryParams(request): QueryParams<CommitLogRequest>,
-) -> Result<Json<CommitLogResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
-    let after = SequenceNumber(request.after.unwrap_or(0));
-    let service = state.service.clone();
-    let commits = service
-        .read_commit_log_async(tenant_id.clone(), after)
-        .await?;
-    let latest_sequence = service.latest_sequence_async(tenant_id).await?;
-
-    Ok(Json(CommitLogResponse {
-        commits,
-        latest_sequence: latest_sequence.0,
-    }))
-}
-
 /// Streams durable journal records for a tenant.
 pub(crate) async fn read_journal(
     State(state): State<Arc<AppState>>,

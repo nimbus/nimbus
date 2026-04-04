@@ -104,10 +104,6 @@ fn build_core_router() -> Router<Arc<AppState>> {
                 .delete(http::delete_table_schema),
         )
         .route(
-            "/api/tenants/{tenant_id}/commits",
-            get(http::read_commit_log),
-        )
-        .route(
             "/api/tenants/{tenant_id}/journal/bootstrap",
             get(http::bootstrap_journal),
         )

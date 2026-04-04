@@ -53,6 +53,19 @@ fn query_for(table: &str) -> Query {
     }
 }
 
+fn durable_journal_commits(
+    service: &Service,
+    tenant_id: &TenantId,
+    after: SequenceNumber,
+) -> Vec<neovex_core::CommitEntry> {
+    service
+        .read_durable_journal(tenant_id, after)
+        .expect("durable journal should read")
+        .into_iter()
+        .map(|record| record.as_commit_entry())
+        .collect()
+}
+
 fn subscription_channel() -> (
     mpsc::Sender<SubscriptionUpdate>,
     mpsc::Receiver<SubscriptionUpdate>,
@@ -77,6 +90,28 @@ async fn wait_for_subscription_delivery_stats(
         assert!(
             started_at.elapsed() < Duration::from_secs(1),
             "timed out waiting for {description}; last subscription delivery stats: {stats:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_mutation_journal_stats(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    description: &str,
+    predicate: impl Fn(&crate::tenant::MutationJournalStats) -> bool,
+) -> crate::tenant::MutationJournalStats {
+    let started_at = tokio::time::Instant::now();
+    loop {
+        let stats = service
+            .mutation_journal_stats_for_testing(tenant_id)
+            .expect("mutation journal stats should load");
+        if predicate(&stats) {
+            return stats;
+        }
+        assert!(
+            started_at.elapsed() < Duration::from_secs(1),
+            "timed out waiting for {description}; last mutation journal stats: {stats:?}"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -696,9 +731,7 @@ async fn create_service_with_durable_unapplied_task(
         .await
         .expect("journal worker should block after durable append");
     drop(insert_handle);
-    let document_id = service
-        .read_commit_log(&tenant_id, SequenceNumber(0))
-        .expect("commit log should read while apply is blocked")
+    let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id)
@@ -1690,7 +1723,7 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
 }
 
 #[tokio::test]
-async fn journal_batch_delete_updates_preserve_deleted_documents_from_commit_log() {
+async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_journal() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
@@ -2504,6 +2537,139 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
             assert!(data.is_empty());
         }
         other => panic!("unexpected done update subscription event: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    for rank in [1, 2, 3] {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("title".to_string(), json!(format!("Task {rank}"))),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .expect("seed insert should succeed");
+    }
+
+    let (tx, mut rx) = subscription_channel();
+    let query = Query {
+        table: tasks_table(),
+        filters: Vec::new(),
+        order: Some(OrderBy {
+            field: "rank".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: Some(2),
+    };
+
+    let _subscription = service
+        .subscribe(&tenant_id, query, "ranked-limit".to_string(), tx)
+        .expect("subscribe should succeed");
+
+    let initial = rx.recv().await.expect("initial update should arrive");
+    match initial {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 2);
+            assert_eq!(data[0]["rank"], json!(1));
+            assert_eq!(data[1]["rank"], json!(2));
+        }
+        other => panic!("unexpected initial subscription update: {other:?}"),
+    }
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Task 99")),
+                ("rank".to_string(), json!(99)),
+            ]),
+        )
+        .expect("outside-window insert should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .is_err(),
+        "writes beyond the visible ordered window should not invalidate the subscription"
+    );
+
+    let document_id = service
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table: tasks_table(),
+                filters: vec![filter("rank", FilterOp::Eq, json!(2))],
+                order: None,
+                limit: Some(1),
+            },
+        )
+        .expect("rank lookup should succeed")
+        .first()
+        .map(|document| document.id)
+        .expect("rank-2 document should exist");
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("rank".to_string(), json!(5))]),
+        )
+        .expect("window-shifting update should succeed");
+
+    let shifted = rx.recv().await.expect("window shift update should arrive");
+    match shifted {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 2);
+            assert_eq!(data[0]["rank"], json!(1));
+            assert_eq!(data[1]["rank"], json!(3));
+        }
+        other => panic!("unexpected shifted subscription update: {other:?}"),
+    }
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Task 4")),
+                ("rank".to_string(), json!(4)),
+            ]),
+        )
+        .expect("second outside-window insert should succeed");
+    assert!(
+        timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .is_err(),
+        "dependency tracking should refresh after reevaluation and keep skipping later out-of-window writes"
+    );
+
+    service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), json!("Task 0")),
+                ("rank".to_string(), json!(0)),
+            ]),
+        )
+        .expect("inside-window insert should succeed");
+
+    let refreshed = rx.recv().await.expect("inside-window update should arrive");
+    match refreshed {
+        SubscriptionUpdate::Result { data, .. } => {
+            assert_eq!(data.len(), 2);
+            assert_eq!(data[0]["rank"], json!(0));
+            assert_eq!(data[1]["rank"], json!(1));
+        }
+        other => panic!("unexpected refreshed subscription update: {other:?}"),
     }
 }
 
@@ -5530,7 +5696,7 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
 }
 
 #[tokio::test]
-async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log() {
+async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_durable_journal() {
     let data_dir = tempdir().expect("service tempdir should build");
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
     let service = Arc::new(
@@ -5569,9 +5735,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
             .is_err(),
         "first mutation should remain pending while apply is blocked"
     );
-    let blocker_id = service
-        .read_commit_log(&tenant_id, SequenceNumber(0))
-        .expect("commit log should read while apply is blocked")
+    let blocker_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id)
@@ -5620,10 +5784,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     assert_eq!(documents[0].id, blocker_id);
     assert_eq!(documents[0].fields.get("title"), Some(&json!("blocker")));
     assert_eq!(
-        service
-            .read_commit_log(&tenant_id, SequenceNumber(0))
-            .expect("commit log should read")
-            .len(),
+        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1,
         "queued cancellation before durable append should not append a second commit"
     );
@@ -5697,10 +5858,7 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
         Some(&json!("after-commit"))
     );
     assert_eq!(
-        service
-            .read_commit_log(&tenant_id, SequenceNumber(0))
-            .expect("commit log should read")
-            .len(),
+        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1
     );
 }
@@ -5783,9 +5941,7 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
             .is_err(),
         "async mutation should remain pending while apply is blocked"
     );
-    let document_id = service
-        .read_commit_log(&tenant_id, SequenceNumber(0))
-        .expect("commit log should read while apply is blocked")
+    let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id)
@@ -5812,10 +5968,7 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
         SequenceNumber(1)
     );
     assert_eq!(
-        service
-            .read_commit_log(&tenant_id, SequenceNumber(0))
-            .expect("commit log should read")
-            .len(),
+        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
         1
     );
     assert_eq!(documents.len(), 1);
@@ -6926,9 +7079,7 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
             .is_err(),
         "mutation should remain pending while apply is blocked"
     );
-    let document_id = service
-        .read_commit_log(&tenant_id, SequenceNumber(0))
-        .expect("commit log should read while apply is blocked")
+    let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
         .map(|write| write.doc_id)
@@ -7419,9 +7570,13 @@ async fn service_reload_recovers_durable_journal_before_serving_async_reads() {
         "follow-up async writes should succeed after the reopen path"
     );
 
-    let recovered_stats = reopened
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should read after the follow-up async write");
+    let recovered_stats = wait_for_mutation_journal_stats(
+        &reopened,
+        &tenant_id,
+        "mutation journal worker to go idle after the follow-up async write",
+        |stats| !stats.worker_running,
+    )
+    .await;
     assert_eq!(recovered_stats.durable_head, SequenceNumber(2));
     assert_eq!(recovered_stats.applied_head, SequenceNumber(2));
     assert_eq!(recovered_stats.apply_lag, 0);

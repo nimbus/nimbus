@@ -12,7 +12,7 @@ fn runtime_cancellable_query_builder_start_short_circuits_before_dispatch() {
     let result = neovex_runtime::HostBridge::call_cancellable(
         &bridge,
         HostCallRequest {
-            operation: "convex.ctx.db.query.start".to_string(),
+            operation: HostCallOperation::CtxDbQueryStart,
             payload: json!({
                 "table": "messages",
             }),
@@ -49,7 +49,7 @@ async fn runtime_async_db_get_precancel_records_canceled_host_op_metric() {
     let result = bridge
         .call_async(
             HostCallRequest {
-                operation: "convex.ctx.db.get".to_string(),
+                operation: HostCallOperation::CtxDbGet,
                 payload: json!({
                     "table": "messages",
                     "id": document_id.to_string(),

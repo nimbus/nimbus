@@ -12,15 +12,13 @@ use neovex_core::{
 use tokio::sync::oneshot;
 use tracing::warn;
 
-use crate::subscriptions::{QueuedSubscriptionWork, SubscriptionBatchCandidate};
+use crate::Service;
 use crate::tenant::{
     QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
 };
 
-use super::{
-    MutationExecutionMode, MutationExecutionResult, Service, candidate_documents_for_commit,
-    enforce_mutation_authorization,
-};
+use super::direct::{MutationExecutionMode, MutationExecutionResult};
+use super::enforce_mutation_authorization;
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 
@@ -170,52 +168,6 @@ impl Service {
             }
             QueuedMutationResult::Scheduled(applied) => MutationExecutionResult::Scheduled(applied),
         })
-    }
-
-    fn process_applied_commit_batch(&self, runtime: Arc<TenantRuntime>, applied: &[CommitEntry]) {
-        if applied.is_empty() {
-            return;
-        }
-
-        let batch_candidate_documents = applied
-            .iter()
-            .map(candidate_documents_for_commit)
-            .collect::<Vec<_>>();
-        let batch_candidates = applied
-            .iter()
-            .zip(batch_candidate_documents.iter())
-            .map(|(commit, candidate_documents)| SubscriptionBatchCandidate {
-                commit,
-                candidate_documents,
-            })
-            .collect::<Vec<_>>();
-        let affected = runtime
-            .subscriptions
-            .affected_subscription_ids_for_batch(&batch_candidates);
-        if affected.subscription_ids.is_empty() {
-            return;
-        }
-
-        if applied.len() > 1 {
-            runtime.record_subscription_coalesced_batch(
-                applied.len() as u64,
-                affected.merged_wakeup_count,
-            );
-        }
-
-        let latest = applied
-            .last()
-            .expect("non-empty applied batch should have a latest commit");
-        let work = QueuedSubscriptionWork::new_coalesced(
-            affected.subscription_ids,
-            latest.sequence,
-            // Coalesced batches intentionally omit per-commit identity; only a
-            // single applied commit can safely preserve exact commit metadata
-            // for downstream consumers.
-            (applied.len() == 1).then(|| latest.clone()),
-            merge_deleted_documents_for_batch(applied),
-        );
-        self.dispatch_or_enqueue_subscription_work(runtime, work);
     }
 }
 
@@ -512,25 +464,6 @@ fn plan_queued_mutation_request(
             })
         }
     }
-}
-
-fn merge_deleted_documents_for_batch(applied: &[CommitEntry]) -> Vec<Document> {
-    let mut seen = HashSet::<(TableName, DocumentId)>::new();
-    let mut deleted_documents = Vec::new();
-    for commit in applied {
-        for document in commit
-            .writes
-            .iter()
-            .filter(|write| matches!(write.op_type, neovex_core::WriteOpType::Delete))
-            .filter_map(|write| write.previous.as_ref())
-        {
-            let key = (document.table.clone(), document.id);
-            if seen.insert(key) {
-                deleted_documents.push(document.clone());
-            }
-        }
-    }
-    deleted_documents
 }
 
 fn load_batched_document(

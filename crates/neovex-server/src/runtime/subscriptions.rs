@@ -18,6 +18,13 @@ pub(crate) struct RuntimeSubscriptionHandle {
 }
 
 impl RuntimeSubscriptionHandle {
+    pub(crate) fn underlying_subscription_ids(&self) -> Vec<u64> {
+        self.cleanup_handles
+            .iter()
+            .map(SubscriptionCleanupHandle::subscription_id)
+            .collect()
+    }
+
     pub(crate) fn start_forwarding(&mut self, sender: mpsc::Sender<SubscriptionUpdate>) {
         for receiver in self.pending_receivers.drain(..) {
             let primary_subscription_id = self.primary_subscription_id;
@@ -66,6 +73,11 @@ impl RuntimeSubscriptionHandle {
                 }
             });
         }
+    }
+
+    pub(crate) async fn shutdown_and_drain(self) {
+        drop(self.cleanup_handles);
+        self.bridge_tasks.shutdown_and_drain().await;
     }
 
     #[cfg(test)]

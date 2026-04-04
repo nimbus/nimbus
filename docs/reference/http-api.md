@@ -43,7 +43,8 @@ server starts with `--convex-app-dir`.
 | `DELETE` | `/api/tenants/{tenant_id}/documents/{table}/{document_id}` | delete one document |
 | `POST` | `/api/tenants/{tenant_id}/query` | execute a query |
 | `POST` | `/api/tenants/{tenant_id}/query/paginated` | execute a paginated query |
-| `GET` | `/api/tenants/{tenant_id}/commits` | read the commit log after a sequence |
+| `GET` | `/api/tenants/{tenant_id}/journal` | stream durable journal records after a sequence cursor |
+| `GET` | `/api/tenants/{tenant_id}/journal/bootstrap` | export snapshot-plus-journal bootstrap metadata |
 
 ## Scheduling Routes
 

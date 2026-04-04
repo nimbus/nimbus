@@ -1233,7 +1233,7 @@ mod tests {
     use tokio::sync::{Mutex as TokioMutex, Notify};
 
     use super::*;
-    use crate::host::{HostBridge, HostBridgeFuture, HostCallRequest};
+    use crate::host::{HostBridge, HostBridgeFuture, HostCallOperation, HostCallRequest};
     use crate::limits::RuntimeLimits;
 
     struct NoopHost;
@@ -1250,7 +1250,7 @@ mod tests {
 
     impl HostBridge for WorkerRuntimeIdHost {
         fn call(&self, request: HostCallRequest) -> Result<Value> {
-            assert_eq!(request.operation, "convex.ctx.db.get");
+            assert_eq!(request.operation, HostCallOperation::CtxDbGet);
             Ok(json!({
                 "workerRuntimeId": self.test_state.worker_runtime_id_for_current_thread(),
             }))
@@ -1414,7 +1414,7 @@ mod tests {
 
     impl HostBridge for SlowSyncQueryHost {
         fn call(&self, request: HostCallRequest) -> Result<Value> {
-            assert_eq!(request.operation, "convex.ctx.db.query.start");
+            assert_eq!(request.operation, HostCallOperation::CtxDbQueryStart);
             self.started.notify_waiters();
             std::thread::sleep(self.delay);
             Ok(json!({
