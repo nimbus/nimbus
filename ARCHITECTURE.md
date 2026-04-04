@@ -207,13 +207,17 @@ file links (links go stale; symbol search does not).
   that gate into the commit path, preserves admitted work once it crosses into
   the journal path, and owns durable append, ordered apply, and resolution of
   queued async mutation futures.
-- `service/queries.rs` — Composition root for the read path. The implementation
-  now lives in `service/queries/authorization.rs`, `planner.rs`,
-  `prepared.rs`, `materialized.rs`, and `snapshot.rs`, while the public
-  `Service` read entrypoints stay stable. Read planning still merges
-  declarative authorization predicates before selecting an index Eq scan, range
-  scan, or table scan, and async read paths still route the same prepared
-  planner/evaluator logic through the storage-owned async executor.
+- `service/queries.rs` — Composition root for the read path. The public
+  `Service` read surface is now split across `service/queries/documents.rs`
+  (list/get document reads), `query_api.rs` (query and pagination entrypoints),
+  `journal.rs` (durable-journal and latest-sequence reads), `verification.rs`
+  (shadow-materializer and consistency verification helpers), and
+  `test_hooks.rs` (test-only read instrumentation and pause handles), while the
+  private capability tree stays in `authorization.rs`, `planner.rs`,
+  `prepared.rs`, `materialized.rs`, and `snapshot.rs`. Read planning still
+  merges declarative authorization predicates before selecting an index Eq
+  scan, range scan, or table scan, and async read paths still route the same
+  prepared planner/evaluator logic through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe` plus subscription
   lifecycle ownership. Initial evaluation and activation handoff now live under
   `service/subscriptions/bootstrap.rs`, which owns materialized-surface reuse,
@@ -239,20 +243,30 @@ file links (links go stale; symbol search does not).
   still exposes an async-friendly test pause seam for deterministic
   multi-record apply coverage.
 - `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
-- `subscriptions.rs` — `SubscriptionRegistry`: per-tenant in-memory registry.
-  It identifies affected subscription ids at commit time, resolves current
-  delivery state by id for background workers, supports batch-aware affected-id
-  scans for journal apply coalescing, and tracks the latest delivered sequence
-  per subscription so async delivery never publishes older visible state after
-  newer visible state. When multiple applied commits are merged into one
-  delivery unit, subscribers receive the latest applied sequence and current
-  query result, but not per-commit metadata for the intermediate records.
+- `subscriptions.rs` — Composition root for tenant-local subscription
+  ownership. The implementation now lives in `subscriptions/registry.rs`
+  (registration, activation, cleanup handles, and live delivery projections),
+  `dependencies.rs` (dependency derivation plus affected-subscription scans),
+  `queue.rs` (queued wakeup work and coalescing), `delivery.rs`
+  (reevaluation, monotonic delivery, and terminal error dispatch), and
+  `invalidation.rs` (policy-revision teardown and shutdown). `SubscriptionRegistry`
+  still tracks the latest delivered sequence per subscription so async
+  delivery never publishes older visible state after newer visible state. When
+  multiple applied commits are merged into one delivery unit, subscribers
+  receive the latest applied sequence and current query result, but not
+  per-commit metadata for the intermediate records.
 - `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification), then fans loaded tenants out through a bounded concurrent scheduler tick so one slow tenant does not stall other due work.
 
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
 
-- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: V8 isolate creation, heap/timeout limits, process-global bootstrap snapshot initialization, the `invoke_bundle_unmanaged` entry point, and the `SharedInvocationPermit` / timeout-controller hooks stored in `OpState` for async host-op suspend/resume. `RuntimeBundle` holds the ESM source + SHA-256 integrity hash. `InvocationRequest` describes the function name, kind, and args.
-- `executor.rs` — `RuntimeExecutor`: global queueing, per-tenant runtime admission, worker thread ownership, and shared JS permit management. It owns the oversubscribed worker pool, the shared `WatchdogTimer`, and the active/in-flight/queued tenant accounting that gates runtime work.
+- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: the runtime composition root. It now owns public runtime construction, the runtime-owned convenience executor boundary, V8 isolate creation, and the `invoke_bundle_unmanaged` execution path, while delegating invocation/auth types to `runtime/invocation.rs`, bundle identity and integrity handling to `runtime/bundle.rs`, and bootstrap snapshot plus host-op ABI registration to `runtime/bootstrap.rs`.
+- `runtime/invocation.rs` — `InvocationKind`, `InvocationRequest`, `InvocationAuth`, `RuntimeUserIdentity`, and `VerifiedUserIdentity`: the public invocation and auth payload surface for runtime calls.
+- `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
+- `runtime/bootstrap.rs` — runtime bootstrap JavaScript, op payload schemas, op registration, startup snapshot creation, worker isolate-pool state, and installation of host bridge plus cancellation state into `OpState`.
+- `executor.rs` — `RuntimeExecutor`: the executor composition root. It now owns public executor construction, request entrypoints, worker-thread startup and shutdown, and routes the remaining executor concerns through `executor/queue.rs`, `executor/admission.rs`, and `executor/lifecycle.rs`.
+- `executor/queue.rs` — runtime worker job envelopes, result channels, queue dispatch plumbing, and executor shutdown state.
+- `executor/admission.rs` — tenant admission accounting, dispatch handles, shared JS permit state, and the active versus parked versus queued fairness model.
+- `executor/lifecycle.rs` — the canonical invocation lifecycle shared by the direct executor path and the worker-loop path: queue admission, execution metrics, cancellation and timeout accounting, debug logging, and permit completion.
 - `worker_loop.rs` — `WorkerLoopFactory`, `WorkerLoop`, and `RunToCompletionWorkerLoop`: the primary executor seam. Each worker thread builds one worker loop that owns a reused current-thread Tokio runtime and drives run-to-completion deno_core invocations for today's runtime model.
 - `backend.rs` — Worker-local `RuntimeBackendFactory` / `RuntimeBackend` helpers. The current `DenoRuntimeBackend` keeps the run-to-completion `invoke(...)` helper below the worker-loop seam so runtime-specific types stay out of `RuntimeExecutor`.
 - `host.rs` — `HostBridge` trait and `HostCallRequest` struct defining the contract between V8 guest code and Rust host operations (db queries, mutations, scheduler commands, `ctx.run*` delegation).

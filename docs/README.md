@@ -24,7 +24,8 @@ and where to go next.
 - [Demos](../demos/README.md):
   demo layout and run commands
 - [Plans](plans/README.md):
-  plan index for active, deferred, and archived execution plans
+  plan index for active control planes, deferred design work, and archived
+  execution history
 
 ## Layout
 

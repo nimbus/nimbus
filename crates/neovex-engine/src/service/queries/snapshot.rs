@@ -3,7 +3,7 @@ use std::sync::Arc;
 use neovex_core::{Document, DurableMutationRecord, Error, Result, TableName, TenantId};
 use neovex_storage::{DurableJournalBootstrap, TenantStore};
 
-use super::Service;
+use crate::service::Service;
 
 impl Service {
     pub(super) async fn read_durable_journal_suffix_to_sequence_async(
