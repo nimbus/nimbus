@@ -9,18 +9,39 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/operational-state-and-scenario-surface-cleanup-plan.md`
-  - canonical execution plan for the next operational-state, evaluator,
-    websocket-session, metrics, and scenario-surface cleanup pass
+- `docs/plans/stateful-execution-and-harness-cleanup-plan.md`
+  - canonical execution plan for the next deterministic-harness, execution-unit,
+    serving-backend, runtime invocation, and cooperative-worker cleanup pass
 - `docs/plans/v8-locker-fork-plan.md`
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
 
 ## Deferred design and experiment plans
 
+- `docs/plans/warm-module-pool-plan.md`
+  - primary owner of warm execution work via surgical `deno_core` fork changes
+    and a `WarmModulePool` pool kind; supersedes the raw-V8 backend plan as the
+    primary path to warm-loaded-code semantics; activates after Locker fork plan
+    Phase 5 completes
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
+- `docs/plans/raw-v8-warm-backend-plan.md`
+  - deferred fallback for warm execution via a separate raw-V8 backend;
+    superseded by `warm-module-pool-plan.md` as the primary path; use only if a
+    fundamental `deno_core` limitation blocks the fork approach
+- `docs/plans/wasmtime-backend-plan.md`
+  - canonical plan for adding a wasmtime-based WASM backend alongside the
+    existing `deno_core` V8 backend; covers backend abstraction refactor, WIT
+    interface definitions, cooperative fuel-based scheduling, module caching,
+    and bundle format extension; activates after the Locker fork plan Phase 5
+    completes
+- `docs/plans/wasi-agent-capabilities-plan.md`
+  - canonical plan for adding agent OS primitives (virtual filesystem, sandboxed
+    process execution, HTTP client) via WASI Component Model interfaces; covers
+    `neovex:agent` WIT package, `AgentOsProvider` trait, capability-based tenant
+    admission, and agent-os sidecar integration; activates after the wasmtime
+    backend plan W3 completes
 
 ## Archived completed plans
 
@@ -37,6 +58,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/archive/refactor-and-cleanup-control-plane.md`
   - completed control plane for the behavior-preserving engine, server, and
     runtime refactor and cleanup pass; historical record only
+- `docs/plans/archive/operational-state-and-scenario-surface-cleanup-plan.md`
+  - completed control plane for the operational-state, runtime metrics,
+    websocket-session, and concept-owned scenario-surface cleanup pass;
+    historical record only
 - `docs/plans/archive/`
   - home for completed historical plans that should not be resumed as active
     control planes unless explicitly requested
@@ -51,10 +76,18 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
-- For the current operational-state and scenario-surface cleanup workstream,
-  start with `operational-state-and-scenario-surface-cleanup-plan.md`.
+- For the current cleanup workstream, start with
+  `stateful-execution-and-harness-cleanup-plan.md`.
 - For the Locker fork and cooperative runtime workstream, start with
   `v8-locker-fork-plan.md`.
+- For warm execution via module persistence on the `deno_core` fork, start
+  with `warm-module-pool-plan.md`.
+- For the deferred raw-V8 backend fallback (only if the fork approach is
+  blocked), see `raw-v8-warm-backend-plan.md`.
+- For future wasmtime WASM backend work, start with
+  `wasmtime-backend-plan.md`.
+- For future agent OS capabilities via WASI Component Model, start with
+  `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
   before starting a new roadmap item inside the owning plan.
 - Use `docs/research/` for north-star architecture and background research, not

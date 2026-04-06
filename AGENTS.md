@@ -33,9 +33,8 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active or deferred execution plan
-- For the current operational-state and scenario-surface cleanup workstream,
-  go from `docs/plans/README.md` to
-  `docs/plans/operational-state-and-scenario-surface-cleanup-plan.md`.
+- For the current cleanup workstream, go from `docs/plans/README.md` to
+  `docs/plans/stateful-execution-and-harness-cleanup-plan.md`.
 - For future admission-control work, go from `docs/plans/README.md` to
   `docs/plans/layered-admission-control-plan.md`.
 
@@ -44,18 +43,17 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- For the current operational-state and scenario-surface cleanup workstream,
-  treat `docs/plans/operational-state-and-scenario-surface-cleanup-plan.md`
-  as the durable control plane and resume from it plus the current git
-  worktree.
+- For the current cleanup workstream, treat
+  `docs/plans/stateful-execution-and-harness-cleanup-plan.md` as the durable
+  control plane and resume from it plus the current git worktree.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly
   asks for historical review or follow-up on a completed workstream.
 - If archived work needs a new execution pass, create or promote a new active
   plan instead of treating the archived plan as live progress state.
 - For future layered admission work, use
   `docs/plans/layered-admission-control-plan.md`.
-- For the current operational-state cleanup plan, reread
-  `Cleanup Invariants`, `Current Assessed State`, `Current Review Findings`,
+- For the current cleanup plan, reread `Cleanup Invariants`,
+  `Current Assessed State`, `Current Review Findings`,
   `Feature Preservation Matrix`, `Control Plane Rules`,
   `Verification Contract`, `Roadmap Status Ledger`,
   `Implementation Checkpoints`, `Dependency Graph`,
