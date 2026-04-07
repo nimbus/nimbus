@@ -172,14 +172,26 @@ file links (links go stale; symbol search does not).
 
 **`neovex-storage`** — Persistence layer. One `TenantStore` per tenant redb file, plus a global `UsageStore` for cross-tenant metering.
 
-- `async_storage.rs` — Internal async storage boundary. Defines the redb-backed read and write executors, cooperative cancellation, queued-write admission, and the write outcome model that distinguishes canceled-before-commit from committed results.
+- `async_storage/` — internal async storage boundary composition root.
+  `traits.rs` owns the async storage contracts and `TenantWriteOutcome`,
+  `read.rs` owns blocking read execution plus the redb-backed tenant and usage
+  read adapters, `write.rs` owns blocking write execution and the tenant write
+  adapter, `engine.rs` owns `RedbStorageEngine` plus tenant open/create/delete
+  management, and `helpers.rs` owns shared blocking-task error mapping. The
+  boundary still preserves the same cancellable pre-commit versus
+  committed-write semantics.
 - `store.rs` — `TenantStore` wrapping a redb `Database`: the storage
   composition root. It now keeps the shared table definitions and public store
   types while routing the remaining storage concerns through the
   `store/` module tree.
-- `store/write.rs` — `TenantWriteTransaction`, direct durable write helpers,
-  write-batch apply, and storage commit ownership for document writes and
-  execution-unit batches.
+- `store/write.rs` — durable write-path composition root. It now composes
+  `store/write/transaction.rs` (`TenantWriteTransaction` lifecycle and commit
+  ownership), `scheduled.rs` (scheduled-write deduplication and scheduled-op
+  batch integration), `direct.rs` (direct document CRUD helpers plus the
+  public `TenantStore` CRUD write surface), `batch.rs` (execution-unit batch
+  apply and durable batch commit ownership), and `store_entry.rs`
+  (`TenantStore` construction, transaction entry, and write-execution
+  helpers).
 - `store/journal.rs` — durable journal append, read, replay, apply, recovery,
   and metadata-sequence ownership.
 - `store/read.rs` — `TenantReadSnapshot`, document reads, table scans,
@@ -200,7 +212,15 @@ file links (links go stale; symbol search does not).
   transaction-side index maintenance, table index rebuild/clear helpers, and
   the `TenantStore` write-facing index APIs.
 - `schema_store.rs` — Schema persistence. `replace_table_schema` atomically updates schema and rebuilds indexes in one transaction.
-- `scheduler.rs` — Scheduled job and cron job persistence. `claim_due_jobs` atomically moves due jobs from pending to running. `recover_running_jobs` handles crash recovery.
+- `scheduler/` — scheduled-work persistence composition root. `jobs.rs` owns
+  pending or running job transitions plus the public scheduled-job CRUD
+  surface, `results.rs` owns executed-job result persistence and lookup,
+  `cron.rs` owns cron CRUD plus enabled-cron next-run scans, `inspection.rs`
+  owns next-work and has-work inspection helpers, `recovery.rs` owns
+  orphaned-running-job recovery, and `codec.rs` owns the shared scheduler
+  key and MessagePack helpers. `claim_due_jobs` still atomically moves due
+  jobs from pending to running, and `recover_running_jobs` still handles
+  crash recovery.
 - `commit_log.rs` — Durable mutation journal serialization plus the internal
   `CommitEntry` projection used by legacy storage-facing helpers and tests.
 - `usage_store.rs` — `UsageStore` backed by a separate redb database (`neovex-control.db`). Tracks monthly active users (MAU) by token identifier with per-month counters.
@@ -231,6 +251,13 @@ file links (links go stale; symbol search does not).
   that gate into the commit path, preserves admitted work once it crosses into
   the journal path, and owns durable append, ordered apply, and resolution of
   queued async mutation futures.
+- `service/execution_units/` — Runtime multi-step mutation execution-unit
+  ownership. `mod.rs` owns `MutationExecutionUnit` construction plus the stable
+  public surface, `reads.rs` owns snapshot-backed read helpers and dependency
+  capture, `staging.rs` owns staged document and scheduler mutation state
+  transitions, `state.rs` owns staged-state lifecycle plus resolved write or
+  schedule-op construction, and `commit.rs` owns finalization, schema-stability
+  checks, and OCC conflict validation before the batch commit path.
 - `service/queries.rs` — Composition root for the read path. The public
   `Service` read surface is now split across `service/queries/documents.rs`
   (list/get document reads), `query_api.rs` (query and pagination entrypoints),
@@ -268,11 +295,22 @@ file links (links go stale; symbol search does not).
   `tenant/query_planning.rs`, and `tenant/subscription_delivery.rs`. That
   materialized-read root now composes `snapshot.rs`
   (`ServingSnapshot`, tenant-scoped snapshot retention, waiter wakeups, and
-  reader pins), `backend.rs` (the in-memory `MaterializedServingBackend`
-  handling publication, residency, eviction, and commit catch-up),
+  reader pins), `backend/` (the in-memory `MaterializedServingBackend`
+  composition root, with `state.rs` owning table residency plus access
+  tracking, `loading.rs` owning warm-load catch-up plus waiter behavior,
+  `publication.rs` owning publication ordering and retained-version
+  management, and `diagnostics.rs` owning backend stats plus test hooks),
   `warm_load.rs` (shared warm-load coordination and waiter ownership),
   `stats.rs` (public serving metrics snapshot types), and `pause.rs`
   (test-only publish pause control). That
+  mutation root now composes `tenant/mutation/requests.rs`
+  (queued mutation request or response models plus queue defaults),
+  `admission.rs` (the outer mutation admission gate and queue ownership),
+  `codel.rs` (CoDel shedding state and drop scheduling),
+  `journal.rs` (journal queue state, applied-sequence waiting, and worker
+  progress ownership), `stats.rs` (public mutation diagnostics snapshot
+  types), and `pause.rs` (test-only pause control reused by the journal worker
+  and subscription-bootstrap hooks). That
   subscription-delivery root now composes
   `tenant/subscription_delivery/queue.rs` (queue state, bounded enqueue, and
   drain batching), `worker.rs` (dedicated worker lifecycle and shutdown),
@@ -289,7 +327,13 @@ file links (links go stale; symbol search does not).
   journal-batch and queue-level coalescing metrics, while the journal worker
   still exposes an async-friendly test pause seam for deterministic
   multi-record apply coverage.
-- `evaluator.rs` — Pure functions: `evaluate_query`, `evaluate_paginated`. Filter, sort, limit, cursor decode/encode. No I/O.
+- `evaluator.rs` — Pure evaluation composition root. It now composes
+  `evaluator/query.rs` (store-backed and preloaded query evaluation surfaces),
+  `pagination.rs` (paginated windowing and page assembly), `filtering.rs`
+  (filter evaluation and shared scalar comparison rules), `ordering.rs`
+  (document ordering and order-domain validation), and `cursor.rs` (cursor
+  encode/decode, query-shape validation, and cursor boundary comparison). No
+  I/O.
 - `subscriptions.rs` — Composition root for tenant-local subscription
   ownership. The implementation now lives in `subscriptions/registry.rs`
   (registration, activation, cleanup handles, and live delivery projections),
@@ -306,7 +350,18 @@ file links (links go stale; symbol search does not).
 
 **`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
 
-- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: the runtime composition root. It now owns public runtime construction, the runtime-owned convenience executor boundary, V8 isolate creation, and the `invoke_bundle_unmanaged` execution path, while delegating invocation/auth types to `runtime/invocation.rs`, bundle identity and integrity handling to `runtime/bundle.rs`, and bootstrap ownership to the `runtime/bootstrap/` module tree.
+- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: the runtime composition
+  root. It now keeps the public type surface while delegating public runtime
+  construction and convenience invocation entrypoints to `runtime/facade.rs`,
+  invocation-driver ownership to the `runtime/driver/` module tree
+  (`invocation.rs` for driver lifecycle and finalize paths, `loading.rs` for
+  bundle load or invoke flow, `construction.rs` for snapshot bootstrap,
+  runtime creation, and retained-runtime reset helpers, and `tracing.rs` for
+  snapshot-seeded tracing), cooperative slot startup plus wake/poll handling
+  to `runtime/cooperative.rs`, error/serialization helpers to
+  `runtime/helpers.rs`, invocation/auth types to `runtime/invocation.rs`,
+  bundle identity and integrity handling to `runtime/bundle.rs`, and
+  bootstrap ownership to the `runtime/bootstrap/` module tree.
 - `runtime/invocation.rs` — `InvocationKind`, `InvocationRequest`, `InvocationAuth`, `RuntimeUserIdentity`, and `VerifiedUserIdentity`: the public invocation and auth payload surface for runtime calls.
 - `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
 - `runtime/bootstrap/mod.rs` — thin bootstrap composition root that wires the runtime bootstrap module tree together.
@@ -315,16 +370,29 @@ file links (links go stale; symbol search does not).
 - `runtime/bootstrap/source.rs` — bootstrap JavaScript source and the installation/finalization helpers that load it into a `JsRuntime`.
 - `runtime/bootstrap/state.rs` — installation of host bridge, cancellation state, and shared permit state into `OpState`, plus runtime timeout-controller ownership.
 - `runtime/bootstrap/snapshot.rs` — startup snapshot creation, snapshot-build test accounting, and worker isolate-pool ownership.
-- `executor.rs` — `RuntimeExecutor`: the executor composition root. It now owns public executor construction, request entrypoints, worker-thread startup and shutdown, and routes the remaining executor concerns through `executor/queue.rs`, `executor/admission.rs`, and `executor/lifecycle.rs`.
+- `executor.rs` — `RuntimeExecutor`: the executor composition root and inline
+  executor regression surface. `executor/facade.rs` owns the public executor
+  type, worker-thread startup and shutdown, and executor test-state scaffolds;
+  `executor/invoke.rs` owns direct and worker-backed async or blocking invoke
+  entrypoints; and the remaining executor concerns still route through
+  `executor/queue.rs`, `executor/admission.rs`, and `executor/lifecycle.rs`.
 - `executor/queue.rs` — runtime worker job envelopes, result channels, queue dispatch plumbing, and executor shutdown state.
 - `executor/admission.rs` — tenant admission accounting, dispatch handles, shared JS permit state, and the active versus parked versus queued fairness model.
 - `executor/lifecycle.rs` — the canonical invocation lifecycle shared by the direct executor path and the worker-loop path: queue admission, execution metrics, cancellation and timeout accounting, debug logging, and permit completion.
-- `worker_loop.rs` — `WorkerLoopFactory`, `WorkerLoop`, and `RunToCompletionWorkerLoop`: the primary executor seam. Each worker thread builds one worker loop that owns a reused current-thread Tokio runtime and drives run-to-completion deno_core invocations for today's runtime model.
+- `worker_loop/mod.rs` — `WorkerLoopFactory`, `WorkerLoop`, and execution-model routing for runtime workers.
+- `worker_loop/cooperative.rs` — composition root for the cooperative worker loop. It now keeps factory construction plus shared worker state in one place while delegating admission and completion flow to `cooperative/execution.rs`, slot-state and parked/runnable scheduling to `cooperative/scheduler.rs`, retained-runtime plus deferred-drop ownership to `cooperative/retention.rs`, and the main worker run/shutdown loop to `cooperative/run.rs`.
+- `worker_loop/run_to_completion.rs` — run-to-completion worker-loop implementation for the non-cooperative runtime execution model.
 - `backend.rs` — Worker-local `RuntimeBackendFactory` / `RuntimeBackend` helpers. The current `DenoRuntimeBackend` keeps the run-to-completion `invoke(...)` helper below the worker-loop seam so runtime-specific types stay out of `RuntimeExecutor`.
 - `host.rs` — `HostBridge` trait and `HostCallRequest` struct defining the contract between V8 guest code and Rust host operations (db queries, mutations, scheduler commands, `ctx.run*` delegation).
 - `context.rs` — `RuntimeInvocationContext`: per-request metadata (invocation ID, function name, kind, auth identity) threaded through the runtime and host bridge.
 - `limits.rs` — `RuntimeLimits` (heap, timeout, max isolates, worker threads, per-tenant active/in-flight/queued caps, max nested calls) and `RuntimePolicy` (enforces limits + owns the isolate concurrency semaphore).
-- `metrics.rs` — `RuntimeMetrics` / `RuntimeMetricsSnapshot`: live counters for active isolates, queued invocations, worker dispatches, cancellations, timeouts, host ops, and same-isolate nested dispatches.
+- `metrics.rs` — runtime metrics composition root. It now composes
+  `metrics/global.rs` (global isolate, queue, pool, bundle, timeout, and
+  cancellation counters), `host_operations.rs` (per-operation host-call
+  metrics), `tenants.rs` (per-tenant counters plus queue or execution
+  distributions), and `correlations.rs` (recent request-correlation retention
+  and snapshot assembly) behind the stable `RuntimeMetrics` /
+  `RuntimeMetricsSnapshot` surface.
 - `module_loader.rs` — Custom `deno_core` module loader that restricts ESM imports to the bundle root.
 - `watchdog.rs` — `WatchdogTimer`: shared timeout and external-cancellation watchdog owned by `RuntimeExecutor`, replacing the old per-invocation watchdog OS threads.
 - `error.rs` — `NeovexRuntimeError` and `ConvexRuntimeError` with variants for timeout, cancellation, heap exceeded, contract violations, and user-thrown errors.
@@ -405,9 +473,13 @@ worker-local beneath that seam.
 
 - `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`. `serve` starts the axum listener.
 - `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
-- `ws.rs` — Neovex-native WebSocket upgrade, message loop, and subscription
-  cleanup. The native session explicitly unsubscribes active subscriptions on
-  disconnect and owns its forwarder and sender tasks through `OwnedTaskSet`.
+- `ws.rs` / `ws/socket.rs` — Neovex-native WebSocket upgrade and session
+  composition. `ws/socket/transport.rs` owns socket reader, writer, and
+  subscription-forwarder tasks, `ws/socket/pending.rs` owns pending bootstrap
+  cancellation tracking, and `ws/socket/session.rs` owns generic subscription
+  registration, unsubscribe handling, and disconnect cleanup. The native
+  session still explicitly unsubscribes active subscriptions on disconnect and
+  owns its child tasks through `OwnedTaskSet`.
 - `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `.neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
 - `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor`, runtime policy, auth verifier, registry state, and the server-side `HostBridge` implementation.
 - `convex/auth/` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
@@ -427,10 +499,13 @@ worker-local beneath that seam.
   `ctx.db`, `ctx.mutation`, pagination, and action entrypoints.
 - `convex/subscriptions/socket/` — Convex WebSocket session orchestration,
   message handling, runtime transform application, and active-subscription
-  cleanup. The session now owns its sender and forwarder tasks through
-  `OwnedTaskSet`, and runtime-backed active subscriptions own their bridge
-  tasks so auth changes, unsubscribe, and disconnect drain those children
-  explicitly.
+  cleanup. `named_subscriptions.rs` is now the composition root over
+  `named_subscriptions/direct.rs` (native direct-registration flow) and
+  `named_subscriptions/runtime.rs` (runtime-backed bootstrap, initial publish,
+  and forwarding ownership). The session still owns its sender and forwarder
+  tasks through `OwnedTaskSet`, and runtime-backed active subscriptions own
+  their bridge tasks so auth changes, unsubscribe, and disconnect drain those
+  children explicitly.
 - `runtime/subscriptions.rs` — Runtime subscription bootstrap for derived base
   queries. It registers the underlying engine subscriptions, rewrites their
   events onto the public subscription id, and now keeps those bridge tasks
@@ -1127,6 +1202,16 @@ simulation seams for new durability-critical subsystems: clock, journal,
 checkpoint, and fault-injection boundaries should become swappable and
 seed-reproducible as journal, materializer, and OCC work lands.
 
+The highest-value regression clusters now live closer to the concepts they
+protect instead of piling up only in crate-root `tests.rs` files. Scheduler
+persistence regressions now sit beside `scheduler/`, execution-unit OCC and
+finalization regressions now sit beside `service/execution_units/`, and the
+seeded Convex demo-flow surface now splits model, support, and scenario
+ownership under `demo_flow/seeded_usage/`. `crates/neovex-engine/src/test_support.rs`
+also now carries the shared engine-only policy, schema, and blocking-fault
+fixtures so concept-owned tests do not need to reach back into the giant root
+test file for reusable setup.
+
 The first concrete seam layer now lives in `neovex-storage::simulation`.
 `Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test
 helpers. `TenantStore::*_with_simulation(...)` and `Service::new_with_simulation(...)`
@@ -1134,6 +1219,11 @@ accept deterministic implementations, storage commit visibility exposes a
 named fault point, and engine scheduler tests can advance time without
 wall-clock sleeps. Later journal, checkpoint, and compaction work should
 extend these same seam types instead of inventing parallel harness APIs.
+That module is now a composition root over `simulation/clocks.rs`,
+`faults.rs`, `coordination.rs`, `harness.rs`, `generated.rs`, and
+`verification.rs` so clock or fault seams, scenario coordination,
+generated-history models, and verification-corpus helpers have clearer local
+ownership instead of living in one mixed implementation file.
 
 The shared `DeterministicHarness` now also lives on that same seam layer rather
 than in a higher-level test-only island. It carries explicit scenario metadata

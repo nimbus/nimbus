@@ -9,15 +9,20 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/stateful-execution-and-harness-cleanup-plan.md`
-  - canonical execution plan for the next deterministic-harness, execution-unit,
-    serving-backend, runtime invocation, and cooperative-worker cleanup pass
+- `docs/plans/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`
+  - canonical execution plan for the next storage-indexing, runtime-bootstrap,
+    and scenario-surface cleanup pass
 - `docs/plans/v8-locker-fork-plan.md`
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
 
 ## Deferred design and experiment plans
 
+- `docs/plans/pluggable-storage-backend-plan.md`
+  - canonical plan for abstracting the storage layer behind a backend-agnostic
+    trait boundary, implementing SQLite as the primary embedded backend, and
+    establishing the architecture for Postgres/MySQL backends and D1
+    compatibility
 - `docs/plans/warm-module-pool-plan.md`
   - primary owner of warm execution work via surgical `deno_core` fork changes
     and a `WarmModulePool` pool kind; supersedes the raw-V8 backend plan as the
@@ -62,6 +67,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - completed control plane for the operational-state, runtime metrics,
     websocket-session, and concept-owned scenario-surface cleanup pass;
     historical record only
+- `docs/plans/archive/stateful-execution-and-harness-cleanup-plan.md`
+  - completed control plane for deterministic-harness, execution-unit,
+    serving-backend, runtime invocation, cooperative-worker, and scenario-root
+    cleanup; historical record only
+- `docs/plans/archive/execution-boundaries-and-integration-surface-cleanup-plan.md`
+  - completed control plane for async-storage, scheduler persistence,
+    runtime executor/driver, and integration-surface cleanup; historical
+    record only
 - `docs/plans/archive/`
   - home for completed historical plans that should not be resumed as active
     control planes unless explicitly requested
@@ -77,7 +90,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
   `convex-demos-compatibility-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - For the current cleanup workstream, start with
-  `stateful-execution-and-harness-cleanup-plan.md`.
+  `indexing-bootstrap-and-scenario-surface-cleanup-plan.md`.
 - For the Locker fork and cooperative runtime workstream, start with
   `v8-locker-fork-plan.md`.
 - For warm execution via module persistence on the `deno_core` fork, start
