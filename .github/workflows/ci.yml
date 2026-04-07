@@ -99,6 +99,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
 
