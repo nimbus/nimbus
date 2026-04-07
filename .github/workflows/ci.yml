@@ -38,6 +38,7 @@ jobs:
           touch ~/.gitcookies && chmod 0600 ~/.gitcookies
           git config --global http.cookiefile ~/.gitcookies
           echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -79,6 +80,7 @@ jobs:
           touch ~/.gitcookies && chmod 0600 ~/.gitcookies
           git config --global http.cookiefile ~/.gitcookies
           echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -112,6 +114,7 @@ jobs:
           touch ~/.gitcookies && chmod 0600 ~/.gitcookies
           git config --global http.cookiefile ~/.gitcookies
           echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -140,6 +143,7 @@ jobs:
           touch ~/.gitcookies && chmod 0600 ~/.gitcookies
           git config --global http.cookiefile ~/.gitcookies
           echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -196,6 +200,7 @@ jobs:
           touch ~/.gitcookies && chmod 0600 ~/.gitcookies
           git config --global http.cookiefile ~/.gitcookies
           echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
