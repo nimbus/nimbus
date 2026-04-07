@@ -1,0 +1,46 @@
+use deno_core::{OpState, op2};
+use deno_error::JsErrorBox;
+
+use crate::host::HostCallOperation;
+
+use super::super::payloads::{
+    RuntimeHostCallEnvelope, RuntimeSyncQueryFilterPayload, RuntimeSyncQueryOrderPayload,
+    RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
+};
+use super::shared::op_neovex_sync_host_call;
+
+#[op2]
+#[serde]
+pub(super) fn op_neovex_ctx_query_start(
+    state: &mut OpState,
+    #[serde] payload: RuntimeSyncQueryStartPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryStart, payload)
+}
+
+#[op2]
+#[serde]
+pub(super) fn op_neovex_ctx_query_with_index(
+    state: &mut OpState,
+    #[serde] payload: RuntimeSyncQueryWithIndexPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryWithIndex, payload)
+}
+
+#[op2]
+#[serde]
+pub(super) fn op_neovex_ctx_query_filter(
+    state: &mut OpState,
+    #[serde] payload: RuntimeSyncQueryFilterPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryFilter, payload)
+}
+
+#[op2]
+#[serde]
+pub(super) fn op_neovex_ctx_query_order(
+    state: &mut OpState,
+    #[serde] payload: RuntimeSyncQueryOrderPayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryOrder, payload)
+}

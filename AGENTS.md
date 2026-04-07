@@ -34,7 +34,7 @@ Use the repo docs for architecture and behavior details:
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active or deferred execution plan
 - For the current cleanup workstream, go from `docs/plans/README.md` to
-  `docs/plans/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`.
+  `docs/plans/test-surface-and-queue-ownership-cleanup-plan.md`.
 - For future admission-control work, go from `docs/plans/README.md` to
   `docs/plans/layered-admission-control-plan.md`.
 
@@ -44,7 +44,7 @@ Use the repo docs for architecture and behavior details:
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
 - For the current cleanup workstream, treat
-  `docs/plans/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`
+  `docs/plans/test-surface-and-queue-ownership-cleanup-plan.md`
   as the durable control plane and resume from it plus the current git
   worktree.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly

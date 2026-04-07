@@ -9,9 +9,9 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`
-  - canonical execution plan for the next storage-indexing, runtime-bootstrap,
-    and scenario-surface cleanup pass
+- `docs/plans/test-surface-and-queue-ownership-cleanup-plan.md`
+  - canonical execution plan for the next runtime worker-queue, shared HTTP
+    fixture, and concept-owned integration test cleanup pass
 - `docs/plans/v8-locker-fork-plan.md`
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
@@ -75,6 +75,9 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - completed control plane for async-storage, scheduler persistence,
     runtime executor/driver, and integration-surface cleanup; historical
     record only
+- `docs/plans/archive/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`
+  - completed control plane for storage indexing, runtime bootstrap, executor
+    admission, and scenario-surface cleanup; historical record only
 - `docs/plans/archive/`
   - home for completed historical plans that should not be resumed as active
     control planes unless explicitly requested
@@ -90,7 +93,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
   `convex-demos-compatibility-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - For the current cleanup workstream, start with
-  `indexing-bootstrap-and-scenario-surface-cleanup-plan.md`.
+  `test-surface-and-queue-ownership-cleanup-plan.md`.
 - For the Locker fork and cooperative runtime workstream, start with
   `v8-locker-fork-plan.md`.
 - For warm execution via module persistence on the `deno_core` fork, start
