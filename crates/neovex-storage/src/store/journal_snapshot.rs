@@ -3,6 +3,9 @@ use redb::{ReadableTable, TableError};
 
 use crate::keys::document_key;
 
+#[cfg(test)]
+mod tests;
+
 use super::journal::encode_u64;
 use super::schema_rewrite::durable_record_index_keys;
 use super::{

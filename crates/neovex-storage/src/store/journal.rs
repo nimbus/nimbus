@@ -7,6 +7,9 @@ use crate::commit_log::serialize_commit;
 use crate::keys::document_key;
 use crate::simulation::{FaultInjector, FaultPoint};
 
+#[cfg(test)]
+mod tests;
+
 use super::schema_rewrite::rewrite_document_indexes_in_write_txn;
 use super::{
     APPLIED_SEQUENCE_KEY, COMMIT_LOG, DOCUMENTS, EMPTY_TABLE_VALUE, JournalProgress, METADATA,

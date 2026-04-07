@@ -305,11 +305,11 @@ and continue only when the blocker is environmental rather than architectural.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | IB0 | `done` | reviewed the current post-execution-boundaries architecture and identified the next meaningful cleanup hotspots in storage indexing, generated-history or demo scenario roots, and runtime bootstrap or admission ownership | none | docs-only review and planning pass on 2026-04-06 |
-| IB1 | `todo` | split `crates/neovex-storage/src/index/scan.rs` by index-scan ownership | none | safest first production slice because it avoids the active Locker runtime overlap |
-| IB2 | `todo` | split `crates/neovex-storage/src/index/maintenance.rs` by write-side index-maintenance ownership | IB1 recommended first | stays in the storage indexing boundary and shares the same vocabulary |
-| IB3 | `todo` | move the highest-value remaining generated-history, recovery, and native HTTP scenario helpers toward concept-owned surfaces | IB1 and IB2 recommended first | next eligible non-runtime slice after storage indexing stabilizes |
-| IB4 | `todo` | split the remaining Convex demo-flow fixture and scenario root by concept ownership | IB3 recommended first | keep after the broader generated-history surfaces stabilize |
-| IB5 | `todo` | split `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs` by startup-snapshot and retained-runtime-pool ownership | IB1 through IB4 recommended first | do not start until the overlapping Locker runtime worktree is reconciled enough for cleanup-only edits |
+| IB1 | `done` | split `crates/neovex-storage/src/index/scan.rs` by index-scan ownership | none | landed as a thin `scan.rs` composition root over exact, prefix, range, read, and adapter submodules |
+| IB2 | `done` | split `crates/neovex-storage/src/index/maintenance.rs` by write-side index-maintenance ownership | IB1 recommended first | landed as a thin `maintenance.rs` root over transaction, rebuild, and store-facing write wrapper submodules |
+| IB3 | `done` | move the highest-value remaining generated-history, recovery, and native HTTP scenario helpers toward concept-owned surfaces | IB1 and IB2 recommended first | landed as dedicated storage generated-history tests plus owned native HTTP generated-history and fault helper submodules |
+| IB4 | `done` | split the remaining Convex demo-flow fixture and scenario root by concept ownership | IB3 recommended first | the root is now a thin composition surface over manifest, bundle, registry, helpers, scenarios, and seeded-usage modules |
+| IB5 | `in_progress` | split `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs` by startup-snapshot and retained-runtime-pool ownership | IB1 through IB4 recommended first | the current Locker/runtime worktree is now treated as the reconciled baseline for this cleanup pass |
 | IB6 | `todo` | split `crates/neovex-runtime/src/runtime/bootstrap/ops.rs` by host-op family ownership | IB5 recommended first | same runtime overlap gate as `IB5` |
 | IB7 | `todo` | split `crates/neovex-runtime/src/executor/admission.rs` by admission, permit, and fairness ownership | IB5 and IB6 recommended first | same runtime overlap gate as `IB5` |
 | IB8 | `todo` | update docs, run the full verification sweep, and archive the completed plan cleanly | IB1 through IB7 | final closure only |
@@ -323,8 +323,8 @@ and continue only when the blocker is environmental rather than architectural.
 - `IB2` should usually follow `IB1` because both live in the storage index
   boundary and share transaction-side index-maintenance terminology.
 - `IB3` and `IB4` come after the storage indexing seams stabilize.
-- `IB5`, `IB6`, and `IB7` should wait until the overlapping runtime worktree
-  is reconciled enough for cleanup-only edits.
+- `IB5`, `IB6`, and `IB7` now proceed from the committed Locker/runtime
+  baseline instead of waiting on a separate moving worktree.
 - `IB6` should usually follow `IB5` because the bootstrap host-op families and
   retained-runtime construction vocabulary share the same runtime bootstrap
   seam.
@@ -352,11 +352,11 @@ and continue only when the blocker is environmental rather than architectural.
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | IB0 | done | start `IB1` by mapping `index/scan.rs` into low-level scan iterators, exact/prefix/range algorithms, and public read adapters |
-| IB1 | not started | split the scan boundary into concept-owned exact, prefix, range, and adapter surfaces without changing scan semantics |
-| IB2 | not started | separate transaction-side index mutations, rebuild/clear helpers, and `TenantStore` write-facing adapters |
-| IB3 | not started | move generated-history and recovery helpers out of the remaining broad storage and native HTTP test roots |
-| IB4 | not started | split the demo-flow root into clearer fixture, manifest/route builder, and scenario support surfaces |
-| IB5 | not started | separate startup-snapshot vocabulary from retained-runtime-pool state and bounds enforcement once runtime overlap is safe |
+| IB1 | done; `scan.rs` is now a composition root over `scan/read.rs`, `scan/exact.rs`, `scan/prefix.rs`, `scan/range.rs`, and `scan/adapters.rs` | start `IB2` by mapping transaction-side maintenance, rebuild/clear helpers, and store-facing wrappers inside `index/maintenance.rs` |
+| IB2 | done; `maintenance.rs` is now a composition root over `maintenance/transaction.rs`, `maintenance/writes.rs`, and `maintenance/rebuild.rs` | start `IB3` by mapping the broad storage and native HTTP scenario roots into reusable generated-history, recovery, and helper seams |
+| IB3 | done; storage generated-history and recovery coverage now lives under `tests/generated_history.rs`, and the native HTTP document/commit suite now owns generated-history and fault helpers in dedicated submodules | start `IB4` by mapping what still lives in the demo-flow root versus the already split helpers, scenarios, and seeded-usage surfaces |
+| IB4 | done; the demo-flow root is now a composition surface over `manifest.rs`, `bundle.rs`, `registry.rs`, `helpers.rs`, `scenarios.rs`, and `seeded_usage/` | checkpoint the reconciled runtime baseline and start `IB5` from the current committed bootstrap boundary |
+| IB5 | runtime Locker work is now treated as the reconciled baseline for this cleanup pass | split startup-snapshot vocabulary from retained-runtime-pool state and bounds enforcement |
 | IB6 | not started | separate runtime bootstrap host-op families and shared async permit-lease glue into clearer submodules |
 | IB7 | not started | separate executor admission dispatch handles, permit state, suspend/resume flow, and fairness bookkeeping |
 | IB8 | not started | update docs, run the repo-wide sweep, and archive the completed plan |
@@ -561,4 +561,8 @@ and continue only when the blocker is environmental rather than architectural.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-06 | IB0 | done | Reviewed the live post-execution-boundaries architecture and identified the next meaningful cleanup hotspots in storage indexing, remaining generated-history and demo scenario roots, and runtime bootstrap or executor-admission ownership. Authored this new active cleanup control plane and prepared it for promotion in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `IB1` with a concept map for `crates/neovex-storage/src/index/scan.rs` |
-
+| 2026-04-06 | IB1 | done | Reconciled the active control plane against the current dirty worktree, then split `crates/neovex-storage/src/index/scan.rs` into concept-owned `read`, `exact`, `prefix`, `range`, and `adapters` submodules while keeping `scan.rs` as the thin composition root. Public `TenantStore` and `TenantReadSnapshot` scan entrypoints stayed stable. | `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB2` by mapping transaction-side index maintenance, rebuild/clear helpers, and store-facing adapters in `crates/neovex-storage/src/index/maintenance.rs` |
+| 2026-04-06 | IB2 | done | Continued directly within the same storage indexing boundary after `IB1` and split `crates/neovex-storage/src/index/maintenance.rs` into transaction-side mutation helpers, rebuild or clear helpers, and store-facing indexed write wrappers. `maintenance.rs` is now the thin composition root for those owned surfaces. | `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB3` by mapping reusable generated-history, recovery, and native HTTP helper seams in the remaining broad scenario roots |
+| 2026-04-06 | IB3 | done | Moved the storage generated-history and recovery cluster into `crates/neovex-storage/src/tests/generated_history.rs`, and moved the native HTTP generated-history oracle plus blocking fault harness into owned submodules under `crates/neovex-server/src/tests/core_http/documents_and_commits/`. The remaining roots now read more like broad scenario surfaces instead of mixed helper piles. | `cargo test -p neovex-storage`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB4` by mapping what still belongs in the demo-flow root versus the already-split helpers, scenarios, and seeded-usage surfaces |
+| 2026-04-06 | IB4 | done | Split the remaining Convex demo-flow root so `mod.rs` is now a thin composition surface over dedicated manifest builders, runtime-bundle generation, registry composition, helpers, broad scenarios, and the already-separated seeded-usage tree. | `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | the next item is `IB5`, but only after the overlapping Locker/runtime worktree is reconciled enough for cleanup-only edits |
+| 2026-04-06 | IB5 | in_progress | Reconciled the earlier runtime overlap gate with the current repo state: the Locker/runtime worktree is now treated as stable baseline work rather than separate in-flight churn. The next step is to checkpoint that full baseline in git and begin the bootstrap snapshot split from there. | reconciliation only; baseline checkpoint and runtime-focused verification pending | commit the reconciled baseline and then split `runtime/bootstrap/snapshot.rs` into startup-snapshot, retention, affinity, and bounds-owned submodules |

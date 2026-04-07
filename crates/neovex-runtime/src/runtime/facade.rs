@@ -1,0 +1,139 @@
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use crate::RuntimeInvocationContext;
+use crate::error::Result;
+use crate::executor::RuntimeExecutor;
+use crate::host::{HostBridge, HostCallCancellation};
+use crate::limits::{RuntimeLimits, RuntimePolicy};
+
+use super::{InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeConstructionMode};
+
+impl NeovexRuntime {
+    pub fn new(host: Arc<dyn HostBridge>) -> Self {
+        Self::with_policy(host, Arc::new(RuntimePolicy::default()))
+    }
+
+    pub fn with_limits(host: Arc<dyn HostBridge>, limits: RuntimeLimits) -> Self {
+        Self::with_policy(host, Arc::new(RuntimePolicy::new(limits)))
+    }
+
+    pub fn with_policy(host: Arc<dyn HostBridge>, policy: Arc<RuntimePolicy>) -> Self {
+        Self {
+            host,
+            policy,
+            bypass_concurrency_limit: false,
+            owned_executor: Arc::default(),
+            #[cfg(test)]
+            retained_runtime_construction_mode_for_test: RuntimeConstructionMode::Unsnapshotted,
+        }
+    }
+
+    pub fn with_policy_bypassing_limit(
+        host: Arc<dyn HostBridge>,
+        policy: Arc<RuntimePolicy>,
+    ) -> Self {
+        Self {
+            host,
+            policy,
+            bypass_concurrency_limit: true,
+            owned_executor: Arc::default(),
+            #[cfg(test)]
+            retained_runtime_construction_mode_for_test: RuntimeConstructionMode::Unsnapshotted,
+        }
+    }
+
+    pub(crate) fn into_policy(self, policy: Arc<RuntimePolicy>) -> Self {
+        Self {
+            policy,
+            owned_executor: Arc::default(),
+            ..self
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_retained_runtime_construction_mode_for_test(
+        mut self,
+        construction_mode: RuntimeConstructionMode,
+    ) -> Self {
+        self.retained_runtime_construction_mode_for_test = construction_mode;
+        self
+    }
+
+    pub(crate) fn retained_runtime_construction_mode(&self) -> RuntimeConstructionMode {
+        #[cfg(test)]
+        {
+            self.retained_runtime_construction_mode_for_test
+        }
+        #[cfg(not(test))]
+        {
+            RuntimeConstructionMode::Unsnapshotted
+        }
+    }
+
+    /// Returns the stable executor handle that powers this runtime's public
+    /// convenience invocation APIs.
+    pub fn executor(&self) -> RuntimeExecutor {
+        self.owned_executor
+            .get_or_init(|| RuntimeExecutor::new(self.policy.clone()))
+            .clone()
+    }
+
+    pub async fn invoke_bundle(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+    ) -> Result<Value> {
+        self.invoke_bundle_with_cancellation(bundle, request, None)
+            .await
+    }
+
+    pub async fn invoke_bundle_with_cancellation(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        self.executor()
+            .invoke_on_worker(
+                self.clone(),
+                bundle.clone(),
+                request.clone(),
+                RuntimeInvocationContext::top_level(request),
+                cancellation,
+            )
+            .await
+    }
+
+    pub fn invoke_bundle_blocking(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+    ) -> Result<Value> {
+        self.invoke_bundle_blocking_with_cancellation(bundle, request, None)
+    }
+
+    pub fn invoke_bundle_blocking_with_cancellation(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        self.executor().invoke_blocking_with_cancellation(
+            self.clone(),
+            bundle.clone(),
+            request.clone(),
+            RuntimeInvocationContext::top_level(request),
+            cancellation,
+        )
+    }
+
+    pub(crate) fn bypasses_concurrency_limit(&self) -> bool {
+        self.bypass_concurrency_limit
+    }
+
+    pub(crate) fn policy(&self) -> Arc<RuntimePolicy> {
+        self.policy.clone()
+    }
+}

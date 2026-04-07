@@ -1,26 +1,46 @@
+#[cfg(test)]
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use deno_core::{JsRuntime, PollEventLoopOptions, RuntimeOptions, scope, serde_v8, v8};
+#[cfg(test)]
+use deno_core::{CreateRealmOptions, JsRuntime, PollEventLoopOptions};
+#[cfg(test)]
 use serde_json::Value;
 
+#[cfg(test)]
 use crate::RuntimeInvocationContext;
+#[cfg(test)]
 use crate::error::{NeovexRuntimeError, Result};
-use crate::executor::{RuntimeExecutor, SharedInvocationPermit};
-use crate::host::{HostBridge, HostCallCancellation};
-use crate::limits::{RuntimeLimits, RuntimePolicy};
+use crate::executor::RuntimeExecutor;
+#[cfg(test)]
+use crate::executor::SharedInvocationPermit;
+use crate::host::HostBridge;
+#[cfg(test)]
+use crate::limits::RuntimeLimits;
+use crate::limits::RuntimePolicy;
+#[cfg(test)]
 use crate::module_loader::SandboxedModuleLoader;
+#[cfg(test)]
 use crate::watchdog::WatchdogTimer;
 
 mod bootstrap;
 mod bundle;
+mod cooperative;
+mod driver;
+mod facade;
+mod helpers;
 mod invocation;
 
-use self::bootstrap::{RuntimeCancellationState, RuntimeStartupSnapshot};
-pub(crate) use self::bootstrap::{RuntimeInvocationTimeoutController, RuntimeWorkerIsolatePool};
+#[cfg(test)]
+use self::bootstrap::RuntimeCancellationState;
+pub(crate) use self::bootstrap::{
+    ReusableRuntime, RuntimeConstructionMode, RuntimeInvocationTimeoutController,
+    RuntimeWorkerIsolatePool,
+};
 pub use self::bundle::RuntimeBundle;
+#[cfg(test)]
+use self::helpers::deserialize_json_value;
 pub use self::invocation::{
     InvocationAuth, InvocationKind, InvocationRequest, RuntimeUserIdentity, VerifiedUserIdentity,
     VerifiedUserIdentityKind,
@@ -32,424 +52,140 @@ pub struct NeovexRuntime {
     policy: Arc<RuntimePolicy>,
     bypass_concurrency_limit: bool,
     owned_executor: Arc<OnceLock<RuntimeExecutor>>,
+    #[cfg(test)]
+    retained_runtime_construction_mode_for_test: RuntimeConstructionMode,
 }
 
-pub(crate) struct RuntimeInvocationExecution {
-    pub(crate) watchdog: WatchdogTimer,
-    pub(crate) bundle: RuntimeBundle,
-    pub(crate) request: InvocationRequest,
-    pub(crate) context: RuntimeInvocationContext,
-    pub(crate) external_cancellation: Option<HostCallCancellation>,
-    pub(crate) permit: SharedInvocationPermit,
-}
+pub(crate) use self::cooperative::{
+    CooperativeLockerRuntimeSlot, CooperativeRuntimeSlotPoll, CooperativeRuntimeSlotStart,
+    RuntimeInvocationExecution,
+};
+
+use self::driver::RuntimeInvocationDriver;
 
 /// Legacy alias for Convex-shaped integrations.
 pub type ConvexRuntime = NeovexRuntime;
 
-impl NeovexRuntime {
-    pub fn new(host: Arc<dyn HostBridge>) -> Self {
-        Self::with_policy(host, Arc::new(RuntimePolicy::default()))
-    }
-
-    pub fn with_limits(host: Arc<dyn HostBridge>, limits: RuntimeLimits) -> Self {
-        Self::with_policy(host, Arc::new(RuntimePolicy::new(limits)))
-    }
-
-    pub fn with_policy(host: Arc<dyn HostBridge>, policy: Arc<RuntimePolicy>) -> Self {
-        Self {
-            host,
-            policy,
-            bypass_concurrency_limit: false,
-            owned_executor: Arc::new(OnceLock::new()),
-        }
-    }
-
-    pub fn with_policy_bypassing_limit(
-        host: Arc<dyn HostBridge>,
-        policy: Arc<RuntimePolicy>,
-    ) -> Self {
-        Self {
-            host,
-            policy,
-            bypass_concurrency_limit: true,
-            owned_executor: Arc::new(OnceLock::new()),
-        }
-    }
-
-    pub(crate) fn into_policy(self, policy: Arc<RuntimePolicy>) -> Self {
-        Self {
-            policy,
-            owned_executor: Arc::new(OnceLock::new()),
-            ..self
-        }
-    }
-
-    /// Returns the stable executor handle that powers this runtime's public
-    /// convenience invocation APIs.
-    pub fn executor(&self) -> RuntimeExecutor {
-        self.owned_executor
-            .get_or_init(|| RuntimeExecutor::new(self.policy.clone()))
-            .clone()
-    }
-
-    pub async fn invoke_bundle(
-        &self,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-    ) -> Result<Value> {
-        self.invoke_bundle_with_cancellation(bundle, request, None)
-            .await
-    }
-
-    pub async fn invoke_bundle_with_cancellation(
-        &self,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        cancellation: Option<HostCallCancellation>,
-    ) -> Result<Value> {
-        self.executor()
-            .invoke_on_worker(
-                self.clone(),
-                bundle.clone(),
-                request.clone(),
-                RuntimeInvocationContext::top_level(request),
-                cancellation,
-            )
-            .await
-    }
-
-    pub fn invoke_bundle_blocking(
-        &self,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-    ) -> Result<Value> {
-        self.invoke_bundle_blocking_with_cancellation(bundle, request, None)
-    }
-
-    pub fn invoke_bundle_blocking_with_cancellation(
-        &self,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        cancellation: Option<HostCallCancellation>,
-    ) -> Result<Value> {
-        self.executor().invoke_blocking_with_cancellation(
-            self.clone(),
-            bundle.clone(),
-            request.clone(),
-            RuntimeInvocationContext::top_level(request),
-            cancellation,
-        )
-    }
-
-    pub(crate) fn bypasses_concurrency_limit(&self) -> bool {
-        self.bypass_concurrency_limit
-    }
-
-    pub(crate) fn policy(&self) -> Arc<RuntimePolicy> {
-        self.policy.clone()
-    }
-
-    pub(crate) async fn invoke_bundle_unmanaged(
-        &self,
-        isolate_pool: Option<&mut RuntimeWorkerIsolatePool>,
-        invocation: RuntimeInvocationExecution,
-    ) -> Result<Value> {
-        let RuntimeInvocationExecution {
-            watchdog,
-            bundle,
-            request,
-            context: _context,
-            external_cancellation,
-            permit,
-        } = invocation;
-        bundle.verify_integrity()?;
-        let mut isolate_pool = isolate_pool;
-        let mut runtime = match isolate_pool.as_deref_mut() {
-            Some(pool) => pool.take_runtime(self, &bundle)?,
-            None => {
-                let snapshot = self.bootstrap_snapshot()?;
-                self.create_runtime_from_snapshot(&bundle, snapshot)?
-            }
-        };
-        let timeout = self.policy.limits().execution_timeout;
-        let timeout_triggered = Arc::new(AtomicBool::new(false));
-        let heap_limit_triggered = Arc::new(AtomicBool::new(false));
-        let external_cancellation_triggered = Arc::new(AtomicBool::new(false));
-        let cancellation_signal = {
-            let op_state = runtime.op_state();
-            op_state
-                .borrow()
-                .borrow::<RuntimeCancellationState>()
-                .signal
-                .clone()
-        };
-        let external_cancellation_watchdog = external_cancellation
-            .clone()
-            .map(|external| {
-                let isolate_handle = runtime.v8_isolate().thread_safe_handle();
-                let cancellation_signal = cancellation_signal.clone();
-                let external_cancellation_triggered = external_cancellation_triggered.clone();
-                watchdog.register_cancellation(external, move || {
-                    external_cancellation_triggered.store(true, Ordering::SeqCst);
-                    cancellation_signal.cancel();
-                    let _ = isolate_handle.terminate_execution();
-                })
-            })
-            .transpose()?;
-
-        {
-            let heap_limit_triggered = heap_limit_triggered.clone();
-            let cancellation_signal = cancellation_signal.clone();
-            let isolate_handle = runtime.v8_isolate().thread_safe_handle();
-            runtime.add_near_heap_limit_callback(move |current_limit, _initial_limit| {
-                heap_limit_triggered.store(true, Ordering::SeqCst);
-                cancellation_signal.cancel();
-                let _ = isolate_handle.terminate_execution();
-                current_limit.saturating_mul(2)
-            });
-        }
-
-        let timeout_controller = if timeout.is_zero() {
-            None
-        } else {
-            let isolate_handle = runtime.v8_isolate().thread_safe_handle();
-            let timeout_triggered = timeout_triggered.clone();
-            let cancellation_signal = cancellation_signal.clone();
-            let callback: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-                timeout_triggered.store(true, Ordering::SeqCst);
-                cancellation_signal.cancel();
-                let _ = isolate_handle.terminate_execution();
-            });
-            Some(RuntimeInvocationTimeoutController::new(
-                watchdog.clone(),
-                timeout,
-                callback,
-            )?)
-        };
-        if let Some(timeout_controller) = timeout_controller.clone() {
-            permit.set_timeout_controller(timeout_controller);
-        }
-        {
-            let op_state = runtime.op_state();
-            op_state.borrow_mut().put(permit.clone());
-        }
-
-        let result = {
-            let isolate_handle = runtime.v8_isolate().thread_safe_handle();
-            let cancellation_signal = cancellation_signal.clone();
-            let external_cancellation_triggered = external_cancellation_triggered.clone();
-            let invoke = async {
-                self.load_bundle(&mut runtime, &bundle).await?;
-                self.invoke_loaded_bundle(&mut runtime, &request).await
-            };
-            tokio::pin!(invoke);
-            match external_cancellation {
-                Some(external_cancellation) => {
-                    tokio::select! {
-                        result = &mut invoke => result,
-                        _ = external_cancellation.cancelled() => {
-                            external_cancellation_triggered.store(true, Ordering::SeqCst);
-                            cancellation_signal.cancel();
-                            let _ = isolate_handle.terminate_execution();
-                            invoke.await
-                        }
-                    }
-                }
-                None => invoke.await,
-            }
-        };
-
-        if let Some(timeout_controller) = timeout_controller {
-            timeout_controller.disarm().await;
-        }
-        permit.clear_timeout_controller();
-        if let Some(external_cancellation_watchdog) = external_cancellation_watchdog {
-            external_cancellation_watchdog.disarm().await;
-        }
-
-        let replacement_required = timeout_triggered.load(Ordering::SeqCst)
-            || heap_limit_triggered.load(Ordering::SeqCst)
-            || external_cancellation_triggered.load(Ordering::SeqCst);
-
-        let result = result.map_err(|error| {
-            classify_runtime_error(
-                error,
-                &timeout_triggered,
-                &heap_limit_triggered,
-                &external_cancellation_triggered,
-                self.policy.limits(),
-            )
-        });
-        if result.is_err()
-            && replacement_required
-            && let Some(pool) = isolate_pool.as_deref()
-        {
-            pool.record_replacement(self);
-        }
-        result
-    }
-
-    async fn load_bundle(&self, runtime: &mut JsRuntime, bundle: &RuntimeBundle) -> Result<()> {
-        let module_specifier = bundle.module_specifier()?;
-        let module_id = runtime
-            .load_main_es_module(&module_specifier)
-            .await
-            .map_err(runtime_js_error)?;
-        let evaluation = runtime.mod_evaluate(module_id);
-        runtime
-            .run_event_loop(Default::default())
-            .await
-            .map_err(runtime_js_error)?;
-        evaluation.await.map_err(runtime_js_error)?;
-        Ok(())
-    }
-
-    async fn invoke_loaded_bundle(
-        &self,
-        runtime: &mut JsRuntime,
-        request: &InvocationRequest,
-    ) -> Result<Value> {
-        let request_json = serde_json::to_string(request)?;
-        let expression = format!("globalThis.__neovexInvoke({request_json})");
-        let value = runtime
-            .execute_script("<neovex-runtime:invoke>", expression)
-            .map_err(runtime_js_error)?;
-        let resolve = runtime.resolve(value);
-        let value = runtime
-            .with_event_loop_promise(resolve, PollEventLoopOptions::default())
-            .await
-            .map_err(runtime_js_error)?;
-        deserialize_json_value(runtime, value)
-    }
-
-    fn bootstrap_snapshot(&self) -> Result<&'static RuntimeStartupSnapshot> {
-        static BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<RuntimeStartupSnapshot, String>> =
-            OnceLock::new();
-        match BOOTSTRAP_SNAPSHOT
-            .get_or_init(|| Self::create_bootstrap_snapshot().map_err(|error| error.to_string()))
-        {
-            Ok(snapshot) => Ok(snapshot),
-            Err(message) => Err(NeovexRuntimeError::Contract(format!(
-                "failed to initialize runtime bootstrap snapshot: {message}"
-            ))),
-        }
-    }
-
-    fn create_bootstrap_snapshot() -> Result<RuntimeStartupSnapshot> {
-        bootstrap::create_bootstrap_snapshot()
-    }
-
-    fn create_runtime_from_snapshot(
-        &self,
-        bundle: &RuntimeBundle,
-        snapshot: &RuntimeStartupSnapshot,
-    ) -> Result<JsRuntime> {
-        self.create_runtime(bundle, Some(snapshot))
-    }
-
-    fn create_runtime(
-        &self,
-        bundle: &RuntimeBundle,
-        startup_snapshot: Option<&RuntimeStartupSnapshot>,
-    ) -> Result<JsRuntime> {
-        let mut runtime = JsRuntime::new(RuntimeOptions {
-            create_params: Some(self.create_isolate_params()),
-            module_loader: Some(Rc::new(SandboxedModuleLoader::new(bundle.module_root()?))),
-            extensions: vec![bootstrap::runtime_extension()],
-            startup_snapshot: startup_snapshot.map(RuntimeStartupSnapshot::as_startup_snapshot),
-            ..Default::default()
-        });
-        self.initialize_runtime_state(&mut runtime);
-        if startup_snapshot.is_none() {
-            Self::install_bootstrap(&mut runtime)?;
-        }
-        Self::finalize_bootstrap(&mut runtime)?;
-        Ok(runtime)
-    }
-
-    fn create_isolate_params(&self) -> v8::CreateParams {
-        let heap_megabyte = 1usize << 20;
-        v8::Isolate::create_params().heap_limits(
-            self.policy.limits().initial_heap_mb * heap_megabyte,
-            self.policy.limits().max_heap_mb * heap_megabyte,
-        )
-    }
-
-    fn initialize_runtime_state(&self, runtime: &mut JsRuntime) {
-        bootstrap::initialize_runtime_state(runtime, self);
-    }
-
-    fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
-        bootstrap::install_bootstrap(runtime)
-    }
-
-    fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
-        bootstrap::finalize_bootstrap(runtime)
-    }
-}
-
 #[cfg(test)]
 pub(crate) fn bootstrap_snapshot_build_count_for_test() -> usize {
-    bootstrap::bootstrap_snapshot_build_count_for_test()
-}
-
-fn deserialize_json_value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
-    scope!(scope, runtime);
-    let local = v8::Local::new(scope, value);
-    serde_v8::from_v8(scope, local)
-        .map_err(|error| NeovexRuntimeError::JavaScript(error.to_string()))
-}
-
-fn runtime_js_error(error: impl std::fmt::Display) -> NeovexRuntimeError {
-    NeovexRuntimeError::JavaScript(error.to_string())
-}
-
-fn classify_runtime_error(
-    error: NeovexRuntimeError,
-    timeout_triggered: &AtomicBool,
-    heap_limit_triggered: &AtomicBool,
-    external_cancellation_triggered: &AtomicBool,
-    limits: &RuntimeLimits,
-) -> NeovexRuntimeError {
-    match error {
-        NeovexRuntimeError::JavaScript(message)
-            if heap_limit_triggered.load(Ordering::SeqCst)
-                && is_execution_terminated_error(&message) =>
-        {
-            NeovexRuntimeError::HeapLimitExceeded(limits.max_heap_mb)
-        }
-        NeovexRuntimeError::JavaScript(message) if is_host_call_canceled_error(&message) => {
-            NeovexRuntimeError::Cancelled
-        }
-        NeovexRuntimeError::JavaScript(_message)
-            if external_cancellation_triggered.load(Ordering::SeqCst) =>
-        {
-            NeovexRuntimeError::Cancelled
-        }
-        NeovexRuntimeError::JavaScript(_message) if timeout_triggered.load(Ordering::SeqCst) => {
-            NeovexRuntimeError::ExecutionTimeout(limits.execution_timeout)
-        }
-        other => other,
-    }
-}
-
-fn is_execution_terminated_error(message: &str) -> bool {
-    message.contains("execution terminated")
-}
-
-fn is_host_call_canceled_error(message: &str) -> bool {
-    message.contains("runtime host call canceled")
+    self::driver::snapshot_build_count_for_test()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::fs::OpenOptions;
+    #[cfg(unix)]
+    use std::os::fd::AsRawFd;
+    use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
     use serde_json::Map;
     use tempfile::tempdir;
+    use tokio::sync::Notify;
 
     use super::*;
     use crate::host::{HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest};
+
+    fn init_runtime_repro_tracing() {
+        static TRACING_INIT: OnceLock<()> = OnceLock::new();
+        TRACING_INIT.get_or_init(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_test_writer()
+                .with_max_level(tracing::Level::DEBUG)
+                .without_time()
+                .try_init();
+        });
+    }
+
+    fn stress_env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(default)
+    }
+
+    fn run_ignored_repro_in_subprocess(test_name: &str) {
+        let status = std::process::Command::new(
+            std::env::current_exe().expect("current test binary path should resolve"),
+        )
+        .arg("--ignored")
+        .arg("--exact")
+        .arg(test_name)
+        .status()
+        .expect("repro subprocess should launch");
+        assert!(
+            status.success(),
+            "repro subprocess {test_name} should succeed"
+        );
+    }
+
+    fn acquire_runtime_suite_lock() -> MutexGuard<'static, ()> {
+        static IN_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        IN_PROCESS_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("runtime test lock should not be poisoned")
+    }
+
+    struct DelayedAsyncReproLockGuard {
+        _in_process_guard: MutexGuard<'static, ()>,
+        #[cfg(unix)]
+        file: std::fs::File,
+    }
+
+    fn acquire_delayed_async_repro_lock() -> DelayedAsyncReproLockGuard {
+        static IN_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let in_process_guard = IN_PROCESS_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("delayed async repro lock should not be poisoned");
+
+        #[cfg(unix)]
+        {
+            const LOCK_EX: i32 = 2;
+
+            unsafe extern "C" {
+                fn flock(fd: i32, operation: i32) -> i32;
+            }
+
+            let path = std::env::temp_dir().join("neovex-runtime-delayed-async-repro.lock");
+            let file = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(path)
+                .expect("delayed async repro lockfile should open");
+            let status = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
+            assert_eq!(
+                status, 0,
+                "delayed async repro lock should acquire successfully"
+            );
+            DelayedAsyncReproLockGuard {
+                _in_process_guard: in_process_guard,
+                file,
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            DelayedAsyncReproLockGuard {
+                _in_process_guard: in_process_guard,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for DelayedAsyncReproLockGuard {
+        fn drop(&mut self) {
+            const LOCK_UN: i32 = 8;
+
+            unsafe extern "C" {
+                fn flock(fd: i32, operation: i32) -> i32;
+            }
+
+            let _ = unsafe { flock(self.file.as_raw_fd(), LOCK_UN) };
+        }
+    }
 
     #[derive(Default)]
     struct RecordingHost {
@@ -521,6 +257,85 @@ mod tests {
             _cancellation: HostCallCancellation,
         ) -> HostBridgeFuture {
             Box::pin(async move {
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "operation": request.operation,
+                        "payload": request.payload,
+                    },
+                }))
+            })
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct DelayedAsyncEchoHost {
+        delay: std::time::Duration,
+    }
+
+    impl DelayedAsyncEchoHost {
+        fn new(delay: std::time::Duration) -> Self {
+            Self { delay }
+        }
+    }
+
+    impl HostBridge for DelayedAsyncEchoHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Err(NeovexRuntimeError::Contract(
+                "sync host bridge path should not be used for async ops".to_string(),
+            ))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            let delay = self.delay;
+            Box::pin(async move {
+                tokio::time::sleep(delay).await;
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "operation": request.operation,
+                        "payload": request.payload,
+                    },
+                }))
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct DeferredAsyncHost {
+        release: Arc<Notify>,
+        calls: Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl DeferredAsyncHost {
+        fn release(&self) {
+            self.release.notify_waiters();
+        }
+    }
+
+    impl HostBridge for DeferredAsyncHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Err(NeovexRuntimeError::Contract(
+                "sync host bridge path should not be used for async ops".to_string(),
+            ))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.calls
+                .lock()
+                .expect("deferred async host lock should not be poisoned")
+                .push(request.clone());
+            let release = self.release.clone();
+            Box::pin(async move {
+                release.notified().await;
                 Ok(serde_json::json!({
                     "status": "ok",
                     "value": {
@@ -693,6 +508,10 @@ mod tests {
             throw_on_missing_identity: false,
         }
     }
+
+    mod cooperative;
+    mod locker;
+    mod retained_pool;
 
     #[tokio::test]
     async fn runtime_loads_bundle_and_invokes_host_bridge() {
@@ -1346,6 +1165,16 @@ export {};
         assert_eq!(metrics.isolate_pool_misses, 1);
         assert_eq!(metrics.isolate_pool_hits, 1);
         assert_eq!(metrics.isolate_pool_replacements, 0);
+        assert_eq!(metrics.retained_runtime_main_realm_resets, 0);
+        assert_eq!(metrics.retained_runtime_main_realm_reset_nanos_total, 0);
+        assert_eq!(metrics.retained_runtime_bootstrap_replays, 0);
+        assert_eq!(metrics.retained_runtime_bootstrap_replay_nanos_total, 0);
+        assert_eq!(metrics.bundle_loads, 2);
+        assert!(metrics.bundle_load_nanos_total > 0);
+        assert_eq!(metrics.bundle_module_loads, 2);
+        assert!(metrics.bundle_module_load_nanos_total > 0);
+        assert_eq!(metrics.bundle_evaluations, 2);
+        assert!(metrics.bundle_evaluation_nanos_total > 0);
     }
 
     #[tokio::test]
@@ -1428,6 +1257,1805 @@ export {};
         assert_eq!(metrics.isolate_pool_misses, 1);
         assert_eq!(metrics.isolate_pool_hits, 1);
         assert_eq!(metrics.isolate_pool_replacements, 0);
+    }
+
+    #[tokio::test]
+    async fn reused_runtime_refreshes_invocation_cancellation_state_before_next_invoke() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+        let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+        let mut runtime = isolate_pool
+            .take_runtime(&runtime_owner, &bundle)
+            .expect("runtime should build from snapshot")
+            .runtime;
+        runtime_owner
+            .load_bundle(&mut runtime, &bundle)
+            .await
+            .expect("bundle should load");
+
+        let previous_cancel_handle = {
+            let op_state = runtime.op_state();
+            let state = op_state.borrow();
+            let cancellation_state = state.borrow::<RuntimeCancellationState>();
+            cancellation_state.signal.cancel();
+            assert!(
+                cancellation_state.signal.is_cancelled(),
+                "test should poison the previous invocation state"
+            );
+            cancellation_state.cancel_handle.clone()
+        };
+
+        let watchdog = WatchdogTimer::new();
+        let mut permit =
+            SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+        permit
+            .acquire_initial(std::time::Instant::now())
+            .await
+            .expect("permit should admit invocation");
+
+        let mut driver = runtime_owner
+            .prepare_runtime_invocation_driver(
+                ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot),
+                watchdog.clone(),
+                None,
+                permit.clone(),
+                false,
+            )
+            .expect("driver preparation should reset invocation state");
+
+        {
+            let op_state = driver.runtime.op_state();
+            let state = op_state.borrow();
+            let cancellation_state = state.borrow::<RuntimeCancellationState>();
+            assert!(
+                !cancellation_state.signal.is_cancelled(),
+                "fresh invocation state should not inherit the previous cancelled signal"
+            );
+            assert!(
+                !Rc::ptr_eq(&previous_cancel_handle, &cancellation_state.cancel_handle),
+                "fresh invocation state should replace the previous cancel handle"
+            );
+        }
+
+        let result = runtime_owner
+            .invoke_loaded_bundle(&mut driver.runtime, &request)
+            .await
+            .expect("fresh invocation state should allow async host work to complete");
+        let result = driver
+            .finalize(Ok(result))
+            .await
+            .expect("result should finalize");
+        let ready_jobs = permit.finish_invocation().await;
+
+        assert!(ready_jobs.is_empty());
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "operation": "convex.ctx.db.get",
+                "payload": {
+                    "table": "messages",
+                    "id": "doc-1",
+                    "session_id": "query:messages:get",
+                },
+            })
+        );
+        watchdog.shutdown();
+    }
+
+    #[tokio::test]
+    async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};").expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+        let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+        let mut runtime = isolate_pool
+            .take_runtime(&runtime_owner, &bundle)
+            .expect("runtime should build from snapshot")
+            .runtime;
+
+        async fn issue_default_context_get(runtime: &mut JsRuntime) -> Value {
+            let value = runtime
+                .execute_script(
+                    "<neovex-runtime:test-default-context-get>",
+                    r#"(async () => {
+  const ctx = globalThis.__neovexCreateContext();
+  return await ctx.db.get("messages", "doc-1");
+})()"#,
+                )
+                .expect("test script should execute");
+            let resolve = runtime.resolve(value);
+            let value = runtime
+                .with_event_loop_promise(resolve, PollEventLoopOptions::default())
+                .await
+                .expect("promise should resolve");
+            deserialize_json_value(runtime, value).expect("result should deserialize")
+        }
+
+        let first = issue_default_context_get(&mut runtime).await;
+        let second_without_reset = issue_default_context_get(&mut runtime).await;
+
+        bootstrap::reset_bootstrap_invocation_state(&mut runtime)
+            .expect("bootstrap reset should succeed on reused runtime");
+
+        let third_after_reset = issue_default_context_get(&mut runtime).await;
+
+        assert_eq!(
+            first,
+            serde_json::json!({
+                "operation": "convex.ctx.db.get",
+                "payload": {
+                    "table": "messages",
+                    "id": "doc-1",
+                    "session_id": "session-1",
+                },
+            })
+        );
+        assert_eq!(
+            second_without_reset,
+            serde_json::json!({
+                "operation": "convex.ctx.db.get",
+                "payload": {
+                    "table": "messages",
+                    "id": "doc-1",
+                    "session_id": "session-2",
+                },
+            })
+        );
+        assert_eq!(
+            third_after_reset,
+            serde_json::json!({
+                "operation": "convex.ctx.db.get",
+                "payload": {
+                    "table": "messages",
+                    "id": "doc-1",
+                    "session_id": "session-1",
+                },
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_born_runtime_reset_with_full_bootstrap_replay_is_not_supported() {
+        init_runtime_repro_tracing();
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            &request,
+            "snapshot-control",
+            "req-snapshot-born-unsupported",
+        );
+        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+        let snapshot = runtime_owner
+            .bootstrap_snapshot()
+            .expect("bootstrap snapshot should build");
+        let mut runtime = runtime_owner
+            .create_runtime(&bundle, Some(snapshot), false)
+            .expect("snapshot-born runtime should build");
+
+        runtime_owner
+            .load_bundle_with_trace(
+                &mut runtime,
+                &bundle,
+                RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+                Some(&request),
+            )
+            .await
+            .expect("bundle should load on the snapshot-born runtime");
+        runtime_owner
+            .invoke_loaded_bundle_with_trace(
+                &mut runtime,
+                &request,
+                Some(&bundle),
+                RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+            )
+            .await
+            .expect("first async host invocation should succeed on the snapshot-born runtime");
+
+        let error = runtime_owner
+            .reset_retained_runtime(
+                &mut runtime,
+                &bundle,
+                RuntimeConstructionMode::Unsnapshotted,
+            )
+            .expect_err(
+                "snapshot-born runtimes should not use the unsnapshotted bootstrap replay path",
+            );
+        let message = error.to_string();
+        assert!(
+            message.contains("__neovexCoreOps"),
+            "reset failure should explain that BOOTSTRAP_SOURCE was replayed into a snapshot-born realm: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_born_runtime_supports_async_host_after_snapshot_aware_reset() {
+        init_runtime_repro_tracing();
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            &request,
+            "snapshot-control",
+            "req-snapshot-born-supported",
+        );
+        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+        let snapshot = runtime_owner
+            .bootstrap_snapshot()
+            .expect("bootstrap snapshot should build");
+        let mut runtime = runtime_owner
+            .create_runtime(&bundle, Some(snapshot), false)
+            .expect("snapshot-born runtime should build");
+
+        runtime_owner
+            .load_bundle_with_trace(
+                &mut runtime,
+                &bundle,
+                RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+                Some(&request),
+            )
+            .await
+            .expect("bundle should load on the snapshot-born runtime");
+        let first = runtime_owner
+            .invoke_loaded_bundle_with_trace(
+                &mut runtime,
+                &request,
+                Some(&bundle),
+                RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+            )
+            .await
+            .expect("first async host invocation should succeed on the snapshot-born runtime");
+
+        let options = CreateRealmOptions {
+            module_loader: Some(Rc::new(SandboxedModuleLoader::new(
+                bundle.module_root().expect("bundle root should resolve"),
+                bundle.module_code_cache(),
+            ))),
+        };
+        runtime
+            .reset_main_realm(options)
+            .expect("snapshot-born runtime should reset its main realm");
+        runtime_owner.initialize_runtime_state(&mut runtime);
+        NeovexRuntime::finalize_bootstrap(&mut runtime)
+            .expect("snapshot-aware reset should only need finalize_bootstrap");
+
+        runtime_owner
+            .load_bundle_with_trace(
+                &mut runtime,
+                &bundle,
+                RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+                Some(&request),
+            )
+            .await
+            .expect("bundle should load after the snapshot-aware reset");
+        let second = runtime_owner
+            .invoke_loaded_bundle_with_trace(
+                &mut runtime,
+                &request,
+                Some(&bundle),
+                RuntimeConstructionMode::StartupSnapshot,
+                Some(&context),
+            )
+            .await
+            .expect("second async host invocation should succeed after the snapshot-aware reset");
+
+        let expected = serde_json::json!({
+            "operation": "convex.ctx.db.get",
+            "payload": {
+                "table": "messages",
+                "id": "doc-1",
+                "session_id": "query:messages:get",
+            }
+        });
+        assert_eq!(first, expected);
+        assert_eq!(second, expected);
+    }
+
+    #[tokio::test]
+    async fn snapshot_born_runtime_survives_repeated_snapshot_aware_reset_async_host_cycles() {
+        init_runtime_repro_tracing();
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            &request,
+            "snapshot-control",
+            "req-snapshot-born-repeated",
+        );
+        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+        let snapshot = runtime_owner
+            .bootstrap_snapshot()
+            .expect("bootstrap snapshot should build");
+        let mut runtime = runtime_owner
+            .create_runtime(&bundle, Some(snapshot), false)
+            .expect("snapshot-born runtime should build");
+        let expected = serde_json::json!({
+            "operation": "convex.ctx.db.get",
+            "payload": {
+                "table": "messages",
+                "id": "doc-1",
+                "session_id": "query:messages:get",
+            }
+        });
+        let cycles = stress_env_usize("NEOVEX_SNAPSHOT_AWARE_RESET_CYCLES", 32);
+
+        for cycle in 0..cycles {
+            if cycle > 0 {
+                let options = CreateRealmOptions {
+                    module_loader: Some(Rc::new(SandboxedModuleLoader::new(
+                        bundle.module_root().expect("bundle root should resolve"),
+                        bundle.module_code_cache(),
+                    ))),
+                };
+                runtime
+                    .reset_main_realm(options)
+                    .expect("snapshot-born runtime should reset its main realm");
+                runtime_owner.initialize_runtime_state(&mut runtime);
+                NeovexRuntime::finalize_bootstrap(&mut runtime)
+                    .expect("snapshot-aware reset should only need finalize_bootstrap");
+            }
+
+            runtime_owner
+                .load_bundle_with_trace(
+                    &mut runtime,
+                    &bundle,
+                    RuntimeConstructionMode::StartupSnapshot,
+                    Some(&context),
+                    Some(&request),
+                )
+                .await
+                .expect("bundle should load after each snapshot-aware reset");
+            let result = runtime_owner
+                .invoke_loaded_bundle_with_trace(
+                    &mut runtime,
+                    &request,
+                    Some(&bundle),
+                    RuntimeConstructionMode::StartupSnapshot,
+                    Some(&context),
+                )
+                .await
+                .expect("snapshot-aware reset cycle should complete async host work");
+            assert_eq!(
+                result, expected,
+                "snapshot-aware reset cycle {cycle} should preserve the expected async-host result"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
+        init_runtime_repro_tracing();
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            &request,
+            "snapshot-control",
+            "req-snapshot-driver-cycles",
+        );
+        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+        let snapshot = runtime_owner
+            .bootstrap_snapshot()
+            .expect("bootstrap snapshot should build");
+        let runtime = runtime_owner
+            .create_runtime(&bundle, Some(snapshot), false)
+            .expect("snapshot-born runtime should build");
+        let expected = serde_json::json!({
+            "operation": "convex.ctx.db.get",
+            "payload": {
+                "table": "messages",
+                "id": "doc-1",
+                "session_id": "query:messages:get",
+            }
+        });
+        let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_CYCLES", 32);
+        let watchdog = WatchdogTimer::new();
+        let mut reusable_runtime =
+            ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
+
+        for cycle in 0..cycles {
+            let mut permit = SharedInvocationPermit::new(
+                runtime_owner.policy(),
+                context.tenant_label.clone(),
+                None,
+                false,
+                None,
+            );
+            permit
+                .acquire_initial(std::time::Instant::now())
+                .await
+                .expect("permit should admit invocation");
+
+            let mut driver = runtime_owner
+                .prepare_runtime_invocation_driver(
+                    reusable_runtime,
+                    watchdog.clone(),
+                    None,
+                    permit.clone(),
+                    false,
+                )
+                .expect("driver preparation should succeed for snapshot-seeded runtime");
+
+            runtime_owner
+                .load_bundle_with_trace(
+                    &mut driver.runtime,
+                    &bundle,
+                    driver.construction_mode,
+                    Some(&context),
+                    Some(&request),
+                )
+                .await
+                .expect("bundle should load during each direct driver cycle");
+            let value = runtime_owner
+                .invoke_loaded_bundle_with_trace(
+                    &mut driver.runtime,
+                    &request,
+                    Some(&bundle),
+                    driver.construction_mode,
+                    Some(&context),
+                )
+                .await
+                .expect("direct driver cycle should complete async host work");
+            let (result, returned_runtime) = driver.finalize_with_runtime(Ok(value)).await;
+            let ready_jobs = permit.finish_invocation().await;
+            assert!(ready_jobs.is_empty(), "no extra jobs should be scheduled");
+            assert_eq!(
+                result.expect("direct driver cycle should finalize cleanly"),
+                expected,
+                "driver cycle {cycle} should preserve the expected async-host result"
+            );
+            reusable_runtime = returned_runtime
+                .expect("successful direct driver cycle should return the runtime for reuse");
+        }
+
+        watchdog.shutdown();
+    }
+
+    #[tokio::test]
+    async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
+        init_runtime_repro_tracing();
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:get".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            &request,
+            "snapshot-control",
+            "req-snapshot-driver-fresh-owner",
+        );
+        let host = Arc::new(AsyncEchoHost);
+        let initial_owner = NeovexRuntime::new(host.clone());
+        let snapshot = initial_owner
+            .bootstrap_snapshot()
+            .expect("bootstrap snapshot should build");
+        let runtime = initial_owner
+            .create_runtime(&bundle, Some(snapshot), false)
+            .expect("snapshot-born runtime should build");
+        let expected = serde_json::json!({
+            "operation": "convex.ctx.db.get",
+            "payload": {
+                "table": "messages",
+                "id": "doc-1",
+                "session_id": "query:messages:get",
+            }
+        });
+        let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_FRESH_OWNER_CYCLES", 32);
+        let watchdog = WatchdogTimer::new();
+        let mut reusable_runtime =
+            ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
+
+        for cycle in 0..cycles {
+            let runtime_owner = NeovexRuntime::new(host.clone());
+            let mut permit = SharedInvocationPermit::new(
+                runtime_owner.policy(),
+                context.tenant_label.clone(),
+                None,
+                false,
+                None,
+            );
+            permit
+                .acquire_initial(std::time::Instant::now())
+                .await
+                .expect("permit should admit invocation");
+
+            let mut driver = runtime_owner
+                .prepare_runtime_invocation_driver(
+                    reusable_runtime,
+                    watchdog.clone(),
+                    None,
+                    permit.clone(),
+                    false,
+                )
+                .expect("driver preparation should succeed for snapshot-seeded runtime");
+
+            runtime_owner
+                .load_bundle_with_trace(
+                    &mut driver.runtime,
+                    &bundle,
+                    driver.construction_mode,
+                    Some(&context),
+                    Some(&request),
+                )
+                .await
+                .expect("bundle should load during each fresh-owner driver cycle");
+            let value = runtime_owner
+                .invoke_loaded_bundle_with_trace(
+                    &mut driver.runtime,
+                    &request,
+                    Some(&bundle),
+                    driver.construction_mode,
+                    Some(&context),
+                )
+                .await
+                .expect("fresh-owner driver cycle should complete async host work");
+            let (result, returned_runtime) = driver.finalize_with_runtime(Ok(value)).await;
+            let ready_jobs = permit.finish_invocation().await;
+            assert!(ready_jobs.is_empty(), "no extra jobs should be scheduled");
+            assert_eq!(
+                result.expect("fresh-owner driver cycle should finalize cleanly"),
+                expected,
+                "fresh-owner driver cycle {cycle} should preserve the expected async-host result"
+            );
+            reusable_runtime = returned_runtime
+                .expect("successful fresh-owner driver cycle should return the runtime for reuse");
+        }
+
+        watchdog.shutdown();
+    }
+
+    #[test]
+    fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let worker_thread = std::thread::spawn(move || {
+            let worker_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime should build");
+            worker_runtime.block_on(async {
+                let tempdir = tempdir().expect("tempdir should build");
+                let bundle_path = tempdir.path().join("bundle.mjs");
+                std::fs::write(
+                    &bundle_path,
+                    r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+                )
+                .expect("bundle should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+                    &request,
+                    "snapshot-control",
+                    "req-snapshot-driver-current-thread-delayed",
+                );
+                let runtime_owner =
+                    NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
+                        std::time::Duration::from_millis(1),
+                    )));
+                let snapshot = runtime_owner
+                    .bootstrap_snapshot()
+                    .expect("bootstrap snapshot should build");
+                let runtime = runtime_owner
+                    .create_runtime(&bundle, Some(snapshot), false)
+                    .expect("snapshot-born runtime should build");
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                let cycles =
+                    stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_CURRENT_THREAD_CYCLES", 32);
+                let watchdog = WatchdogTimer::new();
+                let mut reusable_runtime =
+                    ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
+
+                for cycle in 0..cycles {
+                    let mut permit = SharedInvocationPermit::new(
+                        runtime_owner.policy(),
+                        context.tenant_label.clone(),
+                        None,
+                        false,
+                        None,
+                    );
+                    permit
+                        .acquire_initial(std::time::Instant::now())
+                        .await
+                        .expect("permit should admit invocation");
+
+                    let mut driver = runtime_owner
+                        .prepare_runtime_invocation_driver(
+                            reusable_runtime,
+                            watchdog.clone(),
+                            None,
+                            permit.clone(),
+                            false,
+                        )
+                        .expect(
+                            "driver preparation should succeed for snapshot-seeded delayed runtime",
+                        );
+
+                    runtime_owner
+                        .load_bundle_with_trace(
+                            &mut driver.runtime,
+                            &bundle,
+                            driver.construction_mode,
+                            Some(&context),
+                            Some(&request),
+                        )
+                        .await
+                        .expect(
+                            "bundle should load during each delayed current-thread driver cycle",
+                        );
+                    let value = runtime_owner
+                        .invoke_loaded_bundle_with_trace(
+                            &mut driver.runtime,
+                            &request,
+                            Some(&bundle),
+                            driver.construction_mode,
+                            Some(&context),
+                        )
+                        .await
+                        .expect(
+                            "delayed current-thread driver cycle should complete async host work",
+                        );
+                    let (result, returned_runtime) = driver.finalize_with_runtime(Ok(value)).await;
+                    let ready_jobs = permit.finish_invocation().await;
+                    assert!(ready_jobs.is_empty(), "no extra jobs should be scheduled");
+                    assert_eq!(
+                        result.expect(
+                            "delayed current-thread driver cycle should finalize cleanly"
+                        ),
+                        expected,
+                        "delayed current-thread driver cycle {cycle} should preserve the expected async-host result"
+                    );
+                    reusable_runtime = returned_runtime.expect(
+                        "successful delayed current-thread driver cycle should return the runtime for reuse",
+                    );
+                }
+
+                watchdog.shutdown();
+            });
+        });
+
+        worker_thread
+            .join()
+            .expect("current-thread worker repro thread should not panic");
+    }
+
+    #[test]
+    #[ignore = "manual repro for snapshot-aware reset + delayed async-host crash on current-thread runtime"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_host_repro() {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let worker_thread = std::thread::spawn(move || {
+            let worker_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime should build");
+            worker_runtime.block_on(async {
+                let tempdir = tempdir().expect("tempdir should build");
+                let bundle_path = tempdir.path().join("bundle.mjs");
+                std::fs::write(
+                    &bundle_path,
+                    r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+                )
+                .expect("bundle should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+                    &request,
+                    "snapshot-control",
+                    "req-snapshot-aware-reset-current-thread-delayed",
+                );
+                let runtime_owner =
+                    NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
+                        std::time::Duration::from_millis(1),
+                    )));
+                let snapshot = runtime_owner
+                    .bootstrap_snapshot()
+                    .expect("bootstrap snapshot should build");
+                let mut runtime = runtime_owner
+                    .create_runtime(&bundle, Some(snapshot), false)
+                    .expect("snapshot-born runtime should build");
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                let cycles = stress_env_usize(
+                    "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_CYCLES",
+                    32,
+                );
+
+                for cycle in 0..cycles {
+                    if cycle > 0 {
+                        let options = CreateRealmOptions {
+                            module_loader: Some(Rc::new(SandboxedModuleLoader::new(
+                                bundle.module_root().expect("bundle root should resolve"),
+                                bundle.module_code_cache(),
+                            ))),
+                        };
+                        runtime
+                            .reset_main_realm(options)
+                            .expect("snapshot-born runtime should reset its main realm");
+                        runtime_owner.initialize_runtime_state(&mut runtime);
+                        NeovexRuntime::finalize_bootstrap(&mut runtime)
+                            .expect("snapshot-aware reset should only need finalize_bootstrap");
+                    }
+
+                    runtime_owner
+                        .load_bundle_with_trace(
+                            &mut runtime,
+                            &bundle,
+                            RuntimeConstructionMode::StartupSnapshot,
+                            Some(&context),
+                            Some(&request),
+                        )
+                        .await
+                        .expect(
+                            "bundle should load after each delayed snapshot-aware reset cycle",
+                        );
+                    let result = runtime_owner
+                        .invoke_loaded_bundle_with_trace(
+                            &mut runtime,
+                            &request,
+                            Some(&bundle),
+                            RuntimeConstructionMode::StartupSnapshot,
+                            Some(&context),
+                        )
+                        .await
+                        .expect(
+                            "delayed snapshot-aware reset cycle should complete async host work",
+                        );
+                    assert_eq!(
+                        result, expected,
+                        "delayed snapshot-aware reset cycle {cycle} should preserve the expected async-host result"
+                    );
+                }
+            });
+        });
+
+        worker_thread
+            .join()
+            .expect("current-thread snapshot-aware delayed repro thread should not panic");
+    }
+
+    #[test]
+    #[ignore = "manual repro for snapshot-aware reset + delayed async-host crash without bundle reload"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_script_repro() {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let worker_thread = std::thread::spawn(|| {
+            let worker_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime should build");
+            worker_runtime.block_on(async {
+                let tempdir = tempdir().expect("tempdir should build");
+                let bundle_path = tempdir.path().join("bundle.mjs");
+                std::fs::write(&bundle_path, "export {};").expect("bundle should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let runtime_owner =
+                    NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
+                        std::time::Duration::from_millis(1),
+                    )));
+                let snapshot = runtime_owner
+                    .bootstrap_snapshot()
+                    .expect("bootstrap snapshot should build");
+                let mut runtime = runtime_owner
+                    .create_runtime(&bundle, Some(snapshot), false)
+                    .expect("snapshot-born runtime should build");
+                let request_json =
+                    serde_json::to_string(&request).expect("request should serialize");
+                let expression = format!(
+                    r#"(async () => {{
+  const ctx = globalThis.__neovexCreateContext({{
+    request: {request_json},
+    sessionId: "query:messages:get",
+  }});
+  return await ctx.db.get("messages", "doc-1");
+}})()"#
+                );
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                let cycles = stress_env_usize(
+                    "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_SCRIPT_CYCLES",
+                    32,
+                );
+
+                for cycle in 0..cycles {
+                    if cycle > 0 {
+                        runtime
+                            .reset_main_realm(CreateRealmOptions::default())
+                            .expect("snapshot-born runtime should reset its main realm");
+                        runtime_owner.initialize_runtime_state(&mut runtime);
+                        NeovexRuntime::finalize_bootstrap(&mut runtime)
+                            .expect("snapshot-aware reset should only need finalize_bootstrap");
+                    }
+
+                    let value = runtime
+                        .execute_script(
+                            "<neovex-runtime:reset-delayed-script>",
+                            expression.clone(),
+                        )
+                        .expect("reset-delayed script should execute");
+                    let resolve = runtime.resolve(value);
+                    let value = runtime
+                        .with_event_loop_promise(resolve, PollEventLoopOptions::default())
+                        .await
+                        .expect("reset-delayed script should resolve its async host work");
+                    let result = deserialize_json_value(&mut runtime, value)
+                        .expect("reset-delayed script result should deserialize");
+                    assert_eq!(
+                        result, expected,
+                        "delayed snapshot-aware reset script cycle {cycle} should preserve the expected async-host result"
+                    );
+                }
+            });
+        });
+
+        worker_thread
+            .join()
+            .expect("current-thread snapshot-aware delayed script repro thread should not panic");
+    }
+
+    fn run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        cycles: usize,
+        fresh_bundle_each_cycle: bool,
+        yield_before_reset: bool,
+        settle_before_reset: bool,
+        settle_after_reset: bool,
+    ) {
+        let worker_thread = std::thread::spawn(move || {
+            let worker_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime should build");
+            worker_runtime.block_on(async {
+                let tempdir = tempdir().expect("tempdir should build");
+                let bundle_path = tempdir.path().join("bundle.mjs");
+                std::fs::write(
+                    &bundle_path,
+                    r#"
+globalThis.__bundleLoaded = (globalThis.__bundleLoaded ?? 0) + 1;
+export {};
+"#,
+                )
+                .expect("bundle should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+                    &request,
+                    "snapshot-control",
+                    "req-snapshot-aware-reset-bundle-then-script",
+                );
+                let runtime_owner =
+                    NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
+                        std::time::Duration::from_millis(1),
+                    )));
+                let snapshot = runtime_owner
+                    .bootstrap_snapshot()
+                    .expect("bootstrap snapshot should build");
+                let mut runtime = runtime_owner
+                    .create_runtime(&bundle, Some(snapshot), false)
+                    .expect("snapshot-born runtime should build");
+                let request_json =
+                    serde_json::to_string(&request).expect("request should serialize");
+                let expression = format!(
+                    r#"(async () => {{
+  const ctx = globalThis.__neovexCreateContext({{
+    request: {request_json},
+    sessionId: "query:messages:get",
+  }});
+  return await ctx.db.get("messages", "doc-1");
+}})()"#
+                );
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                for cycle in 0..cycles {
+                    let cycle_bundle = if fresh_bundle_each_cycle {
+                        RuntimeBundle::new(&bundle_path)
+                    } else {
+                        bundle.clone()
+                    };
+                    if cycle > 0 {
+                        if yield_before_reset {
+                            tokio::task::yield_now().await;
+                        }
+                        if settle_before_reset {
+                            runtime
+                                .run_event_loop(Default::default())
+                                .await
+                                .expect("pre-reset settle should succeed");
+                        }
+                        let options = CreateRealmOptions {
+                            module_loader: Some(Rc::new(SandboxedModuleLoader::new(
+                                cycle_bundle
+                                    .module_root()
+                                    .expect("bundle root should resolve"),
+                                cycle_bundle.module_code_cache(),
+                            ))),
+                        };
+                        runtime
+                            .reset_main_realm(options)
+                            .expect("snapshot-born runtime should reset its main realm");
+                        runtime_owner.initialize_runtime_state(&mut runtime);
+                        NeovexRuntime::finalize_bootstrap(&mut runtime)
+                            .expect("snapshot-aware reset should only need finalize_bootstrap");
+                        if settle_after_reset {
+                            runtime
+                                .run_event_loop(Default::default())
+                                .await
+                                .expect("post-reset settle should succeed");
+                        }
+                    }
+
+                    runtime_owner
+                        .load_bundle_with_trace(
+                            &mut runtime,
+                            &cycle_bundle,
+                            RuntimeConstructionMode::StartupSnapshot,
+                            Some(&context),
+                            Some(&request),
+                        )
+                        .await
+                        .expect("bundle should load before the delayed script");
+
+                    let value = runtime
+                        .execute_script(
+                            "<neovex-runtime:reset-delayed-script-after-bundle-load>",
+                            expression.clone(),
+                        )
+                        .expect("reset-delayed script should execute after bundle load");
+                    let resolve = runtime.resolve(value);
+                    let value = runtime
+                        .with_event_loop_promise(resolve, PollEventLoopOptions::default())
+                        .await
+                        .expect("reset-delayed script should resolve its async host work");
+                    let result = deserialize_json_value(&mut runtime, value)
+                        .expect("reset-delayed script result should deserialize");
+                    assert_eq!(
+                        result, expected,
+                        "delayed snapshot-aware reset bundle-then-script cycle {cycle} should preserve the expected async-host result"
+                    );
+                }
+            });
+        });
+
+        worker_thread
+            .join()
+            .expect("current-thread snapshot-aware delayed bundle-then-script repro thread should not panic");
+    }
+
+    #[test]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro() {
+        run_ignored_repro_in_subprocess(
+            "runtime::tests::snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro_subprocess",
+        );
+    }
+
+    #[test]
+    #[ignore = "runs in a subprocess to isolate V8 state from the rest of the runtime suite"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro_subprocess()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_CYCLES",
+            8,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, false, false, false, false,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual stress repro for cumulative snapshot-aware reset + bundle reload + delayed async script crash"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_stress_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_STRESS_CYCLES",
+            32,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, false, false, false, false,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro variant that refreshes the bundle/module code cache every cycle"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_fresh_bundle_cache_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_FRESH_CACHE_CYCLES",
+            32,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, true, false, false, false,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro variant that settles the event loop immediately before snapshot-aware reset"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_pre_reset_settle_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_RESET_SETTLE_CYCLES",
+            32,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, false, false, true, false,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro variant that yields to Tokio and settles the event loop before snapshot-aware reset"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_pre_reset_yield_and_settle_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_RESET_YIELD_AND_SETTLE_CYCLES",
+            32,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, false, true, true, false,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro variant that settles the event loop immediately after snapshot-aware reset"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_post_reset_settle_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_POST_RESET_SETTLE_CYCLES",
+            32,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, false, false, false, true,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro variant that settles the event loop both before and after snapshot-aware reset"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_pre_and_post_reset_settle_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let cycles = stress_env_usize(
+            "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_AND_POST_RESET_SETTLE_CYCLES",
+            32,
+        );
+        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+            cycles, false, false, true, true,
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro for snapshot-aware reset + bundle reload + extra drain + delayed async script"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_extra_drain_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let worker_thread = std::thread::spawn(|| {
+            let worker_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime should build");
+            worker_runtime.block_on(async {
+                let tempdir = tempdir().expect("tempdir should build");
+                let bundle_path = tempdir.path().join("bundle.mjs");
+                std::fs::write(
+                    &bundle_path,
+                    r#"
+globalThis.__bundleLoaded = (globalThis.__bundleLoaded ?? 0) + 1;
+export {};
+"#,
+                )
+                .expect("bundle should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+                    &request,
+                    "snapshot-control",
+                    "req-snapshot-aware-reset-bundle-then-script-extra-drain",
+                );
+                let runtime_owner =
+                    NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
+                        std::time::Duration::from_millis(1),
+                    )));
+                let snapshot = runtime_owner
+                    .bootstrap_snapshot()
+                    .expect("bootstrap snapshot should build");
+                let mut runtime = runtime_owner
+                    .create_runtime(&bundle, Some(snapshot), false)
+                    .expect("snapshot-born runtime should build");
+                let request_json =
+                    serde_json::to_string(&request).expect("request should serialize");
+                let expression = format!(
+                    r#"(async () => {{
+  const ctx = globalThis.__neovexCreateContext({{
+    request: {request_json},
+    sessionId: "query:messages:get",
+  }});
+  return await ctx.db.get("messages", "doc-1");
+}})()"#
+                );
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                let cycles = stress_env_usize(
+                    "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_EXTRA_DRAIN_CYCLES",
+                    32,
+                );
+
+                for cycle in 0..cycles {
+                    if cycle > 0 {
+                        let options = CreateRealmOptions {
+                            module_loader: Some(Rc::new(SandboxedModuleLoader::new(
+                                bundle.module_root().expect("bundle root should resolve"),
+                                bundle.module_code_cache(),
+                            ))),
+                        };
+                        runtime
+                            .reset_main_realm(options)
+                            .expect("snapshot-born runtime should reset its main realm");
+                        runtime_owner.initialize_runtime_state(&mut runtime);
+                        NeovexRuntime::finalize_bootstrap(&mut runtime)
+                            .expect("snapshot-aware reset should only need finalize_bootstrap");
+                    }
+
+                    runtime_owner
+                        .load_bundle_for_bypass_repro_without_post_return_settle(
+                            &mut runtime,
+                            &bundle,
+                            RuntimeConstructionMode::StartupSnapshot,
+                            Some(&context),
+                            Some(&request),
+                        )
+                        .await
+                        .expect("bundle should load before the delayed script");
+
+                    runtime
+                        .run_event_loop(Default::default())
+                        .await
+                        .expect("extra post-bundle drain should succeed");
+
+                    let value = runtime
+                        .execute_script(
+                            "<neovex-runtime:reset-delayed-script-after-bundle-load-extra-drain>",
+                            expression.clone(),
+                        )
+                        .expect("reset-delayed script should execute after bundle load");
+                    let resolve = runtime.resolve(value);
+                    let value = runtime
+                        .with_event_loop_promise(resolve, PollEventLoopOptions::default())
+                        .await
+                        .expect("reset-delayed script should resolve its async host work");
+                    let result = deserialize_json_value(&mut runtime, value)
+                        .expect("reset-delayed script result should deserialize");
+                    assert_eq!(
+                        result, expected,
+                        "delayed snapshot-aware reset bundle-then-script extra-drain cycle {cycle} should preserve the expected async-host result"
+                    );
+                }
+            });
+        });
+
+        worker_thread.join().expect(
+            "current-thread snapshot-aware delayed bundle-then-script extra-drain repro thread should not panic",
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro for snapshot-aware reset + bundle reload + tokio yield + delayed async script"]
+    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_tokio_yield_repro()
+     {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+
+        let worker_thread = std::thread::spawn(|| {
+            let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("current-thread tokio runtime should build");
+
+            tokio_runtime.block_on(async {
+                let bundle_dir = tempfile::tempdir().expect("bundle tempdir should exist");
+                let bundle_path = bundle_dir.path().join("bundle.mjs");
+                std::fs::write(
+                    &bundle_path,
+                    r#"
+                    export async function run(ctx) {
+                      return await ctx.db.get("messages", "doc-1");
+                    }
+                    "#,
+                )
+                .expect("bundle source should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+                    &request,
+                    "snapshot-control",
+                    "req-snapshot-aware-reset-bundle-then-script-tokio-yield",
+                );
+                let runtime_owner =
+                    NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
+                        std::time::Duration::from_millis(1),
+                    )));
+                let snapshot = runtime_owner
+                    .bootstrap_snapshot()
+                    .expect("bootstrap snapshot should build");
+                let mut runtime = runtime_owner
+                    .create_runtime(&bundle, Some(snapshot), false)
+                    .expect("snapshot-born runtime should build");
+                let request_json =
+                    serde_json::to_string(&request).expect("request should serialize");
+                let expression = format!(
+                    r#"(async () => {{
+  const ctx = globalThis.__neovexCreateContext({{
+    request: {request_json},
+    sessionId: "query:messages:get",
+  }});
+  return await ctx.db.get("messages", "doc-1");
+}})()"#
+                );
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                let cycles = stress_env_usize(
+                    "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_TOKIO_YIELD_CYCLES",
+                    32,
+                );
+
+                for cycle in 0..cycles {
+                    if cycle > 0 {
+                        let options = CreateRealmOptions {
+                            module_loader: Some(Rc::new(SandboxedModuleLoader::new(
+                                bundle.module_root().expect("bundle root should resolve"),
+                                bundle.module_code_cache(),
+                            ))),
+                        };
+                        runtime
+                            .reset_main_realm(options)
+                            .expect("snapshot-born runtime should reset its main realm");
+                        runtime_owner.initialize_runtime_state(&mut runtime);
+                        NeovexRuntime::finalize_bootstrap(&mut runtime)
+                            .expect("snapshot-aware reset should only need finalize_bootstrap");
+                    }
+
+                    runtime_owner
+                        .load_bundle_for_bypass_repro_without_post_return_settle(
+                            &mut runtime,
+                            &bundle,
+                            RuntimeConstructionMode::StartupSnapshot,
+                            Some(&context),
+                            Some(&request),
+                        )
+                        .await
+                        .expect("bundle should load before the delayed script");
+
+                    tokio::task::yield_now().await;
+
+                    let value = runtime
+                        .execute_script(
+                            "<neovex-runtime:reset-delayed-script-after-bundle-load-tokio-yield>",
+                            expression.clone(),
+                        )
+                        .expect("reset-delayed script should execute after bundle load");
+                    let resolve = runtime.resolve(value);
+                    let value = runtime
+                        .with_event_loop_promise(resolve, PollEventLoopOptions::default())
+                        .await
+                        .expect("reset-delayed script should resolve its async host work");
+                    let result = deserialize_json_value(&mut runtime, value)
+                        .expect("reset-delayed script result should deserialize");
+                    assert_eq!(
+                        result, expected,
+                        "delayed snapshot-aware reset bundle-then-script tokio-yield cycle {cycle} should preserve the expected async-host result"
+                    );
+                }
+            });
+        });
+
+        worker_thread.join().expect(
+            "current-thread snapshot-aware delayed bundle-then-script tokio-yield repro thread should not panic",
+        );
+    }
+
+    #[test]
+    #[ignore = "manual repro when bypassing the post-return bundle-load settle boundary on snapshot-seeded retained runtimes"]
+    fn snapshot_seeded_retained_pool_multi_tenant_delayed_async_host_repro() {
+        init_runtime_repro_tracing();
+        let _repro_lock = acquire_delayed_async_repro_lock();
+        let worker_thread = std::thread::spawn(|| {
+            let worker_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime should build");
+            worker_runtime.block_on(async {
+                let tempdir = tempdir().expect("tempdir should build");
+                let bundle_path = tempdir.path().join("bundle.mjs");
+                std::fs::write(
+                    &bundle_path,
+                    r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+                )
+                .expect("bundle should write");
+
+                let bundle = RuntimeBundle::new(&bundle_path);
+                let request = InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:get".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                };
+                let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+                    runtime_pool_kind: crate::limits::RuntimePoolKind::RetainedJsRuntimePool,
+                    routing_affinity: crate::limits::RuntimeRoutingAffinity::Tenant,
+                    max_concurrent_isolates: 1,
+                    worker_threads: 1,
+                    max_retained_runtimes_per_worker: 4,
+                    max_retained_runtimes_per_affinity_key_per_worker: 1,
+                    ..RuntimeLimits::default()
+                }));
+                let runtime_owner = NeovexRuntime::with_policy(
+                    Arc::new(DelayedAsyncEchoHost::new(std::time::Duration::from_millis(
+                        1,
+                    ))),
+                    policy.clone(),
+                )
+                .with_retained_runtime_construction_mode_for_test(
+                    RuntimeConstructionMode::StartupSnapshot,
+                );
+                let expected = serde_json::json!({
+                    "operation": "convex.ctx.db.get",
+                    "payload": {
+                        "table": "messages",
+                        "id": "doc-1",
+                        "session_id": "query:messages:get",
+                    }
+                });
+                let cycles = stress_env_usize(
+                    "NEOVEX_SNAPSHOT_MULTI_RUNTIME_CURRENT_THREAD_CYCLES",
+                    16,
+                );
+                let tenants = ["tenant-a", "tenant-b", "tenant-c", "tenant-d"];
+                let watchdog = WatchdogTimer::new();
+                let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+
+                for cycle in 0..cycles {
+                    for tenant in tenants {
+                        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+                            &request,
+                            tenant,
+                            format!(
+                                "req-snapshot-multi-runtime-current-thread-{cycle}-{tenant}"
+                            ),
+                        );
+                        let reusable_runtime = isolate_pool
+                            .take_runtime_for_invocation(
+                                &runtime_owner,
+                                &bundle,
+                                Some(&context),
+                            )
+                            .expect(
+                                "snapshot-seeded multi-tenant retained runtime should build or reuse",
+                            );
+                        let mut permit = SharedInvocationPermit::new(
+                            runtime_owner.policy(),
+                            context.tenant_label.clone(),
+                            None,
+                            false,
+                            None,
+                        );
+                        permit
+                            .acquire_initial(std::time::Instant::now())
+                            .await
+                            .expect("permit should admit invocation");
+
+                        let mut driver = runtime_owner
+                            .prepare_runtime_invocation_driver(
+                                reusable_runtime,
+                                watchdog.clone(),
+                                None,
+                                permit.clone(),
+                                false,
+                            )
+                            .expect(
+                                "driver preparation should succeed for snapshot-seeded retained runtime",
+                            );
+
+                        runtime_owner
+                            .load_bundle_for_bypass_repro_without_post_return_settle(
+                                &mut driver.runtime,
+                                &bundle,
+                                driver.construction_mode,
+                                Some(&context),
+                                Some(&request),
+                            )
+                            .await
+                            .expect(
+                                "bundle should load during each multi-tenant retained cycle",
+                            );
+                        let value = runtime_owner
+                            .invoke_loaded_bundle_with_trace(
+                                &mut driver.runtime,
+                                &request,
+                                Some(&bundle),
+                                driver.construction_mode,
+                                Some(&context),
+                            )
+                            .await
+                            .expect(
+                                "multi-tenant retained cycle should complete async host work",
+                            );
+                        let (result, returned_runtime) =
+                            driver.finalize_with_runtime(Ok(value)).await;
+                        let ready_jobs = permit.finish_invocation().await;
+                        assert!(ready_jobs.is_empty(), "no extra jobs should be scheduled");
+                        assert_eq!(
+                            result.expect(
+                                "multi-tenant retained cycle should finalize cleanly"
+                            ),
+                            expected,
+                            "multi-tenant retained cycle {cycle} for {tenant} should preserve the expected async-host result",
+                        );
+                        isolate_pool.return_runtime_for_invocation(
+                            &runtime_owner,
+                            &bundle,
+                            Some(&context),
+                            returned_runtime.expect(
+                                "successful multi-tenant retained cycle should return the runtime for reuse",
+                            ),
+                        );
+                    }
+                }
+
+                watchdog.shutdown();
+            });
+        });
+
+        worker_thread
+            .join()
+            .expect("current-thread worker multi-tenant repro thread should not panic");
+    }
+
+    #[tokio::test]
+    async fn reused_runtime_still_leaks_user_module_state_after_current_resets() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__userCounter = globalThis.__userCounter ?? 0;
+
+globalThis.__neovexInvoke = function () {
+  globalThis.__userCounter += 1;
+  return { counter: globalThis.__userCounter };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let runtime_owner = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+        let mut runtime = isolate_pool
+            .take_runtime(&runtime_owner, &bundle)
+            .expect("runtime should build from snapshot")
+            .runtime;
+        runtime_owner
+            .load_bundle(&mut runtime, &bundle)
+            .await
+            .expect("bundle should load");
+
+        async fn invoke_with_current_reset_contract(
+            runtime_owner: &NeovexRuntime,
+            runtime: &mut JsRuntime,
+        ) -> Value {
+            bootstrap::reset_runtime_invocation_state(
+                runtime,
+                SharedInvocationPermit::new(runtime_owner.policy(), None, None, true, None),
+            );
+            bootstrap::reset_bootstrap_invocation_state(runtime)
+                .expect("bootstrap invocation reset should succeed");
+            runtime_owner
+                .invoke_loaded_bundle(
+                    runtime,
+                    &InvocationRequest {
+                        kind: InvocationKind::Query,
+                        function_name: "messages:get".to_string(),
+                        args: Value::Null,
+                        page_size: None,
+                        cursor: None,
+                        auth: None,
+                    },
+                )
+                .await
+                .expect("invocation should succeed")
+        }
+
+        let first = invoke_with_current_reset_contract(&runtime_owner, &mut runtime).await;
+        let second = invoke_with_current_reset_contract(&runtime_owner, &mut runtime).await;
+
+        assert_eq!(first, serde_json::json!({ "counter": 1 }));
+        assert_eq!(
+            second,
+            serde_json::json!({ "counter": 2 }),
+            "user-module/global state still persists on a reused loaded runtime even after the current Rust-side and bootstrap-state resets"
+        );
     }
 
     #[tokio::test]
@@ -1894,15 +3522,7 @@ export {};
                 initial_heap_mb: 4,
                 execution_timeout: std::time::Duration::from_secs(2),
                 max_concurrent_isolates: 1,
-                worker_threads: RuntimeLimits::default().worker_threads,
-                max_active_top_level_invocations_per_tenant: RuntimeLimits::default()
-                    .max_active_top_level_invocations_per_tenant,
-                max_in_flight_top_level_invocations_per_tenant: RuntimeLimits::default()
-                    .max_in_flight_top_level_invocations_per_tenant,
-                max_queued_top_level_invocations_per_tenant: RuntimeLimits::default()
-                    .max_queued_top_level_invocations_per_tenant,
-                max_nested_runtime_invocations: RuntimeLimits::default()
-                    .max_nested_runtime_invocations,
+                ..RuntimeLimits::default()
             },
         );
         let error = runtime
@@ -2027,6 +3647,83 @@ export {};
         }
     }
 
+    #[tokio::test]
+    async fn startup_snapshot_runtime_populates_and_reuses_bundle_module_code_cache() {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        let dep_path = tempdir.path().join("dep.mjs");
+        std::fs::write(
+            &dep_path,
+            r#"
+export function value() {
+  return "cached";
+}
+"#,
+        )
+        .expect("dependency should write");
+        std::fs::write(
+            &bundle_path,
+            r#"
+import { value } from "./dep.mjs";
+
+globalThis.__neovexInvoke = async function () {
+  return { value: value() };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:list".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+        };
+
+        assert_eq!(bundle.module_code_cache_entry_count(), 0);
+        assert_eq!(bundle.module_code_cache_write_count(), 0);
+
+        let first = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .expect("first invocation should succeed");
+        assert_eq!(first, serde_json::json!({ "value": "cached" }));
+
+        let first_entry_count = bundle.module_code_cache_entry_count();
+        let first_write_count = bundle.module_code_cache_write_count();
+        assert!(
+            first_entry_count >= 2,
+            "expected main module and dependency to populate cache"
+        );
+        assert!(
+            first_write_count >= first_entry_count,
+            "expected at least one cache write per populated module"
+        );
+
+        let second = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .expect("second invocation should succeed");
+        assert_eq!(second, serde_json::json!({ "value": "cached" }));
+        assert_eq!(bundle.module_code_cache_entry_count(), first_entry_count);
+        assert_eq!(bundle.module_code_cache_write_count(), first_write_count);
+        let metrics = runtime.policy.metrics_snapshot();
+        assert_eq!(metrics.bundle_loads, 2);
+        assert!(metrics.bundle_load_nanos_total > 0);
+        assert_eq!(metrics.bundle_module_loads, 2);
+        assert!(metrics.bundle_module_load_nanos_total > 0);
+        assert_eq!(metrics.bundle_evaluations, 2);
+        assert!(metrics.bundle_evaluation_nanos_total > 0);
+        assert_eq!(metrics.retained_runtime_main_realm_resets, 0);
+        assert_eq!(metrics.retained_runtime_bootstrap_replays, 0);
+    }
+
     #[test]
     fn runtime_bundle_clones_share_normalized_identity() {
         let tempdir = tempdir().expect("tempdir should build");
@@ -2069,6 +3766,33 @@ export {};
         assert_eq!(
             bundle.canonical_entrypoint(),
             Some(canonical_bundle_path.as_path())
+        );
+        assert_eq!(
+            bundle
+                .module_root()
+                .expect("bundle root should resolve from cached metadata"),
+            canonical_bundle_path
+                .parent()
+                .expect("bundle root should exist")
+                .to_path_buf()
+        );
+        assert_eq!(
+            bundle
+                .module_specifier()
+                .expect("bundle specifier should resolve from cached metadata")
+                .as_str(),
+            deno_core::ModuleSpecifier::from_file_path(&canonical_bundle_path)
+                .expect("canonical bundle path should convert to a file url")
+                .as_str()
+        );
+        assert_eq!(
+            cloned
+                .module_root()
+                .expect("cloned bundle should share cached root metadata"),
+            canonical_bundle_path
+                .parent()
+                .expect("bundle root should exist")
+                .to_path_buf()
         );
     }
 

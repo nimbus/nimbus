@@ -24,7 +24,7 @@ pub(crate) struct RuntimeBackendInvocation {
     pub(crate) permit: SharedInvocationPermit,
 }
 
-pub(crate) trait RuntimeBackend: Send + 'static {
+pub(crate) trait RuntimeBackend: 'static {
     fn invoke<'a>(
         &'a mut self,
         invocation: RuntimeBackendInvocation,

@@ -18,6 +18,9 @@ and where to go next.
   server flags and runtime-limit defaults
 - [Convex compatibility](convex/compatibility.md):
   current Convex-surface scope, limits, and demo entrypoints
+- [Runtime execution architecture rationale](research/runtime-execution-architecture-rationale.md):
+  why Neovex embeds V8 via deno_core fork, why the workerd model is not
+  pursued, and what future paths exist
 - [Versioned serving snapshot design note](research/versioned-serving-snapshot-design-note.md):
   implementation-grade north-star for the next server-side read-surface
   promotion after the `SA8` materialized-serving slice

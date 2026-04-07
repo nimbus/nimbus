@@ -5,6 +5,7 @@ use deno_core::ModuleSpecifier;
 use sha2::{Digest, Sha256};
 
 use crate::error::{NeovexRuntimeError, Result};
+use crate::module_loader::BundleModuleCodeCache;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RuntimeBundleIdentity {
@@ -22,18 +23,29 @@ impl RuntimeBundleIdentity {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct RuntimeBundleShared {
     entrypoint: PathBuf,
     canonical_entrypoint: Option<PathBuf>,
+    canonical_module_root: Option<PathBuf>,
+    module_specifier: std::result::Result<ModuleSpecifier, String>,
     expected_sha256: Option<String>,
     identity: RuntimeBundleIdentity,
+    module_code_cache: Arc<BundleModuleCodeCache>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RuntimeBundle {
     shared: Arc<RuntimeBundleShared>,
 }
+
+impl PartialEq for RuntimeBundle {
+    fn eq(&self, other: &Self) -> bool {
+        self.shared.identity == other.shared.identity
+    }
+}
+
+impl Eq for RuntimeBundle {}
 
 impl RuntimeBundle {
     pub fn new(entrypoint: impl AsRef<Path>) -> Self {
@@ -68,15 +80,16 @@ impl RuntimeBundle {
     }
 
     pub(crate) fn module_specifier(&self) -> Result<ModuleSpecifier> {
-        ModuleSpecifier::from_file_path(self.entrypoint()).map_err(|_| {
-            NeovexRuntimeError::Contract(format!(
-                "bundle entrypoint is not a valid file URL: {}",
-                self.entrypoint().display()
-            ))
-        })
+        self.shared
+            .module_specifier
+            .clone()
+            .map_err(NeovexRuntimeError::Contract)
     }
 
     pub(crate) fn module_root(&self) -> Result<PathBuf> {
+        if let Some(root) = &self.shared.canonical_module_root {
+            return Ok(root.clone());
+        }
         self.entrypoint()
             .parent()
             .ok_or_else(|| {
@@ -109,6 +122,24 @@ impl RuntimeBundle {
 
     fn from_parts(entrypoint: PathBuf, expected_sha256: Option<String>) -> Self {
         let canonical_entrypoint = entrypoint.canonicalize().ok();
+        let module_specifier_path = canonical_entrypoint
+            .clone()
+            .unwrap_or_else(|| entrypoint.clone());
+        let module_specifier =
+            ModuleSpecifier::from_file_path(&module_specifier_path).map_err(|_| {
+                format!(
+                    "bundle entrypoint is not a valid file URL: {}",
+                    entrypoint.display()
+                )
+            });
+        let canonical_module_root = canonical_entrypoint
+            .as_ref()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .or_else(|| {
+                entrypoint
+                    .parent()
+                    .and_then(|path| path.canonicalize().ok())
+            });
         let identity = RuntimeBundleIdentity {
             entrypoint: canonical_entrypoint
                 .clone()
@@ -119,15 +150,32 @@ impl RuntimeBundle {
             shared: Arc::new(RuntimeBundleShared {
                 entrypoint,
                 canonical_entrypoint,
+                canonical_module_root,
+                module_specifier,
                 expected_sha256,
                 identity,
+                module_code_cache: Arc::new(BundleModuleCodeCache::new()),
             }),
         }
+    }
+
+    pub(crate) fn module_code_cache(&self) -> Arc<BundleModuleCodeCache> {
+        self.shared.module_code_cache.clone()
     }
 
     #[cfg(test)]
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn module_code_cache_entry_count(&self) -> usize {
+        self.shared.module_code_cache.entry_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn module_code_cache_write_count(&self) -> usize {
+        self.shared.module_code_cache.write_count()
     }
 }
 

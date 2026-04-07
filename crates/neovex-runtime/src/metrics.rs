@@ -1,12 +1,22 @@
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+mod correlations;
+mod global;
+mod host_operations;
+mod tenants;
+
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::context::RuntimeInvocationContext;
 use crate::host::HostCallCancellationCause;
+
+pub use self::correlations::RuntimeRequestCorrelationSnapshot;
+use self::global::RuntimeGlobalCounters;
+pub use self::host_operations::RuntimeHostOperationMetricsSnapshot;
+use self::host_operations::RuntimeHostOperationRegistry;
+use self::tenants::RuntimeTenantRegistry;
+pub use self::tenants::{RuntimeDurationDistributionSnapshot, RuntimeTenantMetricsSnapshot};
 
 // These atomics back diagnostics-only snapshots and counters. They do not
 // participate in runtime correctness or cancellation safety, so relaxed
@@ -15,31 +25,10 @@ const DIAGNOSTIC_COUNTER_ORDERING: Ordering = Ordering::Relaxed;
 
 #[derive(Debug, Default)]
 pub struct RuntimeMetrics {
-    active_isolates: AtomicUsize,
-    queued_invocations: AtomicUsize,
-    worker_dispatched_invocations: AtomicU64,
-    isolate_pool_hits: AtomicU64,
-    isolate_pool_misses: AtomicU64,
-    isolate_pool_replacements: AtomicU64,
-    started_invocations: AtomicU64,
-    completed_invocations: AtomicU64,
-    queue_wait_nanos_total: AtomicU64,
-    execution_nanos_total: AtomicU64,
-    timed_out_invocations: AtomicU64,
-    canceled_invocations: AtomicU64,
-    rejected_invocations: AtomicU64,
-    queued_canceled_invocations: AtomicU64,
-    in_flight_canceled_invocations: AtomicU64,
-    disconnect_canceled_invocations: AtomicU64,
-    explicit_canceled_invocations: AtomicU64,
-    canceled_host_ops: AtomicU64,
-    precanceled_host_ops: AtomicU64,
-    in_flight_canceled_host_ops: AtomicU64,
-    nested_local_dispatches: AtomicU64,
-    fallback_cross_isolate_dispatches: AtomicU64,
-    host_operations: Mutex<BTreeMap<String, RuntimeHostOperationMetrics>>,
-    tenant_metrics: Mutex<BTreeMap<String, RuntimeTenantMetrics>>,
-    recent_request_correlations: Mutex<VecDeque<RuntimeRequestCorrelation>>,
+    global: RuntimeGlobalCounters,
+    host_operations: RuntimeHostOperationRegistry,
+    tenants: RuntimeTenantRegistry,
+    recent_request_correlations: correlations::RuntimeRequestCorrelationLog,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -47,6 +36,23 @@ pub struct RuntimeMetricsSnapshot {
     pub active_isolates: usize,
     pub queued_invocations: usize,
     pub worker_dispatched_invocations: u64,
+    pub worker_affinity_routed_invocations: u64,
+    pub worker_least_loaded_routed_invocations: u64,
+    pub worker_affinity_cache_entries: usize,
+    pub worker_affinity_cache_evictions: u64,
+    pub retained_runtime_pool_entries: usize,
+    pub retained_runtime_pool_evictions: u64,
+    pub retained_runtime_pool_retirements: u64,
+    pub retained_runtime_main_realm_resets: u64,
+    pub retained_runtime_main_realm_reset_nanos_total: u64,
+    pub retained_runtime_bootstrap_replays: u64,
+    pub retained_runtime_bootstrap_replay_nanos_total: u64,
+    pub bundle_loads: u64,
+    pub bundle_load_nanos_total: u64,
+    pub bundle_module_loads: u64,
+    pub bundle_module_load_nanos_total: u64,
+    pub bundle_evaluations: u64,
+    pub bundle_evaluation_nanos_total: u64,
     pub isolate_pool_hits: u64,
     pub isolate_pool_misses: u64,
     pub isolate_pool_replacements: u64,
@@ -66,110 +72,18 @@ pub struct RuntimeMetricsSnapshot {
     pub in_flight_canceled_host_ops: u64,
     pub nested_local_dispatches: u64,
     pub fallback_cross_isolate_dispatches: u64,
-    pub host_operations: BTreeMap<String, RuntimeHostOperationMetricsSnapshot>,
-    pub tenants: BTreeMap<String, RuntimeTenantMetricsSnapshot>,
+    pub host_operations: std::collections::BTreeMap<String, RuntimeHostOperationMetricsSnapshot>,
+    pub tenants: std::collections::BTreeMap<String, RuntimeTenantMetricsSnapshot>,
     pub recent_request_correlations: Vec<RuntimeRequestCorrelationSnapshot>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
-pub struct RuntimeHostOperationMetricsSnapshot {
-    pub started: u64,
-    pub succeeded: u64,
-    pub failed: u64,
-    pub canceled_before_start: u64,
-    pub canceled_in_flight: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
-pub struct RuntimeDurationDistributionSnapshot {
-    pub samples: u64,
-    pub under_1ms: u64,
-    pub ms_1_to_5: u64,
-    pub ms_5_to_25: u64,
-    pub ms_25_to_100: u64,
-    pub ms_100_to_500: u64,
-    pub at_least_500ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
-pub struct RuntimeTenantMetricsSnapshot {
-    pub active_isolates: usize,
-    pub started_invocations: u64,
-    pub completed_invocations: u64,
-    pub rejected_invocations: u64,
-    pub queued_canceled_invocations: u64,
-    pub in_flight_canceled_invocations: u64,
-    pub disconnect_canceled_invocations: u64,
-    pub explicit_canceled_invocations: u64,
-    pub queue_wait_nanos_total: u64,
-    pub execution_nanos_total: u64,
-    pub queue_wait_distribution: RuntimeDurationDistributionSnapshot,
-    pub execution_distribution: RuntimeDurationDistributionSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RuntimeRequestCorrelationSnapshot {
-    pub invocation_id: u64,
-    pub server_request_id: String,
-    pub tenant_label: Option<String>,
-    pub function_name: String,
-    pub kind: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct RuntimeHostOperationMetrics {
-    started: u64,
-    succeeded: u64,
-    failed: u64,
-    canceled_before_start: u64,
-    canceled_in_flight: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct RuntimeDurationDistribution {
-    samples: u64,
-    under_1ms: u64,
-    ms_1_to_5: u64,
-    ms_5_to_25: u64,
-    ms_25_to_100: u64,
-    ms_100_to_500: u64,
-    at_least_500ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct RuntimeTenantMetrics {
-    active_isolates: usize,
-    started_invocations: u64,
-    completed_invocations: u64,
-    rejected_invocations: u64,
-    queued_canceled_invocations: u64,
-    in_flight_canceled_invocations: u64,
-    disconnect_canceled_invocations: u64,
-    explicit_canceled_invocations: u64,
-    queue_wait_nanos_total: u64,
-    execution_nanos_total: u64,
-    queue_wait_distribution: RuntimeDurationDistribution,
-    execution_distribution: RuntimeDurationDistribution,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeRequestCorrelation {
-    invocation_id: u64,
-    server_request_id: String,
-    tenant_label: Option<String>,
-    function_name: String,
-    kind: &'static str,
 }
 
 impl RuntimeMetrics {
     pub fn increment_queued_invocations(&self) {
-        self.queued_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.increment_queued_invocations();
     }
 
     pub fn decrement_queued_invocations(&self) {
-        self.queued_invocations
-            .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.decrement_queued_invocations();
     }
 
     pub fn increment_active_isolates(&self) {
@@ -177,11 +91,8 @@ impl RuntimeMetrics {
     }
 
     pub fn increment_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
-        self.active_isolates
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.active_isolates += 1;
-        });
+        self.global.increment_active_isolates();
+        self.tenants.increment_active_isolates(tenant_label);
     }
 
     pub fn record_invocation_started(&self) {
@@ -189,31 +100,78 @@ impl RuntimeMetrics {
     }
 
     pub fn record_invocation_started_for_tenant(&self, tenant_label: Option<&str>) {
-        self.started_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.started_invocations += 1;
-        });
+        self.global.record_invocation_started();
+        self.tenants.record_invocation_started(tenant_label);
     }
 
     pub fn record_worker_dispatch(&self) {
-        self.worker_dispatched_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_worker_dispatch();
+    }
+
+    pub fn record_worker_affinity_route(&self) {
+        self.global.record_worker_affinity_route();
+    }
+
+    pub fn record_worker_least_loaded_route(&self) {
+        self.global.record_worker_least_loaded_route();
+    }
+
+    pub fn update_worker_affinity_cache_entries(&self, entries: usize) {
+        self.global.update_worker_affinity_cache_entries(entries);
+    }
+
+    pub fn record_worker_affinity_cache_eviction(&self) {
+        self.global.record_worker_affinity_cache_eviction();
+    }
+
+    pub fn increment_retained_runtime_pool_entries(&self) {
+        self.global.increment_retained_runtime_pool_entries();
+    }
+
+    pub fn decrement_retained_runtime_pool_entries(&self) {
+        self.global.decrement_retained_runtime_pool_entries();
+    }
+
+    pub fn record_retained_runtime_pool_eviction(&self) {
+        self.global.record_retained_runtime_pool_eviction();
+    }
+
+    pub fn record_retained_runtime_pool_retirement(&self) {
+        self.global.record_retained_runtime_pool_retirement();
+    }
+
+    pub fn record_retained_runtime_main_realm_reset(&self, duration: Duration) {
+        self.global
+            .record_retained_runtime_main_realm_reset(duration);
+    }
+
+    pub fn record_retained_runtime_bootstrap_replay(&self, duration: Duration) {
+        self.global
+            .record_retained_runtime_bootstrap_replay(duration);
+    }
+
+    pub fn record_bundle_load(&self, duration: Duration) {
+        self.global.record_bundle_load(duration);
+    }
+
+    pub fn record_bundle_module_load(&self, duration: Duration) {
+        self.global.record_bundle_module_load(duration);
+    }
+
+    pub fn record_bundle_evaluation(&self, duration: Duration) {
+        self.global.record_bundle_evaluation(duration);
     }
 
     pub fn record_isolate_pool_hit(&self) {
-        self.isolate_pool_hits
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_isolate_pool_hit();
     }
 
     pub fn record_isolate_pool_miss(&self) {
-        self.isolate_pool_misses
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_isolate_pool_miss();
     }
 
     pub fn record_isolate_pool_replacement(&self) {
-        self.isolate_pool_replacements
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_isolate_pool_replacement();
     }
 
     pub fn decrement_active_isolates(&self) {
@@ -221,11 +179,8 @@ impl RuntimeMetrics {
     }
 
     pub fn decrement_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
-        self.active_isolates
-            .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.active_isolates = metrics.active_isolates.saturating_sub(1);
-        });
+        self.global.decrement_active_isolates();
+        self.tenants.decrement_active_isolates(tenant_label);
     }
 
     pub fn record_invocation_completed(&self) {
@@ -233,11 +188,8 @@ impl RuntimeMetrics {
     }
 
     pub fn record_invocation_completed_for_tenant(&self, tenant_label: Option<&str>) {
-        self.completed_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.completed_invocations += 1;
-        });
+        self.global.record_invocation_completed();
+        self.tenants.record_invocation_completed(tenant_label);
     }
 
     pub fn record_queue_wait(&self, duration: Duration) {
@@ -245,12 +197,8 @@ impl RuntimeMetrics {
     }
 
     pub fn record_queue_wait_for_tenant(&self, tenant_label: Option<&str>, duration: Duration) {
-        self.queue_wait_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.queue_wait_nanos_total += duration_to_nanos(duration);
-            metrics.queue_wait_distribution.record(duration);
-        });
+        self.global.record_queue_wait(duration);
+        self.tenants.record_queue_wait(tenant_label, duration);
     }
 
     pub fn record_execution(&self, duration: Duration) {
@@ -258,30 +206,21 @@ impl RuntimeMetrics {
     }
 
     pub fn record_execution_for_tenant(&self, tenant_label: Option<&str>, duration: Duration) {
-        self.execution_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.execution_nanos_total += duration_to_nanos(duration);
-            metrics.execution_distribution.record(duration);
-        });
+        self.global.record_execution(duration);
+        self.tenants.record_execution(tenant_label, duration);
     }
 
     pub fn record_timeout(&self) {
-        self.timed_out_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_timeout();
     }
 
     pub fn record_canceled_invocation(&self) {
-        self.canceled_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_canceled_invocation();
     }
 
     pub fn record_rejected_invocation_for_tenant(&self, tenant_label: Option<&str>) {
-        self.rejected_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.rejected_invocations += 1;
-        });
+        self.global.record_rejected_invocation();
+        self.tenants.record_rejected_invocation(tenant_label);
     }
 
     pub fn record_queued_canceled_invocation(&self) {
@@ -293,13 +232,9 @@ impl RuntimeMetrics {
         tenant_label: Option<&str>,
         cause: Option<HostCallCancellationCause>,
     ) {
-        self.queued_canceled_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.record_canceled_invocation();
+        self.global.record_queued_canceled_invocation();
         self.record_canceled_invocation_cause(tenant_label, cause);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.queued_canceled_invocations += 1;
-        });
+        self.tenants.record_queued_canceled_invocation(tenant_label);
     }
 
     pub fn record_in_flight_canceled_invocation(&self) {
@@ -311,221 +246,106 @@ impl RuntimeMetrics {
         tenant_label: Option<&str>,
         cause: Option<HostCallCancellationCause>,
     ) {
-        self.in_flight_canceled_invocations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.record_canceled_invocation();
+        self.global.record_in_flight_canceled_invocation();
         self.record_canceled_invocation_cause(tenant_label, cause);
-        self.update_tenant_metrics(tenant_label, |metrics| {
-            metrics.in_flight_canceled_invocations += 1;
-        });
+        self.tenants
+            .record_in_flight_canceled_invocation(tenant_label);
     }
 
     pub fn record_canceled_host_op(&self) {
-        self.canceled_host_ops
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_canceled_host_op();
     }
 
     pub fn record_precanceled_host_op(&self) {
-        self.precanceled_host_ops
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.record_canceled_host_op();
+        self.global.record_precanceled_host_op();
     }
 
     pub fn record_in_flight_canceled_host_op(&self) {
-        self.in_flight_canceled_host_ops
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.record_canceled_host_op();
+        self.global.record_in_flight_canceled_host_op();
     }
 
     pub fn record_host_operation_started(&self, operation: &str) {
-        self.update_host_operation_metrics(operation, |metrics| metrics.started += 1);
+        self.host_operations.record_started(operation);
     }
 
     pub fn record_host_operation_succeeded(&self, operation: &str) {
-        self.update_host_operation_metrics(operation, |metrics| metrics.succeeded += 1);
+        self.host_operations.record_succeeded(operation);
     }
 
     pub fn record_host_operation_failed(&self, operation: &str) {
-        self.update_host_operation_metrics(operation, |metrics| metrics.failed += 1);
+        self.host_operations.record_failed(operation);
     }
 
     pub fn record_host_operation_canceled_before_start(&self, operation: &str) {
         self.record_precanceled_host_op();
-        self.update_host_operation_metrics(operation, |metrics| {
-            metrics.canceled_before_start += 1;
-        });
+        self.host_operations.record_canceled_before_start(operation);
     }
 
     pub fn record_host_operation_canceled_in_flight(&self, operation: &str) {
         self.record_in_flight_canceled_host_op();
-        self.update_host_operation_metrics(operation, |metrics| {
-            metrics.canceled_in_flight += 1;
-        });
+        self.host_operations.record_canceled_in_flight(operation);
     }
 
     pub fn record_nested_local_dispatch(&self) {
-        self.nested_local_dispatches
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_nested_local_dispatch();
     }
 
     pub fn record_fallback_cross_isolate_dispatch(&self) {
-        self.fallback_cross_isolate_dispatches
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.global.record_fallback_cross_isolate_dispatch();
     }
 
     pub fn record_request_correlation(&self, context: &RuntimeInvocationContext) {
-        let Some(server_request_id) = context.server_request_id.clone() else {
-            return;
-        };
-        const MAX_RECENT_REQUEST_CORRELATIONS: usize = 128;
-
-        let mut recent_request_correlations = self
-            .recent_request_correlations
-            .lock()
-            .expect("runtime request correlations lock should not be poisoned");
-        if recent_request_correlations.len() == MAX_RECENT_REQUEST_CORRELATIONS {
-            recent_request_correlations.pop_front();
-        }
-        recent_request_correlations.push_back(RuntimeRequestCorrelation {
-            invocation_id: context.invocation_id,
-            server_request_id,
-            tenant_label: context.tenant_label.clone(),
-            function_name: context.function_name.clone(),
-            kind: context.kind,
-        });
+        self.recent_request_correlations.record(context);
     }
 
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
+        let global = self.global.snapshot();
         RuntimeMetricsSnapshot {
-            active_isolates: self.active_isolates.load(DIAGNOSTIC_COUNTER_ORDERING),
-            queued_invocations: self.queued_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
-            worker_dispatched_invocations: self
-                .worker_dispatched_invocations
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            isolate_pool_hits: self.isolate_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
-            isolate_pool_misses: self.isolate_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
-            isolate_pool_replacements: self
-                .isolate_pool_replacements
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            started_invocations: self.started_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
-            completed_invocations: self.completed_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
-            queue_wait_nanos_total: self
-                .queue_wait_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            execution_nanos_total: self.execution_nanos_total.load(DIAGNOSTIC_COUNTER_ORDERING),
-            timed_out_invocations: self.timed_out_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
-            canceled_invocations: self.canceled_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
-            rejected_invocations: self.rejected_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
-            queued_canceled_invocations: self
-                .queued_canceled_invocations
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            in_flight_canceled_invocations: self
-                .in_flight_canceled_invocations
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            disconnect_canceled_invocations: self
-                .disconnect_canceled_invocations
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            explicit_canceled_invocations: self
-                .explicit_canceled_invocations
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            canceled_host_ops: self.canceled_host_ops.load(DIAGNOSTIC_COUNTER_ORDERING),
-            precanceled_host_ops: self.precanceled_host_ops.load(DIAGNOSTIC_COUNTER_ORDERING),
-            in_flight_canceled_host_ops: self
-                .in_flight_canceled_host_ops
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            nested_local_dispatches: self
-                .nested_local_dispatches
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fallback_cross_isolate_dispatches: self
-                .fallback_cross_isolate_dispatches
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            host_operations: self
-                .host_operations
-                .lock()
-                .expect("runtime host operation metrics lock should not be poisoned")
-                .iter()
-                .map(|(operation, metrics)| {
-                    (
-                        operation.clone(),
-                        RuntimeHostOperationMetricsSnapshot {
-                            started: metrics.started,
-                            succeeded: metrics.succeeded,
-                            failed: metrics.failed,
-                            canceled_before_start: metrics.canceled_before_start,
-                            canceled_in_flight: metrics.canceled_in_flight,
-                        },
-                    )
-                })
-                .collect(),
-            tenants: self
-                .tenant_metrics
-                .lock()
-                .expect("runtime tenant metrics lock should not be poisoned")
-                .iter()
-                .map(|(tenant, metrics)| {
-                    (
-                        tenant.clone(),
-                        RuntimeTenantMetricsSnapshot {
-                            active_isolates: metrics.active_isolates,
-                            started_invocations: metrics.started_invocations,
-                            completed_invocations: metrics.completed_invocations,
-                            rejected_invocations: metrics.rejected_invocations,
-                            queued_canceled_invocations: metrics.queued_canceled_invocations,
-                            in_flight_canceled_invocations: metrics.in_flight_canceled_invocations,
-                            disconnect_canceled_invocations: metrics
-                                .disconnect_canceled_invocations,
-                            explicit_canceled_invocations: metrics.explicit_canceled_invocations,
-                            queue_wait_nanos_total: metrics.queue_wait_nanos_total,
-                            execution_nanos_total: metrics.execution_nanos_total,
-                            queue_wait_distribution: metrics.queue_wait_distribution.snapshot(),
-                            execution_distribution: metrics.execution_distribution.snapshot(),
-                        },
-                    )
-                })
-                .collect(),
-            recent_request_correlations: self
-                .recent_request_correlations
-                .lock()
-                .expect("runtime request correlations lock should not be poisoned")
-                .iter()
-                .map(|correlation| RuntimeRequestCorrelationSnapshot {
-                    invocation_id: correlation.invocation_id,
-                    server_request_id: correlation.server_request_id.clone(),
-                    tenant_label: correlation.tenant_label.clone(),
-                    function_name: correlation.function_name.clone(),
-                    kind: correlation.kind.to_string(),
-                })
-                .collect(),
+            active_isolates: global.active_isolates,
+            queued_invocations: global.queued_invocations,
+            worker_dispatched_invocations: global.worker_dispatched_invocations,
+            worker_affinity_routed_invocations: global.worker_affinity_routed_invocations,
+            worker_least_loaded_routed_invocations: global.worker_least_loaded_routed_invocations,
+            worker_affinity_cache_entries: global.worker_affinity_cache_entries,
+            worker_affinity_cache_evictions: global.worker_affinity_cache_evictions,
+            retained_runtime_pool_entries: global.retained_runtime_pool_entries,
+            retained_runtime_pool_evictions: global.retained_runtime_pool_evictions,
+            retained_runtime_pool_retirements: global.retained_runtime_pool_retirements,
+            retained_runtime_main_realm_resets: global.retained_runtime_main_realm_resets,
+            retained_runtime_main_realm_reset_nanos_total: global
+                .retained_runtime_main_realm_reset_nanos_total,
+            retained_runtime_bootstrap_replays: global.retained_runtime_bootstrap_replays,
+            retained_runtime_bootstrap_replay_nanos_total: global
+                .retained_runtime_bootstrap_replay_nanos_total,
+            bundle_loads: global.bundle_loads,
+            bundle_load_nanos_total: global.bundle_load_nanos_total,
+            bundle_module_loads: global.bundle_module_loads,
+            bundle_module_load_nanos_total: global.bundle_module_load_nanos_total,
+            bundle_evaluations: global.bundle_evaluations,
+            bundle_evaluation_nanos_total: global.bundle_evaluation_nanos_total,
+            isolate_pool_hits: global.isolate_pool_hits,
+            isolate_pool_misses: global.isolate_pool_misses,
+            isolate_pool_replacements: global.isolate_pool_replacements,
+            started_invocations: global.started_invocations,
+            completed_invocations: global.completed_invocations,
+            queue_wait_nanos_total: global.queue_wait_nanos_total,
+            execution_nanos_total: global.execution_nanos_total,
+            timed_out_invocations: global.timed_out_invocations,
+            canceled_invocations: global.canceled_invocations,
+            rejected_invocations: global.rejected_invocations,
+            queued_canceled_invocations: global.queued_canceled_invocations,
+            in_flight_canceled_invocations: global.in_flight_canceled_invocations,
+            disconnect_canceled_invocations: global.disconnect_canceled_invocations,
+            explicit_canceled_invocations: global.explicit_canceled_invocations,
+            canceled_host_ops: global.canceled_host_ops,
+            precanceled_host_ops: global.precanceled_host_ops,
+            in_flight_canceled_host_ops: global.in_flight_canceled_host_ops,
+            nested_local_dispatches: global.nested_local_dispatches,
+            fallback_cross_isolate_dispatches: global.fallback_cross_isolate_dispatches,
+            host_operations: self.host_operations.snapshot(),
+            tenants: self.tenants.snapshot(),
+            recent_request_correlations: self.recent_request_correlations.snapshot(),
         }
-    }
-
-    fn update_host_operation_metrics(
-        &self,
-        operation: &str,
-        update: impl FnOnce(&mut RuntimeHostOperationMetrics),
-    ) {
-        let mut host_operations = self
-            .host_operations
-            .lock()
-            .expect("runtime host operation metrics lock should not be poisoned");
-        let metrics = host_operations.entry(operation.to_string()).or_default();
-        update(metrics);
-    }
-
-    fn update_tenant_metrics(
-        &self,
-        tenant_label: Option<&str>,
-        update: impl FnOnce(&mut RuntimeTenantMetrics),
-    ) {
-        let Some(tenant_label) = tenant_label else {
-            return;
-        };
-        let mut tenant_metrics = self
-            .tenant_metrics
-            .lock()
-            .expect("runtime tenant metrics lock should not be poisoned");
-        let metrics = tenant_metrics.entry(tenant_label.to_string()).or_default();
-        update(metrics);
     }
 
     fn record_canceled_invocation_cause(
@@ -535,62 +355,28 @@ impl RuntimeMetrics {
     ) {
         match cause {
             Some(HostCallCancellationCause::Disconnect) => {
-                self.disconnect_canceled_invocations
-                    .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-                self.update_tenant_metrics(tenant_label, |metrics| {
-                    metrics.disconnect_canceled_invocations += 1;
-                });
+                self.global.record_disconnect_canceled_invocation();
+                self.tenants
+                    .record_disconnect_canceled_invocation(tenant_label);
             }
             Some(HostCallCancellationCause::Explicit) => {
-                self.explicit_canceled_invocations
-                    .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-                self.update_tenant_metrics(tenant_label, |metrics| {
-                    metrics.explicit_canceled_invocations += 1;
-                });
+                self.global.record_explicit_canceled_invocation();
+                self.tenants
+                    .record_explicit_canceled_invocation(tenant_label);
             }
             None => {}
         }
     }
 }
 
-impl RuntimeDurationDistribution {
-    fn record(&mut self, duration: Duration) {
-        let nanos = duration_to_nanos(duration);
-        self.samples += 1;
-        if nanos < 1_000_000 {
-            self.under_1ms += 1;
-        } else if nanos < 5_000_000 {
-            self.ms_1_to_5 += 1;
-        } else if nanos < 25_000_000 {
-            self.ms_5_to_25 += 1;
-        } else if nanos < 100_000_000 {
-            self.ms_25_to_100 += 1;
-        } else if nanos < 500_000_000 {
-            self.ms_100_to_500 += 1;
-        } else {
-            self.at_least_500ms += 1;
-        }
-    }
-
-    fn snapshot(&self) -> RuntimeDurationDistributionSnapshot {
-        RuntimeDurationDistributionSnapshot {
-            samples: self.samples,
-            under_1ms: self.under_1ms,
-            ms_1_to_5: self.ms_1_to_5,
-            ms_5_to_25: self.ms_5_to_25,
-            ms_25_to_100: self.ms_25_to_100,
-            ms_100_to_500: self.ms_100_to_500,
-            at_least_500ms: self.at_least_500ms,
-        }
-    }
-}
-
-fn duration_to_nanos(duration: Duration) -> u64 {
+pub(super) fn duration_to_nanos(duration: Duration) -> u64 {
     duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -671,6 +457,19 @@ mod tests {
         metrics.record_queue_wait(Duration::from_millis(1));
         metrics.record_execution(Duration::from_millis(2));
         metrics.record_worker_dispatch();
+        metrics.record_worker_affinity_route();
+        metrics.record_worker_least_loaded_route();
+        metrics.update_worker_affinity_cache_entries(1);
+        metrics.record_worker_affinity_cache_eviction();
+        metrics.increment_retained_runtime_pool_entries();
+        metrics.record_retained_runtime_pool_eviction();
+        metrics.record_retained_runtime_pool_retirement();
+        metrics.record_retained_runtime_main_realm_reset(Duration::from_millis(3));
+        metrics.record_retained_runtime_bootstrap_replay(Duration::from_millis(4));
+        metrics.record_bundle_load(Duration::from_millis(5));
+        metrics.record_bundle_module_load(Duration::from_millis(6));
+        metrics.record_bundle_evaluation(Duration::from_millis(7));
+        metrics.decrement_retained_runtime_pool_entries();
         metrics.record_isolate_pool_miss();
         metrics.record_isolate_pool_hit();
         metrics.record_isolate_pool_replacement();
@@ -692,6 +491,23 @@ mod tests {
                 active_isolates: 0,
                 queued_invocations: 0,
                 worker_dispatched_invocations: 1,
+                worker_affinity_routed_invocations: 1,
+                worker_least_loaded_routed_invocations: 1,
+                worker_affinity_cache_entries: 1,
+                worker_affinity_cache_evictions: 1,
+                retained_runtime_pool_entries: 0,
+                retained_runtime_pool_evictions: 1,
+                retained_runtime_pool_retirements: 1,
+                retained_runtime_main_realm_resets: 1,
+                retained_runtime_main_realm_reset_nanos_total: 3_000_000,
+                retained_runtime_bootstrap_replays: 1,
+                retained_runtime_bootstrap_replay_nanos_total: 4_000_000,
+                bundle_loads: 1,
+                bundle_load_nanos_total: 5_000_000,
+                bundle_module_loads: 1,
+                bundle_module_load_nanos_total: 6_000_000,
+                bundle_evaluations: 1,
+                bundle_evaluation_nanos_total: 7_000_000,
                 isolate_pool_hits: 1,
                 isolate_pool_misses: 1,
                 isolate_pool_replacements: 1,

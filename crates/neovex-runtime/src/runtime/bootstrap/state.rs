@@ -21,6 +21,13 @@ pub(crate) struct RuntimeCancellationState {
     pub(crate) signal: HostCallCancellation,
 }
 
+fn fresh_runtime_cancellation_state() -> RuntimeCancellationState {
+    RuntimeCancellationState {
+        cancel_handle: CancelHandle::new_rc(),
+        signal: HostCallCancellation::default(),
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeInvocationTimeoutController {
     inner: Arc<Mutex<RuntimeInvocationTimeoutControllerState>>,
@@ -120,20 +127,24 @@ impl RuntimeInvocationTimeoutController {
 
 pub(crate) fn initialize_runtime_state(runtime: &mut JsRuntime, runtime_owner: &NeovexRuntime) {
     let op_state = runtime.op_state();
+    {
+        let mut state = op_state.borrow_mut();
+        state.put(RuntimeHostState {
+            bridge: runtime_owner.host.clone(),
+        });
+    }
+    reset_runtime_invocation_state(
+        runtime,
+        SharedInvocationPermit::new(runtime_owner.policy.clone(), None, None, true, None),
+    );
+}
+
+pub(crate) fn reset_runtime_invocation_state(
+    runtime: &mut JsRuntime,
+    permit: SharedInvocationPermit,
+) {
+    let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
-    state.put(RuntimeHostState {
-        bridge: runtime_owner.host.clone(),
-    });
-    let signal = HostCallCancellation::default();
-    state.put(RuntimeCancellationState {
-        cancel_handle: CancelHandle::new_rc(),
-        signal,
-    });
-    state.put(SharedInvocationPermit::new(
-        runtime_owner.policy.clone(),
-        None,
-        None,
-        true,
-        None,
-    ));
+    state.put(fresh_runtime_cancellation_state());
+    state.put(permit);
 }

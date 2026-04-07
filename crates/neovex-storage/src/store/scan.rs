@@ -8,6 +8,9 @@ use rmp::decode::{read_array_len, read_map_len, read_marker, read_str_len};
 use serde_json::Value;
 
 #[cfg(test)]
+mod tests;
+
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ScanStats {
     pub scanned_rows: u64,

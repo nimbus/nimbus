@@ -1,437 +1,32 @@
 #[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::atomic::AtomicUsize;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-#[cfg(test)]
-use std::thread::ThreadId;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
-
+#[cfg(test)]
 use crate::context::RuntimeInvocationContext;
+#[cfg(test)]
 use crate::error::{NeovexRuntimeError, Result};
+#[cfg(test)]
 use crate::host::HostCallCancellation;
+#[cfg(test)]
 use crate::limits::RuntimePolicy;
-use crate::runtime::{InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeInvocationExecution};
-use crate::watchdog::WatchdogTimer;
-use crate::worker_loop::{RunToCompletionWorkerLoopFactory, WorkerLoopFactory};
+#[cfg(test)]
+use crate::limits::{RuntimeExecutionModel, RuntimePoolKind, RuntimeRoutingAffinity};
+#[cfg(test)]
+use crate::runtime::{InvocationRequest, NeovexRuntime, RuntimeBundle};
 
 mod admission;
+mod facade;
+mod invoke;
 mod lifecycle;
 mod queue;
 
 pub(crate) use self::admission::SharedInvocationPermit;
-use self::admission::{RuntimeExecutorAdmission, RuntimeExecutorAdmissionDecision};
+pub use self::facade::RuntimeExecutor;
+#[cfg(test)]
+pub(crate) use self::facade::RuntimeExecutorTestState;
 pub(crate) use self::lifecycle::run_invocation_lifecycle;
-use self::queue::{RuntimeWorkerJob, RuntimeWorkerQueueController, RuntimeWorkerResultSender};
-pub(crate) use self::queue::{RuntimeWorkerQueue, RuntimeWorkerShutdown};
-
-#[derive(Clone)]
-pub struct RuntimeExecutor {
-    inner: Arc<RuntimeExecutorInner>,
-}
-
-struct RuntimeExecutorInner {
-    policy: Arc<RuntimePolicy>,
-    queue: Arc<RuntimeWorkerQueueController>,
-    admission: Arc<RuntimeExecutorAdmission>,
-    shutdown: RuntimeWorkerShutdown,
-    watchdog: WatchdogTimer,
-    worker_count: usize,
-    queue_capacity: usize,
-    worker_handles: Mutex<Vec<JoinHandle<()>>>,
-    #[cfg(test)]
-    test_state: Arc<RuntimeExecutorTestState>,
-}
-
-#[cfg(test)]
-pub(crate) struct RuntimeExecutorTestState {
-    next_worker_runtime_id: AtomicUsize,
-    worker_runtime_builds: AtomicUsize,
-    worker_thread_runtime_ids: Mutex<HashMap<ThreadId, usize>>,
-}
-
-#[cfg(test)]
-impl RuntimeExecutorTestState {
-    fn new() -> Self {
-        Self {
-            next_worker_runtime_id: AtomicUsize::new(1),
-            worker_runtime_builds: AtomicUsize::new(0),
-            worker_thread_runtime_ids: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub(crate) fn register_current_worker_runtime(&self) {
-        let worker_runtime_id = self.next_worker_runtime_id.fetch_add(1, Ordering::Relaxed);
-        self.worker_runtime_builds.fetch_add(1, Ordering::Relaxed);
-        self.worker_thread_runtime_ids
-            .lock()
-            .expect("runtime executor test state lock should not be poisoned")
-            .insert(std::thread::current().id(), worker_runtime_id);
-    }
-
-    fn worker_runtime_builds(&self) -> usize {
-        self.worker_runtime_builds.load(Ordering::Relaxed)
-    }
-
-    fn worker_runtime_id_for_current_thread(&self) -> Option<usize> {
-        self.worker_thread_runtime_ids
-            .lock()
-            .expect("runtime executor test state lock should not be poisoned")
-            .get(&std::thread::current().id())
-            .copied()
-    }
-}
-
-const BLOCKING_RESULT_POLL_INTERVAL: Duration = Duration::from_millis(1);
-
-impl std::fmt::Debug for RuntimeExecutor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RuntimeExecutor")
-            .field("worker_count", &self.inner.worker_count)
-            .field("queue_capacity", &self.inner.queue_capacity)
-            .finish()
-    }
-}
-
-impl RuntimeExecutor {
-    pub fn new(policy: Arc<RuntimePolicy>) -> Self {
-        let worker_count = policy.limits().worker_threads.max(1);
-        let queue_capacity = worker_count.saturating_mul(4).max(1);
-        let (worker_sender, receiver) = mpsc::channel::<RuntimeWorkerJob>(queue_capacity);
-        let sender = Arc::new(Mutex::new(Some(worker_sender)));
-        let receiver = Arc::new(Mutex::new(receiver));
-        let queue = Arc::new(RuntimeWorkerQueueController::new(receiver, sender));
-        let admission = Arc::new(RuntimeExecutorAdmission::new(policy.clone()));
-        let shutdown = RuntimeWorkerShutdown::new();
-        let watchdog = WatchdogTimer::new();
-        #[cfg(test)]
-        let test_state = Arc::new(RuntimeExecutorTestState::new());
-        let worker_loop_factory: Arc<dyn WorkerLoopFactory> = {
-            let factory = RunToCompletionWorkerLoopFactory::new(watchdog.clone());
-            #[cfg(test)]
-            let factory = factory.with_test_state(test_state.clone());
-            Arc::new(factory)
-        };
-        let mut worker_handles = Vec::with_capacity(worker_count);
-
-        for worker_id in 0..worker_count {
-            let queue: Arc<dyn RuntimeWorkerQueue> = queue.clone();
-            let policy = policy.clone();
-            let shutdown = shutdown.clone();
-            let worker_loop_factory = worker_loop_factory.clone();
-            let handle = std::thread::Builder::new()
-                .name(format!("neovex-runtime-worker-{worker_id}"))
-                .spawn(move || {
-                    let mut worker_loop = worker_loop_factory.create(worker_id, policy);
-                    worker_loop.run(queue, shutdown);
-                })
-                .expect("runtime executor worker thread should start");
-            worker_handles.push(handle);
-        }
-
-        Self {
-            inner: Arc::new(RuntimeExecutorInner {
-                policy,
-                queue,
-                admission,
-                shutdown,
-                watchdog,
-                worker_count,
-                queue_capacity,
-                worker_handles: Mutex::new(worker_handles),
-                #[cfg(test)]
-                test_state,
-            }),
-        }
-    }
-
-    pub fn policy(&self) -> Arc<RuntimePolicy> {
-        self.inner.policy.clone()
-    }
-
-    #[cfg(test)]
-    fn test_state(&self) -> Arc<RuntimeExecutorTestState> {
-        self.inner.test_state.clone()
-    }
-
-    async fn dispatch_admitted_job_async(&self, job: RuntimeWorkerJob) -> Result<()> {
-        self.inner.queue.dispatch_job(job).await
-    }
-
-    fn dispatch_admitted_job_blocking(&self, job: RuntimeWorkerJob) -> Result<()> {
-        self.inner.queue.dispatch_job_blocking(job)
-    }
-
-    async fn invoke_job(
-        watchdog: WatchdogTimer,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-        cancellation: Option<HostCallCancellation>,
-        queue_started_at: Instant,
-    ) -> Result<Value> {
-        let policy = runtime.policy();
-        let permit = SharedInvocationPermit::new(
-            policy.clone(),
-            context.tenant_label.clone(),
-            None,
-            runtime.bypasses_concurrency_limit(),
-            cancellation.clone(),
-        );
-        let (result, _ready_jobs) = run_invocation_lifecycle(
-            permit,
-            policy,
-            context.clone(),
-            cancellation.clone(),
-            queue_started_at,
-            None,
-            |permit| async move {
-                runtime
-                    .invoke_bundle_unmanaged(
-                        None,
-                        RuntimeInvocationExecution {
-                            watchdog: watchdog.clone(),
-                            bundle: bundle.clone(),
-                            request: request.clone(),
-                            context: context.clone(),
-                            external_cancellation: cancellation,
-                            permit,
-                        },
-                    )
-                    .await
-            },
-        )
-        .await;
-        result
-    }
-
-    pub async fn invoke(
-        &self,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-    ) -> Result<Value> {
-        self.invoke_with_cancellation(runtime, bundle, request, context, None)
-            .await
-    }
-
-    pub async fn invoke_with_cancellation(
-        &self,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-        cancellation: Option<HostCallCancellation>,
-    ) -> Result<Value> {
-        self.inner
-            .policy
-            .metrics()
-            .record_request_correlation(&context);
-        Self::invoke_job(
-            self.inner.watchdog.clone(),
-            runtime.into_policy(self.inner.policy.clone()),
-            bundle,
-            request,
-            context,
-            cancellation,
-            Instant::now(),
-        )
-        .await
-    }
-
-    pub async fn invoke_on_worker(
-        &self,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-        cancellation: Option<HostCallCancellation>,
-    ) -> Result<Value> {
-        self.inner
-            .policy
-            .metrics()
-            .record_request_correlation(&context);
-        if cancellation
-            .as_ref()
-            .is_some_and(HostCallCancellation::is_cancelled)
-        {
-            self.inner
-                .policy
-                .metrics()
-                .record_queued_canceled_invocation_for_tenant(
-                    context.tenant_label.as_deref(),
-                    cancellation.as_ref().and_then(HostCallCancellation::cause),
-                );
-            return Err(NeovexRuntimeError::Cancelled);
-        }
-
-        let (result_tx, result_rx) = oneshot::channel();
-        let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
-            runtime,
-            bundle,
-            request,
-            context,
-            cancellation: cancellation.clone(),
-            enqueued_at: Instant::now(),
-            result_tx: RuntimeWorkerResultSender::Async(result_tx),
-            dispatch_handle: None,
-        })?;
-        if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
-            self.dispatch_admitted_job_async(*job).await?;
-        }
-
-        match cancellation {
-            Some(cancellation) => {
-                tokio::select! {
-                    _ = cancellation.cancelled() => Err(NeovexRuntimeError::Cancelled),
-                    result = result_rx => result.map_err(|_| {
-                        NeovexRuntimeError::Contract(
-                            "runtime executor dropped an invocation result".to_string(),
-                        )
-                    })?,
-                }
-            }
-            None => result_rx.await.map_err(|_| {
-                NeovexRuntimeError::Contract(
-                    "runtime executor dropped an invocation result".to_string(),
-                )
-            })?,
-        }
-    }
-
-    pub fn invoke_blocking(
-        &self,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-    ) -> Result<Value> {
-        self.invoke_blocking_with_cancellation(runtime, bundle, request, context, None)
-    }
-
-    pub fn invoke_blocking_with_cancellation(
-        &self,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-        cancellation: Option<HostCallCancellation>,
-    ) -> Result<Value> {
-        let executor = self.clone();
-        let invoke = move || {
-            executor.invoke_on_worker_blocking(runtime, bundle, request, context, cancellation)
-        };
-
-        if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::spawn(invoke).join().map_err(|_| {
-                NeovexRuntimeError::Contract(
-                    "runtime executor invocation thread panicked".to_string(),
-                )
-            })?
-        } else {
-            invoke()
-        }
-    }
-
-    fn invoke_on_worker_blocking(
-        &self,
-        runtime: NeovexRuntime,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-        cancellation: Option<HostCallCancellation>,
-    ) -> Result<Value> {
-        self.inner
-            .policy
-            .metrics()
-            .record_request_correlation(&context);
-        if cancellation
-            .as_ref()
-            .is_some_and(HostCallCancellation::is_cancelled)
-        {
-            self.inner
-                .policy
-                .metrics()
-                .record_queued_canceled_invocation_for_tenant(
-                    context.tenant_label.as_deref(),
-                    cancellation.as_ref().and_then(HostCallCancellation::cause),
-                );
-            return Err(NeovexRuntimeError::Cancelled);
-        }
-
-        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
-        let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
-            runtime,
-            bundle,
-            request,
-            context,
-            cancellation: cancellation.clone(),
-            enqueued_at: Instant::now(),
-            result_tx: RuntimeWorkerResultSender::Blocking(result_tx),
-            dispatch_handle: None,
-        })?;
-        if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
-            self.dispatch_admitted_job_blocking(*job)?;
-        }
-
-        match cancellation {
-            Some(cancellation) => loop {
-                if cancellation.is_cancelled() {
-                    return Err(NeovexRuntimeError::Cancelled);
-                }
-                match result_rx.recv_timeout(BLOCKING_RESULT_POLL_INTERVAL) {
-                    Ok(result) => return result,
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        return Err(NeovexRuntimeError::Contract(
-                            "runtime executor dropped an invocation result".to_string(),
-                        ));
-                    }
-                }
-            },
-            None => result_rx.recv().map_err(|_| {
-                NeovexRuntimeError::Contract(
-                    "runtime executor dropped an invocation result".to_string(),
-                )
-            })?,
-        }
-    }
-}
-
-impl Drop for RuntimeExecutorInner {
-    fn drop(&mut self) {
-        self.shutdown.cancel();
-        self.queue.close();
-        for queued_job in self.admission.drain_queued_jobs() {
-            queued_job.result_tx.send(Err(NeovexRuntimeError::Contract(
-                "runtime executor unexpectedly closed".to_string(),
-            )));
-        }
-        let mut worker_handles = self
-            .worker_handles
-            .lock()
-            .expect("runtime executor worker handle lock should not be poisoned");
-        for handle in worker_handles.drain(..) {
-            let _ = handle.join();
-        }
-        self.watchdog.shutdown();
-    }
-}
-
-impl Default for RuntimeExecutor {
-    fn default() -> Self {
-        let policy = Arc::new(RuntimePolicy::default());
-        Self::new(policy)
-    }
-}
+pub(crate) use self::queue::RuntimeWorkerJob;
+pub(crate) use self::queue::{RuntimeWorkerQueue, RuntimeWorkerShutdown, WorkerActivitySignal};
 
 #[cfg(test)]
 mod tests {
@@ -446,6 +41,7 @@ mod tests {
     use super::*;
     use crate::host::{HostBridge, HostBridgeFuture, HostCallOperation, HostCallRequest};
     use crate::limits::RuntimeLimits;
+    use crate::runtime::RuntimeConstructionMode;
 
     struct NoopHost;
 
@@ -465,6 +61,105 @@ mod tests {
             Ok(json!({
                 "workerRuntimeId": self.test_state.worker_runtime_id_for_current_thread(),
             }))
+        }
+    }
+
+    struct ControlledAsyncWorkerRuntimeIdHost {
+        test_state: Arc<RuntimeExecutorTestState>,
+        started: StdMutex<std::collections::HashMap<String, usize>>,
+        started_notify: Arc<Notify>,
+        release_slow: Arc<Notify>,
+        release_slow_flag: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl ControlledAsyncWorkerRuntimeIdHost {
+        fn new(test_state: Arc<RuntimeExecutorTestState>) -> Self {
+            Self {
+                test_state,
+                started: StdMutex::new(std::collections::HashMap::new()),
+                started_notify: Arc::new(Notify::new()),
+                release_slow: Arc::new(Notify::new()),
+                release_slow_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+
+        async fn wait_until_started(&self, document_id: &str) {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    let notified = self.started_notify.notified();
+                    if self
+                        .started
+                        .lock()
+                        .expect("controlled runtime-id host lock should not be poisoned")
+                        .contains_key(document_id)
+                    {
+                        return;
+                    }
+                    notified.await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("host request {document_id} should start"));
+        }
+
+        fn started_runtime_id(&self, document_id: &str) -> Option<usize> {
+            self.started
+                .lock()
+                .expect("controlled runtime-id host lock should not be poisoned")
+                .get(document_id)
+                .copied()
+        }
+
+        fn release_slow_jobs(&self) {
+            self.release_slow_flag
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.release_slow.notify_waiters();
+        }
+    }
+
+    impl HostBridge for ControlledAsyncWorkerRuntimeIdHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Err(NeovexRuntimeError::Contract(
+                "controlled runtime-id host expects async db.get path".to_string(),
+            ))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            let document_id = request
+                .payload
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("db.get payload should carry an id")
+                .to_string();
+            let worker_runtime_id = self
+                .test_state
+                .worker_runtime_id_for_current_thread()
+                .expect("worker runtime id should be registered before async host calls");
+            self.started
+                .lock()
+                .expect("controlled runtime-id host lock should not be poisoned")
+                .insert(document_id.clone(), worker_runtime_id);
+            self.started_notify.notify_waiters();
+            let release_slow = self.release_slow.clone();
+            let release_slow_flag = self.release_slow_flag.clone();
+            Box::pin(async move {
+                if document_id.starts_with("slow-")
+                    && !release_slow_flag.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    release_slow.notified().await;
+                }
+                Ok(json!({
+                    "status": "ok",
+                    "value": {
+                        "id": document_id,
+                        "workerRuntimeId": worker_runtime_id,
+                    },
+                }))
+            })
         }
     }
 
@@ -532,6 +227,7 @@ mod tests {
         started_ids: StdMutex<Vec<String>>,
         started_notify: Arc<Notify>,
         release_slow: Arc<Notify>,
+        release_slow_flag: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl ControlledAsyncGetHost {
@@ -561,6 +257,8 @@ mod tests {
         }
 
         fn release_slow_jobs(&self) {
+            self.release_slow_flag
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             self.release_slow.notify_waiters();
         }
     }
@@ -589,10 +287,55 @@ mod tests {
                 .push(document_id.clone());
             self.started_notify.notify_waiters();
             let release_slow = self.release_slow.clone();
+            let release_slow_flag = self.release_slow_flag.clone();
             Box::pin(async move {
-                if document_id.starts_with("slow-") {
+                if document_id.starts_with("slow-")
+                    && !release_slow_flag.load(std::sync::atomic::Ordering::SeqCst)
+                {
                     release_slow.notified().await;
                 }
+                Ok(json!({
+                    "status": "ok",
+                    "value": {
+                        "id": document_id,
+                    },
+                }))
+            })
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct DelayedAsyncGetHost {
+        delay: Duration,
+    }
+
+    impl DelayedAsyncGetHost {
+        fn new(delay: Duration) -> Self {
+            Self { delay }
+        }
+    }
+
+    impl HostBridge for DelayedAsyncGetHost {
+        fn call(&self, _request: HostCallRequest) -> Result<Value> {
+            Err(NeovexRuntimeError::Contract(
+                "delayed async host expects async db.get path".to_string(),
+            ))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            let document_id = request
+                .payload
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("db.get payload should carry an id")
+                .to_string();
+            let delay = self.delay;
+            Box::pin(async move {
+                tokio::time::sleep(delay).await;
                 Ok(json!({
                     "status": "ok",
                     "value": {
@@ -707,6 +450,32 @@ export {};
         (bundle_dir, bundle_path)
     }
 
+    fn write_retained_counter_get_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
+        let bundle_dir = tempdir().expect("tempdir should build");
+        let bundle_path = bundle_dir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__neovexInvoke = async function (request) {
+  globalThis.__userCounter = (globalThis.__userCounter ?? 0) + 1;
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `session-${globalThis.__userCounter}`,
+  });
+  const value = await ctx.db.get("messages", request.function_name);
+  return {
+    counter: globalThis.__userCounter,
+    id: value.id,
+  };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+        (bundle_dir, bundle_path)
+    }
+
     fn write_sync_query_builder_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
         let bundle_dir = tempdir().expect("tempdir should build");
         let bundle_path = bundle_dir.path().join("bundle.mjs");
@@ -743,6 +512,72 @@ export {};
         (bundle_dir, bundle_path)
     }
 
+    fn retained_async_host_batch_policy() -> Arc<RuntimePolicy> {
+        Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: RuntimePoolKind::RetainedJsRuntimePool,
+            routing_affinity: RuntimeRoutingAffinity::Tenant,
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            max_retained_runtimes_per_worker: 4,
+            max_retained_runtimes_per_affinity_key_per_worker: 1,
+            ..RuntimeLimits::default()
+        }))
+    }
+
+    fn init_runtime_repro_tracing() {
+        static TRACING_INIT: OnceLock<()> = OnceLock::new();
+        TRACING_INIT.get_or_init(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_test_writer()
+                .with_max_level(tracing::Level::DEBUG)
+                .without_time()
+                .try_init();
+        });
+    }
+
+    fn stress_env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(default)
+    }
+
+    fn run_retained_async_host_batch_round(
+        executor: &RuntimeExecutor,
+        policy: &Arc<RuntimePolicy>,
+        host: &Arc<DelayedAsyncGetHost>,
+        bundle: &RuntimeBundle,
+        batch_index: usize,
+        construction_mode: RuntimeConstructionMode,
+    ) {
+        let tenant_labels = ["tenant-a", "tenant-b", "tenant-c", "tenant-d"];
+        let mut handles = Vec::with_capacity(tenant_labels.len());
+        let mut expected_ids = Vec::with_capacity(tenant_labels.len());
+        for (tenant_index, tenant_label) in tenant_labels.iter().enumerate() {
+            let executor = executor.clone();
+            let runtime = NeovexRuntime::with_policy(host.clone(), policy.clone())
+                .with_retained_runtime_construction_mode_for_test(construction_mode);
+            let bundle = bundle.clone();
+            let function_name = format!("doc-{batch_index}-{tenant_index}");
+            let request = test_request(&function_name);
+            let request_id = format!("req-retained-async-batch-{batch_index}-{tenant_index}");
+            let context = test_context_for_tenant(&request, tenant_label, &request_id);
+            expected_ids.push(function_name.clone());
+            handles.push(std::thread::spawn(move || {
+                executor.invoke_blocking(runtime, bundle, request, context)
+            }));
+        }
+
+        for (handle, expected_id) in handles.into_iter().zip(expected_ids) {
+            let result = handle
+                .join()
+                .expect("retained async batch caller thread should join")
+                .expect("retained async batch invocation should succeed");
+            assert_eq!(result, json!({ "id": expected_id }));
+        }
+    }
+
     fn test_request(function_name: &str) -> InvocationRequest {
         InvocationRequest {
             kind: crate::runtime::InvocationKind::Query,
@@ -768,6 +603,14 @@ export {};
 
     fn test_context(request: &InvocationRequest, request_id: &str) -> RuntimeInvocationContext {
         test_context_for_tenant(request, "demo", request_id)
+    }
+
+    fn worker_runtime_id(result: &Value) -> usize {
+        result
+            .get("workerRuntimeId")
+            .and_then(Value::as_u64)
+            .map(|id| id as usize)
+            .expect("result should include a workerRuntimeId")
     }
 
     fn runtime_executor_test_lock() -> &'static TokioMutex<()> {
@@ -854,6 +697,762 @@ export {};
         assert_eq!(metrics.isolate_pool_misses, 1);
         assert_eq!(metrics.isolate_pool_hits, 1);
         assert_eq!(metrics.isolate_pool_replacements, 0);
+    }
+
+    #[tokio::test]
+    async fn cooperative_execution_model_processes_worker_invocations() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(WorkerRuntimeIdHost {
+            test_state: test_state.clone(),
+        });
+        let request = test_request("messages:list");
+
+        let first_result = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context(&request, "req-cooperative-1"),
+                None,
+            )
+            .await
+            .expect("first cooperative worker invocation should succeed");
+        let second_result = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context(&request, "req-cooperative-2"),
+                None,
+            )
+            .await
+            .expect("second cooperative worker invocation should succeed");
+
+        assert_eq!(first_result, json!({ "workerRuntimeId": 1 }));
+        assert_eq!(second_result, json!({ "workerRuntimeId": 1 }));
+        assert_eq!(test_state.worker_runtime_builds(), 1);
+
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.isolate_pool_misses, 1);
+        assert_eq!(metrics.isolate_pool_hits, 1);
+        assert_eq!(metrics.isolate_pool_replacements, 0);
+    }
+
+    #[tokio::test]
+    async fn cooperative_execution_model_retained_runtime_pool_reuses_locker_runtime() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let before_snapshot_builds = crate::runtime::bootstrap_snapshot_build_count_for_test();
+        let (_bundle_dir, bundle_path) = write_retained_counter_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            runtime_pool_kind: RuntimePoolKind::RetainedJsRuntimePool,
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(ControlledAsyncGetHost::default());
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let first_request = test_request("retained-1");
+        let second_request = test_request("retained-2");
+
+        let first_result = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                bundle.clone(),
+                first_request.clone(),
+                test_context(&first_request, "req-cooperative-retained-1"),
+                None,
+            )
+            .await
+            .expect("first retained cooperative invocation should succeed");
+        let second_result = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy.clone()),
+                bundle,
+                second_request.clone(),
+                test_context(&second_request, "req-cooperative-retained-2"),
+                None,
+            )
+            .await
+            .expect("second retained cooperative invocation should reuse the reset runtime");
+
+        assert_eq!(first_result, json!({ "counter": 1, "id": "retained-1" }));
+        assert_eq!(second_result, json!({ "counter": 1, "id": "retained-2" }));
+
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.isolate_pool_misses, 1);
+        assert_eq!(metrics.isolate_pool_hits, 1);
+        assert_eq!(metrics.isolate_pool_replacements, 0);
+
+        let after_snapshot_builds = crate::runtime::bootstrap_snapshot_build_count_for_test();
+        assert_eq!(
+            after_snapshot_builds, before_snapshot_builds,
+            "retained cooperative Locker pooling should reuse unsnapshotted runtimes instead of building the startup snapshot"
+        );
+        assert!(
+            policy
+                .limits()
+                .reset_capabilities()
+                .user_module_state_per_invocation,
+            "retained cooperative Locker pooling should now advertise fresh user-module state per invocation"
+        );
+    }
+
+    #[test]
+    fn retained_run_to_completion_async_host_batch_survives_repeated_blocking_batches() {
+        let _test_lock = runtime_executor_test_lock().blocking_lock();
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = retained_async_host_batch_policy();
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(DelayedAsyncGetHost::new(Duration::from_millis(1)));
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let total_batches = 32;
+
+        for batch_index in 0..total_batches {
+            run_retained_async_host_batch_round(
+                &executor,
+                &policy,
+                &host,
+                &bundle,
+                batch_index,
+                RuntimeConstructionMode::Unsnapshotted,
+            );
+        }
+
+        let snapshot = policy.metrics_snapshot();
+        let total_invocations = (total_batches * 4) as u64;
+        assert_eq!(snapshot.isolate_pool_misses, 1);
+        assert_eq!(
+            snapshot.isolate_pool_hits,
+            total_invocations.saturating_sub(1)
+        );
+        assert_eq!(
+            snapshot.retained_runtime_main_realm_resets,
+            snapshot.isolate_pool_hits
+        );
+        assert_eq!(
+            snapshot.retained_runtime_bootstrap_replays,
+            snapshot.isolate_pool_hits
+        );
+        assert_eq!(snapshot.retained_runtime_pool_entries, 1);
+        assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
+        assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
+    }
+
+    #[test]
+    fn retained_run_to_completion_async_host_batch_survives_repeated_scenario_rebuilds() {
+        let _test_lock = runtime_executor_test_lock().blocking_lock();
+        let scenarios = stress_env_usize("NEOVEX_RETAINED_ASYNC_SCENARIOS", 24);
+        let measured_batches_per_scenario = stress_env_usize("NEOVEX_RETAINED_ASYNC_BATCHES", 8);
+
+        for scenario_index in 0..scenarios {
+            let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+            let policy = retained_async_host_batch_policy();
+            let executor = RuntimeExecutor::new(policy.clone());
+            let host = Arc::new(DelayedAsyncGetHost::new(Duration::from_millis(1)));
+            let bundle = RuntimeBundle::new(&bundle_path);
+            let base_batch_index = scenario_index * (measured_batches_per_scenario + 1);
+
+            run_retained_async_host_batch_round(
+                &executor,
+                &policy,
+                &host,
+                &bundle,
+                base_batch_index,
+                RuntimeConstructionMode::Unsnapshotted,
+            );
+            for local_batch_index in 0..measured_batches_per_scenario {
+                run_retained_async_host_batch_round(
+                    &executor,
+                    &policy,
+                    &host,
+                    &bundle,
+                    base_batch_index + local_batch_index + 1,
+                    RuntimeConstructionMode::Unsnapshotted,
+                );
+            }
+
+            let snapshot = policy.metrics_snapshot();
+            let total_invocations = ((measured_batches_per_scenario + 1) * 4) as u64;
+            assert_eq!(snapshot.isolate_pool_misses, 1);
+            assert_eq!(
+                snapshot.isolate_pool_hits,
+                total_invocations.saturating_sub(1)
+            );
+            assert_eq!(
+                snapshot.retained_runtime_main_realm_resets,
+                snapshot.isolate_pool_hits
+            );
+            assert_eq!(
+                snapshot.retained_runtime_bootstrap_replays,
+                snapshot.isolate_pool_hits
+            );
+            assert_eq!(snapshot.retained_runtime_pool_entries, 1);
+            assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
+            assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
+        }
+    }
+
+    #[test]
+    #[ignore = "manual repro for snapshot-seeded retained async-host reuse; run with --ignored --nocapture"]
+    fn retained_snapshot_seeded_async_host_batch_repro() {
+        init_runtime_repro_tracing();
+        let _test_lock = runtime_executor_test_lock().blocking_lock();
+        let scenarios = stress_env_usize("NEOVEX_RETAINED_ASYNC_SCENARIOS", 24);
+        let measured_batches_per_scenario = stress_env_usize("NEOVEX_RETAINED_ASYNC_BATCHES", 8);
+
+        for scenario_index in 0..scenarios {
+            let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+            let policy = retained_async_host_batch_policy();
+            let executor = RuntimeExecutor::new(policy.clone());
+            let host = Arc::new(DelayedAsyncGetHost::new(Duration::from_millis(1)));
+            let bundle = RuntimeBundle::new(&bundle_path);
+            let base_batch_index = scenario_index * (measured_batches_per_scenario + 1);
+
+            run_retained_async_host_batch_round(
+                &executor,
+                &policy,
+                &host,
+                &bundle,
+                base_batch_index,
+                RuntimeConstructionMode::StartupSnapshot,
+            );
+            for local_batch_index in 0..measured_batches_per_scenario {
+                run_retained_async_host_batch_round(
+                    &executor,
+                    &policy,
+                    &host,
+                    &bundle,
+                    base_batch_index + local_batch_index + 1,
+                    RuntimeConstructionMode::StartupSnapshot,
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cooperative_execution_model_resumes_parked_invocations_after_host_completion() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(ControlledAsyncGetHost::default());
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let request = test_request("slow-1");
+        let parked_task = tokio::spawn({
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&request, "tenant-a", "req-cooperative-parked");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+
+        host.wait_until_started("slow-1").await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if policy.metrics_snapshot().active_isolates == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cooperative invocation should suspend its active isolate while parked");
+        tokio::task::yield_now().await;
+        assert!(
+            !parked_task.is_finished(),
+            "cooperative invocation should remain pending until host work completes"
+        );
+
+        host.release_slow_jobs();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), parked_task)
+                .await
+                .expect("cooperative invocation should resume after host completion")
+                .expect("cooperative parked task should join")
+                .expect("cooperative parked invocation should succeed"),
+            json!({ "id": "slow-1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let host = Arc::new(ControlledAsyncGetHost::default());
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let slow_requests = [
+            ("slow-1", "tenant-a", "req-cooperative-slow-1"),
+            ("slow-2", "tenant-b", "req-cooperative-slow-2"),
+            ("slow-3", "tenant-c", "req-cooperative-slow-3"),
+            ("slow-4", "tenant-d", "req-cooperative-slow-4"),
+        ];
+
+        let tasks = slow_requests.map(|(function_name, tenant_label, request_id)| {
+            let executor = executor.clone();
+            let bundle = bundle.clone();
+            let host = host.clone();
+            let policy = policy.clone();
+            let request = test_request(function_name);
+            let context = test_context_for_tenant(&request, tenant_label, request_id);
+            tokio::spawn(async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        request,
+                        context,
+                        None,
+                    )
+                    .await
+            })
+        });
+
+        for (function_name, _, _) in slow_requests {
+            host.wait_until_started(function_name).await;
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let metrics = policy.metrics_snapshot();
+                if metrics.active_isolates == 0 && host.started_ids().len() >= slow_requests.len() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("all cooperative invocations should park and release the worker isolate");
+
+        host.release_slow_jobs();
+
+        for (task, (function_name, _, _)) in tasks.into_iter().zip(slow_requests) {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), task)
+                    .await
+                    .expect("cooperative parked invocation should resume after host completion")
+                    .expect("cooperative parked task should join")
+                    .expect("cooperative parked invocation should succeed"),
+                json!({ "id": function_name })
+            );
+        }
+
+        let metrics = policy.metrics_snapshot();
+        assert_eq!(metrics.isolate_pool_misses, 1);
+        assert_eq!(metrics.isolate_pool_hits, 3);
+        assert_eq!(metrics.isolate_pool_replacements, 0);
+        assert_eq!(metrics.retained_runtime_pool_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn worker_router_prefers_tenant_affinity_for_warm_worker_reuse() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            max_concurrent_isolates: 2,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(WorkerRuntimeIdHost {
+            test_state: test_state.clone(),
+        });
+        let request = test_request("messages:list");
+
+        let tenant_a_first = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-affinity-a-1"),
+                None,
+            )
+            .await
+            .expect("tenant-a invocation should succeed");
+        let tenant_b_first = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-b", "req-affinity-b-1"),
+                None,
+            )
+            .await
+            .expect("tenant-b invocation should succeed");
+        let tenant_b_second = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-b", "req-affinity-b-2"),
+                None,
+            )
+            .await
+            .expect("second tenant-b invocation should succeed");
+
+        let tenant_a_worker = worker_runtime_id(&tenant_a_first);
+        let tenant_b_worker = worker_runtime_id(&tenant_b_first);
+        let tenant_b_second_worker = worker_runtime_id(&tenant_b_second);
+
+        assert_ne!(
+            tenant_a_worker, tenant_b_worker,
+            "initial tie-broken routing should spread different tenants across workers"
+        );
+        assert_eq!(
+            tenant_b_second_worker, tenant_b_worker,
+            "tenant affinity should keep follow-up work on the warmed worker"
+        );
+
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.worker_dispatched_invocations, 3);
+        assert_eq!(metrics.worker_affinity_routed_invocations, 1);
+        assert_eq!(metrics.worker_least_loaded_routed_invocations, 2);
+    }
+
+    #[tokio::test]
+    async fn worker_router_uses_least_loaded_fallback_when_affinity_is_absent() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            max_concurrent_isolates: 2,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(ControlledAsyncWorkerRuntimeIdHost::new(test_state));
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let slow_request = test_request("slow-1");
+        let slow_task = tokio::spawn({
+            let executor = executor.clone();
+            let host = host.clone();
+            let bundle = bundle.clone();
+            let policy = policy.clone();
+            let context = test_context_for_tenant(&slow_request, "tenant-a", "req-router-slow");
+            async move {
+                executor
+                    .invoke_on_worker(
+                        NeovexRuntime::with_policy(host, policy),
+                        bundle,
+                        slow_request,
+                        context,
+                        None,
+                    )
+                    .await
+            }
+        });
+
+        host.wait_until_started("slow-1").await;
+        let slow_worker = host
+            .started_runtime_id("slow-1")
+            .expect("slow invocation should record a worker runtime id");
+
+        let fast_request = test_request("fast-1");
+        let fast_result = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy),
+                bundle,
+                fast_request.clone(),
+                test_context_for_tenant(&fast_request, "tenant-b", "req-router-fast"),
+                None,
+            )
+            .await
+            .expect("fast invocation should succeed");
+
+        assert_ne!(
+            worker_runtime_id(&fast_result),
+            slow_worker,
+            "a tenant without affinity should fall back to the least-loaded worker"
+        );
+
+        host.release_slow_jobs();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), slow_task)
+                .await
+                .expect("slow invocation should complete after host release")
+                .expect("slow invocation task should join")
+                .expect("slow invocation should succeed")
+                .get("workerRuntimeId")
+                .and_then(Value::as_u64)
+                .map(|id| id as usize)
+                .expect("slow result should include a workerRuntimeId"),
+            slow_worker,
+            "slow invocation should resume and finish on its original worker"
+        );
+
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.worker_dispatched_invocations, 2);
+        assert_eq!(metrics.worker_affinity_routed_invocations, 0);
+        assert_eq!(metrics.worker_least_loaded_routed_invocations, 2);
+    }
+
+    #[tokio::test]
+    async fn worker_router_can_affinitize_by_function() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            routing_affinity: crate::limits::RuntimeRoutingAffinity::Function,
+            max_concurrent_isolates: 2,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(WorkerRuntimeIdHost {
+            test_state: test_state.clone(),
+        });
+
+        let first_request = test_request("messages:list");
+        let second_request = test_request("messages:get");
+
+        let function_a_first = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                first_request.clone(),
+                test_context_for_tenant(&first_request, "tenant-a", "req-function-a-1"),
+                None,
+            )
+            .await
+            .expect("first function-affinitized invocation should succeed");
+        let function_b_first = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                second_request.clone(),
+                test_context_for_tenant(&second_request, "tenant-a", "req-function-b-1"),
+                None,
+            )
+            .await
+            .expect("second function-affinitized invocation should succeed");
+        let function_b_second = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy),
+                RuntimeBundle::new(&bundle_path),
+                second_request.clone(),
+                test_context_for_tenant(&second_request, "tenant-a", "req-function-b-2"),
+                None,
+            )
+            .await
+            .expect("repeated function-affinitized invocation should succeed");
+
+        let function_a_worker = worker_runtime_id(&function_a_first);
+        let function_b_worker = worker_runtime_id(&function_b_first);
+        let function_b_second_worker = worker_runtime_id(&function_b_second);
+
+        assert_ne!(
+            function_a_worker, function_b_worker,
+            "different functions within one tenant should not share function affinity"
+        );
+        assert_eq!(
+            function_b_second_worker, function_b_worker,
+            "matching tenant+function should route back to the warmed worker"
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_router_can_affinitize_by_script_identity() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir_a, bundle_path_a) = write_runtime_id_bundle();
+        let (_bundle_dir_b, bundle_path_b) = write_runtime_id_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            routing_affinity: crate::limits::RuntimeRoutingAffinity::Script,
+            max_concurrent_isolates: 2,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(WorkerRuntimeIdHost {
+            test_state: test_state.clone(),
+        });
+        let request = test_request("messages:list");
+
+        let script_a_first = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path_a),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-script-a-1"),
+                None,
+            )
+            .await
+            .expect("first script-affinitized invocation should succeed");
+        let script_b_first = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path_b),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-script-b-1"),
+                None,
+            )
+            .await
+            .expect("second script-affinitized invocation should succeed");
+        let script_b_second = executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy),
+                RuntimeBundle::new(&bundle_path_b),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-script-b-2"),
+                None,
+            )
+            .await
+            .expect("repeated script-affinitized invocation should succeed");
+
+        let script_a_worker = worker_runtime_id(&script_a_first);
+        let script_b_worker = worker_runtime_id(&script_b_first);
+        let script_b_second_worker = worker_runtime_id(&script_b_second);
+
+        assert_ne!(
+            script_a_worker, script_b_worker,
+            "different bundle identities should not share script affinity"
+        );
+        assert_eq!(
+            script_b_second_worker, script_b_worker,
+            "matching bundle identity should route back to the warmed worker"
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_router_can_disable_affinity() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            routing_affinity: crate::limits::RuntimeRoutingAffinity::None,
+            max_concurrent_isolates: 2,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(WorkerRuntimeIdHost {
+            test_state: test_state.clone(),
+        });
+        let request = test_request("messages:list");
+
+        executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-no-affinity-1"),
+                None,
+            )
+            .await
+            .expect("first no-affinity invocation should succeed");
+        executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-no-affinity-2"),
+                None,
+            )
+            .await
+            .expect("second no-affinity invocation should succeed");
+
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.worker_affinity_routed_invocations, 0);
+        assert_eq!(metrics.worker_least_loaded_routed_invocations, 2);
+        assert_eq!(metrics.worker_affinity_cache_entries, 0);
+        assert_eq!(metrics.worker_affinity_cache_evictions, 0);
+    }
+
+    #[tokio::test]
+    async fn worker_router_bounds_affinity_cache_and_records_evictions() {
+        let _test_lock = runtime_executor_test_lock().lock().await;
+        let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            routing_affinity: crate::limits::RuntimeRoutingAffinity::Tenant,
+            routing_affinity_max_entries: 1,
+            max_concurrent_isolates: 2,
+            worker_threads: 2,
+            ..RuntimeLimits::default()
+        }));
+        let executor = RuntimeExecutor::new(policy.clone());
+        let test_state = executor.test_state();
+        let host = Arc::new(WorkerRuntimeIdHost {
+            test_state: test_state.clone(),
+        });
+        let request = test_request("messages:list");
+
+        executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-affinity-cap-a-1"),
+                None,
+            )
+            .await
+            .expect("first bounded-affinity invocation should succeed");
+        executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host.clone(), policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-b", "req-affinity-cap-b-1"),
+                None,
+            )
+            .await
+            .expect("second bounded-affinity invocation should succeed");
+        executor
+            .invoke_on_worker(
+                NeovexRuntime::with_policy(host, policy.clone()),
+                RuntimeBundle::new(&bundle_path),
+                request.clone(),
+                test_context_for_tenant(&request, "tenant-a", "req-affinity-cap-a-2"),
+                None,
+            )
+            .await
+            .expect("third bounded-affinity invocation should succeed");
+
+        let metrics = executor.policy().metrics_snapshot();
+        assert_eq!(metrics.worker_affinity_routed_invocations, 0);
+        assert_eq!(metrics.worker_least_loaded_routed_invocations, 3);
+        assert_eq!(metrics.worker_affinity_cache_entries, 1);
+        assert_eq!(metrics.worker_affinity_cache_evictions, 2);
     }
 
     #[test]

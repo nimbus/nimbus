@@ -207,10 +207,10 @@ file links (links go stale; symbol search does not).
 - `index/` — Composition root for storage indexing ownership. `encoding.rs`
   owns order-preserving scalar and tuple encoding, `keyspace.rs` owns index
   key construction and prefix layout, `bounds.rs` owns composite range-bound
-  synthesis, `scan.rs` owns exact/prefix/range scan execution plus
-  `TenantReadSnapshot` scan convenience methods, and `maintenance.rs` owns
-  transaction-side index maintenance, table index rebuild/clear helpers, and
-  the `TenantStore` write-facing index APIs.
+  synthesis, `scan.rs` is now the read-side composition root over
+  `scan/read.rs`, `exact.rs`, `prefix.rs`, `range.rs`, and `adapters.rs`, and
+  `maintenance.rs` is now the write-side composition root over
+  `maintenance/transaction.rs`, `writes.rs`, and `rebuild.rs`.
 - `schema_store.rs` — Schema persistence. `replace_table_schema` atomically updates schema and rebuilds indexes in one transaction.
 - `scheduler/` — scheduled-work persistence composition root. `jobs.rs` owns
   pending or running job transitions plus the public scheduled-job CRUD
@@ -1211,6 +1211,15 @@ ownership under `demo_flow/seeded_usage/`. `crates/neovex-engine/src/test_suppor
 also now carries the shared engine-only policy, schema, and blocking-fault
 fixtures so concept-owned tests do not need to reach back into the giant root
 test file for reusable setup.
+
+The next test-surface cleanup layer now also moved broad generated-history and
+fault helper clusters out of the remaining mixed roots. Storage seed-oracle and
+recovery-campaign tests now live under `crates/neovex-storage/src/tests/generated_history.rs`,
+the native HTTP documents-and-commits surface now owns generated-history and
+blocking-fault helpers under `core_http/documents_and_commits/`, and the
+top-level Convex demo-flow root now reads as a fixture composition surface over
+`manifest.rs`, `bundle.rs`, `registry.rs`, `helpers.rs`, `scenarios.rs`, and
+`seeded_usage/`.
 
 The first concrete seam layer now lives in `neovex-storage::simulation`.
 `Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test

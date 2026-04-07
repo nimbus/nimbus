@@ -16,9 +16,9 @@ pub use neovex_engine::{
 };
 pub use neovex_runtime::{
     ConvexRuntime, ConvexRuntimeError, HostBridge, HostBridgeFuture, HostCallRequest,
-    InvocationKind, InvocationRequest, NeovexRuntime, NeovexRuntimeError, RuntimeBundle,
-    RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, VerifiedUserIdentity,
-    VerifiedUserIdentityKind,
+    InvocationKind, InvocationRequest, NeovexRuntime, NeovexRuntimeError, RuntimeBackendKind,
+    RuntimeBundle, RuntimeExecutionModel, RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits,
+    RuntimePolicy, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 pub use neovex_server::{
     ConvexRegistry, DEFAULT_LICENSE_PATH, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements,

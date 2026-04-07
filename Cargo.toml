@@ -45,10 +45,19 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 time = "0.3"
+twox-hash = "2"
 ulid = { version = "1", features = ["serde"] }
+v8 = "147.0.0"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# ── Locker fork overrides ────────────────────────────────────────────
+# Keep the public dependency surface aligned with upstream crate versions while
+# selecting the fork implementation immutably at the workspace root.
+[patch.crates-io]
+deno_core = { git = "https://github.com/agentstation/deno_core", tag = "0.395.0-locker.1" }
+v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.0.0-locker.1" }

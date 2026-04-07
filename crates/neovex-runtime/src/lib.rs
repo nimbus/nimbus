@@ -1,3 +1,4 @@
+mod affinity;
 mod backend;
 mod context;
 mod error;
@@ -17,7 +18,10 @@ pub use host::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallCancellationCause,
     HostCallOperation, HostCallRequest,
 };
-pub use limits::{RuntimeLimits, RuntimePolicy};
+pub use limits::{
+    RuntimeBackendKind, RuntimeExecutionModel, RuntimeLimits, RuntimeModuleStateSemantics,
+    RuntimePolicy, RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+};
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,
     RuntimeMetricsSnapshot, RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,

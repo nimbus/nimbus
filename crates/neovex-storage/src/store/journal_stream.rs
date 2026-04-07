@@ -1,6 +1,9 @@
 use neovex_core::{DurableMutationRecord, Error, Result, SequenceNumber};
 use redb::{ReadableTable, TableError};
 
+#[cfg(test)]
+mod tests;
+
 use super::{
     COMMIT_LOG, MaterializedJournalSnapshot, TenantReadSnapshot, TenantStore, map_redb_error,
 };

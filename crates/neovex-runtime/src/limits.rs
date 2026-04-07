@@ -7,8 +7,70 @@ use tokio::sync::Semaphore;
 
 use crate::metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBackendKind {
+    DenoCore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeExecutionModel {
+    RunToCompletion,
+    CooperativeLocker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeRoutingAffinity {
+    None,
+    Tenant,
+    Function,
+    Script,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimePoolKind {
+    /// Reuse the worker-local bootstrap snapshot, then build a fresh JsRuntime
+    /// for every invocation.
+    ///
+    /// This preserves the freshest execution boundary and is currently the
+    /// default low-latency mode.
+    StartupSnapshotCache,
+    /// Reuse whole JsRuntime instances on a worker after resetting the main
+    /// realm and replaying bootstrap.
+    ///
+    /// This is currently a specialized opt-in mode for cooperative Locker
+    /// execution. Under the current `fresh_per_invocation` contract it still
+    /// pays main-realm reset, bootstrap replay, and bundle reload costs, so it
+    /// should not be assumed to improve single-request latency.
+    RetainedJsRuntimePool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeModuleStateSemantics {
+    FreshPerInvocation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RuntimeResetCapabilities {
+    pub op_state_per_invocation: bool,
+    pub bootstrap_state_per_invocation: bool,
+    pub user_module_state_per_invocation: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeLimits {
+    pub backend_kind: RuntimeBackendKind,
+    pub execution_model: RuntimeExecutionModel,
+    pub runtime_pool_kind: RuntimePoolKind,
+    pub routing_affinity: RuntimeRoutingAffinity,
+    pub routing_affinity_max_entries: usize,
+    pub max_retained_runtimes_per_worker: usize,
+    pub max_retained_runtimes_per_affinity_key_per_worker: usize,
+    pub max_retained_runtime_reuses: usize,
     pub max_heap_mb: usize,
     pub initial_heap_mb: usize,
     pub execution_timeout: Duration,
@@ -21,6 +83,22 @@ pub struct RuntimeLimits {
 }
 
 impl RuntimeLimits {
+    pub fn module_state_semantics(&self) -> RuntimeModuleStateSemantics {
+        RuntimeModuleStateSemantics::FreshPerInvocation
+    }
+
+    pub fn reset_capabilities(&self) -> RuntimeResetCapabilities {
+        let user_module_state_per_invocation = matches!(
+            self.runtime_pool_kind,
+            RuntimePoolKind::RetainedJsRuntimePool
+        );
+        RuntimeResetCapabilities {
+            op_state_per_invocation: true,
+            bootstrap_state_per_invocation: true,
+            user_module_state_per_invocation,
+        }
+    }
+
     pub fn normalized(&self) -> Self {
         let max_concurrent_isolates = self.max_concurrent_isolates.max(1);
         let worker_threads = self.worker_threads.max(max_concurrent_isolates).max(1);
@@ -35,6 +113,16 @@ impl RuntimeLimits {
             .max(max_active_top_level_invocations_per_tenant)
             .min(worker_threads);
         Self {
+            backend_kind: self.backend_kind,
+            execution_model: self.execution_model,
+            runtime_pool_kind: self.runtime_pool_kind,
+            routing_affinity: self.routing_affinity,
+            routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
+            max_retained_runtimes_per_worker: self.max_retained_runtimes_per_worker.max(1),
+            max_retained_runtimes_per_affinity_key_per_worker: self
+                .max_retained_runtimes_per_affinity_key_per_worker
+                .max(1),
+            max_retained_runtime_reuses: self.max_retained_runtime_reuses.max(1),
             max_heap_mb,
             initial_heap_mb,
             execution_timeout: self.execution_timeout,
@@ -62,7 +150,16 @@ impl Default for RuntimeLimits {
                 .saturating_mul(2)
                 .min(worker_threads)
                 .max(max_active_top_level_invocations_per_tenant);
+        let routing_affinity_max_entries = worker_threads.saturating_mul(256).max(1024);
         Self {
+            backend_kind: RuntimeBackendKind::DenoCore,
+            execution_model: RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+            routing_affinity: RuntimeRoutingAffinity::Tenant,
+            routing_affinity_max_entries,
+            max_retained_runtimes_per_worker: 4,
+            max_retained_runtimes_per_affinity_key_per_worker: 1,
+            max_retained_runtime_reuses: 1000,
             max_heap_mb: 128,
             initial_heap_mb: 8,
             execution_timeout: Duration::from_secs(30),
