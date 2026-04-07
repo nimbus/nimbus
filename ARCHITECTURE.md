@@ -366,10 +366,19 @@ file links (links go stale; symbol search does not).
 - `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
 - `runtime/bootstrap/mod.rs` — thin bootstrap composition root that wires the runtime bootstrap module tree together.
 - `runtime/bootstrap/payloads.rs` — host-call payload schemas plus the runtime host-call envelope used by the bootstrap op surface.
-- `runtime/bootstrap/ops.rs` — op registration, op handlers, and shared sync or async host-call glue for bootstrap-owned runtime host operations.
+- `runtime/bootstrap/ops.rs` — thin bootstrap op composition root. It now keeps
+  the extension registration surface while delegating sync query-builder ops to
+  `ops/sync_query_builder.rs`, async query and terminal ops to
+  `ops/async_query.rs`, mutation/action/scheduler plus write-effect ops to
+  `ops/async_effects.rs`, nested runtime ops to `ops/nested_runtime.rs`, and
+  shared sync/async host-call permit glue to `ops/shared.rs`.
 - `runtime/bootstrap/source.rs` — bootstrap JavaScript source and the installation/finalization helpers that load it into a `JsRuntime`.
 - `runtime/bootstrap/state.rs` — installation of host bridge, cancellation state, and shared permit state into `OpState`, plus runtime timeout-controller ownership.
-- `runtime/bootstrap/snapshot.rs` — startup snapshot creation, snapshot-build test accounting, and worker isolate-pool ownership.
+- `runtime/bootstrap/snapshot.rs` — thin composition root for startup-snapshot
+  ownership. `snapshot/startup.rs` owns construction vocabulary, startup
+  snapshot creation, and snapshot-build test accounting, while
+  `snapshot/retained_pool.rs` owns retained-runtime entry state, affinity-aware
+  reuse, and pool-bounds enforcement.
 - `executor.rs` — `RuntimeExecutor`: the executor composition root and inline
   executor regression surface. `executor/facade.rs` owns the public executor
   type, worker-thread startup and shutdown, and executor test-state scaffolds;
@@ -377,7 +386,11 @@ file links (links go stale; symbol search does not).
   entrypoints; and the remaining executor concerns still route through
   `executor/queue.rs`, `executor/admission.rs`, and `executor/lifecycle.rs`.
 - `executor/queue.rs` — runtime worker job envelopes, result channels, queue dispatch plumbing, and executor shutdown state.
-- `executor/admission.rs` — tenant admission accounting, dispatch handles, shared JS permit state, and the active versus parked versus queued fairness model.
+- `executor/admission.rs` — thin executor-admission composition root.
+  `admission/dispatch.rs` owns dispatch-handle lifecycle, `admission/permit.rs`
+  owns shared permit state plus async host-call suspend/resume behavior, and
+  `admission/tenant_fairness.rs` owns queued-tenant bookkeeping and the active
+  versus parked versus queued fairness model.
 - `executor/lifecycle.rs` — the canonical invocation lifecycle shared by the direct executor path and the worker-loop path: queue admission, execution metrics, cancellation and timeout accounting, debug logging, and permit completion.
 - `worker_loop/mod.rs` — `WorkerLoopFactory`, `WorkerLoop`, and execution-model routing for runtime workers.
 - `worker_loop/cooperative.rs` — composition root for the cooperative worker loop. It now keeps factory construction plus shared worker state in one place while delegating admission and completion flow to `cooperative/execution.rs`, slot-state and parked/runnable scheduling to `cooperative/scheduler.rs`, retained-runtime plus deferred-drop ownership to `cooperative/retention.rs`, and the main worker run/shutdown loop to `cooperative/run.rs`.
