@@ -13,7 +13,9 @@ pub(crate) trait WorkerLoopFactory: Send + Sync + 'static {
     fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop>;
 }
 
-pub(crate) trait WorkerLoop: Send + 'static {
+/// Worker loops are created inside their worker thread and may therefore own
+/// thread-affine runtime state such as `JsRuntime`.
+pub(crate) trait WorkerLoop: 'static {
     fn run(&mut self, queue: Arc<dyn RuntimeWorkerQueue>, shutdown: RuntimeWorkerShutdown);
 }
 
@@ -102,7 +104,7 @@ impl RunToCompletionWorkerLoop {
 impl WorkerLoop for RunToCompletionWorkerLoop {
     fn run(&mut self, queue: Arc<dyn RuntimeWorkerQueue>, shutdown: RuntimeWorkerShutdown) {
         while !shutdown.is_cancelled() {
-            let Some(job) = queue.recv_blocking() else {
+            let Some(job) = queue.try_recv().or_else(|| queue.recv_blocking()) else {
                 break;
             };
             let cancellation_for_metrics = job.cancellation.clone();

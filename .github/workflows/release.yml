@@ -34,11 +34,6 @@ jobs:
             os: linux
             arch: arm64
             archive: tar.gz
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-            os: darwin
-            arch: x86_64
-            archive: tar.gz
           - target: aarch64-apple-darwin
             runner: macos-14
             os: darwin

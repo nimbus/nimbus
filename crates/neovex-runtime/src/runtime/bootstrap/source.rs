@@ -423,7 +423,14 @@ Object.freeze(globalThis.__neovexAsyncHostValue);
 Object.freeze(globalThis.__neovexCreateContext);
 "#;
 
+// Keep Deno cleanup out of BOOTSTRAP_SOURCE. That source is executed during
+// startup-snapshot creation, and moving `delete globalThis.Deno` into it has
+// already regressed snapshot-backed Locker runtime startup in the repaired
+// deno_core fork. The cleanup must remain a separate post-bootstrap step until
+// the fork exposes an explicit snapshot-safe alternative.
 const POST_BOOTSTRAP_SOURCE: &str = "delete globalThis.Deno;";
+
+const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str = "__neovexNextSessionId = 1;";
 
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     runtime
@@ -433,8 +440,21 @@ pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
 }
 
 pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
+    // This stays as an intentional second step instead of being folded into
+    // install_bootstrap(), because the snapshot path also executes
+    // BOOTSTRAP_SOURCE during snapshot creation.
     runtime
         .execute_script("<neovex-runtime:bootstrap:finalize>", POST_BOOTSTRAP_SOURCE)
+        .map_err(|error| NeovexRuntimeError::JavaScript(error.to_string()))?;
+    Ok(())
+}
+
+pub(crate) fn reset_bootstrap_invocation_state(runtime: &mut JsRuntime) -> Result<()> {
+    runtime
+        .execute_script(
+            "<neovex-runtime:bootstrap:reset>",
+            RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE,
+        )
         .map_err(|error| NeovexRuntimeError::JavaScript(error.to_string()))?;
     Ok(())
 }

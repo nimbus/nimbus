@@ -46,4 +46,7 @@ wildcards = "allow"
 [sources]
 unknown-git = "deny"
 unknown-registry = "deny"
-allow-git = []
+allow-git = [
+  "https://github.com/agentstation/deno_core",
+  "https://github.com/agentstation/rusty_v8",
+]

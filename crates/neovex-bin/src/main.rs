@@ -95,13 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         execution_timeout: Duration::from_secs(cli.runtime_timeout_secs),
         max_concurrent_isolates: cli.runtime_max_isolates,
         worker_threads: cli.runtime_worker_threads,
-        max_active_top_level_invocations_per_tenant: RuntimeLimits::default()
-            .max_active_top_level_invocations_per_tenant,
-        max_in_flight_top_level_invocations_per_tenant: RuntimeLimits::default()
-            .max_in_flight_top_level_invocations_per_tenant,
-        max_queued_top_level_invocations_per_tenant: RuntimeLimits::default()
-            .max_queued_top_level_invocations_per_tenant,
         max_nested_runtime_invocations: cli.runtime_max_nested_calls,
+        ..RuntimeLimits::default()
     };
     let license_state = LicenseState::load(cli.license_file.as_deref())?;
     let license_snapshot = license_state.snapshot();
