@@ -30,6 +30,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -37,6 +46,8 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -60,11 +71,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
 
       - name: Run PR verification harness corpus
         run: bash scripts/verification-harness.sh pr ${{ matrix.surface }}
@@ -82,11 +104,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
 
       - name: Run nightly verification harness corpus
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
@@ -99,11 +132,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
@@ -144,11 +188,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov

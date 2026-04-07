@@ -56,6 +56,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        shell: bash
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -63,6 +73,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
+          cache-on-failure: "true"
 
       - name: Build release binary
         run: cargo build --release -p neovex-bin
