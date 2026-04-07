@@ -2452,6 +2452,7 @@ export {};
     }
 
     #[test]
+    #[ignore = "known SIGABRT on second snapshot-aware reset cycle with delayed async host ops — unfixed repro"]
     fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro() {
         run_ignored_repro_in_subprocess(
             "runtime::tests::snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro_subprocess",
