@@ -1,7 +1,31 @@
 use super::*;
 
-#[tokio::test]
-async fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion() {
+// Cooperative locker tests create V8 isolates with `use_locker: true`.
+// V8's internal state tracking is corrupted when locker-enabled and
+// non-locker isolates coexist in the same process and are torn down
+// at exit. Run each cooperative test in a subprocess to isolate its
+// V8 platform state from the rest of the suite.
+
+#[test]
+fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion() {
+    run_ignored_repro_in_subprocess(
+        "runtime::tests::cooperative::runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_subprocess",
+    );
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate V8 locker state"]
+fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(
+            runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_inner(),
+        );
+}
+
+async fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_inner() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -144,8 +168,26 @@ export {};
     watchdog.shutdown();
 }
 
-#[tokio::test]
-async fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking() {
+#[test]
+fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking() {
+    run_ignored_repro_in_subprocess(
+        "runtime::tests::cooperative::runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_subprocess",
+    );
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate V8 locker state"]
+fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_subprocess()
+{
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_inner());
+}
+
+async fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_inner()
+{
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(

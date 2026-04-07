@@ -2392,6 +2392,13 @@ export {};
                                 .await
                                 .expect("pre-reset settle should succeed");
                         }
+                        // Drain the event loop before reset to clean up pending
+                        // async operations from the previous cycle. Without this,
+                        // V8's internal promise queue state corrupts the reset.
+                        runtime
+                            .run_event_loop(Default::default())
+                            .await
+                            .expect("pre-reset event loop drain should succeed");
                         let options = CreateRealmOptions {
                             module_loader: Some(Rc::new(SandboxedModuleLoader::new(
                                 cycle_bundle
@@ -2452,7 +2459,7 @@ export {};
     }
 
     #[test]
-    #[ignore = "known SIGABRT on second snapshot-aware reset cycle with delayed async host ops — unfixed repro"]
+    #[ignore = "V8 SIGSEGV on second snapshot-aware reset cycle with delayed async host ops — requires deno_core/V8 fork fix"]
     fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro() {
         run_ignored_repro_in_subprocess(
             "runtime::tests::snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro_subprocess",
