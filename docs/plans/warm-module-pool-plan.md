@@ -19,6 +19,13 @@ fallback if a fundamental `deno_core` limitation blocks this approach.
   (`docs/plans/v8-locker-fork-plan.md`) completes Phase 5 and the retained
   pool path (`RetainedJsRuntimePool`) is proven green with `reset_main_realm()`
   on the repaired remote fork
+- **Gate status (2026-04-07):** `reset_main_realm()` is now proven green —
+  all 4 previously-crashing 32-cycle snapshot-born reset tests pass 20/20.
+  The root cause was eagerly dropping V8 Global handles during context
+  teardown while V8's NativeContext references were still live. The fix
+  (`destroy_for_reset` skips all V8 handle cleanup, leaks Rc refs) is
+  committed on the `locker-v0.395` branch. This plan is now eligible for
+  promotion once Locker fork Phase 5 completes.
 
 ## How To Use This Plan
 
@@ -455,11 +462,30 @@ warm pool. WM3 needs this surface for the post-handler drain loop.
 ### 3. `JsRuntime::reset_request_state()` (~40-70 lines)
 
 Public entry point. Guards on `is_warm_reuse_safe()` (not `is_pending()`),
-runs a microtask checkpoint, and clears fork-managed per-request/event-loop
-state while preserving evaluated modules and bootstrap/user globals. It does
-not, by itself, define or clear arbitrary embedder-specific `OpState`; warm
-users must separately refresh any additional request-local `OpState` they add
-outside the current Neovex bootstrap contract.
+drains foreground tasks and microtasks, and clears fork-managed
+per-request/event-loop state while preserving evaluated modules and
+bootstrap/user globals. It does not, by itself, define or clear arbitrary
+embedder-specific `OpState`; warm users must separately refresh any
+additional request-local `OpState` they add outside the current Neovex
+bootstrap contract.
+
+**Important operational requirements** (learned from the `reset_main_realm`
+investigation, 2026-04-07):
+
+- **Foreground task drain.** V8 background threads (TurboFan, code cache,
+  GC finalization) enqueue foreground tasks during async op yields. These
+  must be drained (from `foreground_tasks` queue) before the microtask
+  checkpoint, within a ContextScope for the current context. Running V8
+  foreground tasks without an active ContextScope is undefined behavior.
+- **TryCatch for microtask checkpoint.** On snapshot-born contexts,
+  `perform_microtask_checkpoint()` must be called within a TryCatch scope.
+  Without TryCatch, V8's internal exception state from deserialized promise
+  reactions can corrupt the isolate. This applies to both `reset_main_realm`
+  and `reset_request_state`.
+- **Drain loop.** A single drain pass is insufficient — foreground tasks
+  may enqueue microtasks, and microtasks may trigger background work that
+  enqueues more foreground tasks. Loop until both queues are empty (bounded
+  to prevent infinite loops).
 
 ### 4. `ExceptionState::clear_request_state()` (~10 lines)
 
@@ -594,8 +620,14 @@ implementation:
    the runtime if quiescence cannot be reached.
 2. **Stale ctx objects must throw on use.** The generation guard prevents any
    host call through a ctx captured in a prior invocation.
-3. **Microtask checkpoint before clearing exception state.** V8 microtasks
-   are isolate-level under `Explicit` policy. Must drain before warm reset.
+3. **Foreground task drain + microtask checkpoint before clearing state.**
+   V8 background threads enqueue foreground tasks during async op yields;
+   V8 microtasks are isolate-level under `Explicit` policy. Both must be
+   drained in a loop (within a ContextScope + TryCatch) before warm reset.
+   The TryCatch is required because `perform_microtask_checkpoint` on
+   snapshot-born contexts can encounter V8 exception state from deserialized
+   promise reactions — without TryCatch, V8's exception propagation corrupts
+   isolate state. (Confirmed 2026-04-07 during `reset_main_realm` investigation.)
 4. **`unrefed_ops` must be cleared on warm reset.** Stale op IDs cause
    incorrect `EventLoopPendingState` calculations.
 5. **Module re-loading is already idempotent.** `load_main_es_module()` on
@@ -618,8 +650,13 @@ implementation:
    `RuntimeCancellationState` and `SharedInvocationPermit` per invocation, and
    does not otherwise rely on `resource_table`, `gotham_state`, or
    `unrefed_resources` for request-local Neovex runtime state.
-10. **No `v8::Weak` references exist in deno_core.** Eliminates an entire
-   class of warm-persistence bugs (weak callback timing, phantom resurrection).
+10. **No user-facing `v8::Weak` references exist in deno_core.** Eliminates
+   an entire class of warm-persistence bugs (weak callback timing, phantom
+   resurrection). Note: rusty_v8's internal `ContextAnnex` creates a
+   `Weak<Context>` with a guaranteed finalizer for each context, but this is
+   transparent to deno_core and does not affect warm-pool semantics since the
+   warm pool keeps contexts alive (the Weak is only relevant during context
+   destruction in the `reset_main_realm` path).
 11. **Bundle identity match is required for warm hits.** Entrypoint path +
    SHA-256 hash must match. Integrity verification must run before reuse.
 12. **Module-level side effects persist by contract.** Top-level `let counter
@@ -666,7 +703,16 @@ implementation. Violating them silently degrades warm-pool safety.
    `resource_table`, `gotham_state`, or `unrefed_resources`, warm reuse must
    either clear that state explicitly or reject reuse.
 
-4. **Warm-pool feasibility is design-validated, not production-proven.** The
+4. **V8 Global handles must not be eagerly dropped during context teardown.**
+   The `reset_main_realm` investigation (2026-04-07) proved that calling
+   `v8__Global__Reset` on handles from an old context while V8 internally
+   still references the NativeContext causes nondeterministic SIGSEGV. The
+   warm pool avoids this entirely by keeping contexts alive — this is not
+   just a performance advantage but a correctness advantage over
+   `reset_main_realm`. If warm pool entries are evicted/retired, they must
+   go through `destroy()` (isolate disposal path), not `destroy_for_reset()`.
+
+5. **Warm-pool feasibility is design-validated, not production-proven.** The
    six-agent audit and two review rounds confirmed the approach is architecturally
    sound. The real proof depends on WM1 fork validation (does `reset_request_state()`
    actually work on the live fork?) and WM5 benchmarks (does the latency
@@ -686,7 +732,9 @@ implementation. Violating them silently degrades warm-pool safety.
 | Future request-local Neovex state added to generic `OpState` | MEDIUM | Maintenance invariant #3; if runtime ops begin using `resource_table`, `gotham_state`, `unrefed_resources`, or other request-local `OpState` slots, warm reuse must clear them explicitly or reject reuse |
 | Op driver residual state at quiescence | LOW | Existing `test_driver_yield` already exercises repeated submit/drain/reuse on the same driver; keep `shutdown()` teardown-only in the warm path, rely on quiescent reuse, and add targeted `clear_residual(&self)` only if WM1 testing discovers stale state |
 | Hidden per-request state survives the first `reset_request_state()` pass | MEDIUM | WM1 negative tests plus repeated warm-cycle validation; discard the runtime on any uncertainty instead of reusing it |
-| V8 microtask queue stale entries on warm reset | MEDIUM | Mandatory `perform_microtask_checkpoint()` before warm reset |
+| V8 microtask queue stale entries on warm reset | MEDIUM | Mandatory foreground task drain + `perform_microtask_checkpoint()` in a drain loop (within ContextScope + TryCatch) before warm reset; TryCatch required on snapshot-born contexts (confirmed 2026-04-07) |
+| V8 foreground tasks from background threads survive between requests | MEDIUM | Drain `foreground_tasks` queue inside a ContextScope before microtask checkpoint; tasks execute with undefined behavior without an active scope (confirmed 2026-04-07) |
+| V8 API call during partial `reset_request_state()` triggers internal GC while request-local state is half-cleared | MEDIUM | Order field clears so V8-touching operations (foreground drain, microtask checkpoint) happen first while state is still consistent; Rust-side field clears (exception state, timer info, unrefed_ops) happen after, when no further V8 calls are needed. WM1 stress test with 32+ warm cycles to expose any ordering sensitivity. |
 | `unrefed_ops` stale entries affecting event loop pending state | MEDIUM | Clear the set during warm reset |
 | `v8::External` closures from `watch_promise` leak on abandoned promises | LOW | GC collects them after context cleanup; heap growth bounded by reuse limit |
 | `task_spawner_factory` internal fields are private | LOW | Add `pub(crate) clear()` method in fork |
@@ -763,3 +811,4 @@ Each phase must demonstrate:
 | 2026-04-06 | meta | revised | Refined the op-driver conclusion after local verification. Confirmed the live `Rc<OpDriverImpl>` topology still rules out replacement from outside the driver, but also confirmed that warm reuse does **not** need an explicit driver reset in the expected path because the live driver is already exercised across repeated submit → drain → submit cycles by `runtime::op_driver::tests::test_driver_yield`. Corrected the earlier overstatement that an aborted driver task would auto-respawn: in the current implementation `shutdown()` is teardown-only and warm reset must not call it because it aborts the task handle without resetting `task_set`. Also kept the earlier `~159` production-line figure and `~1-10μs` fork-overhead figure out of the active control plane because they remain implementation/benchmark estimates rather than locally verified facts. | document review against `futures_unordered_driver.rs` plus focused `cargo test test_driver_yield -- --nocapture` in the live fork worktree | keep quiescent driver reuse as the WM1 assumption; treat `shutdown()` as teardown-only and add a targeted residual-state helper only if WM1 testing exposes a real survivor |
 | 2026-04-06 | meta | revised | Re-reviewed the full plan against the live Neovex bootstrap/runtime surfaces. Resolved the remaining WM2/WM3 inconsistency by removing the stored `handler_fn` / `module_id` warm-hit path from the first implementation and keeping the unchanged `execute_script("globalThis.__neovexInvoke({request_json})")` dispatch contract as the only active plan. Also tightened the fork-reset contract around `OpState`: the current design is valid because Neovex only persists `RuntimeHostState` and refreshes `RuntimeCancellationState` + `SharedInvocationPermit` per invocation, but future request-local `OpState` usage (`resource_table`, `gotham_state`, `unrefed_resources`, or other generic slots) must either be explicitly cleared or make the runtime ineligible for warm reuse. | document review against `warm-module-pool-plan.md`, `runtime/bootstrap/state.rs`, `runtime/bootstrap/ops.rs`, and live fork `ops.rs` | keep first implementation on the unchanged `__neovexInvoke` ABI; treat additional request-local `OpState` as an explicit maintenance gate for warm reuse |
 | 2026-04-06 | meta | revised | Verified WM1 fork changes against the live `0.395.0-locker.1` Locker fork surface. The warm pool is `CooperativeLocker`-only, so warm runtimes use `use_locker: true` — `ensure_v8_lock_held()` is NOT a no-op on this path. Added fork lineage section documenting that WM1 is applied to `0.395.0-locker.1` (or Phase 5 successor) to produce a new `0.395.0-locker.2` tag instead of repairing `0.395.0-locker.1` again. `reset_request_state(&mut self)` must ensure the V8 lock is held before any V8 access, with an explicit top-of-method `ensure_v8_lock_held()` as the clearest pattern. `is_warm_reuse_safe(&mut self)` also needs `&mut self` on the Locker path, but the requirement is outcome-based: it must keep the lock held before scope creation / V8-backed state reads, whether that happens via an explicit `ensure_v8_lock_held()` call or via helpers like `scope!`, `v8_isolate()`, and `v8_isolate_ptr()` that already perform the same check. WM1 verification contract now requires all negative tests to pass with `use_locker: true`, not just the standard path. | audit of `ensure_v8_lock_held()` at `jsruntime.rs:713`, `ManagedIsolate::Lockable` lock path at `managed_isolate.rs:132-137`, `reset_main_realm()` Locker pattern at `jsruntime.rs:1564-1566`, `scope!` macro at `jsruntime.rs:670-678`, `v8_isolate()` / `v8_isolate_ptr()` lock checks at `jsruntime.rs:1644-1651`, `EventLoopPendingState::new_from_scope()` scope requirement at `jsruntime.rs:3123-3127`, and cooperative runtime startup using `use_locker: true` at `runtime.rs:507` | WM1 implementation must test on the Locker path; fork tag versioning is explicit |
+| 2026-04-07 | meta | revised | Updated plan with findings from the `reset_main_realm` root cause investigation. The true root cause of the nondeterministic SIGSEGV was eagerly dropping V8 Global handles (via `v8__Global__Reset`) during context teardown while V8 internally still references the old context's NativeContext through compiled code, feedback vectors, and microtask queue metadata. The fix: `destroy_for_reset()` skips all V8 handle cleanup and intentionally leaks ContextState/ModuleMap Rc refs from embedder slots, keeping Global handles alive until V8's GC collects the old context. All 4 previously-crashing 32-cycle tests now pass 20/20. Plan updates: (1) Activation gate dependency is now satisfied. (2) WM1 `reset_request_state()` must drain foreground tasks (within ContextScope) before microtask checkpoint, use TryCatch for the checkpoint, and loop until both queues are empty. (3) Invariant #3 expanded to include foreground drain and TryCatch requirements. (4) Invariant #10 refined: rusty_v8's ContextAnnex creates internal `Weak<Context>` handles, but these don't affect warm-pool semantics since contexts are kept alive. (5) New maintenance invariant #4: V8 Global handles must not be eagerly dropped during context teardown. (6) New known risk: V8 foreground tasks from background threads must be drained between requests. The warm pool's design decision to avoid context destruction is now validated as both a performance and correctness advantage over the `reset_main_realm` path. | 20/20 test pass confirmation across all 4 snapshot-born 32-cycle tests; heap stats analysis showing ~500KB/cycle leak without GC (stable with GC); separate-runtime control experiment proving same-isolate reset is the trigger | activation gate met; plan eligible for promotion after Locker Phase 5 |
