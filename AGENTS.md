@@ -33,6 +33,8 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active or deferred execution plan
+- For active SQLite storage migration work, go from `docs/plans/README.md` to
+  `docs/plans/pluggable-storage-backend-plan.md`.
 - For cleanup or refactor work, go from `docs/plans/README.md` to the owning
   active plan instead of assuming an archived cleanup pass is still live.
 - For future admission-control work, go from `docs/plans/README.md` to
@@ -43,13 +45,16 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
+- For the active SQLite storage migration workstream, use
+  `docs/plans/pluggable-storage-backend-plan.md` as the durable control plane.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly
   asks for historical review or follow-up on a completed workstream.
 - If archived work needs a new execution pass, create or promote a new active
   plan instead of treating the archived plan as live progress state.
 - For future layered admission work, use
   `docs/plans/layered-admission-control-plan.md`.
-- For any active cleanup control plane, reread `Cleanup Invariants`,
+- For any active control plan, reread the plan's invariants section
+  (`Cleanup Invariants`, `Migration Invariants`, or equivalent),
   `Current Assessed State`, `Current Review Findings`,
   `Feature Preservation Matrix`, `Control Plane Rules`,
   `Verification Contract`, `Roadmap Status Ledger`,
@@ -72,7 +77,7 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 | `neovex-engine` | `crates/neovex-engine/` | Central coordinator (`Service`) |
 | `neovex-runtime` | `crates/neovex-runtime/` | V8 execution (zero workspace deps) |
 | `neovex-server` | `crates/neovex-server/` | HTTP/WebSocket transport |
-| `neovex-storage` | `crates/neovex-storage/` | Persistence layer (redb) |
+| `neovex-storage` | `crates/neovex-storage/` | Persistence layer |
 | `neovex-testing` | `crates/neovex-testing/` | Shared test fixtures and deterministic harness helpers |
 | `neovex` (JS SDK) | `packages/neovex/` | Neovex-native JavaScript SDK |
 | `convex` (JS compat) | `packages/convex/` | Convex compatibility package |
@@ -93,7 +98,9 @@ Every mutation — HTTP, WebSocket, scheduler, or V8 runtime — flows through `
 
 ### Storage atomicity
 
-Document write + index update + commit log append are a single redb transaction. Never commit a document without its index entries. Never append a commit without the document write.
+Document write, supporting index effects, and commit log append must remain a
+single storage transaction. Never commit a document without its index entries.
+Never append a commit without the document write.
 
 ### Runtime bundles
 
