@@ -85,7 +85,7 @@ mod tests {
     use super::*;
     use crate::host::{HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest};
 
-    fn init_runtime_repro_tracing() {
+    fn init_test_tracing() {
         static TRACING_INIT: OnceLock<()> = OnceLock::new();
         TRACING_INIT.get_or_init(|| {
             let _ = tracing_subscriber::fmt()
@@ -103,20 +103,6 @@ mod tests {
             .unwrap_or(default)
     }
 
-    fn run_ignored_repro_in_subprocess(test_name: &str) {
-        let status = std::process::Command::new(
-            std::env::current_exe().expect("current test binary path should resolve"),
-        )
-        .arg("--ignored")
-        .arg("--exact")
-        .arg(test_name)
-        .status()
-        .expect("repro subprocess should launch");
-        assert!(
-            status.success(),
-            "repro subprocess {test_name} should succeed"
-        );
-    }
 
     fn acquire_runtime_suite_lock() -> MutexGuard<'static, ()> {
         static IN_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -126,18 +112,18 @@ mod tests {
             .expect("runtime test lock should not be poisoned")
     }
 
-    struct DelayedAsyncReproLockGuard {
+    struct SnapshotResetTestLockGuard {
         _in_process_guard: MutexGuard<'static, ()>,
         #[cfg(unix)]
         file: std::fs::File,
     }
 
-    fn acquire_delayed_async_repro_lock() -> DelayedAsyncReproLockGuard {
+    fn acquire_snapshot_reset_test_lock() -> SnapshotResetTestLockGuard {
         static IN_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         let in_process_guard = IN_PROCESS_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .expect("delayed async repro lock should not be poisoned");
+            .expect("snapshot reset test lock should not be poisoned");
 
         #[cfg(unix)]
         {
@@ -147,20 +133,20 @@ mod tests {
                 fn flock(fd: i32, operation: i32) -> i32;
             }
 
-            let path = std::env::temp_dir().join("neovex-runtime-delayed-async-repro.lock");
+            let path = std::env::temp_dir().join("neovex-runtime-snapshot-reset-test.lock");
             let file = OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .read(true)
                 .write(true)
                 .open(path)
-                .expect("delayed async repro lockfile should open");
+                .expect("snapshot reset test lockfile should open");
             let status = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
             assert_eq!(
                 status, 0,
-                "delayed async repro lock should acquire successfully"
+                "snapshot reset test lock should acquire successfully"
             );
-            DelayedAsyncReproLockGuard {
+            SnapshotResetTestLockGuard {
                 _in_process_guard: in_process_guard,
                 file,
             }
@@ -168,14 +154,14 @@ mod tests {
 
         #[cfg(not(unix))]
         {
-            DelayedAsyncReproLockGuard {
+            SnapshotResetTestLockGuard {
                 _in_process_guard: in_process_guard,
             }
         }
     }
 
     #[cfg(unix)]
-    impl Drop for DelayedAsyncReproLockGuard {
+    impl Drop for SnapshotResetTestLockGuard {
         fn drop(&mut self) {
             const LOCK_UN: i32 = 8;
 
@@ -1445,7 +1431,7 @@ export {};
 
     #[tokio::test]
     async fn snapshot_born_runtime_reset_with_full_bootstrap_replay_is_not_supported() {
-        init_runtime_repro_tracing();
+        init_test_tracing();
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
         std::fs::write(
@@ -1525,7 +1511,7 @@ export {};
 
     #[tokio::test]
     async fn snapshot_born_runtime_supports_async_host_after_snapshot_aware_reset() {
-        init_runtime_repro_tracing();
+        init_test_tracing();
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
         std::fs::write(
@@ -1635,7 +1621,7 @@ export {};
 
     #[tokio::test]
     async fn snapshot_born_runtime_survives_repeated_snapshot_aware_reset_async_host_cycles() {
-        init_runtime_repro_tracing();
+        init_test_tracing();
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
         std::fs::write(
@@ -1730,7 +1716,7 @@ export {};
 
     #[tokio::test]
     async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
-        init_runtime_repro_tracing();
+        init_test_tracing();
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
         std::fs::write(
@@ -1843,7 +1829,7 @@ export {};
 
     #[tokio::test]
     async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
-        init_runtime_repro_tracing();
+        init_test_tracing();
         let tempdir = tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("bundle.mjs");
         std::fs::write(
@@ -1959,8 +1945,8 @@ export {};
     #[test]
     fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let worker_thread = std::thread::spawn(move || {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2093,14 +2079,13 @@ export {};
 
         worker_thread
             .join()
-            .expect("current-thread worker repro thread should not panic");
+            .expect("current-thread worker thread should not panic");
     }
 
     #[test]
-    #[ignore = "manual repro for snapshot-aware reset + delayed async-host crash on current-thread runtime"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_host_repro() {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+    fn snapshot_born_reset_cycles_with_delayed_async_host() {
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let worker_thread = std::thread::spawn(move || {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2212,14 +2197,13 @@ export {};
 
         worker_thread
             .join()
-            .expect("current-thread snapshot-aware delayed repro thread should not panic");
+            .expect("current-thread snapshot-aware delayed async host thread should not panic");
     }
 
     #[test]
-    #[ignore = "manual repro for snapshot-aware reset + delayed async-host crash without bundle reload"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_script_repro() {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+    fn snapshot_born_reset_cycles_with_delayed_async_script() {
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let worker_thread = std::thread::spawn(|| {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2306,10 +2290,10 @@ export {};
 
         worker_thread
             .join()
-            .expect("current-thread snapshot-aware delayed script repro thread should not panic");
+            .expect("current-thread snapshot-aware delayed script thread should not panic");
     }
 
-    fn run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+    fn run_snapshot_born_reset_cycles_with_bundle_load(
         cycles: usize,
         fresh_bundle_each_cycle: bool,
         yield_before_reset: bool,
@@ -2455,128 +2439,112 @@ export {};
 
         worker_thread
             .join()
-            .expect("current-thread snapshot-aware delayed bundle-then-script repro thread should not panic");
+            .expect("current-thread snapshot-aware delayed bundle-then-script thread should not panic");
     }
 
     #[test]
-    #[ignore = "V8 SIGSEGV on second snapshot-aware reset cycle with delayed async host ops — requires deno_core/V8 fork fix"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro() {
-        run_ignored_repro_in_subprocess(
-            "runtime::tests::snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro_subprocess",
-        );
-    }
-
-    #[test]
-    #[ignore = "runs in a subprocess to isolate V8 state from the rest of the runtime suite"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro_subprocess()
+    fn snapshot_born_reset_cycles_with_bundle_load()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_CYCLES",
             8,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, false, false, false, false,
         );
     }
 
     #[test]
-    #[ignore = "manual stress repro for cumulative snapshot-aware reset + bundle reload + delayed async script crash"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_stress_repro()
+    fn snapshot_born_reset_cycles_with_bundle_load_stress()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_STRESS_CYCLES",
             32,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, false, false, false, false,
         );
     }
 
     #[test]
-    #[ignore = "manual repro variant that refreshes the bundle/module code cache every cycle"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_fresh_bundle_cache_repro()
+    fn snapshot_born_reset_cycles_with_fresh_bundle_cache()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_FRESH_CACHE_CYCLES",
             32,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, true, false, false, false,
         );
     }
 
     #[test]
-    #[ignore = "manual repro variant that settles the event loop immediately before snapshot-aware reset"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_pre_reset_settle_repro()
+    fn snapshot_born_reset_cycles_with_pre_reset_settle()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_RESET_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, false, false, true, false,
         );
     }
 
     #[test]
-    #[ignore = "manual repro variant that yields to Tokio and settles the event loop before snapshot-aware reset"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_pre_reset_yield_and_settle_repro()
+    fn snapshot_born_reset_cycles_with_pre_reset_yield_and_settle()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_RESET_YIELD_AND_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, false, true, true, false,
         );
     }
 
     #[test]
-    #[ignore = "manual repro variant that settles the event loop immediately after snapshot-aware reset"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_post_reset_settle_repro()
+    fn snapshot_born_reset_cycles_with_post_reset_settle()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_POST_RESET_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, false, false, false, true,
         );
     }
 
     #[test]
-    #[ignore = "manual repro variant that settles the event loop both before and after snapshot-aware reset"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_pre_and_post_reset_settle_repro()
+    fn snapshot_born_reset_cycles_with_pre_and_post_reset_settle()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_AND_POST_RESET_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_repro(
+        run_snapshot_born_reset_cycles_with_bundle_load(
             cycles, false, false, true, true,
         );
     }
 
     #[test]
-    #[ignore = "manual repro for snapshot-aware reset + bundle reload + extra drain + delayed async script"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_extra_drain_repro()
+    fn snapshot_born_reset_cycles_with_extra_drain()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let worker_thread = std::thread::spawn(|| {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2696,16 +2664,15 @@ export {};
         });
 
         worker_thread.join().expect(
-            "current-thread snapshot-aware delayed bundle-then-script extra-drain repro thread should not panic",
+            "current-thread snapshot-aware delayed bundle-then-script extra-drain thread should not panic",
         );
     }
 
     #[test]
-    #[ignore = "manual repro for snapshot-aware reset + bundle reload + tokio yield + delayed async script"]
-    fn snapshot_born_runtime_repeated_snapshot_aware_reset_delayed_async_after_bundle_load_with_tokio_yield_repro()
+    fn snapshot_born_reset_cycles_with_tokio_yield()
      {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
 
         let worker_thread = std::thread::spawn(|| {
             let tokio_runtime = tokio::runtime::Builder::new_current_thread()
@@ -2825,15 +2792,14 @@ export {};
         });
 
         worker_thread.join().expect(
-            "current-thread snapshot-aware delayed bundle-then-script tokio-yield repro thread should not panic",
+            "current-thread snapshot-aware delayed bundle-then-script tokio-yield thread should not panic",
         );
     }
 
     #[test]
-    #[ignore = "manual repro when bypassing the post-return bundle-load settle boundary on snapshot-seeded retained runtimes"]
-    fn snapshot_seeded_retained_pool_multi_tenant_delayed_async_host_repro() {
-        init_runtime_repro_tracing();
-        let _repro_lock = acquire_delayed_async_repro_lock();
+    fn snapshot_seeded_retained_pool_multi_tenant_reset_cycles() {
+        init_test_tracing();
+        let _test_lock = acquire_snapshot_reset_test_lock();
         let worker_thread = std::thread::spawn(|| {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2995,7 +2961,7 @@ export {};
 
         worker_thread
             .join()
-            .expect("current-thread worker multi-tenant repro thread should not panic");
+            .expect("current-thread worker multi-tenant thread should not panic");
     }
 
     #[tokio::test]

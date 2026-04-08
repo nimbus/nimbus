@@ -525,7 +525,7 @@ export {};
         }))
     }
 
-    fn init_runtime_repro_tracing() {
+    fn init_test_tracing() {
         static TRACING_INIT: OnceLock<()> = OnceLock::new();
         TRACING_INIT.get_or_init(|| {
             let _ = tracing_subscriber::fmt()
@@ -904,9 +904,8 @@ export {};
     }
 
     #[test]
-    #[ignore = "manual repro for snapshot-seeded retained async-host reuse; run with --ignored --nocapture"]
-    fn retained_snapshot_seeded_async_host_batch_repro() {
-        init_runtime_repro_tracing();
+    fn retained_snapshot_seeded_async_host_batch_cycles() {
+        init_test_tracing();
         let _test_lock = runtime_executor_test_lock().blocking_lock();
         let scenarios = stress_env_usize("NEOVEX_RETAINED_ASYNC_SCENARIOS", 24);
         let measured_batches_per_scenario = stress_env_usize("NEOVEX_RETAINED_ASYNC_BATCHES", 8);

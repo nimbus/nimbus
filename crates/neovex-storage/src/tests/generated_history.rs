@@ -300,7 +300,6 @@ fn generated_task_history_matches_model_on_storage_surface() {
 }
 
 #[test]
-#[ignore = "run through verification harness pr mode"]
 fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
     for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest)
         .expect("pull-request corpus should resolve")
@@ -315,7 +314,6 @@ fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
 }
 
 #[test]
-#[ignore = "run through verification harness nightly mode"]
 fn verification_harness_nightly_generated_history_seed_corpus_matches_model() {
     for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::Nightly)
         .expect("nightly corpus should resolve")

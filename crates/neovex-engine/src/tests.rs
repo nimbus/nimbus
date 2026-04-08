@@ -7289,7 +7289,6 @@ async fn generated_task_history_matches_model_across_live_shadow_and_embedded_re
 }
 
 #[tokio::test]
-#[ignore = "run through verification harness pr mode"]
 async fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
     for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest)
         .expect("pull-request corpus should resolve")
@@ -7305,7 +7304,6 @@ async fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
 }
 
 #[tokio::test]
-#[ignore = "run through verification harness nightly mode"]
 async fn verification_harness_nightly_generated_history_seed_corpus_matches_model() {
     for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::Nightly)
         .expect("nightly corpus should resolve")
