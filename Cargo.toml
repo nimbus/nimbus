@@ -60,4 +60,4 @@ strip = true
 # selecting the fork implementation immutably at the workspace root.
 [patch.crates-io]
 deno_core = { git = "https://github.com/agentstation/deno_core", tag = "0.395.0-locker.2" }
-v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.0.0-locker.1" }
+v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.0.0-locker.2" }

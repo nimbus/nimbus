@@ -569,7 +569,7 @@ dependencies = [
 [[package]]
 name = "deno_core"
 version = "0.395.0"
-source = "git+https://github.com/agentstation/deno_core?tag=0.395.0-locker.2#f10265b9b3124e855bf478dce039f51098c0181d"
+source = "git+https://github.com/agentstation/deno_core?tag=0.395.0-locker.2#22648f70c66c9465503ec3d7985278afdcd66e1c"
 dependencies = [
  "anyhow",
  "az",
@@ -3141,7 +3141,7 @@ dependencies = [
 [[package]]
 name = "v8"
 version = "147.0.0"
-source = "git+https://github.com/agentstation/rusty_v8?tag=v147.0.0-locker.1#e03354dd4f914273a0b55824b2550e332c2dadd3"
+source = "git+https://github.com/agentstation/rusty_v8?tag=v147.0.0-locker.2#f3f4e5a54ee438630ae38623a4c358ea42717bca"
 dependencies = [
  "bindgen",
  "bitflags",

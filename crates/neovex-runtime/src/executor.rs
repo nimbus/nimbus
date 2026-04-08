@@ -10,7 +10,7 @@ use crate::host::HostCallCancellation;
 #[cfg(test)]
 use crate::limits::RuntimePolicy;
 #[cfg(test)]
-use crate::limits::{RuntimeExecutionModel, RuntimePoolKind, RuntimeRoutingAffinity};
+use crate::limits::{RuntimeExecutionModel, RuntimePoolKind};
 #[cfg(test)]
 use crate::runtime::{InvocationRequest, NeovexRuntime, RuntimeBundle};
 
@@ -41,7 +41,6 @@ mod tests {
     use super::*;
     use crate::host::{HostBridge, HostBridgeFuture, HostCallOperation, HostCallRequest};
     use crate::limits::RuntimeLimits;
-    use crate::runtime::RuntimeConstructionMode;
 
     struct NoopHost;
 
@@ -304,48 +303,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy)]
-    struct DelayedAsyncGetHost {
-        delay: Duration,
-    }
-
-    impl DelayedAsyncGetHost {
-        fn new(delay: Duration) -> Self {
-            Self { delay }
-        }
-    }
-
-    impl HostBridge for DelayedAsyncGetHost {
-        fn call(&self, _request: HostCallRequest) -> Result<Value> {
-            Err(NeovexRuntimeError::Contract(
-                "delayed async host expects async db.get path".to_string(),
-            ))
-        }
-
-        fn call_async(
-            &self,
-            request: HostCallRequest,
-            _cancellation: HostCallCancellation,
-        ) -> HostBridgeFuture {
-            let document_id = request
-                .payload
-                .get("id")
-                .and_then(Value::as_str)
-                .expect("db.get payload should carry an id")
-                .to_string();
-            let delay = self.delay;
-            Box::pin(async move {
-                tokio::time::sleep(delay).await;
-                Ok(json!({
-                    "status": "ok",
-                    "value": {
-                        "id": document_id,
-                    },
-                }))
-            })
-        }
-    }
-
     struct SlowSyncQueryHost {
         delay: Duration,
         started: Arc<Notify>,
@@ -450,32 +407,6 @@ export {};
         (bundle_dir, bundle_path)
     }
 
-    fn write_retained_counter_get_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
-        let bundle_dir = tempdir().expect("tempdir should build");
-        let bundle_path = bundle_dir.path().join("bundle.mjs");
-        std::fs::write(
-            &bundle_path,
-            r#"
-globalThis.__neovexInvoke = async function (request) {
-  globalThis.__userCounter = (globalThis.__userCounter ?? 0) + 1;
-  const ctx = globalThis.__neovexCreateContext({
-    request,
-    sessionId: `session-${globalThis.__userCounter}`,
-  });
-  const value = await ctx.db.get("messages", request.function_name);
-  return {
-    counter: globalThis.__userCounter,
-    id: value.id,
-  };
-};
-
-export {};
-"#,
-        )
-        .expect("bundle should write");
-        (bundle_dir, bundle_path)
-    }
-
     fn write_sync_query_builder_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
         let bundle_dir = tempdir().expect("tempdir should build");
         let bundle_path = bundle_dir.path().join("bundle.mjs");
@@ -510,72 +441,6 @@ export {};
         )
         .expect("bundle should write");
         (bundle_dir, bundle_path)
-    }
-
-    fn retained_async_host_batch_policy() -> Arc<RuntimePolicy> {
-        Arc::new(RuntimePolicy::new(RuntimeLimits {
-            execution_model: RuntimeExecutionModel::RunToCompletion,
-            runtime_pool_kind: RuntimePoolKind::RetainedJsRuntimePool,
-            routing_affinity: RuntimeRoutingAffinity::Tenant,
-            max_concurrent_isolates: 1,
-            worker_threads: 1,
-            max_retained_runtimes_per_worker: 4,
-            max_retained_runtimes_per_affinity_key_per_worker: 1,
-            ..RuntimeLimits::default()
-        }))
-    }
-
-    fn init_test_tracing() {
-        static TRACING_INIT: OnceLock<()> = OnceLock::new();
-        TRACING_INIT.get_or_init(|| {
-            let _ = tracing_subscriber::fmt()
-                .with_test_writer()
-                .with_max_level(tracing::Level::DEBUG)
-                .without_time()
-                .try_init();
-        });
-    }
-
-    fn stress_env_usize(name: &str, default: usize) -> usize {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(default)
-    }
-
-    fn run_retained_async_host_batch_round(
-        executor: &RuntimeExecutor,
-        policy: &Arc<RuntimePolicy>,
-        host: &Arc<DelayedAsyncGetHost>,
-        bundle: &RuntimeBundle,
-        batch_index: usize,
-        construction_mode: RuntimeConstructionMode,
-    ) {
-        let tenant_labels = ["tenant-a", "tenant-b", "tenant-c", "tenant-d"];
-        let mut handles = Vec::with_capacity(tenant_labels.len());
-        let mut expected_ids = Vec::with_capacity(tenant_labels.len());
-        for (tenant_index, tenant_label) in tenant_labels.iter().enumerate() {
-            let executor = executor.clone();
-            let runtime = NeovexRuntime::with_policy(host.clone(), policy.clone())
-                .with_retained_runtime_construction_mode_for_test(construction_mode);
-            let bundle = bundle.clone();
-            let function_name = format!("doc-{batch_index}-{tenant_index}");
-            let request = test_request(&function_name);
-            let request_id = format!("req-retained-async-batch-{batch_index}-{tenant_index}");
-            let context = test_context_for_tenant(&request, tenant_label, &request_id);
-            expected_ids.push(function_name.clone());
-            handles.push(std::thread::spawn(move || {
-                executor.invoke_blocking(runtime, bundle, request, context)
-            }));
-        }
-
-        for (handle, expected_id) in handles.into_iter().zip(expected_ids) {
-            let result = handle
-                .join()
-                .expect("retained async batch caller thread should join")
-                .expect("retained async batch invocation should succeed");
-            assert_eq!(result, json!({ "id": expected_id }));
-        }
     }
 
     fn test_request(function_name: &str) -> InvocationRequest {
@@ -748,198 +613,6 @@ export {};
     }
 
     #[tokio::test]
-    async fn cooperative_execution_model_retained_runtime_pool_reuses_locker_runtime() {
-        let _test_lock = runtime_executor_test_lock().lock().await;
-        let before_snapshot_builds = crate::runtime::bootstrap_snapshot_build_count_for_test();
-        let (_bundle_dir, bundle_path) = write_retained_counter_get_bundle();
-        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-            execution_model: RuntimeExecutionModel::CooperativeLocker,
-            runtime_pool_kind: RuntimePoolKind::RetainedJsRuntimePool,
-            max_concurrent_isolates: 1,
-            worker_threads: 1,
-            ..RuntimeLimits::default()
-        }));
-        let executor = RuntimeExecutor::new(policy.clone());
-        let host = Arc::new(ControlledAsyncGetHost::default());
-        let bundle = RuntimeBundle::new(&bundle_path);
-        let first_request = test_request("retained-1");
-        let second_request = test_request("retained-2");
-
-        let first_result = executor
-            .invoke_on_worker(
-                NeovexRuntime::with_policy(host.clone(), policy.clone()),
-                bundle.clone(),
-                first_request.clone(),
-                test_context(&first_request, "req-cooperative-retained-1"),
-                None,
-            )
-            .await
-            .expect("first retained cooperative invocation should succeed");
-        let second_result = executor
-            .invoke_on_worker(
-                NeovexRuntime::with_policy(host, policy.clone()),
-                bundle,
-                second_request.clone(),
-                test_context(&second_request, "req-cooperative-retained-2"),
-                None,
-            )
-            .await
-            .expect("second retained cooperative invocation should reuse the reset runtime");
-
-        assert_eq!(first_result, json!({ "counter": 1, "id": "retained-1" }));
-        assert_eq!(second_result, json!({ "counter": 1, "id": "retained-2" }));
-
-        let metrics = executor.policy().metrics_snapshot();
-        assert_eq!(metrics.isolate_pool_misses, 1);
-        assert_eq!(metrics.isolate_pool_hits, 1);
-        assert_eq!(metrics.isolate_pool_replacements, 0);
-
-        let after_snapshot_builds = crate::runtime::bootstrap_snapshot_build_count_for_test();
-        assert_eq!(
-            after_snapshot_builds, before_snapshot_builds,
-            "retained cooperative Locker pooling should reuse unsnapshotted runtimes instead of building the startup snapshot"
-        );
-        assert!(
-            policy
-                .limits()
-                .reset_capabilities()
-                .user_module_state_per_invocation,
-            "retained cooperative Locker pooling should now advertise fresh user-module state per invocation"
-        );
-    }
-
-    #[test]
-    fn retained_run_to_completion_async_host_batch_survives_repeated_blocking_batches() {
-        let _test_lock = runtime_executor_test_lock().blocking_lock();
-        let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
-        let policy = retained_async_host_batch_policy();
-        let executor = RuntimeExecutor::new(policy.clone());
-        let host = Arc::new(DelayedAsyncGetHost::new(Duration::from_millis(1)));
-        let bundle = RuntimeBundle::new(&bundle_path);
-        let total_batches = 32;
-
-        for batch_index in 0..total_batches {
-            run_retained_async_host_batch_round(
-                &executor,
-                &policy,
-                &host,
-                &bundle,
-                batch_index,
-                RuntimeConstructionMode::Unsnapshotted,
-            );
-        }
-
-        let snapshot = policy.metrics_snapshot();
-        let total_invocations = (total_batches * 4) as u64;
-        assert_eq!(snapshot.isolate_pool_misses, 1);
-        assert_eq!(
-            snapshot.isolate_pool_hits,
-            total_invocations.saturating_sub(1)
-        );
-        assert_eq!(
-            snapshot.retained_runtime_main_realm_resets,
-            snapshot.isolate_pool_hits
-        );
-        assert_eq!(
-            snapshot.retained_runtime_bootstrap_replays,
-            snapshot.isolate_pool_hits
-        );
-        assert_eq!(snapshot.retained_runtime_pool_entries, 1);
-        assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
-        assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
-    }
-
-    #[test]
-    fn retained_run_to_completion_async_host_batch_survives_repeated_scenario_rebuilds() {
-        let _test_lock = runtime_executor_test_lock().blocking_lock();
-        let scenarios = stress_env_usize("NEOVEX_RETAINED_ASYNC_SCENARIOS", 24);
-        let measured_batches_per_scenario = stress_env_usize("NEOVEX_RETAINED_ASYNC_BATCHES", 8);
-
-        for scenario_index in 0..scenarios {
-            let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
-            let policy = retained_async_host_batch_policy();
-            let executor = RuntimeExecutor::new(policy.clone());
-            let host = Arc::new(DelayedAsyncGetHost::new(Duration::from_millis(1)));
-            let bundle = RuntimeBundle::new(&bundle_path);
-            let base_batch_index = scenario_index * (measured_batches_per_scenario + 1);
-
-            run_retained_async_host_batch_round(
-                &executor,
-                &policy,
-                &host,
-                &bundle,
-                base_batch_index,
-                RuntimeConstructionMode::Unsnapshotted,
-            );
-            for local_batch_index in 0..measured_batches_per_scenario {
-                run_retained_async_host_batch_round(
-                    &executor,
-                    &policy,
-                    &host,
-                    &bundle,
-                    base_batch_index + local_batch_index + 1,
-                    RuntimeConstructionMode::Unsnapshotted,
-                );
-            }
-
-            let snapshot = policy.metrics_snapshot();
-            let total_invocations = ((measured_batches_per_scenario + 1) * 4) as u64;
-            assert_eq!(snapshot.isolate_pool_misses, 1);
-            assert_eq!(
-                snapshot.isolate_pool_hits,
-                total_invocations.saturating_sub(1)
-            );
-            assert_eq!(
-                snapshot.retained_runtime_main_realm_resets,
-                snapshot.isolate_pool_hits
-            );
-            assert_eq!(
-                snapshot.retained_runtime_bootstrap_replays,
-                snapshot.isolate_pool_hits
-            );
-            assert_eq!(snapshot.retained_runtime_pool_entries, 1);
-            assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
-            assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
-        }
-    }
-
-    #[test]
-    fn retained_snapshot_seeded_async_host_batch_cycles() {
-        init_test_tracing();
-        let _test_lock = runtime_executor_test_lock().blocking_lock();
-        let scenarios = stress_env_usize("NEOVEX_RETAINED_ASYNC_SCENARIOS", 24);
-        let measured_batches_per_scenario = stress_env_usize("NEOVEX_RETAINED_ASYNC_BATCHES", 8);
-
-        for scenario_index in 0..scenarios {
-            let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
-            let policy = retained_async_host_batch_policy();
-            let executor = RuntimeExecutor::new(policy.clone());
-            let host = Arc::new(DelayedAsyncGetHost::new(Duration::from_millis(1)));
-            let bundle = RuntimeBundle::new(&bundle_path);
-            let base_batch_index = scenario_index * (measured_batches_per_scenario + 1);
-
-            run_retained_async_host_batch_round(
-                &executor,
-                &policy,
-                &host,
-                &bundle,
-                base_batch_index,
-                RuntimeConstructionMode::StartupSnapshot,
-            );
-            for local_batch_index in 0..measured_batches_per_scenario {
-                run_retained_async_host_batch_round(
-                    &executor,
-                    &policy,
-                    &host,
-                    &bundle,
-                    base_batch_index + local_batch_index + 1,
-                    RuntimeConstructionMode::StartupSnapshot,
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
     async fn cooperative_execution_model_resumes_parked_invocations_after_host_completion() {
         let _test_lock = runtime_executor_test_lock().lock().await;
         let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
@@ -1006,6 +679,7 @@ export {};
         let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             execution_model: RuntimeExecutionModel::CooperativeLocker,
+            runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
             max_concurrent_isolates: 1,
             worker_threads: 1,
             ..RuntimeLimits::default()
@@ -1552,6 +1226,8 @@ export {};
         let (_timeout_bundle_dir, timeout_bundle_path) = write_busy_loop_bundle();
         let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
             execution_timeout: Duration::from_millis(50),
             max_concurrent_isolates: 1,
             worker_threads: 1,

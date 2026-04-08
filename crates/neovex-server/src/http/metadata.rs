@@ -31,10 +31,8 @@ pub(crate) async fn runtime_diagnostics(
             module_state_semantics: limits.module_state_semantics(),
             routing_affinity: limits.routing_affinity,
             routing_affinity_max_entries: limits.routing_affinity_max_entries,
-            max_retained_runtimes_per_worker: limits.max_retained_runtimes_per_worker,
-            max_retained_runtimes_per_affinity_key_per_worker: limits
-                .max_retained_runtimes_per_affinity_key_per_worker,
-            max_retained_runtime_reuses: limits.max_retained_runtime_reuses,
+            max_warm_module_pool_entries_per_worker: limits.max_warm_module_pool_entries_per_worker,
+            max_warm_module_reuses: limits.max_warm_module_reuses,
             max_heap_mb: limits.max_heap_mb,
             initial_heap_mb: limits.initial_heap_mb,
             execution_timeout_ms: limits

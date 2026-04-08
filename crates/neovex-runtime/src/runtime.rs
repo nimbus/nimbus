@@ -52,8 +52,6 @@ pub struct NeovexRuntime {
     policy: Arc<RuntimePolicy>,
     bypass_concurrency_limit: bool,
     owned_executor: Arc<OnceLock<RuntimeExecutor>>,
-    #[cfg(test)]
-    retained_runtime_construction_mode_for_test: RuntimeConstructionMode,
 }
 
 pub(crate) use self::cooperative::{
@@ -1119,6 +1117,8 @@ export {};
         .expect("bundle should write");
 
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: crate::limits::RuntimePoolKind::StartupSnapshotCache,
             max_concurrent_isolates: 1,
             worker_threads: 1,
             ..RuntimeLimits::default()
@@ -1150,10 +1150,6 @@ export {};
         assert_eq!(metrics.isolate_pool_misses, 1);
         assert_eq!(metrics.isolate_pool_hits, 1);
         assert_eq!(metrics.isolate_pool_replacements, 0);
-        assert_eq!(metrics.retained_runtime_main_realm_resets, 0);
-        assert_eq!(metrics.retained_runtime_main_realm_reset_nanos_total, 0);
-        assert_eq!(metrics.retained_runtime_bootstrap_replays, 0);
-        assert_eq!(metrics.retained_runtime_bootstrap_replay_nanos_total, 0);
         assert_eq!(metrics.bundle_loads, 2);
         assert!(metrics.bundle_load_nanos_total > 0);
         assert_eq!(metrics.bundle_module_loads, 2);
@@ -1425,86 +1421,6 @@ export {};
                     "session_id": "session-1",
                 },
             })
-        );
-    }
-
-    #[tokio::test]
-    async fn snapshot_born_runtime_reset_with_full_bootstrap_replay_is_not_supported() {
-        init_test_tracing();
-        let tempdir = tempdir().expect("tempdir should build");
-        let bundle_path = tempdir.path().join("bundle.mjs");
-        std::fs::write(
-            &bundle_path,
-            r#"
-globalThis.__neovexInvoke = async function (request) {
-  const ctx = globalThis.__neovexCreateContext({
-    request,
-    sessionId: `${request.kind}:${request.function_name}`,
-  });
-  return await ctx.db.get("messages", "doc-1");
-};
-
-export {};
-"#,
-        )
-        .expect("bundle should write");
-
-        let bundle = RuntimeBundle::new(&bundle_path);
-        let request = InvocationRequest {
-            kind: InvocationKind::Query,
-            function_name: "messages:get".to_string(),
-            args: Value::Null,
-            page_size: None,
-            cursor: None,
-            auth: None,
-        };
-        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
-            &request,
-            "snapshot-control",
-            "req-snapshot-born-unsupported",
-        );
-        let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
-        let snapshot = runtime_owner
-            .bootstrap_snapshot()
-            .expect("bootstrap snapshot should build");
-        let mut runtime = runtime_owner
-            .create_runtime(&bundle, Some(snapshot), false)
-            .expect("snapshot-born runtime should build");
-
-        runtime_owner
-            .load_bundle_with_trace(
-                &mut runtime,
-                &bundle,
-                RuntimeConstructionMode::StartupSnapshot,
-                Some(&context),
-                Some(&request),
-            )
-            .await
-            .expect("bundle should load on the snapshot-born runtime");
-        runtime_owner
-            .invoke_loaded_bundle_with_trace(
-                &mut runtime,
-                &request,
-                Some(&bundle),
-                RuntimeConstructionMode::StartupSnapshot,
-                Some(&context),
-            )
-            .await
-            .expect("first async host invocation should succeed on the snapshot-born runtime");
-
-        let error = runtime_owner
-            .reset_retained_runtime(
-                &mut runtime,
-                &bundle,
-                RuntimeConstructionMode::Unsnapshotted,
-            )
-            .expect_err(
-                "snapshot-born runtimes should not use the unsnapshotted bootstrap replay path",
-            );
-        let message = error.to_string();
-        assert!(
-            message.contains("__neovexCoreOps"),
-            "reset failure should explain that BOOTSTRAP_SOURCE was replayed into a snapshot-born realm: {message}"
         );
     }
 
@@ -2772,174 +2688,6 @@ export {};
         );
     }
 
-    #[test]
-    fn snapshot_seeded_retained_pool_multi_tenant_reset_cycles() {
-        init_test_tracing();
-        let _test_lock = acquire_snapshot_reset_test_lock();
-        let worker_thread = std::thread::spawn(|| {
-            let worker_runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("current-thread runtime should build");
-            worker_runtime.block_on(async {
-                let tempdir = tempdir().expect("tempdir should build");
-                let bundle_path = tempdir.path().join("bundle.mjs");
-                std::fs::write(
-                    &bundle_path,
-                    r#"
-globalThis.__neovexInvoke = async function (request) {
-  const ctx = globalThis.__neovexCreateContext({
-    request,
-    sessionId: `${request.kind}:${request.function_name}`,
-  });
-  return await ctx.db.get("messages", "doc-1");
-};
-
-export {};
-"#,
-                )
-                .expect("bundle should write");
-
-                let bundle = RuntimeBundle::new(&bundle_path);
-                let request = InvocationRequest {
-                    kind: InvocationKind::Query,
-                    function_name: "messages:get".to_string(),
-                    args: Value::Null,
-                    page_size: None,
-                    cursor: None,
-                    auth: None,
-                };
-                let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-                    runtime_pool_kind: crate::limits::RuntimePoolKind::RetainedJsRuntimePool,
-                    routing_affinity: crate::limits::RuntimeRoutingAffinity::Tenant,
-                    max_concurrent_isolates: 1,
-                    worker_threads: 1,
-                    max_retained_runtimes_per_worker: 4,
-                    max_retained_runtimes_per_affinity_key_per_worker: 1,
-                    ..RuntimeLimits::default()
-                }));
-                let runtime_owner = NeovexRuntime::with_policy(
-                    Arc::new(DelayedAsyncEchoHost::new(std::time::Duration::from_millis(
-                        1,
-                    ))),
-                    policy.clone(),
-                )
-                .with_retained_runtime_construction_mode_for_test(
-                    RuntimeConstructionMode::StartupSnapshot,
-                );
-                let expected = serde_json::json!({
-                    "operation": "convex.ctx.db.get",
-                    "payload": {
-                        "table": "messages",
-                        "id": "doc-1",
-                        "session_id": "query:messages:get",
-                    }
-                });
-                let cycles = stress_env_usize(
-                    "NEOVEX_SNAPSHOT_MULTI_RUNTIME_CURRENT_THREAD_CYCLES",
-                    16,
-                );
-                let tenants = ["tenant-a", "tenant-b", "tenant-c", "tenant-d"];
-                let watchdog = WatchdogTimer::new();
-                let mut isolate_pool = RuntimeWorkerIsolatePool::new();
-
-                for cycle in 0..cycles {
-                    for tenant in tenants {
-                        let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
-                            &request,
-                            tenant,
-                            format!(
-                                "req-snapshot-multi-runtime-current-thread-{cycle}-{tenant}"
-                            ),
-                        );
-                        let reusable_runtime = isolate_pool
-                            .take_runtime_for_invocation(
-                                &runtime_owner,
-                                &bundle,
-                                Some(&context),
-                            )
-                            .expect(
-                                "snapshot-seeded multi-tenant retained runtime should build or reuse",
-                            );
-                        let mut permit = SharedInvocationPermit::new(
-                            runtime_owner.policy(),
-                            context.tenant_label.clone(),
-                            None,
-                            false,
-                            None,
-                        );
-                        permit
-                            .acquire_initial(std::time::Instant::now())
-                            .await
-                            .expect("permit should admit invocation");
-
-                        let mut driver = runtime_owner
-                            .prepare_runtime_invocation_driver(
-                                reusable_runtime,
-                                watchdog.clone(),
-                                None,
-                                permit.clone(),
-                                false,
-                            )
-                            .expect(
-                                "driver preparation should succeed for snapshot-seeded retained runtime",
-                            );
-
-                        runtime_owner
-                            .load_bundle_for_bypass_repro_without_post_return_settle(
-                                &mut driver.runtime,
-                                &bundle,
-                                driver.construction_mode,
-                                Some(&context),
-                                Some(&request),
-                            )
-                            .await
-                            .expect(
-                                "bundle should load during each multi-tenant retained cycle",
-                            );
-                        let value = runtime_owner
-                            .invoke_loaded_bundle_with_trace(
-                                &mut driver.runtime,
-                                &request,
-                                Some(&bundle),
-                                driver.construction_mode,
-                                Some(&context),
-                            )
-                            .await
-                            .expect(
-                                "multi-tenant retained cycle should complete async host work",
-                            );
-                        let (result, returned_runtime) =
-                            driver.finalize_with_runtime(Ok(value)).await;
-                        let ready_jobs = permit.finish_invocation().await;
-                        assert!(ready_jobs.is_empty(), "no extra jobs should be scheduled");
-                        assert_eq!(
-                            result.expect(
-                                "multi-tenant retained cycle should finalize cleanly"
-                            ),
-                            expected,
-                            "multi-tenant retained cycle {cycle} for {tenant} should preserve the expected async-host result",
-                        );
-                        isolate_pool.return_runtime_for_invocation(
-                            &runtime_owner,
-                            &bundle,
-                            Some(&context),
-                            returned_runtime.expect(
-                                "successful multi-tenant retained cycle should return the runtime for reuse",
-                            ),
-                        );
-                    }
-                }
-
-                watchdog.shutdown();
-            });
-        });
-
-        worker_thread
-            .join()
-            .expect("current-thread worker multi-tenant thread should not panic");
-    }
-
     #[tokio::test]
     async fn reused_runtime_still_leaks_user_module_state_after_current_resets() {
         let tempdir = tempdir().expect("tempdir should build");
@@ -3670,8 +3418,6 @@ export {};
         assert!(metrics.bundle_module_load_nanos_total > 0);
         assert_eq!(metrics.bundle_evaluations, 2);
         assert!(metrics.bundle_evaluation_nanos_total > 0);
-        assert_eq!(metrics.retained_runtime_main_realm_resets, 0);
-        assert_eq!(metrics.retained_runtime_bootstrap_replays, 0);
     }
 
     #[test]

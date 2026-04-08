@@ -1,9 +1,7 @@
 use std::rc::Rc;
 use std::sync::OnceLock;
-use std::time::Instant;
 
-use deno_core::{CreateRealmOptions, JsRuntime, RuntimeOptions, v8};
-use tracing::debug;
+use deno_core::{JsRuntime, RuntimeOptions, v8};
 
 use crate::error::{NeovexRuntimeError, Result};
 use crate::module_loader::SandboxedModuleLoader;
@@ -14,7 +12,7 @@ use super::super::bootstrap::{
     RuntimeStartupSnapshot, finalize_bootstrap, initialize_runtime_state, install_bootstrap,
     runtime_extension,
 };
-use super::super::{NeovexRuntime, RuntimeBundle, RuntimeConstructionMode};
+use super::super::{NeovexRuntime, RuntimeBundle};
 
 impl NeovexRuntime {
     pub(crate) fn bootstrap_snapshot(&self) -> Result<&'static RuntimeStartupSnapshot> {
@@ -56,80 +54,6 @@ impl NeovexRuntime {
         }
         Self::finalize_bootstrap(&mut runtime)?;
         Ok(runtime)
-    }
-
-    pub(crate) fn reset_retained_runtime(
-        &self,
-        runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        construction_mode: RuntimeConstructionMode,
-    ) -> Result<()> {
-        let options = CreateRealmOptions {
-            module_loader: Some(Rc::new(SandboxedModuleLoader::new(
-                bundle.module_root()?,
-                bundle.module_code_cache(),
-            ))),
-        };
-        if runtime.is_v8_lock_held() {
-            self.reset_retained_runtime_inner(runtime, bundle, construction_mode, options)?;
-        } else {
-            let mut locked = runtime.acquire_v8_lock();
-            self.reset_retained_runtime_inner(&mut locked, bundle, construction_mode, options)?;
-        }
-        Ok(())
-    }
-
-    fn reset_retained_runtime_inner(
-        &self,
-        runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        construction_mode: RuntimeConstructionMode,
-        options: CreateRealmOptions,
-    ) -> Result<()> {
-        let bundle_label = bundle.entrypoint().display().to_string();
-        if construction_mode.uses_startup_snapshot() {
-            debug!(
-                bundle = %bundle_label,
-                construction_mode = construction_mode.as_str(),
-                "resetting snapshot-seeded retained runtime"
-            );
-        }
-
-        let reset_started_at = Instant::now();
-        runtime.reset_main_realm(options).map_err(|error| {
-            NeovexRuntimeError::Contract(format!(
-                "failed to reset retained JsRuntime main realm ({construction_mode:?}) for {}: {error}",
-                bundle.entrypoint().display()
-            ))
-        })?;
-        self.policy
-            .metrics()
-            .record_retained_runtime_main_realm_reset(reset_started_at.elapsed());
-
-        let bootstrap_started_at = Instant::now();
-        self.initialize_runtime_state(runtime);
-        match construction_mode {
-            RuntimeConstructionMode::Unsnapshotted => {
-                Self::install_bootstrap(runtime)?;
-                Self::finalize_bootstrap(runtime)?;
-            }
-            RuntimeConstructionMode::StartupSnapshot => {
-                Self::finalize_bootstrap(runtime)?;
-            }
-        }
-        self.policy
-            .metrics()
-            .record_retained_runtime_bootstrap_replay(bootstrap_started_at.elapsed());
-
-        if construction_mode.uses_startup_snapshot() {
-            debug!(
-                bundle = %bundle_label,
-                construction_mode = construction_mode.as_str(),
-                "finished snapshot-seeded retained runtime reset"
-            );
-        }
-
-        Ok(())
     }
 
     pub(crate) fn runtime_options(

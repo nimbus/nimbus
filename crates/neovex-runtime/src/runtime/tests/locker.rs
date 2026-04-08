@@ -1,4 +1,13 @@
 use super::*;
+use crate::limits::{RuntimeExecutionModel, RuntimePoolKind};
+
+fn locker_test_policy() -> Arc<RuntimePolicy> {
+    Arc::new(RuntimePolicy::new(RuntimeLimits {
+        execution_model: RuntimeExecutionModel::CooperativeLocker,
+        runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+        ..RuntimeLimits::default()
+    }))
+}
 
 #[test]
 fn runtime_builds_locker_jsruntime_from_snapshot() {
@@ -8,7 +17,8 @@ fn runtime_builds_locker_jsruntime_from_snapshot() {
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime_owner =
+        NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), locker_test_policy());
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let mut runtime = isolate_pool
         .take_runtime_with_options(&runtime_owner, &bundle, true)
@@ -53,7 +63,8 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread() {
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime_owner =
+        NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), locker_test_policy());
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
 
     let mut rt1 = isolate_pool

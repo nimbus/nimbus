@@ -15,10 +15,6 @@ pub(super) struct RuntimeGlobalCounters {
     retained_runtime_pool_entries: AtomicUsize,
     retained_runtime_pool_evictions: AtomicU64,
     retained_runtime_pool_retirements: AtomicU64,
-    retained_runtime_main_realm_resets: AtomicU64,
-    retained_runtime_main_realm_reset_nanos_total: AtomicU64,
-    retained_runtime_bootstrap_replays: AtomicU64,
-    retained_runtime_bootstrap_replay_nanos_total: AtomicU64,
     bundle_loads: AtomicU64,
     bundle_load_nanos_total: AtomicU64,
     bundle_module_loads: AtomicU64,
@@ -62,10 +58,6 @@ pub(super) struct RuntimeGlobalCountersSnapshot {
     pub retained_runtime_pool_entries: usize,
     pub retained_runtime_pool_evictions: u64,
     pub retained_runtime_pool_retirements: u64,
-    pub retained_runtime_main_realm_resets: u64,
-    pub retained_runtime_main_realm_reset_nanos_total: u64,
-    pub retained_runtime_bootstrap_replays: u64,
-    pub retained_runtime_bootstrap_replay_nanos_total: u64,
     pub bundle_loads: u64,
     pub bundle_load_nanos_total: u64,
     pub bundle_module_loads: u64,
@@ -161,20 +153,6 @@ impl RuntimeGlobalCounters {
     pub(super) fn record_retained_runtime_pool_retirement(&self) {
         self.retained_runtime_pool_retirements
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_retained_runtime_main_realm_reset(&self, duration: Duration) {
-        self.retained_runtime_main_realm_resets
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.retained_runtime_main_realm_reset_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_retained_runtime_bootstrap_replay(&self, duration: Duration) {
-        self.retained_runtime_bootstrap_replays
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.retained_runtime_bootstrap_replay_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub(super) fn record_bundle_load(&self, duration: Duration) {
@@ -343,18 +321,6 @@ impl RuntimeGlobalCounters {
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             retained_runtime_pool_retirements: self
                 .retained_runtime_pool_retirements
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            retained_runtime_main_realm_resets: self
-                .retained_runtime_main_realm_resets
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            retained_runtime_main_realm_reset_nanos_total: self
-                .retained_runtime_main_realm_reset_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            retained_runtime_bootstrap_replays: self
-                .retained_runtime_bootstrap_replays
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            retained_runtime_bootstrap_replay_nanos_total: self
-                .retained_runtime_bootstrap_replay_nanos_total
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             bundle_loads: self.bundle_loads.load(DIAGNOSTIC_COUNTER_ORDERING),
             bundle_load_nanos_total: self
