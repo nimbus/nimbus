@@ -57,7 +57,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace
+        # neovex-runtime uses V8 Locker isolates that corrupt V8 platform
+        # state when running in parallel with non-locker isolates. Run the
+        # runtime crate single-threaded, then the rest of the workspace.
+        run: |
+          cargo test -p neovex-runtime -- --test-threads=1
+          cargo test --workspace --exclude neovex-runtime
 
   harness-pr:
     name: Verification Harness (PR / ${{ matrix.surface }})

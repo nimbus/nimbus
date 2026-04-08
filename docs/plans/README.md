@@ -16,10 +16,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
 
-- `docs/plans/bundle-identity-and-tenant-isolation-plan.md`
-  - rename `bundle_identity()` → `identity()` and add per-tenant isolation to
-    `RuntimeBundleIdentity` so warm pool entries cannot be shared across tenants
-
 ## Deferred design and experiment plans
 
 - `docs/plans/pluggable-storage-backend-plan.md`
@@ -27,10 +23,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     trait boundary, implementing SQLite as the primary embedded backend, and
     establishing the architecture for Postgres/MySQL backends and D1
     compatibility
-- `docs/plans/warm-module-pool-plan.md`
-  - **done** — all 6 phases complete; WarmPool delivers 22µs warm-hit
-    latency (50x over snapshot cache); deprecation of RetainedJsRuntimePool
-    complete (see archived deprecation plan)
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
@@ -53,42 +45,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Archived completed plans
 
-- `docs/plans/archive/modularity-and-idiomatic-rust-cleanup-plan.md`
-  - completed control plane for the runtime and engine modularity cleanup
-    workstream; historical record only
-- `docs/plans/archive/deep-module-ownership-and-canonical-cleanup-plan.md`
-  - completed control plane for the deeper serving, indexing, planner,
-    direct-mutation, and concept-owned scenario cleanup pass; historical
-    record only
-- `docs/plans/archive/concept-owned-modularity-and-canonical-cleanup-plan.md`
-  - completed control plane for the deeper concept-ownership, canonical
-    naming, and idiomatic Rust cleanup pass; historical record only
-- `docs/plans/archive/refactor-and-cleanup-control-plane.md`
-  - completed control plane for the behavior-preserving engine, server, and
-    runtime refactor and cleanup pass; historical record only
-- `docs/plans/archive/operational-state-and-scenario-surface-cleanup-plan.md`
-  - completed control plane for the operational-state, runtime metrics,
-    websocket-session, and concept-owned scenario-surface cleanup pass;
-    historical record only
-- `docs/plans/archive/stateful-execution-and-harness-cleanup-plan.md`
-  - completed control plane for deterministic-harness, execution-unit,
-    serving-backend, runtime invocation, cooperative-worker, and scenario-root
-    cleanup; historical record only
-- `docs/plans/archive/execution-boundaries-and-integration-surface-cleanup-plan.md`
-  - completed control plane for async-storage, scheduler persistence,
-    runtime executor/driver, and integration-surface cleanup; historical
-    record only
-- `docs/plans/archive/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`
-  - completed control plane for storage indexing, runtime bootstrap, executor
-    admission, and scenario-surface cleanup; historical record only
-- `docs/plans/warm-pool-default-and-retained-pool-deprecation-plan.md`
-  - **done** — all 6 phases (D0-D5) complete; made WarmPool +
-    CooperativeLocker the default, removed RetainedJsRuntimePool and ~1,200
-    lines of reset_main_realm code across neovex, deno_core, and rusty_v8 forks;
-    RunToCompletion + StartupSnapshotCache kept as per-bundle user option
-- `docs/plans/archive/`
-  - home for completed historical plans that should not be resumed as active
-    control planes unless explicitly requested
+Completed plans live in `docs/plans/archive/`. Do not resume them unless
+explicitly asked to review historical work.
 
 ## How To Use This Folder
 
@@ -104,8 +62,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
   `test-surface-and-queue-ownership-cleanup-plan.md`.
 - For the Locker fork and cooperative runtime workstream, start with
   `v8-locker-fork-plan.md`.
-- For warm execution via module persistence on the `deno_core` fork, start
-  with `warm-module-pool-plan.md`.
 - For the deferred raw-V8 backend fallback (only if the fork approach is
   blocked), see `raw-v8-warm-backend-plan.md`.
 - For future wasmtime WASM backend work, start with
