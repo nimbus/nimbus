@@ -384,8 +384,13 @@ file links (links go stale; symbol search does not).
   type, worker-thread startup and shutdown, and executor test-state scaffolds;
   `executor/invoke.rs` owns direct and worker-backed async or blocking invoke
   entrypoints; and the remaining executor concerns still route through
-  `executor/queue.rs`, `executor/admission.rs`, and `executor/lifecycle.rs`.
-- `executor/queue.rs` — runtime worker job envelopes, result channels, queue dispatch plumbing, and executor shutdown state.
+  `executor/queue/`, `executor/admission.rs`, and `executor/lifecycle.rs`.
+- `executor/queue/` — runtime worker-queue composition root. `job.rs` owns
+  worker job envelopes plus result channels, `signal.rs` owns worker activity
+  signaling, `shutdown.rs` owns executor shutdown state, `router.rs` owns
+  affinity-aware worker routing plus dispatch/load tracking, and
+  `controller.rs` owns the worker-local queue controller surface that workers
+  drain and complete against.
 - `executor/admission.rs` — thin executor-admission composition root.
   `admission/dispatch.rs` owns dispatch-handle lifecycle, `admission/permit.rs`
   owns shared permit state plus async host-call suspend/resume behavior, and
@@ -536,7 +541,12 @@ worker-local beneath that seam.
 
 **`packages/convex`** — In-repo Convex compatibility package. Provides `convex/browser` (`ConvexHttpClient`), `convex/react` (`ConvexReactClient`, hooks), `convex/server` (handler wrappers), and `convex/values` (validators). These talk the Neovex Convex-shaped WebSocket/HTTP protocol.
 
-**`neovex-test-support`** — Shared test fixtures (`HttpApiFixture`) for integration tests.
+**`neovex-test-support`** — Shared test fixtures (`HttpApiFixture`) for
+integration tests. `http_api_fixture/` is now a route-family composition root:
+`debug.rs` owns diagnostics helpers, `convex.rs` owns Convex runtime and HTTP
+helpers, `tenants.rs` owns tenant lifecycle helpers, `schedule.rs` owns native
+scheduling and cron helpers, `schema.rs` owns schema helpers, `documents.rs`
+owns document and journal helpers, and `queries.rs` owns native query helpers.
 
 ---
 
@@ -1225,14 +1235,29 @@ also now carries the shared engine-only policy, schema, and blocking-fault
 fixtures so concept-owned tests do not need to reach back into the giant root
 test file for reusable setup.
 
+The remaining broad engine integration root is now a composition surface over
+`tests/subscriptions.rs`, `tests/queries.rs`, `tests/materialized_serving.rs`,
+`tests/mutation_journal.rs`, `tests/consistency.rs`, and `tests/policy.rs`,
+while `crates/neovex-engine/src/tests.rs` keeps the shared helpers and a small
+set of basic service and schema validations. New engine-wide regressions should
+prefer those concept-owned files over appending back into one flat root.
+
+The remaining storage integration root now follows the same pattern:
+`crates/neovex-storage/src/tests.rs` is a helper-and-module composition
+surface over `tests/crud_and_journal.rs`, `tests/recovery.rs`,
+`tests/store_basics.rs`, `tests/usage_store.rs`, `tests/async_faults.rs`, and
+`tests/generated_history.rs`. New storage regressions should prefer those
+concept-owned files over reopening one mixed storage root.
+
 The next test-surface cleanup layer now also moved broad generated-history and
 fault helper clusters out of the remaining mixed roots. Storage seed-oracle and
 recovery-campaign tests now live under `crates/neovex-storage/src/tests/generated_history.rs`,
 the native HTTP documents-and-commits surface now owns generated-history and
-blocking-fault helpers under `core_http/documents_and_commits/`, and the
-top-level Convex demo-flow root now reads as a fixture composition surface over
-`manifest.rs`, `bundle.rs`, `registry.rs`, `helpers.rs`, `scenarios.rs`, and
-`seeded_usage/`.
+blocking-fault helpers under `core_http/documents_and_commits/`, where
+`lifecycle.rs`, `journal.rs`, and `consistency.rs` now own the main native HTTP
+scenario families, and the top-level Convex demo-flow root now reads as a
+fixture composition surface over `manifest.rs`, `bundle.rs`, `registry.rs`,
+`helpers.rs`, `scenarios.rs`, and `seeded_usage/`.
 
 The first concrete seam layer now lives in `neovex-storage::simulation`.
 `Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test
