@@ -55,25 +55,6 @@ impl NeovexRuntime {
         .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn load_bundle_for_bypass_repro_without_post_return_settle(
-        &self,
-        runtime: &mut JsRuntime,
-        bundle: &RuntimeBundle,
-        construction_mode: RuntimeConstructionMode,
-        context: Option<&RuntimeInvocationContext>,
-        request: Option<&InvocationRequest>,
-    ) -> Result<()> {
-        self.load_bundle_without_post_return_settle_with_trace(
-            runtime,
-            bundle,
-            construction_mode,
-            context,
-            request,
-        )
-        .await
-    }
-
     async fn load_bundle_without_post_return_settle_with_trace(
         &self,
         runtime: &mut JsRuntime,

@@ -258,15 +258,15 @@ export {};
 }
 
 #[test]
-fn warm_module_pool_cooperative_async_host_two_cycles() {
+fn warm_pool_cooperative_async_host_two_cycles() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime should build")
-        .block_on(warm_module_pool_cooperative_async_host_two_cycles_inner());
+        .block_on(warm_pool_cooperative_async_host_two_cycles_inner());
 }
 
-async fn warm_module_pool_cooperative_async_host_two_cycles_inner() {
+async fn warm_pool_cooperative_async_host_two_cycles_inner() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -296,7 +296,7 @@ export {};
     };
     let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
         execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::WarmModulePool,
+        runtime_pool_kind: RuntimePoolKind::WarmPool,
         max_concurrent_isolates: 1,
         worker_threads: 1,
         ..RuntimeLimits::default()
@@ -432,7 +432,7 @@ export {};
 
     for &pool_kind in &[
         RuntimePoolKind::StartupSnapshotCache,
-        RuntimePoolKind::WarmModulePool,
+        RuntimePoolKind::WarmPool,
     ] {
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,

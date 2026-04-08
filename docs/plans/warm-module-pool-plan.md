@@ -1,6 +1,6 @@
 # Plan: Warm Module Pool
 
-Canonical execution plan for adding a `WarmModulePool` runtime pool kind to
+Canonical execution plan for adding a `WarmPool` runtime pool kind to
 `neovex-runtime`. Warm module pooling keeps evaluated user modules alive across
 invocations on the same worker-local isolate, skipping realm reset, bootstrap
 replay, and module reload on warm hits.
@@ -89,7 +89,7 @@ changes are surgical and the raw backend is unnecessary:
 |------|-----------------|----------------|
 | `StartupSnapshotCache` | ~4-12ms | new JsRuntime + module load + evaluate + invoke |
 | `RetainedJsRuntimePool` | ~2-5ms | realm reset + bootstrap replay + module reload + invoke |
-| `WarmModulePool` | ~0.1-0.3ms | request-state swap + invoke stored handler |
+| `WarmPool` | ~0.1-0.3ms | request-state swap + invoke stored handler |
 
 ### Decision rule against the raw-V8 fallback
 
@@ -110,7 +110,7 @@ Continue with this plan unless one of two things becomes true:
 
 ### Execution model constraint
 
-**The first `WarmModulePool` implementation is `CooperativeLocker`-only.** The
+**The first `WarmPool` implementation is `CooperativeLocker`-only.** The
 current runtime explicitly caps `RunToCompletion` to one retained idle runtime
 per worker (`snapshot.rs:458`). Warm pooling inherits that constraint: it must
 not enable multi-entry warm pools under run-to-completion execution. The warm
@@ -129,12 +129,12 @@ No new backend kind. One new pool kind alongside the existing two:
 RuntimePoolKind
   - startup_snapshot_cache        (default: fresh JsRuntime per invocation)
   - retained_jsruntime_pool       (opt-in: retained JsRuntime, realm reset per invocation)
-  - warm_module_pool              (opt-in: retained JsRuntime, NO realm reset, surgical cleanup)
+  - warm_pool              (opt-in: retained JsRuntime, NO realm reset, surgical cleanup)
 ```
 
 Validation rules:
-- `warm_module_pool` requires `execution_model = cooperative_locker`
-- `warm_module_pool` with `execution_model = run_to_completion` must fail fast
+- `warm_pool` requires `execution_model = cooperative_locker`
+- `warm_pool` with `execution_model = run_to_completion` must fail fast
 
 Existing `deno_core` behavior must remain unchanged. Warm reuse should be
 introduced through separate additive APIs and guards, not by widening or
@@ -567,21 +567,21 @@ existing `deno_core` semantics.
 
 ### 2. `src/limits.rs` (~24 lines) — WM2
 
-- `WarmModulePool` variant on `RuntimePoolKind`
+- `WarmPool` variant on `RuntimePoolKind`
 - `WarmPerBundle` variant on `RuntimeModuleStateSemantics`
 - Update `module_state_semantics()`, `reset_capabilities()`, `normalized()`
-- Validation: `WarmModulePool` requires `CooperativeLocker`; fail fast
+- Validation: `WarmPool` requires `CooperativeLocker`; fail fast
   otherwise
-- New limit fields: `max_warm_module_pool_entries_per_worker`,
-  `max_warm_module_reuses`
+- New limit fields: `max_warm_pool_entries_per_worker`,
+  `max_warm_reuses`
 
 ### 3. `src/runtime/bootstrap/snapshot.rs` (~138 lines) — WM2
 
 - `WarmPoolEntry` struct
 - `warm_pool: Vec<WarmPoolEntry>` field on `RuntimeWorkerIsolatePool`
-- `WarmModulePool` arm in `take_runtime_with_options_for_invocation()` —
+- `WarmPool` arm in `take_runtime_with_options_for_invocation()` —
   match by bundle identity, skip `reset_retained_runtime()`, return warm entry
-- `WarmModulePool` arm in `return_runtime_with_affinity()` — store with
+- `WarmPool` arm in `return_runtime_with_affinity()` — store with
   bundle identity, enforce bounds
 - `take_warm_pool_entry()` — find by identity + affinity key
 - `enforce_warm_pool_bounds()` — idle-only LRU eviction
@@ -597,7 +597,7 @@ existing `deno_core` semantics.
 
 ### 5. `src/worker_loop/cooperative.rs` (~4 lines) — WM3
 
-- `WarmModulePool` arm in `retain_or_defer_runtime_drop()`
+- `WarmPool` arm in `retain_or_defer_runtime_drop()`
 
 ### 6. `src/metrics.rs` + `src/metrics/global.rs` (~50 lines) — WM4
 
@@ -663,7 +663,7 @@ implementation:
    = 0` in user code accumulates across requests. This is intentional and
    matches Cloudflare Workers, Deno Deploy, and Vercel Edge Runtime semantics.
    Must be documented and exposed via `module_state_semantics = warm_per_bundle`.
-13. **Warm pool entries must be retired after `max_warm_module_reuses`.** Limits
+13. **Warm pool entries must be retired after `max_warm_reuses`.** Limits
     heap fragmentation and long-tail state accumulation risk.
 14. **Warm pool eviction must be idle-only.** Never evict active or parked
     contexts.
@@ -859,10 +859,10 @@ compiled code. In the GC finalizer path, V8 has already swept those references.
 |-------|-----------|-----------|
 | WM0 | done | `__neovexInvocationGeneration` + `guardStale()` added to bootstrap; all ctx methods guarded (db.get, db.query, db.insert, db.patch, db.delete, auth.getUserIdentity, auth.getVerifiedIdentity, scheduler.*, runQuery, runMutation, runAction); query builder async methods routed through guarded `asyncHostValue`; reset script bumps generation; 2 tests added |
 | WM1 | done | `is_warm_reuse_safe()` + `reset_request_state()` landed in fork at `0.395.0-locker.2` (`f10265b`). 206 production lines + 277 test lines across 7 files. Helpers: `ExceptionState::clear_request_state`, `ModuleMap::clear_pending_state`, `RuntimeActivityTraces::clear_traces`, `V8TaskSpawnerFactory::clear`, `ExternalOpsTracker::reset`. 8 tests: module preservation, exception cleanup, async op quiescence, repeated cycles, negative (pending op, scheduled tick), Locker sync, Locker async. Neovex Cargo.toml updated to `0.395.0-locker.2`. |
-| WM2 | done | `WarmModulePool` variant on `RuntimePoolKind`, `WarmPerBundle` on `RuntimeModuleStateSemantics`, `WarmPoolEntry` struct, bundle-identity-matched take/return, LRU eviction, retirement at reuse cap, CooperativeLocker-only validation (panic on RunToCompletion), warm pool limit fields. Test: `warm_module_pool_with_run_to_completion_fails_fast`. |
-| WM3 | done | Warm-hit branch skips `load_bundle_with_trace` in both `invoke_bundle_unmanaged` and `start_cooperative_locker_runtime_slot`. Post-handler `reset_request_state()` called before return to pool; discards runtime on non-quiescent state. `retain_or_defer_runtime_drop` handles `WarmModulePool` alongside `RetainedJsRuntimePool`. |
+| WM2 | done | `WarmPool` variant on `RuntimePoolKind`, `WarmPerBundle` on `RuntimeModuleStateSemantics`, `WarmPoolEntry` struct, bundle-identity-matched take/return, LRU eviction, retirement at reuse cap, CooperativeLocker-only validation (panic on RunToCompletion), warm pool limit fields. Test: `warm_pool_with_run_to_completion_fails_fast`. |
+| WM3 | done | Warm-hit branch skips `load_bundle_with_trace` in both `invoke_bundle_unmanaged` and `start_cooperative_locker_runtime_slot`. Post-handler `reset_request_state()` called before return to pool; discards runtime on non-quiescent state. `retain_or_defer_runtime_drop` handles `WarmPool` alongside `RetainedJsRuntimePool`. |
 | WM4 | done | `warm_pool_hits`, `warm_pool_misses`, `warm_pool_retirements`, `warm_pool_discard_unquiesced` counters added to `RuntimeGlobalCounters`, `RuntimeGlobalCountersSnapshot`, `RuntimeMetricsSnapshot`, and `RuntimeMetrics`. Wired into pool take (hit/miss), pool return (retirement), and invocation driver (discard_unquiesced). |
-| WM5 | done | Benchmark results (cooperative locker, pure JS): **WarmModulePool 22µs** vs StartupSnapshotCache 1.1ms vs RetainedJsRuntimePool 1.8-2.1ms. 50x speedup over snapshot cache, exceeding the 5x promotion threshold. Async batch cooperative excluded: retained pool impractically slow (realm reset dominates), warm pool has a concurrent dispatch queuing issue (sequential async proven by unit test). |
+| WM5 | done | Benchmark results (cooperative locker, pure JS): **WarmPool 22µs** vs StartupSnapshotCache 1.1ms vs RetainedJsRuntimePool 1.8-2.1ms. 50x speedup over snapshot cache, exceeding the 5x promotion threshold. Async batch cooperative excluded: retained pool impractically slow (realm reset dominates), warm pool has a concurrent dispatch queuing issue (sequential async proven by unit test). |
 
 ## Verification Contract
 
@@ -872,14 +872,14 @@ Each phase must demonstrate:
 |-------|---------------------|
 | WM0 | Neovex test: ctx from invocation N throws on any host call during invocation N+1; ctx.auth.getUserIdentity() from invocation N throws during invocation N+1; ctx.auth.getVerifiedIdentity() from invocation N throws during invocation N+1; ctx from invocation N works normally during invocation N; generation counter increments on warm reset |
 | WM1 | Fork test: `reset_request_state()` preserves evaluated modules, clears per-request state; `EventLoopPendingState::is_warm_reuse_safe()` returns false for all 12 state sources; `JsRuntime::is_warm_reuse_safe()` reports the same boundary to Neovex; **negative tests**: reset is rejected with a live timer, with a pending promise, with a pending dynamic import, with an outstanding immediate; **Locker tests**: all of the above must pass with `use_locker: true` (not just standard path), proving the implementation works on the `ManagedIsolate::Lockable` path and keeps V8 state access on a held-lock path |
-| WM2 | Neovex test: warm pool take/return round-trips with correct bundle identity matching; LRU eviction fires at bounds; retirement fires at reuse limit; `WarmModulePool` + `RunToCompletion` fails fast |
+| WM2 | Neovex test: warm pool take/return round-trips with correct bundle identity matching; LRU eviction fires at bounds; retirement fires at reuse limit; `WarmPool` + `RunToCompletion` fails fast |
 | WM3 | Neovex test: warm-hit invocation returns correct result without module reload; cold-miss followed by warm-hit shows expected latency drop; module-level state persists across warm hits (intentional); unquiesced runtime is discarded, not pooled |
 | WM4 | Diagnostics test: warm_pool_hits / misses / retirements / discard_unquiesced counters are accurate; `module_state_semantics = warm_per_bundle` is exposed |
 | WM5 | Benchmark report: absolute warm-hit latency, comparison against `StartupSnapshotCache` and `RetainedJsRuntimePool`, throughput under concurrent load, all under `CooperativeLocker` execution model; explicitly call out whether per-invocation bundle integrity re-hash is a dominant remaining fixed warm-hit cost |
 
 ## Promotion Criteria
 
-`WarmModulePool` should remain opt-in until WM5 proves:
+`WarmPool` should remain opt-in until WM5 proves:
 
 1. Warm-hit latency is at least 5x better than `StartupSnapshotCache` on a
    representative workload.
@@ -896,7 +896,7 @@ Each phase must demonstrate:
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
 | 2026-04-05 | meta | documented | Initial plan authored from six-agent verified audit of fork feasibility. Scope: ~103 lines deno_core fork + ~276 lines neovex-runtime. Supersedes raw-v8-warm-backend-plan.md as primary warm execution path. | document review against current fork surface, ARCHITECTURE.md, and agent audit findings | activate after Locker fork plan Phase 5 completes |
-| 2026-04-05 | meta | revised | Addressed three review findings (round 1): (1) P1 BLOCKER — bootstrap `__neovexCreateContext()` captures `requestAuth`, `authIdentity`, `verifiedAuthIdentity`, `sessionId` in JS closures; stashed ctx leaks previous request's auth across warm hits. Fix: add `__neovexInvocationGeneration` guard to all host call closures (WM0). (2) P1 BLOCKER — `pending_ops.len() == 0` insufficient as warm-reset boundary; event loop tracks timers, dynamic imports, ticks, promises, UV handles beyond ops. Fix: guard on full `EventLoopPendingState::is_pending() == false`, add quiescence drain loop, discard on timeout, add negative tests (WM1/WM3). (3) P2 — plan did not state execution-model constraint. Fix: `WarmModulePool` is `CooperativeLocker`-only in first implementation; `RunToCompletion` fails fast (WM2). | review of `source.rs:251-419` (closure captures), `jsruntime.rs:3069` (EventLoopPendingState), `snapshot.rs:458` (single-entry RTC constraint) | WM0 can land independently as a safety improvement; WM1+ blocked on Locker fork Phase 5 |
+| 2026-04-05 | meta | revised | Addressed three review findings (round 1): (1) P1 BLOCKER — bootstrap `__neovexCreateContext()` captures `requestAuth`, `authIdentity`, `verifiedAuthIdentity`, `sessionId` in JS closures; stashed ctx leaks previous request's auth across warm hits. Fix: add `__neovexInvocationGeneration` guard to all host call closures (WM0). (2) P1 BLOCKER — `pending_ops.len() == 0` insufficient as warm-reset boundary; event loop tracks timers, dynamic imports, ticks, promises, UV handles beyond ops. Fix: guard on full `EventLoopPendingState::is_pending() == false`, add quiescence drain loop, discard on timeout, add negative tests (WM1/WM3). (3) P2 — plan did not state execution-model constraint. Fix: `WarmPool` is `CooperativeLocker`-only in first implementation; `RunToCompletion` fails fast (WM2). | review of `source.rs:251-419` (closure captures), `jsruntime.rs:3069` (EventLoopPendingState), `snapshot.rs:458` (single-entry RTC constraint) | WM0 can land independently as a safety improvement; WM1+ blocked on Locker fork Phase 5 |
 | 2026-04-05 | meta | revised | Addressed three review findings (round 2): (1) P1 — generation guard only wrapped `syncHostValue`/`asyncHostValue` but `ctx.auth.getUserIdentity()` and `ctx.auth.getVerifiedIdentity()` return captured identity directly without host calls. Fix: `guardStale()` now explicitly wraps every ctx method including auth accessors. (2) P1 — `is_pending()` in the fork only checks 9 of 12 `EventLoopPendingState` fields; it skips `has_pending_ops`, `has_outstanding_immediates`, `has_pending_timers`. Fix: new `is_warm_reuse_safe()` method checks all 12 fields; `reset_request_state()` guards on that instead of `is_pending()`. (3) P2 — invocation path described a new ctx-first handler ABI that does not exist. Fix: clarified that warm path re-calls `globalThis.__neovexInvoke(request)` via `execute_script()` unchanged; `__neovexCreateContext()` is called internally by user code as today; no new ABI. | verification of `source.rs:303-308` (auth accessors bypass host ops), `jsruntime.rs:3129-3139` (`is_pending()` skips 3 fields) | plan is now implementation-ready pending activation gate |
 | 2026-04-05 | meta | revised | Final feasibility pass against the live fork and the deferred raw-V8 backend plan. Adjusted the fork estimate upward to a more realistic merge budget (`120-180` production lines, `250-400` total with focused tests), documented the in-place op-driver reset and hidden-state audit as the primary WM1 friction points, and made the backend decision rule explicit: stay on the fork path unless WM1 proves `reset_request_state()` unsound or WM5 proves the warm path still misses the target badly enough to justify a second backend. Also recorded that the fork work remains useful even if warm pooling later fails the promotion gate because the quiescence/reset primitives are reusable on their own. | document review against `warm-module-pool-plan.md`, `raw-v8-warm-backend-plan.md`, `runtime/bootstrap/source.rs`, `runtime/bootstrap/snapshot.rs`, and the live `agentstation/deno_core` fork surfaces (`jsruntime.rs`, `modules/map.rs`, `exception_state.rs`, `futures_unordered_driver.rs`) | keep raw-V8 deferred; execute WM0/WM1 only after activation gate is opened |
 | 2026-04-05 | meta | revised | Verified follow-up insights from an independent implementation sketch audit. Kept the additive/no-existing-functionality-loss conclusion, clarified that WM3 needs a public `JsRuntime::is_warm_reuse_safe()` wrapper rather than only the `EventLoopPendingState` method, recorded that the current `Rc<OpDriverImpl>` topology rules out treating `*self = Self::default()` as the assumed reset strategy from outside the driver, and added WM5 guidance to measure whether per-invocation `bundle.verify_integrity()` becomes the dominant remaining fixed warm-hit cost. Did **not** adopt the claimed exact `~159` production-line count because the final op-driver reset shape is still design-dependent. | document review against the live fork (`extension_set.rs`, `ops.rs`, `jsruntime.rs`, `bundle.rs`, `runtime.rs`) and the updated warm-module-pool control plane | keep exact line count flexible; carry the verified API/benchmark insights into WM1/WM5 |
@@ -908,6 +908,6 @@ Each phase must demonstrate:
 | 2026-04-07 | meta | revised | Added "Rc Leak in `destroy_for_reset`" section documenting the ~500KB/cycle memory leak on the retained pool path, its root cause (intentionally leaked Rc refs from embedder slots to prevent SIGSEGV), and the proposed GC-finalizer-based solution using rusty_v8's existing `Context::set_slot<T>()` API. Updated maintenance invariant #4 to cross-reference the leak. Added known risk entry. Confirmed no rusty_v8 changes are needed — the existing API surface is sufficient for the fix. The warm pool is not affected since it keeps contexts alive. | review of rusty_v8 `set_slot`/`clear_all_slots`/`detach_all_slots` API surface; ContextAnnex weak finalizer lifecycle analysis; V8 GC second-pass callback safety analysis for `Global::Reset` | implement the `set_slot`-based deferred cleanup as a follow-up when retained pool production hardening begins |
 | 2026-04-07 | WM0 | done | Implemented bootstrap generation guard. Added `__neovexInvocationGeneration` counter and `guardStale()` closure to `__neovexCreateContext`. All ctx methods now guarded: `syncHostValue`, `asyncHostValue`, `ctx.auth.getUserIdentity()`, `ctx.auth.getVerifiedIdentity()`, `ctx.db.get()`, `ctx.db.query()` (and all query builder terminal methods via guarded `asyncHostValue`), `ctx.db.insert/patch/delete`, `ctx.scheduler.*`, `ctx.runQuery/runMutation/runAction`. Reset script bumps generation. Query builder refactored to receive guarded `asyncHostValue` instead of calling global directly. Discovered and fixed: `runQuery/runMutation/runAction` bypassed guard when `localInvoker` was not set (fell through to global `__neovexAsyncHostValue`). | 59/59 runtime tests pass; `stale_ctx_throws_on_host_call_after_generation_bump` validates all 7 representative ctx methods throw after generation bump; `current_ctx_works_normally_during_same_invocation` validates no false positives across 2 invocations; clippy clean | WM1: fork changes |
 | 2026-04-07 | WM1 | done | Implemented warm-reuse APIs in deno_core fork. Tagged `0.395.0-locker.2` at `f10265b`. New public APIs: `JsRuntime::is_warm_reuse_safe()` (checks all 12 EventLoopPendingState fields), `JsRuntime::reset_request_state()` (full quiescence guard → foreground drain in ContextScope + TryCatch loop → clear exception state, module in-flight state, timer/immediate/tick buffers, active timers, unrefed ops, external ops tracker, activity traces, event loop phases, task spawner). Internal helpers: `EventLoopPendingState::is_warm_reuse_safe()`, `ExceptionState::clear_request_state()`, `ModuleMap::clear_pending_state()`, `RuntimeActivityTraces::clear_traces()`, `V8TaskSpawnerFactory::clear()`, `ExternalOpsTracker::reset()`. 206 production lines + 277 test lines across 7 files. Neovex `Cargo.toml` updated to `0.395.0-locker.2`. | 423/424 deno_core tests pass (1 pre-existing `located_script_name`); 8 warm reuse tests all green including Locker path; neovex-runtime 55/55 non-locker runtime tests pass; neovex retained pool 8/8 tests pass including WM0 generation guard tests | WM2: pool infrastructure |
-| 2026-04-07 | WM2 | done | Implemented warm pool infrastructure in neovex. `WarmModulePool` variant on `RuntimePoolKind`, `WarmPerBundle` on `RuntimeModuleStateSemantics`, `WarmPoolEntry` struct with bundle identity matching, pool take/return with LRU eviction, retirement at reuse cap, fail-fast validation (panic on `RunToCompletion`), new limit fields `max_warm_module_pool_entries_per_worker` and `max_warm_module_reuses`. | 56/56 non-locker runtime tests pass (9 retained pool tests including fail-fast validation); clippy clean | WM3: invocation path |
-| 2026-04-07 | WM3 | done | Implemented warm invocation path. Warm-hit branch skips `load_bundle_with_trace` in both `invoke_bundle_unmanaged` (run-to-completion path) and `start_cooperative_locker_runtime_slot` (cooperative path). Post-handler `reset_request_state()` called before returning runtime to pool; discards runtime if not quiescent. `retain_or_defer_runtime_drop` handles `WarmModulePool` alongside `RetainedJsRuntimePool`. Reuse count incremented on successful warm return. | 56/56 non-locker runtime tests pass; clippy clean | WM4: metrics (deferred — existing retained pool metrics reused) |
-| 2026-04-08 | WM5 | done | Benchmark validation complete. Results (cooperative locker, pure JS, `runtime_pool_modes.rs`): **WarmModulePool: 22µs/invocation**, StartupSnapshotCache: 1.1ms, RetainedJsRuntimePool: 1.8-2.1ms. **50x speedup** over snapshot cache — exceeds the 5x promotion threshold by 10x. Four-tenant warm pool: 22µs (same as single-tenant, confirming bundle-identity sharing works). Async batch cooperative: startup_snapshot_cache at 6.6ms works; retained pool excluded (realm reset too slow); warm pool excluded (concurrent 4-thread dispatch has a queuing issue — sequential warm async proven by `warm_module_pool_cooperative_async_host_two_cycles` unit test). Retained pool benchmarks capped at 200 reuses to bound the `destroy_for_reset` Rc leak (~500KB/cycle). The warm pool has **zero memory leak** by design (no `reset_main_realm`). | Full benchmark suite green (12 scenarios, 0 panics); `warm_module_pool_cooperative_async_host_two_cycles` unit test passes | Promotion: warm pool meets all 5 criteria; async concurrent dispatch queuing is a follow-up investigation |
+| 2026-04-07 | WM2 | done | Implemented warm pool infrastructure in neovex. `WarmPool` variant on `RuntimePoolKind`, `WarmPerBundle` on `RuntimeModuleStateSemantics`, `WarmPoolEntry` struct with bundle identity matching, pool take/return with LRU eviction, retirement at reuse cap, fail-fast validation (panic on `RunToCompletion`), new limit fields `max_warm_pool_entries_per_worker` and `max_warm_reuses`. | 56/56 non-locker runtime tests pass (9 retained pool tests including fail-fast validation); clippy clean | WM3: invocation path |
+| 2026-04-07 | WM3 | done | Implemented warm invocation path. Warm-hit branch skips `load_bundle_with_trace` in both `invoke_bundle_unmanaged` (run-to-completion path) and `start_cooperative_locker_runtime_slot` (cooperative path). Post-handler `reset_request_state()` called before returning runtime to pool; discards runtime if not quiescent. `retain_or_defer_runtime_drop` handles `WarmPool` alongside `RetainedJsRuntimePool`. Reuse count incremented on successful warm return. | 56/56 non-locker runtime tests pass; clippy clean | WM4: metrics (deferred — existing retained pool metrics reused) |
+| 2026-04-08 | WM5 | done | Benchmark validation complete. Results (cooperative locker, pure JS, `runtime_pool_modes.rs`): **WarmPool: 22µs/invocation**, StartupSnapshotCache: 1.1ms, RetainedJsRuntimePool: 1.8-2.1ms. **50x speedup** over snapshot cache — exceeds the 5x promotion threshold by 10x. Four-tenant warm pool: 22µs (same as single-tenant, confirming bundle-identity sharing works). Async batch cooperative: startup_snapshot_cache at 6.6ms works; retained pool excluded (realm reset too slow); warm pool excluded (concurrent 4-thread dispatch has a queuing issue — sequential warm async proven by `warm_pool_cooperative_async_host_two_cycles` unit test). Retained pool benchmarks capped at 200 reuses to bound the `destroy_for_reset` Rc leak (~500KB/cycle). The warm pool has **zero memory leak** by design (no `reset_main_realm`). | Full benchmark suite green (12 scenarios, 0 panics); `warm_pool_cooperative_async_host_two_cycles` unit test passes | Promotion: warm pool meets all 5 criteria; async concurrent dispatch queuing is a follow-up investigation |

@@ -8,7 +8,7 @@ future contributors do not re-derive these decisions from scratch. It is a
 research rationale, not an execution plan — see `docs/plans/README.md` for
 active plans.
 
-**Update 2026-04-08:** The warm module pool (`WarmModulePool`) is now
+**Update 2026-04-08:** The warm module pool (`WarmPool`) is now
 implemented and benchmarked at **22µs warm-hit latency** — a 50x improvement
 over `StartupSnapshotCache` (1.1ms). This changes the architecture analysis
 significantly: the thread-pinning cost that was the primary concern is now
@@ -536,7 +536,7 @@ necessary.
 
 ## Future Paths
 
-### Deprecate RetainedJsRuntimePool in favor of WarmModulePool
+### Deprecate RetainedJsRuntimePool in favor of WarmPool
 
 The warm module pool is strictly better than the retained pool:
 - **50x faster** warm-hit latency (22µs vs 1.1ms)
@@ -633,7 +633,7 @@ burst handling, routing complexity) are real but secondary to the 50x
 per-invocation improvement already achieved.
 
 The `RetainedJsRuntimePool` is a candidate for deprecation — it is strictly
-worse than `WarmModulePool` (slower, leaks ~500KB/cycle from
+worse than `WarmPool` (slower, leaks ~500KB/cycle from
 `destroy_for_reset`, more complex). The only remaining advantage of the
 retained pool is that it works with `RunToCompletion` execution model, but
 the warm pool's `CooperativeLocker` requirement aligns with the production

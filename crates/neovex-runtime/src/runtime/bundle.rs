@@ -9,11 +9,16 @@ use crate::module_loader::BundleModuleCodeCache;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RuntimeBundleIdentity {
+    tenant_label: Option<String>,
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
 }
 
 impl RuntimeBundleIdentity {
+    pub fn tenant_label(&self) -> Option<&str> {
+        self.tenant_label.as_deref()
+    }
+
     pub fn entrypoint(&self) -> &Path {
         &self.entrypoint
     }
@@ -49,7 +54,7 @@ impl Eq for RuntimeBundle {}
 
 impl RuntimeBundle {
     pub fn new(entrypoint: impl AsRef<Path>) -> Self {
-        Self::from_parts(entrypoint.as_ref().to_path_buf(), None)
+        Self::from_parts(entrypoint.as_ref().to_path_buf(), None, None)
     }
 
     pub fn with_expected_sha256(
@@ -59,6 +64,19 @@ impl RuntimeBundle {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
             Some(normalize_sha256(expected_sha256.as_ref())?),
+            None,
+        ))
+    }
+
+    pub fn for_tenant(
+        entrypoint: impl AsRef<Path>,
+        expected_sha256: impl AsRef<str>,
+        tenant_label: impl Into<String>,
+    ) -> Result<Self> {
+        Ok(Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            Some(normalize_sha256(expected_sha256.as_ref())?),
+            Some(tenant_label.into()),
         ))
     }
 
@@ -70,7 +88,7 @@ impl RuntimeBundle {
         self.shared.canonical_entrypoint.as_deref()
     }
 
-    pub fn bundle_identity(&self) -> &RuntimeBundleIdentity {
+    pub fn identity(&self) -> &RuntimeBundleIdentity {
         &self.shared.identity
     }
 
@@ -120,7 +138,11 @@ impl RuntimeBundle {
         )))
     }
 
-    fn from_parts(entrypoint: PathBuf, expected_sha256: Option<String>) -> Self {
+    fn from_parts(
+        entrypoint: PathBuf,
+        expected_sha256: Option<String>,
+        tenant_label: Option<String>,
+    ) -> Self {
         let canonical_entrypoint = entrypoint.canonicalize().ok();
         let module_specifier_path = canonical_entrypoint
             .clone()
@@ -141,6 +163,7 @@ impl RuntimeBundle {
                     .and_then(|path| path.canonicalize().ok())
             });
         let identity = RuntimeBundleIdentity {
+            tenant_label,
             entrypoint: canonical_entrypoint
                 .clone()
                 .unwrap_or_else(|| entrypoint.clone()),

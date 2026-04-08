@@ -86,13 +86,13 @@ impl RuntimeWorkerIsolatePool {
     ) -> Result<ReusableRuntime> {
         match runtime_owner.policy.limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
-            RuntimePoolKind::WarmModulePool => {
+            RuntimePoolKind::WarmPool => {
                 let affinity_key = runtime_affinity_key(
                     runtime_owner.policy.limits().routing_affinity,
                     context,
                     bundle,
                 );
-                let bundle_identity = bundle.bundle_identity().clone();
+                let bundle_identity = bundle.identity().clone();
                 if let Some(entry) =
                     self.take_warm_pool_entry(&bundle_identity, affinity_key.as_ref())
                 {
@@ -161,20 +161,18 @@ impl RuntimeWorkerIsolatePool {
     ) {
         match runtime_owner.policy.limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
-            RuntimePoolKind::WarmModulePool => {
+            RuntimePoolKind::WarmPool => {
                 if runtime.runtime.is_v8_lock_held() {
                     runtime.runtime.release_v8_lock();
                 }
-                if runtime.retained_reuse_count
-                    >= runtime_owner.policy.limits().max_warm_module_reuses
-                {
+                if runtime.retained_reuse_count >= runtime_owner.policy.limits().max_warm_reuses {
                     runtime_owner.policy.metrics().record_warm_pool_retirement();
                     return;
                 }
                 let last_used_sequence = self.next_warm_sequence();
                 self.warm_pool.push(WarmPoolEntry {
                     runtime: runtime.runtime,
-                    bundle_identity: bundle.bundle_identity().clone(),
+                    bundle_identity: bundle.identity().clone(),
                     affinity_key,
                     reuse_count: runtime.retained_reuse_count,
                     last_used_sequence,
@@ -232,7 +230,7 @@ impl RuntimeWorkerIsolatePool {
         let max_entries = runtime_owner
             .policy
             .limits()
-            .max_warm_module_pool_entries_per_worker;
+            .max_warm_pool_entries_per_worker;
         while self.warm_pool.len() > max_entries {
             // Evict LRU
             if let Some(index) = self

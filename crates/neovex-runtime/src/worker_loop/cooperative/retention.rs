@@ -12,7 +12,7 @@ impl CooperativeWorkerLoop {
         runtime: ReusableRuntime,
     ) {
         match self.policy.limits().runtime_pool_kind {
-            RuntimePoolKind::WarmModulePool => {
+            RuntimePoolKind::WarmPool => {
                 let mut runtime = runtime;
                 if runtime.runtime.reset_request_state().is_err() {
                     self.policy.metrics().record_warm_pool_discard_unquiesced();

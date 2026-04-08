@@ -531,7 +531,7 @@ This plan is **closed**. The warm module pool plan achieved warm execution
 semantics through `deno_core` fork changes, proving the raw-V8 backend
 unnecessary:
 
-- **`WarmModulePool`** delivers 22µs warm-hit latency (50x over snapshot cache)
+- **`WarmPool`** delivers 22µs warm-hit latency (50x over snapshot cache)
   without a second backend
 - **`reset_request_state()`** in the fork provides surgical per-request cleanup
   while preserving evaluated modules — the exact contract this plan proposed
