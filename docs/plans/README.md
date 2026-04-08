@@ -13,9 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/v8-locker-fork-plan.md`
-  - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
-    Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
 
 ## Deferred design and experiment plans
 
@@ -35,8 +32,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - canonical plan for adding a wasmtime-based WASM backend alongside the
     existing `deno_core` V8 backend; covers backend abstraction refactor, WIT
     interface definitions, cooperative fuel-based scheduling, module caching,
-    and bundle format extension; activates after the Locker fork plan Phase 5
-    completes
+    and bundle format extension; activation gate met (Locker fork Phase 5
+    completed 2026-04-06)
 - `docs/plans/wasi-agent-capabilities-plan.md`
   - canonical plan for adding agent OS primitives (virtual filesystem, sandboxed
     process execution, HTTP client) via WASI Component Model interfaces; covers
@@ -61,8 +58,6 @@ explicitly asked to review historical work.
 - For the current test and harness hardening workstream, start with
   `deterministic-test-and-harness-hardening-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
-- For the Locker fork and cooperative runtime workstream, start with
-  `v8-locker-fork-plan.md`.
 - If no active cleanup, refactor, or verification hardening control plane is
   listed above, author or promote a new active plan before resuming generic
   work.
