@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness-pr verify-harness-nightly verify-harness-repro convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -51,17 +51,41 @@ lint: fmt-check clippy
 deny:
 	$(SINGLE_FLIGHT) --key cargo-deny-check -- cargo deny check
 
-# Focused verification harness slice for PRs
-verify-harness-pr:
-	bash scripts/verification-harness.sh pr
+# Focused verification harness slice
+verify-harness:
+	bash scripts/verification-harness.sh pr $(if $(SURFACE),$(SURFACE),all)
+
+verify-harness-storage:
+	$(MAKE) verify-harness SURFACE=storage
+
+verify-harness-engine:
+	$(MAKE) verify-harness SURFACE=engine
+
+verify-harness-server:
+	$(MAKE) verify-harness SURFACE=server
+
+verify-harness-runtime:
+	$(MAKE) verify-harness SURFACE=runtime
 
 # Heavier adversarial verification harness slice for scheduled runs
 verify-harness-nightly:
-	bash scripts/verification-harness.sh nightly
+	bash scripts/verification-harness.sh nightly $(if $(SURFACE),$(SURFACE),all)
+
+verify-harness-nightly-storage:
+	$(MAKE) verify-harness-nightly SURFACE=storage
+
+verify-harness-nightly-engine:
+	$(MAKE) verify-harness-nightly SURFACE=engine
+
+verify-harness-nightly-server:
+	$(MAKE) verify-harness-nightly SURFACE=server
+
+verify-harness-nightly-runtime:
+	$(MAKE) verify-harness-nightly SURFACE=runtime
 
 # Re-run one exact verification harness case
 verify-harness-repro:
-	@test -n "$(SURFACE)" || (echo "set SURFACE=storage|engine|server" && exit 1)
+	@test -n "$(SURFACE)" || (echo "set SURFACE=storage|engine|server|runtime" && exit 1)
 	@test -n "$(MODE)" || (echo "set MODE=pr|nightly" && exit 1)
 	@test -n "$(CASE)" || (echo "set CASE=<named-seed-case>" && exit 1)
 	bash scripts/verification-harness.sh repro "$(SURFACE)" "$(MODE)" "$(CASE)"

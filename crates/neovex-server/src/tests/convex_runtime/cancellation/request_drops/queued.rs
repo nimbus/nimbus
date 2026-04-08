@@ -2,8 +2,22 @@ use super::helpers::runtime_request_drop_registry;
 use super::*;
 use neovex_core::Timestamp;
 
+const QUEUED_REQUEST_DROP_CASE: DeterministicTestCase = DeterministicTestCase::new(
+    "runtime-request-drop-queued",
+    "run-to-completion-snapshot",
+    "dropping queued runtime work cancels pressure cleanly and never starts the queued mutation",
+);
+
+const QUEUED_REQUEST_RECOVERY_CASE: DeterministicTestCase = DeterministicTestCase::new(
+    "runtime-request-drop-queued-recovery",
+    "run-to-completion-snapshot",
+    "runtime recovers and serves new work after queued request-drop pressure clears",
+);
+
 #[tokio::test]
 async fn dropped_queued_runtime_request_never_starts_mutation() {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -20,10 +34,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(RuntimeLimits {
-        max_concurrent_isolates: 1,
-        ..RuntimeLimits::default()
-    });
+    .with_runtime_limits(limits);
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
     let server =
@@ -41,9 +52,12 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics(&registry, "blocking runtime query to start", |metrics| {
-        metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1
-    })
+    wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_DROP_CASE,
+        "blocking runtime query to start",
+        |metrics| metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1,
+    )
     .await;
 
     let queued_mutation = open_json_post_stream(
@@ -52,8 +66,17 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let queued_snapshot = registry.runtime_metrics_snapshot();
+    let queued_snapshot = wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_DROP_CASE,
+        "queued runtime mutation to be admitted but not started",
+        |metrics| {
+            metrics.active_isolates == 1
+                && metrics.worker_dispatched_invocations == 2
+                && metrics.started_invocations == 1
+        },
+    )
+    .await;
     assert_eq!(queued_snapshot.active_isolates, 1);
     assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
     assert_eq!(queued_snapshot.started_invocations, 1);
@@ -61,8 +84,9 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     drop(queued_mutation);
     drop(blocker);
 
-    let metrics = wait_for_runtime_metrics(
+    let metrics = wait_for_runtime_metrics_case(
         &registry,
+        QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
     )
@@ -118,6 +142,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
 
 #[tokio::test]
 async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears() {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -134,10 +160,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(RuntimeLimits {
-        max_concurrent_isolates: 1,
-        ..RuntimeLimits::default()
-    });
+    .with_runtime_limits(limits);
     let harness =
         DeterministicHarness::scenario("runtime-request-drop-recovery", 75, Timestamp(75_000));
     let fixture = ServiceFixture::new_with_harness(harness.clone(), |path, harness| {
@@ -159,9 +182,12 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics(&registry, "blocking runtime query to start", |metrics| {
-        metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1
-    })
+    wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_RECOVERY_CASE,
+        "blocking runtime query to start",
+        |metrics| metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1,
+    )
     .await;
 
     let queued_mutation = open_json_post_stream(
@@ -170,8 +196,17 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let queued_snapshot = registry.runtime_metrics_snapshot();
+    let queued_snapshot = wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_RECOVERY_CASE,
+        "queued runtime mutation recovery request to be admitted but not started",
+        |metrics| {
+            metrics.active_isolates == 1
+                && metrics.worker_dispatched_invocations == 2
+                && metrics.started_invocations == 1
+        },
+    )
+    .await;
     assert_eq!(queued_snapshot.active_isolates, 1);
     assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
     assert_eq!(queued_snapshot.started_invocations, 1);
@@ -179,8 +214,9 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     drop(queued_mutation);
     drop(blocker);
 
-    let canceled = wait_for_runtime_metrics(
+    let canceled = wait_for_runtime_metrics_case(
         &registry,
+        QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
     )
@@ -198,8 +234,9 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         .await;
     assert_eq!(recovery_response.status(), StatusCode::OK);
 
-    let recovered = wait_for_runtime_metrics(
+    let recovered = wait_for_runtime_metrics_case(
         &registry,
+        QUEUED_REQUEST_RECOVERY_CASE,
         "runtime recovery after queued request drop",
         |metrics| {
             metrics.active_isolates == 0

@@ -22,11 +22,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        max_concurrent_isolates: 1,
-        worker_threads: 1,
-        ..RuntimeLimits::default()
-    }));
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
     let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
     let bundle = RuntimeBundle::new(&bundle_path);
@@ -75,11 +74,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        max_concurrent_isolates: 1,
-        worker_threads: 1,
-        ..RuntimeLimits::default()
-    }));
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
     let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
     let bundle = RuntimeBundle::new(&bundle_path);
@@ -164,7 +162,10 @@ export {};
         cursor: None,
         auth: None,
     };
-    let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+    let runtime_owner = NeovexRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let mut runtime = isolate_pool
         .take_runtime(&runtime_owner, &bundle)
@@ -250,7 +251,10 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+    let runtime_owner = NeovexRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let mut runtime = isolate_pool
         .take_runtime(&runtime_owner, &bundle)

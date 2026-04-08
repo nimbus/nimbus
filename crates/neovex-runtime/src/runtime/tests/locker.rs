@@ -1,16 +1,31 @@
 use super::*;
-use crate::limits::{RuntimeExecutionModel, RuntimePoolKind};
 
 fn locker_test_policy() -> Arc<RuntimePolicy> {
-    Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
-        ..RuntimeLimits::default()
-    }))
+    cooperative_startup_snapshot_runtime_test_policy()
 }
+
+pub(super) const LOCKER_SNAPSHOT_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-locker-builds-from-snapshot",
+    "cooperative-startup-snapshot",
+    "locker runtime builds from startup snapshot and exposes bootstrap globals only under lock",
+    "runtime::tests::locker::runtime_builds_locker_jsruntime_from_snapshot_subprocess",
+);
+
+pub(super) const LOCKER_INTERLEAVE_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-locker-interleave-same-thread",
+    "cooperative-startup-snapshot",
+    "snapshot-backed locker runtimes preserve isolated state while interleaving on one thread",
+    "runtime::tests::locker::runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess",
+);
 
 #[test]
 fn runtime_builds_locker_jsruntime_from_snapshot() {
+    run_v8_sensitive_runtime_test_in_subprocess(LOCKER_SNAPSHOT_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate locker V8 state"]
+fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -57,6 +72,12 @@ fn runtime_builds_locker_jsruntime_from_snapshot() {
 
 #[test]
 fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread() {
+    run_v8_sensitive_runtime_test_in_subprocess(LOCKER_INTERLEAVE_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate locker V8 state"]
+fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess() {
     let _guard = acquire_runtime_suite_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");

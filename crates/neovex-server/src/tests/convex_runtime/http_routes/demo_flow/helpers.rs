@@ -23,19 +23,18 @@ pub(super) async fn wait_for_message(
     author: &str,
     body: &str,
 ) -> serde_json::Value {
-    timeout(Duration::from_secs(3), async {
-        loop {
-            let messages = query_messages_by_author(api, Some(author)).await;
-            if messages.as_array().is_some_and(|items| {
+    wait_for_value(
+        "expected demo flow message to arrive",
+        Duration::from_secs(3),
+        Duration::from_millis(50),
+        || query_messages_by_author(api, Some(author)),
+        |messages| {
+            messages.as_array().is_some_and(|items| {
                 items.iter().any(|message| {
                     message["author"] == json!(author) && message["body"] == json!(body)
                 })
-            }) {
-                return messages;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
+            })
+        },
+    )
     .await
-    .expect("expected demo flow message to arrive")
 }

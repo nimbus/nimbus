@@ -2,6 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn convex_runtime_only_query_enforces_nested_runtime_budget() {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_nested_runtime_invocations = 2;
     let registry = convex_registry_with_routes_and_bundle(
         json!([
             {
@@ -60,10 +62,7 @@ export {};
 "#,
         ),
     )
-    .with_runtime_limits(RuntimeLimits {
-        max_nested_runtime_invocations: 2,
-        ..RuntimeLimits::default()
-    });
+    .with_runtime_limits(limits);
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);

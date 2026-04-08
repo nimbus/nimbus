@@ -1,5 +1,19 @@
 use super::*;
 
+pub(crate) const WEBSOCKET_DISCONNECT_CLEANUP_CASE: DeterministicTestCase =
+    DeterministicTestCase::new(
+        "websocket-disconnect-cleanup",
+        "run-to-completion-snapshot",
+        "disconnecting a runtime-backed websocket subscription releases its child runtime subscription state",
+    );
+
+pub(crate) const WEBSOCKET_AUTH_CHANGE_RESUBSCRIBE_CASE: DeterministicTestCase =
+    DeterministicTestCase::new(
+        "websocket-auth-change-resubscribe",
+        "run-to-completion-snapshot",
+        "auth changes drop active runtime-backed subscriptions until the client explicitly resubscribes",
+    );
+
 #[tokio::test]
 async fn convex_websocket_auth_message_sets_runtime_identity() {
     let _guard = auth_test_guard().await;
@@ -93,6 +107,10 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
 
 #[tokio::test]
 async fn convex_websocket_disconnect_releases_runtime_subscription_children() {
+    convex_websocket_disconnect_releases_runtime_subscription_children_inner().await;
+}
+
+pub(crate) async fn convex_websocket_disconnect_releases_runtime_subscription_children_inner() {
     let _guard = auth_test_guard().await;
     let registry = convex_registry_with_routes_and_bundle_and_auth(
         json!([
@@ -141,24 +159,30 @@ async fn convex_websocket_disconnect_releases_runtime_subscription_children() {
 
     drop(socket);
 
-    timeout(Duration::from_secs(2), async {
-        loop {
-            if service
+    wait_for_condition(
+        &WEBSOCKET_DISCONNECT_CLEANUP_CASE.failure_context_with_repro(
+            "disconnect should release runtime-backed websocket subscriptions",
+            "cargo test -p neovex-server convex_websocket_disconnect_releases_runtime_subscription_children -- --nocapture",
+        ),
+        Duration::from_secs(2),
+        Duration::from_millis(10),
+        || async {
+            service
                 .active_subscription_count(&tenant_id)
                 .expect("subscription count should load")
                 == 0
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("disconnect should release runtime-backed websocket subscriptions");
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed() {
+    convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed_inner().await;
+}
+
+pub(crate) async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed_inner()
+ {
     let _guard = auth_test_guard().await;
     let issuer = "https://issuer.example.com";
     let application_id = "neovex-test";
@@ -260,20 +284,21 @@ async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscri
             "is_authenticated": false
         })
     );
-    timeout(Duration::from_secs(2), async {
-        loop {
-            if service
+    wait_for_condition(
+        &WEBSOCKET_AUTH_CHANGE_RESUBSCRIBE_CASE.failure_context_with_repro(
+            "auth changes should explicitly release active runtime subscriptions",
+            "cargo test -p neovex-server convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed -- --nocapture",
+        ),
+        Duration::from_secs(2),
+        Duration::from_millis(10),
+        || async {
+            service
                 .active_subscription_count(&tenant_id)
                 .expect("subscription count should load")
                 == 0
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("auth changes should explicitly release active runtime subscriptions");
+        },
+    )
+    .await;
 
     assert_eq!(
         api.insert_document("demo", "messages", json!({ "body": "After auth change" }))
@@ -286,13 +311,33 @@ async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscri
             .next_json_with_timeout(Duration::from_millis(250))
             .await,
         None,
-        "old subscription should be gone after auth changes"
+        "{}",
+        WEBSOCKET_AUTH_CHANGE_RESUBSCRIBE_CASE.failure_context_with_repro(
+            "old subscription should be gone after auth changes",
+            "cargo test -p neovex-server convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed -- --nocapture",
+        )
     );
 
     socket
         .subscribe_named("req-2", "auth:watchIdentity", json!({}))
         .await;
     let resubscribed = socket.next_json().await;
-    assert_eq!(resubscribed["type"], json!("subscription_result"));
-    assert_eq!(resubscribed["data"]["identity"], json!(null));
+    assert_eq!(
+        resubscribed["type"],
+        json!("subscription_result"),
+        "{}",
+        WEBSOCKET_AUTH_CHANGE_RESUBSCRIBE_CASE.failure_context_with_repro(
+            "resubscribe should bootstrap a fresh runtime-backed subscription result",
+            "cargo test -p neovex-server convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed -- --nocapture",
+        )
+    );
+    assert_eq!(
+        resubscribed["data"]["identity"],
+        json!(null),
+        "{}",
+        WEBSOCKET_AUTH_CHANGE_RESUBSCRIBE_CASE.failure_context_with_repro(
+            "resubscribe should reflect the cleared auth context after runtime cleanup",
+            "cargo test -p neovex-server convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed -- --nocapture",
+        )
+    );
 }

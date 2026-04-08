@@ -1,17 +1,22 @@
 use super::*;
-use crate::limits::RuntimePoolKind;
 use crate::runtime::bootstrap::RuntimeWorkerIsolatePool;
+
+pub(super) const CROSS_TENANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-cross-tenant-isolation",
+        "cooperative-warm-pool",
+        "warm-pool entries stay isolated by tenant label even when bundle bytes match",
+        "runtime::tests::warm_pool::warm_pool_cross_tenant_isolation_subprocess",
+    );
 
 #[test]
 #[should_panic(expected = "WarmPool requires CooperativeLocker")]
 fn warm_pool_with_run_to_completion_fails_fast() {
-    let _policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
-        runtime_pool_kind: crate::limits::RuntimePoolKind::WarmPool,
-        max_concurrent_isolates: 1,
-        worker_threads: 1,
-        ..RuntimeLimits::default()
-    }));
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.runtime_pool_kind = crate::limits::RuntimePoolKind::WarmPool;
+    limits.max_concurrent_isolates = 1;
+    limits.worker_threads = 1;
+    let _policy = Arc::new(RuntimePolicy::new(limits));
 }
 
 /// Proves that `RuntimeBundleIdentity` includes the tenant dimension:
@@ -71,6 +76,12 @@ fn bundle_identity_includes_tenant_label() {
 /// 3. Take again for tenant-A → assert warm hit.
 #[test]
 fn warm_pool_cross_tenant_isolation() {
+    run_v8_sensitive_runtime_test_in_subprocess(CROSS_TENANT_WARM_POOL_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_cross_tenant_isolation_subprocess() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -105,13 +116,10 @@ export {};
     let bundle_tenant_b = RuntimeBundle::for_tenant(&bundle_path, &expected_sha256, "tenant-b")
         .expect("tenant-b bundle should build");
 
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::WarmPool,
-        max_concurrent_isolates: 1,
-        worker_threads: 1,
-        ..RuntimeLimits::default()
-    }));
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime_owner = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
 

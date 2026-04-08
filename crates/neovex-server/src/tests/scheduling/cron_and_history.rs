@@ -1,5 +1,12 @@
 use super::*;
 
+pub(crate) const SCHEDULED_JOB_HISTORY_FAILURE_CASE: DeterministicTestCase =
+    DeterministicTestCase::new(
+        "scheduled-job-history-failure-publication",
+        "run-to-completion-snapshot",
+        "scheduled job history publishes failed results once the scheduler applies the attempted mutation",
+    );
+
 #[tokio::test]
 async fn cron_endpoints_create_list_and_delete_jobs() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
@@ -69,6 +76,10 @@ async fn cron_endpoints_create_list_and_delete_jobs() {
 
 #[tokio::test]
 async fn scheduled_job_history_endpoint_reports_failures() {
+    scheduled_job_history_endpoint_reports_failures_inner().await;
+}
+
+pub(crate) async fn scheduled_job_history_endpoint_reports_failures_inner() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -114,23 +125,31 @@ async fn scheduled_job_history_endpoint_reports_failures() {
         .expect("job_id should be present")
         .to_string();
 
-    let history = timeout(Duration::from_secs(3), async {
-        loop {
-            let response = api.get_scheduled_job_result("demo", &job_id).await;
-            if response.status() == StatusCode::OK {
-                break response;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("history should become available");
+    let history = wait_for_value(
+        &SCHEDULED_JOB_HISTORY_FAILURE_CASE.failure_context_with_repro(
+            "scheduled job history should become available",
+            "cargo test -p neovex-server scheduled_job_history_endpoint_reports_failures -- --nocapture",
+        ),
+        Duration::from_secs(3),
+        Duration::from_millis(50),
+        || api.get_scheduled_job_result("demo", &job_id),
+        |response| response.status() == StatusCode::OK,
+    )
+    .await;
 
     let body = history
         .json::<serde_json::Value>()
         .await
         .expect("history response should parse");
-    assert_eq!(body["result"]["outcome"], json!("failed"));
+    assert_eq!(
+        body["result"]["outcome"],
+        json!("failed"),
+        "{}",
+        SCHEDULED_JOB_HISTORY_FAILURE_CASE.failure_context_with_repro(
+            "scheduled job history should record the failed outcome",
+            "cargo test -p neovex-server scheduled_job_history_endpoint_reports_failures -- --nocapture",
+        )
+    );
     assert!(
         body["result"]["error"]
             .as_str()

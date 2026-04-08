@@ -1,4 +1,19 @@
 use super::*;
+use crate::test_support::{RuntimeReproCase, product_default_runtime_test_policy};
+
+pub(super) const BUNDLE_INTEGRITY_RECHECK_CASE: RuntimeReproCase = RuntimeReproCase::new(
+    "runtime-bundle-integrity-recheck-after-success",
+    "run-to-completion-snapshot",
+    "bundle integrity is revalidated after a prior successful invocation",
+);
+
+pub(super) const PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-product-default-bundle-integrity-queue-health",
+        "product-default",
+        "product-default runtime keeps queue health after a successful invoke followed by a bundle integrity mismatch",
+        "runtime::tests::bundle_integrity::runtime_product_default_bundle_integrity_recheck_after_prior_success_preserves_queue_health_subprocess",
+    );
 
 #[tokio::test]
 async fn runtime_reports_heap_limit_exceeded() {
@@ -19,16 +34,12 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::with_limits(
-        Arc::new(RecordingHost::default()),
-        RuntimeLimits {
-            max_heap_mb: 8,
-            initial_heap_mb: 4,
-            execution_timeout: std::time::Duration::from_secs(2),
-            max_concurrent_isolates: 1,
-            ..RuntimeLimits::default()
-        },
-    );
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_heap_mb = 8;
+    limits.initial_heap_mb = 4;
+    limits.execution_timeout = std::time::Duration::from_secs(2);
+    limits.max_concurrent_isolates = 1;
+    let runtime = NeovexRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
     let error = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -74,7 +85,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let error = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -125,12 +139,10 @@ export {};
     )
     .expect("tampered bundle should write");
 
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
-        runtime_pool_kind: crate::limits::RuntimePoolKind::StartupSnapshotCache,
-        ..RuntimeLimits::default()
-    }));
-    let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
         .expect("bundle integrity metadata should build");
     let error = runtime
@@ -184,7 +196,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -305,6 +320,10 @@ export {};
 
 #[tokio::test]
 async fn runtime_bundle_rechecks_integrity_after_prior_success() {
+    runtime_bundle_rechecks_integrity_after_prior_success_inner().await;
+}
+
+pub(super) async fn runtime_bundle_rechecks_integrity_after_prior_success_inner() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -323,12 +342,10 @@ export {};
         RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
     let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
         .expect("bundle integrity metadata should build");
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
-        runtime_pool_kind: crate::limits::RuntimePoolKind::StartupSnapshotCache,
-        ..RuntimeLimits::default()
-    }));
-    let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
         function_name: "messages:list".to_string(),
@@ -341,8 +358,20 @@ export {};
     let first_result = runtime
         .invoke_bundle(&bundle, &request)
         .await
-        .expect("first bundle invocation should succeed");
-    assert_eq!(first_result, serde_json::json!({ "ok": true }));
+        .unwrap_or_else(|error| {
+            panic!(
+                "{}: {error}",
+                BUNDLE_INTEGRITY_RECHECK_CASE
+                    .failure_context("first bundle invocation should succeed")
+            )
+        });
+    assert_eq!(
+        first_result,
+        serde_json::json!({ "ok": true }),
+        "{}",
+        BUNDLE_INTEGRITY_RECHECK_CASE
+            .failure_context("first bundle invocation should return the original bundle result")
+    );
 
     std::fs::write(
         &bundle_path,
@@ -360,10 +389,125 @@ export {};
         .invoke_bundle(&bundle, &request)
         .await
         .expect_err("tampered bundle should fail integrity verification");
-    assert!(matches!(
-        error,
-        NeovexRuntimeError::BundleIntegrityMismatch(_)
-    ));
+    assert!(
+        matches!(error, NeovexRuntimeError::BundleIntegrityMismatch(_)),
+        "{}; received {error}",
+        BUNDLE_INTEGRITY_RECHECK_CASE.failure_context(
+            "tampered bundle should fail integrity verification with a bundle-integrity mismatch"
+        )
+    );
+}
+
+#[test]
+fn runtime_product_default_bundle_integrity_recheck_after_prior_success_preserves_queue_health() {
+    run_v8_sensitive_runtime_test_in_subprocess(PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate product-default cooperative V8 state"]
+fn runtime_product_default_bundle_integrity_recheck_after_prior_success_preserves_queue_health_subprocess()
+ {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(
+            runtime_product_default_bundle_integrity_recheck_after_prior_success_preserves_queue_health_inner(),
+        );
+}
+
+async fn runtime_product_default_bundle_integrity_recheck_after_prior_success_preserves_queue_health_inner()
+ {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    let original_source = r#"
+globalThis.__neovexInvoke = function () {
+  return { ok: true };
+};
+
+export {};
+"#;
+    let tampered_source = r#"
+globalThis.__neovexInvoke = function () {
+  return { ok: false };
+};
+
+export {};
+"#;
+    std::fs::write(&bundle_path, original_source).expect("bundle should write");
+
+    let expected_sha256 =
+        RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+    let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
+        .expect("bundle integrity metadata should build");
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        product_default_runtime_test_policy(),
+    );
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+    };
+
+    let first_result = runtime
+        .invoke_bundle(&bundle, &request)
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "{}: {error}",
+                PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE.failure_context(
+                    "initial product-default invocation should succeed before integrity mismatch"
+                )
+            )
+        });
+    assert_eq!(
+        first_result,
+        serde_json::json!({ "ok": true }),
+        "{}",
+        PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE.failure_context(
+            "initial product-default invocation should return the original bundle result"
+        )
+    );
+
+    std::fs::write(&bundle_path, tampered_source).expect("tampered bundle should write");
+
+    let error = runtime
+        .invoke_bundle(&bundle, &request)
+        .await
+        .expect_err("tampered bundle should fail integrity verification");
+    assert!(
+        matches!(error, NeovexRuntimeError::BundleIntegrityMismatch(_)),
+        "{}; received {error}",
+        PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE.failure_context(
+            "product-default runtime should report a bundle-integrity mismatch after prior success"
+        )
+    );
+
+    std::fs::write(&bundle_path, original_source).expect("restored bundle should write");
+
+    let recovered = runtime
+        .invoke_bundle(&bundle, &request)
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "{}: {error}",
+                PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE.failure_context(
+                    "runtime should still serve new work after integrity mismatch without queue-accounting corruption"
+                )
+            )
+        });
+    assert_eq!(
+        recovered,
+        serde_json::json!({ "ok": true }),
+        "{}",
+        PRODUCT_DEFAULT_BUNDLE_QUEUE_HEALTH_CASE.failure_context(
+            "restored bundle should succeed again after the mismatch without poisoning the runtime queue"
+        )
+    );
 }
 
 #[tokio::test]
@@ -395,7 +539,10 @@ export {};
         format!("{expected_sha256}\n"),
     )
     .expect("dot path bundle should build");
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
         function_name: "messages:list".to_string(),

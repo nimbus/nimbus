@@ -56,13 +56,17 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Run tests
-        # neovex-runtime uses V8 Locker isolates that corrupt V8 platform
-        # state when running in parallel with non-locker isolates. Run the
-        # runtime crate single-threaded, then the rest of the workspace.
-        run: |
-          cargo test -p neovex-runtime -- --test-threads=1
-          cargo test --workspace --exclude neovex-runtime
+      - name: Run isolated runtime test lane
+        # V8-sensitive runtime tests are subprocess-isolated in the harness, so
+        # CI keeps a dedicated runtime lane instead of falling back to a global
+        # single-thread workaround.
+        run: cargo test -p neovex-runtime
+
+      - name: Run workspace test lane
+        # Verification-harness corpus tests are ignored by default and run in
+        # the dedicated harness matrix below, so this lane stays focused on the
+        # main workspace suite outside the runtime crate.
+        run: cargo test --workspace --exclude neovex-runtime
 
   harness-pr:
     name: Verification Harness (PR / ${{ matrix.surface }})
@@ -71,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        surface: [storage, engine, server]
+        surface: [storage, engine, server, runtime]
 
     steps:
       - name: Check out repository
@@ -105,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        surface: [storage, engine, server]
+        surface: [storage, engine, server, runtime]
 
     steps:
       - name: Check out repository
@@ -219,6 +223,9 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
+        # Coverage intentionally tracks the default workspace suite. The
+        # heavier verification-harness corpora run in dedicated lanes, and the
+        # runtime crate's V8-sensitive tests self-isolate inside the harness.
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage artifact

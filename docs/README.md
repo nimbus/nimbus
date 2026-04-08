@@ -43,12 +43,23 @@ and where to go next.
 
 The deterministic verification harness now has explicit local and CI modes:
 
-- `bash scripts/verification-harness.sh pr`
-  runs the focused named-seed corpus for storage, engine, and native HTTP
-- `bash scripts/verification-harness.sh nightly`
-  runs the heavier adversarial named-seed corpus
-- `bash scripts/verification-harness.sh repro <storage|engine|server> <pr|nightly> <case-id>`
+- `make verify-harness`
+  runs the focused named corpora for storage, engine, native HTTP, runtime,
+  and server transport-liveness campaigns
+- `make verify-harness SURFACE=runtime`
+  runs one focused harness surface
+- `make verify-harness-runtime`
+  runs the runtime focused harness surface through a dedicated convenience
+  target
+- `make verify-harness-nightly`
+  runs the heavier adversarial named corpora
+- `make verify-harness-nightly SURFACE=server`
+  runs one focused nightly harness surface
+- `make verify-harness-repro SURFACE=<storage|engine|server|runtime> MODE=<pr|nightly> CASE=<case-id>`
   reruns one exact failing seed from the corpus
+
+The underlying `bash scripts/verification-harness.sh ...` launcher still
+exists, but `make` is the preferred operator and contributor interface.
 
 These harness entrypoints and the main `make check`, `make test`, and
 `make clippy` targets are single-flight guarded locally, so an accidental
@@ -56,5 +67,40 @@ duplicate invocation exits quickly instead of starting a second overlapping
 verification session.
 
 Named seeds live in `neovex-storage::simulation` and flow through
-`neovex-test-support`. New historically valuable bug-finding seeds should be
-checked in there with stable case ids so failure output stays reproducible.
+`neovex-testing`. Runtime harness cases live in
+`neovex-runtime::runtime::tests::verification_harness` and route through local
+runtime `test_support` metadata plus subprocess isolation helpers. New
+historically valuable bug-finding seeds or runtime case ids should be checked
+in with stable names so failure output stays reproducible.
+
+Server transport-liveness campaigns live in
+`neovex-server::tests::verification_harness` and reuse the named websocket,
+scheduler, and fairness scenarios from the ordinary server test tree instead of
+forking separate harness-only behavior. Exact server repro commands such as
+`make verify-harness-repro SURFACE=server MODE=pr CASE=websocket-auth-change-resubscribe`
+and exact runtime repro commands such as
+`make verify-harness-repro SURFACE=runtime MODE=pr CASE=runtime-queue-limit-rejection-accounting`
+now route through the same case ids that appear in failure output.
+
+The hardened harness topology is now:
+
+- the ordinary workspace suite keeps the heavier generated-history corpora
+  ignored by default
+- runtime V8-sensitive tests use explicit harness-owned subprocess isolation
+  instead of crate-wide single-thread containment
+- the dedicated verification-harness lanes own the named focused and nightly
+  corpora
+- runtime now has a first-class harness surface for queue-accounting,
+  cooperative-dispatch, integrity-after-success, and fairness/accounting
+  campaigns
+- server now has a first-class transport-liveness harness corpus layered on top
+  of the existing generated-history server corpus
+- only the server harness corpus currently narrows to `--test-threads=1`
+  because it boots multiple ephemeral HTTP fixtures that still need serialized
+  binding
+
+When adding new runtime or server liveness campaigns, prefer the shared
+`DeterministicTestCase` and eventual-wait helpers in `neovex-testing`
+plus the shared fault-gate primitives (`BlockingFaultInjector` and
+`ArmedBlockingFaultInjector`) and explicit runtime test profiles over ad hoc
+sleeps or implicit defaults.

@@ -3,13 +3,46 @@ use crate::executor::RuntimeExecutor;
 use crate::limits::RuntimePoolKind;
 
 // Cooperative locker tests create V8 isolates with `use_locker: true`.
-// V8's internal state tracking is corrupted when locker-enabled and
-// non-locker isolates coexist in the same process and are torn down
-// at exit. Run each cooperative test in a subprocess to isolate its
-// V8 platform state from the rest of the suite.
+// Keep them subprocess-isolated so the parent runtime suite can run with the
+// normal test topology without mixing locker and non-locker V8 teardown in one
+// process.
+
+pub(super) const PARK_AND_RESUME_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-cooperative-park-resume",
+    "cooperative-warm-pool",
+    "cooperative locker slot parks on deferred async host work and resumes after wake",
+    "runtime::tests::cooperative::runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_subprocess",
+);
+
+pub(super) const IMMEDIATE_ASYNC_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-cooperative-immediate-async",
+    "cooperative-warm-pool",
+    "cooperative locker slot completes immediate async host work without parking",
+    "runtime::tests::cooperative::runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_subprocess",
+);
+
+pub(super) const WARM_POOL_TWO_CYCLE_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-cooperative-warm-pool-two-cycles",
+    "cooperative-warm-pool",
+    "warm-pool cooperative async host flow survives two cycles with runtime reuse",
+    "runtime::tests::cooperative::warm_pool_cooperative_async_host_two_cycles_subprocess",
+);
+
+pub(super) const CONCURRENT_DISPATCH_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-cooperative-concurrent-dispatch",
+    "cooperative-startup-snapshot-and-warm-pool",
+    "cooperative concurrent dispatch does not deadlock under bounded isolate concurrency",
+    "runtime::tests::cooperative::cooperative_concurrent_dispatch_does_not_deadlock_subprocess",
+);
 
 #[test]
 fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion() {
+    run_v8_sensitive_runtime_test_in_subprocess(PARK_AND_RESUME_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_subprocess() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -52,7 +85,8 @@ export {};
         auth: None,
     };
     let host = Arc::new(DeferredAsyncHost::default());
-    let runtime_owner = NeovexRuntime::new(host.clone());
+    let runtime_owner =
+        NeovexRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
@@ -164,6 +198,13 @@ export {};
 
 #[test]
 fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking() {
+    run_v8_sensitive_runtime_test_in_subprocess(IMMEDIATE_ASYNC_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_subprocess()
+{
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -200,7 +241,10 @@ export {};
         cursor: None,
         auth: None,
     };
-    let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+    let runtime_owner = NeovexRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        cooperative_warm_pool_runtime_test_policy(),
+    );
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
@@ -259,6 +303,12 @@ export {};
 
 #[test]
 fn warm_pool_cooperative_async_host_two_cycles() {
+    run_v8_sensitive_runtime_test_in_subprocess(WARM_POOL_TWO_CYCLE_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn warm_pool_cooperative_async_host_two_cycles_subprocess() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -294,13 +344,10 @@ export {};
         cursor: None,
         auth: None,
     };
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::WarmPool,
-        max_concurrent_isolates: 1,
-        worker_threads: 1,
-        ..RuntimeLimits::default()
-    }));
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime_owner = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let watchdog = WatchdogTimer::new();
@@ -398,6 +445,12 @@ export {};
 /// before the next admission.
 #[test]
 fn cooperative_concurrent_dispatch_does_not_deadlock() {
+    run_v8_sensitive_runtime_test_in_subprocess(CONCURRENT_DISPATCH_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn cooperative_concurrent_dispatch_does_not_deadlock_subprocess() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -434,13 +487,15 @@ export {};
         RuntimePoolKind::StartupSnapshotCache,
         RuntimePoolKind::WarmPool,
     ] {
-        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-            execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
-            runtime_pool_kind: pool_kind,
-            max_concurrent_isolates: 1,
-            worker_threads: 1,
-            ..RuntimeLimits::default()
-        }));
+        let mut limits = match pool_kind {
+            RuntimePoolKind::StartupSnapshotCache => {
+                cooperative_startup_snapshot_runtime_test_limits()
+            }
+            RuntimePoolKind::WarmPool => cooperative_warm_pool_runtime_test_limits(),
+        };
+        limits.max_concurrent_isolates = 1;
+        limits.worker_threads = 1;
+        let policy = Arc::new(RuntimePolicy::new(limits));
         let runtime = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy.clone());
         let executor = RuntimeExecutor::new(policy);
 
@@ -472,14 +527,24 @@ export {};
             let join_result = rx
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap_or_else(|_| {
-                    panic!("cooperative concurrent dispatch timed out for {pool_kind:?} thread {i}")
+                    panic!(
+                        "{} for {pool_kind:?} thread {i}",
+                        CONCURRENT_DISPATCH_CASE
+                            .failure_context("cooperative concurrent dispatch timed out")
+                    )
                 });
             let invocation_result = join_result.unwrap_or_else(|_| {
-                panic!("cooperative concurrent dispatch thread {i} panicked for {pool_kind:?}")
+                panic!(
+                    "{} for {pool_kind:?} thread {i}",
+                    CONCURRENT_DISPATCH_CASE
+                        .failure_context("cooperative concurrent dispatch thread panicked")
+                )
             });
             invocation_result.unwrap_or_else(|e| {
                 panic!(
-                    "cooperative concurrent dispatch invocation {i} failed for {pool_kind:?}: {e}"
+                    "{} for {pool_kind:?} thread {i}: {e}",
+                    CONCURRENT_DISPATCH_CASE
+                        .failure_context("cooperative concurrent dispatch invocation failed")
                 )
             });
         }

@@ -37,7 +37,10 @@ export {};
         "snapshot-control",
         "req-snapshot-driver-cycles",
     );
-    let runtime_owner = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+    let runtime_owner = NeovexRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let snapshot = runtime_owner
         .bootstrap_snapshot()
         .expect("bootstrap snapshot should build");
@@ -151,7 +154,10 @@ export {};
         "req-snapshot-driver-fresh-owner",
     );
     let host = Arc::new(AsyncEchoHost);
-    let initial_owner = NeovexRuntime::new(host.clone());
+    let initial_owner = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let snapshot = initial_owner
         .bootstrap_snapshot()
         .expect("bootstrap snapshot should build");
@@ -172,7 +178,10 @@ export {};
         ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
 
     for cycle in 0..cycles {
-        let runtime_owner = NeovexRuntime::new(host.clone());
+        let runtime_owner = NeovexRuntime::with_policy(
+            host.clone(),
+            run_to_completion_snapshot_runtime_test_policy(),
+        );
         let mut permit = SharedInvocationPermit::new(
             runtime_owner.policy(),
             context.tenant_label.clone(),
@@ -273,9 +282,10 @@ export {};
                 "snapshot-control",
                 "req-snapshot-driver-current-thread-delayed",
             );
-            let runtime_owner = NeovexRuntime::new(Arc::new(DelayedAsyncEchoHost::new(
-                std::time::Duration::from_millis(1),
-            )));
+            let runtime_owner = NeovexRuntime::with_policy(
+                Arc::new(DelayedAsyncEchoHost::new(std::time::Duration::from_millis(1))),
+                run_to_completion_snapshot_runtime_test_policy(),
+            );
             let snapshot = runtime_owner
                 .bootstrap_snapshot()
                 .expect("bootstrap snapshot should build");
@@ -384,7 +394,10 @@ export {};
     .expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime_owner = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let mut isolate_pool = RuntimeWorkerIsolatePool::new();
     let mut runtime = isolate_pool
         .take_runtime(&runtime_owner, &bundle)

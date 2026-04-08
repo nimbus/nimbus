@@ -1,8 +1,9 @@
 use super::*;
-use neovex_runtime::RuntimeLimits;
 
 #[tokio::test]
 async fn convex_runtime_nested_query_subscription_tracks_inner_runtime_reads() {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
     let registry = convex_registry_with_bundle(
         json!([
             {
@@ -82,10 +83,7 @@ export {};
 "#,
         ),
     )
-    .with_runtime_limits(RuntimeLimits {
-        max_concurrent_isolates: 1,
-        ..RuntimeLimits::default()
-    });
+    .with_runtime_limits(limits);
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router_with_convex(
         fixture.service(),
