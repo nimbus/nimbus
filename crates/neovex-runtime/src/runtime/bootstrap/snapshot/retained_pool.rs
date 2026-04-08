@@ -340,16 +340,14 @@ impl RuntimeWorkerIsolatePool {
                 }))
             }
             Err(error) => {
-                if entry.construction_mode.uses_startup_snapshot() {
-                    tracing::warn!(
-                        bundle = %bundle.entrypoint().display(),
-                        affinity_key = ?entry.affinity_key,
-                        retained_reuse_count = entry.retained_reuse_count,
-                        construction_mode = entry.construction_mode.as_str(),
-                        error = %error,
-                        "reset failed for snapshot-seeded retained runtime; replacing runtime"
-                    );
-                }
+                tracing::warn!(
+                    bundle = %bundle.entrypoint().display(),
+                    affinity_key = ?entry.affinity_key,
+                    retained_reuse_count = entry.retained_reuse_count,
+                    construction_mode = entry.construction_mode.as_str(),
+                    error = %error,
+                    "reset failed for retained runtime; replacing runtime"
+                );
                 runtime_owner
                     .policy
                     .metrics()
