@@ -13,4 +13,4 @@ mod http_bearer;
 #[path = "auth/oidc/mod.rs"]
 mod oidc;
 #[path = "auth/websocket_auth.rs"]
-mod websocket_auth;
+pub(super) mod websocket_auth;

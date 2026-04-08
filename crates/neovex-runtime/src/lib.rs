@@ -8,6 +8,8 @@ mod limits;
 mod metrics;
 mod module_loader;
 mod runtime;
+#[cfg(test)]
+mod test_support;
 mod watchdog;
 mod worker_loop;
 

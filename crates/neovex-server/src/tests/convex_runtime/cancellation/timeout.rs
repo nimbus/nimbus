@@ -2,6 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn convex_runtime_timeout_returns_request_timeout() {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = Duration::from_millis(10);
     let registry = convex_registry_with_routes_and_bundle(
         json!([
             {
@@ -31,10 +33,7 @@ export {};
 "#,
         ),
     )
-    .with_runtime_limits(RuntimeLimits {
-        execution_timeout: Duration::from_millis(10),
-        ..RuntimeLimits::default()
-    });
+    .with_runtime_limits(limits);
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);

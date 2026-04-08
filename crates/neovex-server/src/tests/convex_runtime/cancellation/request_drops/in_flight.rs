@@ -1,8 +1,16 @@
 use super::helpers::runtime_request_drop_registry;
 use super::*;
 
+const IN_FLIGHT_REQUEST_DROP_CASE: DeterministicTestCase = DeterministicTestCase::new(
+    "runtime-request-drop-in-flight",
+    "run-to-completion-snapshot",
+    "dropping an in-flight runtime HTTP request cancels the invocation and preserves recovery",
+);
+
 #[tokio::test]
 async fn dropped_runtime_http_request_cancels_runtime_invocation() {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:spin",
@@ -19,10 +27,7 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
             "runtime_handler": "async (_ctx, { value }) => value"
         }
     ]))
-    .with_runtime_limits(RuntimeLimits {
-        max_concurrent_isolates: 1,
-        ..RuntimeLimits::default()
-    });
+    .with_runtime_limits(limits);
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router_with_convex(
         fixture.service(),
@@ -42,15 +47,19 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         &json!({ "name": "messages:spin", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics(&registry, "runtime invocation to start", |metrics| {
-        metrics.active_isolates >= 1 && metrics.worker_dispatched_invocations >= 1
-    })
+    wait_for_runtime_metrics_case(
+        &registry,
+        IN_FLIGHT_REQUEST_DROP_CASE,
+        "runtime invocation to start",
+        |metrics| metrics.active_isolates >= 1 && metrics.worker_dispatched_invocations >= 1,
+    )
     .await;
 
     drop(request);
 
-    let metrics = wait_for_runtime_metrics(
+    let metrics = wait_for_runtime_metrics_case(
         &registry,
+        IN_FLIGHT_REQUEST_DROP_CASE,
         "dropped runtime request cancellation",
         |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 1,
     )
@@ -85,8 +94,9 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         .expect("recovery runtime query response should parse");
     assert_eq!(recovery_body, json!("after-cancel"));
 
-    let recovery_metrics = wait_for_runtime_metrics(
+    let recovery_metrics = wait_for_runtime_metrics_case(
         &registry,
+        IN_FLIGHT_REQUEST_DROP_CASE,
         "recovery runtime invocation after cancellation",
         |metrics| {
             metrics.worker_dispatched_invocations == 2

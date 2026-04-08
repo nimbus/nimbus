@@ -550,7 +550,7 @@ worker-local beneath that seam.
 
 **`packages/convex`** — In-repo Convex compatibility package. Provides `convex/browser` (`ConvexHttpClient`), `convex/react` (`ConvexReactClient`, hooks), `convex/server` (handler wrappers), and `convex/values` (validators). These talk the Neovex Convex-shaped WebSocket/HTTP protocol.
 
-**`neovex-test-support`** — Shared test fixtures (`HttpApiFixture`) for
+**`neovex-testing`** — Shared test fixtures (`HttpApiFixture`) for
 integration tests. `http_api_fixture/` is now a route-family composition root:
 `debug.rs` owns diagnostics helpers, `convex.rs` owns Convex runtime and HTTP
 helpers, `tenants.rs` owns tenant lifecycle helpers, `schedule.rs` owns native
@@ -1227,7 +1227,7 @@ revalidation or teardown before more data is delivered.
 
 **Testing.** Unit tests live in each crate's `tests.rs`. Integration tests
 (HTTP + WebSocket end-to-end) live in `neovex-server/tests/reactive_loop.rs`.
-Shared fixtures live in `neovex-test-support`. The `TenantStore::create_in_memory()`
+Shared fixtures live in `neovex-testing`. The `TenantStore::create_in_memory()`
 and `UsageStore::create_in_memory()` constructors enable fast storage tests
 without disk I/O. The roadmap also commits Neovex to stronger deterministic
 simulation seams for new durability-critical subsystems: clock, journal,
@@ -1290,6 +1290,17 @@ also has a `new_with_harness(...)` helper so higher layers can consume the same
 deterministic harness without re-specifying clock and fault plumbing in every
 test.
 
+Runtime-facing harness ownership now follows the same rule. Runtime semantic
+tests no longer rely on drifting `RuntimeLimits::default()` behavior unless the
+default itself is the subject under test: `neovex-runtime::test_support` owns
+named runtime test profiles, subprocess-isolation helpers for V8-sensitive
+cooperative and warm-pool tests, and stable runtime repro case metadata. Cross-
+crate campaigns then share the same vocabulary through `neovex-testing`,
+which now owns common eventual-assertion helpers, `DeterministicTestCase`
+failure context, reusable runtime profile helpers used by server and transport
+campaigns, and the canonical shared fault-gate primitives used by engine and
+server adversarial tests.
+
 That same simulation layer now also owns the first generated-history oracle
 slice. `GeneratedTaskHistory` models logical-slot insert/update/delete
 workloads, exposes canonical filtered query and paginated-query builders, and
@@ -1311,15 +1322,16 @@ after restarts, and for scheduler campaigns that verify claimed work is
 recovered without double-applying completed jobs across repeated service
 reloads.
 
-`neovex-test-support` now complements that shared scenario vocabulary with a
-reusable `BlockingFaultInjector` for adversarial server tests. The current
-transport/runtime liveness slice uses it to pause the authoritative write path
-after durable append but before apply, drop and re-establish a WebSocket
-subscription under that lag, and then prove the reconnected subscription both
-catches up and resumes reactive pushes once the fault is released. The same
-verification pass also stamps runtime cancellation campaigns with shared
-scenario metadata and proves queued plus in-flight request drops recover into
-fresh exactly-once work once isolate pressure clears.
+`neovex-testing` now complements that shared scenario vocabulary with reusable
+`BlockingFaultInjector` and `ArmedBlockingFaultInjector` primitives for
+adversarial engine and server tests. The current transport/runtime liveness
+slice uses them to pause the authoritative write path after durable append but
+before apply, drop and re-establish a WebSocket subscription under that lag,
+and then prove the reconnected subscription both catches up and resumes
+reactive pushes once the fault is released. The same verification pass also
+stamps runtime cancellation campaigns with shared scenario metadata and proves
+queued plus in-flight request drops recover into fresh exactly-once work once
+isolate pressure clears.
 
 The first external Convex semantic oracle now lives in
 `packages/convex/src/differential.mjs`. It reuses one shared messages fixture
@@ -1356,7 +1368,25 @@ for those corpus runs prints a one-command repro that pins the exact named case
 through `NEOVEX_VERIFY_CASE`. CI now runs the focused PR corpus separately from
 the heavier scheduled nightly corpus, and local entrypoints live in
 `scripts/verification-harness.sh` plus the matching `make verify-harness-*`
-targets.
+targets. That taxonomy now includes a first-class `runtime` surface in
+addition to `storage`, `engine`, and `server`, so runtime queue-accounting,
+cooperative-dispatch, and bundle-integrity campaigns use the same
+`pr`/`nightly`/`repro` story as the generated-history corpora instead of only
+ad hoc unit-test filters. The server harness surface now also owns a transport-
+liveness corpus in addition to the generated-history replay corpus: websocket
+disconnect cleanup, auth-change resubscribe semantics, scheduler history
+publication, and runtime fairness rejection paths all run through the same
+named `pr`/`nightly`/`repro` entrypoints instead of remaining isolated to
+ordinary unit-test names.
+
+Those harness corpus tests are now ignored by default inside the ordinary
+workspace suite and only run through the dedicated verification-harness lanes.
+That keeps the main `make test` / `cargo test --workspace` path honest about
+what it covers while preserving explicit PR and nightly adversarial campaigns.
+The harness launcher now fails if a requested corpus surface matches zero
+tests, and only the server harness surface currently narrows to
+`--test-threads=1` because that dedicated ignored corpus boots multiple
+ephemeral HTTP fixtures that still need serialized port binding.
 
 The first composite-index slice is also in place behind that verification
 discipline. Table schemas now treat indexes as `IndexDefinition { name, fields

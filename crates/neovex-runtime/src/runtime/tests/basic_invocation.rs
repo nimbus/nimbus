@@ -1,5 +1,14 @@
 use super::*;
 
+#[test]
+fn runtime_new_uses_product_default_runtime_policy() {
+    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    assert_eq!(
+        runtime.policy().limits(),
+        &product_default_runtime_test_limits()
+    );
+}
+
 #[tokio::test]
 async fn runtime_loads_bundle_and_invokes_host_bridge() {
     let tempdir = tempdir().expect("tempdir should build");
@@ -25,7 +34,10 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(RecordingHost::default());
-    let runtime = NeovexRuntime::new(host.clone());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -80,7 +92,10 @@ async fn runtime_requires_bundle_contract() {
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(&bundle_path, "export const noop = 1;").expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let error = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -130,7 +145,8 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(RecordingHost::default());
-    let runtime = NeovexRuntime::new(host);
+    let runtime =
+        NeovexRuntime::with_policy(host, run_to_completion_snapshot_runtime_test_policy());
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -181,7 +197,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -226,7 +245,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -263,13 +285,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
-        execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
-        runtime_pool_kind: crate::limits::RuntimePoolKind::StartupSnapshotCache,
-        max_concurrent_isolates: 1,
-        worker_threads: 1,
-        ..RuntimeLimits::default()
-    }));
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.max_concurrent_isolates = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy.clone());
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {

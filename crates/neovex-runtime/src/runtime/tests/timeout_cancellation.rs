@@ -16,13 +16,9 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::with_limits(
-        Arc::new(RecordingHost::default()),
-        RuntimeLimits {
-            execution_timeout: std::time::Duration::from_millis(50),
-            ..RuntimeLimits::default()
-        },
-    );
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = std::time::Duration::from_millis(50);
+    let runtime = NeovexRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
     let error = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -63,13 +59,9 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::with_limits(
-        Arc::new(RecordingHost::default()),
-        RuntimeLimits {
-            execution_timeout: std::time::Duration::from_secs(5),
-            ..RuntimeLimits::default()
-        },
-    );
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = std::time::Duration::from_secs(5);
+    let runtime = NeovexRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
     let cancellation = HostCallCancellation::default();
     let cancellation_clone = cancellation.clone();
     std::thread::spawn(move || {
@@ -114,14 +106,13 @@ export {};
     )
     .expect("bundle should write");
 
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = std::time::Duration::from_millis(50);
     let runtime = NeovexRuntime::with_limits(
         Arc::new(SlowEnvelopeHost {
             delay: std::time::Duration::from_secs(1),
         }),
-        RuntimeLimits {
-            execution_timeout: std::time::Duration::from_millis(50),
-            ..RuntimeLimits::default()
-        },
+        limits,
     );
     let error = runtime
         .invoke_bundle(

@@ -141,7 +141,10 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
         .await
         .expect("blocking write should start");
     cancellation.cancel();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        cancellation.is_cancelled(),
+        "cancellation signal should flip synchronously before the write is released"
+    );
     release.notify_waiters();
 
     let result = timeout(Duration::from_secs(1), task)

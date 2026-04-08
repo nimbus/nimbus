@@ -6,10 +6,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 - `docs/plans/convex-demos-compatibility-plan.md`
   - execution plan for closing the remaining Convex demo and compatibility gaps
-- `docs/plans/deterministic-test-and-harness-hardening-plan.md`
-  - canonical execution plan for TigerBeetle-style test and harness hardening:
-    explicit profiles, real runtime isolation, deterministic waiters, and CI
-    alignment
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
@@ -55,8 +51,6 @@ explicitly asked to review historical work.
   of reviving a completed archived one.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
-- For the current test and harness hardening workstream, start with
-  `deterministic-test-and-harness-hardening-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - If no active cleanup, refactor, or verification hardening control plane is
   listed above, author or promote a new active plan before resuming generic

@@ -18,7 +18,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(AsyncOnlyHost));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(AsyncOnlyHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -58,7 +61,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -186,7 +192,10 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(SyncOnlyHost::default());
-    let runtime = NeovexRuntime::new(host.clone());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -253,7 +262,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -350,7 +362,10 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(PaginateHost::default());
-    let runtime = NeovexRuntime::new(host.clone());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -429,7 +444,8 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(PaginateContinuationHost);
-    let runtime = NeovexRuntime::new(host);
+    let runtime =
+        NeovexRuntime::with_policy(host, run_to_completion_snapshot_runtime_test_policy());
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -484,7 +500,10 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(SyncOnlyHost::default());
-    let runtime = NeovexRuntime::new(host.clone());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),
@@ -550,7 +569,10 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime = NeovexRuntime::new(Arc::new(AsyncEchoHost));
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
     let result = runtime
         .invoke_bundle(
             &RuntimeBundle::new(&bundle_path),

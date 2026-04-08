@@ -95,20 +95,13 @@ async fn websocket_disconnect_drops_subscription_without_explicit_unsubscribe() 
 
     drop(socket);
 
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if service
-                .active_subscription_count(&tenant_id)
-                .expect("subscription count should load")
-                == 0
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("connection teardown should release subscription handles");
+    wait_for_active_subscription_count(
+        &service,
+        &tenant_id,
+        "connection teardown should release subscription handles",
+        0,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -315,20 +308,13 @@ async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keep
 
     drop(socket);
 
-    timeout(Duration::from_secs(2), async {
-        loop {
-            if service
-                .active_subscription_count(&tenant_id)
-                .expect("subscription count should load")
-                == 0
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("disconnect should release the original subscription");
+    wait_for_active_subscription_count(
+        &service,
+        &tenant_id,
+        "disconnect should release the original subscription",
+        0,
+    )
+    .await;
 
     let mut reconnected = WebSocketFixture::connect(&api.ws_url("/ws"), "demo").await;
     reconnected.subscribe_all("reconnected", "tasks").await;

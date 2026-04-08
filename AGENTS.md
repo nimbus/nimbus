@@ -35,9 +35,6 @@ Use the repo docs for architecture and behavior details:
 - `docs/plans/README.md` to find the owning active or deferred execution plan
 - For cleanup or refactor work, go from `docs/plans/README.md` to the owning
   active plan instead of assuming an archived cleanup pass is still live.
-- For the current test and harness hardening workstream, go from
-  `docs/plans/README.md` to
-  `docs/plans/deterministic-test-and-harness-hardening-plan.md`.
 - For future admission-control work, go from `docs/plans/README.md` to
   `docs/plans/layered-admission-control-plan.md`.
 
@@ -46,10 +43,6 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- For the current test and harness hardening workstream, treat
-  `docs/plans/deterministic-test-and-harness-hardening-plan.md`
-  as the durable control plane and resume from it plus the current git
-  worktree.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly
   asks for historical review or follow-up on a completed workstream.
 - If archived work needs a new execution pass, create or promote a new active
@@ -80,7 +73,7 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 | `neovex-runtime` | `crates/neovex-runtime/` | V8 execution (zero workspace deps) |
 | `neovex-server` | `crates/neovex-server/` | HTTP/WebSocket transport |
 | `neovex-storage` | `crates/neovex-storage/` | Persistence layer (redb) |
-| `neovex-test-support` | `crates/neovex-test-support/` | Shared test fixtures |
+| `neovex-testing` | `crates/neovex-testing/` | Shared test fixtures and deterministic harness helpers |
 | `neovex` (JS SDK) | `packages/neovex/` | Neovex-native JavaScript SDK |
 | `convex` (JS compat) | `packages/convex/` | Convex compatibility package |
 | `@neovex/codegen` | `packages/codegen/` | Code generation tool |
@@ -121,6 +114,9 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **Full test suite:** `make test`
 - **Lint:** `make clippy`
 - **Dependency audit:** `make deny`
+- **Harness focused lanes:** `make verify-harness` or `make verify-harness SURFACE=runtime`
+- **Harness nightly lanes:** `make verify-harness-nightly` or `make verify-harness-nightly SURFACE=server`
+- **Harness repro:** `make verify-harness-repro SURFACE=runtime MODE=pr CASE=<case-id>`
 - **JS tests:** `npm run test --workspaces --if-present`
 - **JS build:** `npm run build --workspaces --if-present`
 - **All at once:** `make ci`
