@@ -6,13 +6,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 - `docs/plans/convex-demos-compatibility-plan.md`
   - execution plan for closing the remaining Convex demo and compatibility gaps
+- `docs/plans/deterministic-test-and-harness-hardening-plan.md`
+  - canonical execution plan for TigerBeetle-style test and harness hardening:
+    explicit profiles, real runtime isolation, deterministic waiters, and CI
+    alignment
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
-- `docs/plans/targeted-domain-modularity-cleanup-plan.md`
-  - canonical execution plan for the next focused god-file removal and
-    domain-surface cleanup pass across `runtime.rs`, `tenant.rs`, `auth.rs`,
-    and `packages/neovex/src/browser.ts`
 - `docs/plans/v8-locker-fork-plan.md`
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
@@ -58,11 +58,14 @@ explicitly asked to review historical work.
   of reviving a completed archived one.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
+- For the current test and harness hardening workstream, start with
+  `deterministic-test-and-harness-hardening-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
-- For the current cleanup workstream, start with
-  `targeted-domain-modularity-cleanup-plan.md`.
 - For the Locker fork and cooperative runtime workstream, start with
   `v8-locker-fork-plan.md`.
+- If no active cleanup, refactor, or verification hardening control plane is
+  listed above, author or promote a new active plan before resuming generic
+  work.
 - For the deferred raw-V8 backend fallback (only if the fork approach is
   blocked), see `raw-v8-warm-backend-plan.md`.
 - For future wasmtime WASM backend work, start with

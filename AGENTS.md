@@ -35,8 +35,9 @@ Use the repo docs for architecture and behavior details:
 - `docs/plans/README.md` to find the owning active or deferred execution plan
 - For cleanup or refactor work, go from `docs/plans/README.md` to the owning
   active plan instead of assuming an archived cleanup pass is still live.
-- For the current cleanup workstream, go from `docs/plans/README.md` to
-  `docs/plans/targeted-domain-modularity-cleanup-plan.md`.
+- For the current test and harness hardening workstream, go from
+  `docs/plans/README.md` to
+  `docs/plans/deterministic-test-and-harness-hardening-plan.md`.
 - For future admission-control work, go from `docs/plans/README.md` to
   `docs/plans/layered-admission-control-plan.md`.
 
@@ -45,8 +46,8 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- For the current cleanup workstream, treat
-  `docs/plans/targeted-domain-modularity-cleanup-plan.md`
+- For the current test and harness hardening workstream, treat
+  `docs/plans/deterministic-test-and-harness-hardening-plan.md`
   as the durable control plane and resume from it plus the current git
   worktree.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly

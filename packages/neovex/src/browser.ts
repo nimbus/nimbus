@@ -1,17 +1,11 @@
 import type {
   ActionReference,
   MutationReference,
-  Page,
   PaginatedQueryReference,
   QueryReference,
   InferArgs,
-  InferResult,
-  ActionShape,
-  MutationShape,
-  QueryShape,
 } from "./internal/shared.ts";
 import {
-  createApiError,
   defineAction,
   defineMutation,
   definePaginatedQuery,
@@ -36,6 +30,26 @@ export {
   makePaginatedQueryReference,
   makeQueryReference,
 } from "./internal/shared.ts";
+export { NeovexHttpClient } from "./http-client.ts";
+export type { AuthTokenFetcher } from "./http-client.ts";
+
+import { NeovexHttpClient } from "./http-client.ts";
+import type {
+  AuthChangeListener,
+  AuthTokenFetcher,
+  FetchLike,
+} from "./http-client.ts";
+import {
+  areSubscriptionValuesEqual,
+  attachSocketListener,
+  buildSubscribeMessage,
+  decodeJwtPayload,
+} from "./browser-utils.ts";
+import type {
+  InferLiveResult,
+  LiveQueryReference,
+  SubscriptionEntry,
+} from "./browser-utils.ts";
 
 export type ConnectionState = {
   hasInflightRequests: boolean;
@@ -55,10 +69,6 @@ export type Unsubscribe<T> = {
   getQueryLogs(): string[] | undefined;
 };
 
-type FetchLike = typeof globalThis.fetch;
-export type AuthTokenFetcher = (args: {
-  forceRefreshToken: boolean;
-}) => Promise<string | null | undefined>;
 export type WebSocketLike = {
   addEventListener?: (type: string, listener: (event: any) => void) => void;
   on?: (type: string, listener: (event: any) => void) => void;
@@ -67,259 +77,8 @@ export type WebSocketLike = {
 };
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
-type AuthChangeListener = (isAuthenticated: boolean) => void;
-
 const MAXIMUM_REFRESH_DELAY = 20 * 24 * 60 * 60 * 1000;
 const DEFAULT_AUTH_REFRESH_TOKEN_LEEWAY_SECONDS = 10;
-
-type LiveQueryReference<Args, Result> =
-  | QueryReference<Args, Result>
-  | PaginatedQueryReference<Args, Result>;
-
-type InferLiveResult<Ref> = Ref extends PaginatedQueryReference<any, infer Item>
-  ? Item[]
-  : InferResult<Ref>;
-
-type SubscriptionEntry<T> = {
-  query: LiveQueryReference<any, any>;
-  args: unknown;
-  livePageSize?: number;
-  liveCursor?: string | null;
-  callback: (value: T) => unknown;
-  onError?: (error: Error) => unknown;
-  currentValue?: T;
-  subscriptionId?: number;
-  pendingRequestId?: string;
-  unsubscribed: boolean;
-};
-
-type RequestTracker = {
-  startedAt: Date;
-  kind: "mutation" | "action" | "query";
-};
-
-export class NeovexHttpClient {
-  private readonly address: string;
-  private fetchImpl?: FetchLike;
-  private authToken?: string;
-  private authTokenFetcher?: AuthTokenFetcher;
-  private authChangeListener?: AuthChangeListener;
-  private inflight = new Map<number, RequestTracker>();
-  private nextRequestId = 1;
-
-  constructor(
-    address: string,
-    options?: {
-      skipDeploymentUrlCheck?: boolean;
-      auth?: string;
-      fetch?: FetchLike;
-    },
-  ) {
-    if (options?.skipDeploymentUrlCheck !== true) {
-      validateDeploymentUrl(address);
-    }
-    this.address = stripTrailingSlash(address);
-    this.fetchImpl = options?.fetch;
-    this.authToken = options?.auth;
-  }
-
-  get url() {
-    return this.address;
-  }
-
-  setAuth(value: string | AuthTokenFetcher, onChange?: AuthChangeListener) {
-    if (typeof value === "string") {
-      this.authToken = value;
-      this.authTokenFetcher = undefined;
-      this.authChangeListener = onChange;
-      this.reportAuthState(true);
-      return;
-    }
-
-    this.authToken = undefined;
-    this.authTokenFetcher = value;
-    this.authChangeListener = onChange;
-  }
-
-  clearAuth() {
-    this.authToken = undefined;
-    this.authTokenFetcher = undefined;
-    this.reportAuthState(false);
-  }
-
-  async query<Query extends QueryReference<any, any>>(
-    query: Query,
-    args?: InferArgs<Query>,
-  ): Promise<InferResult<Query>> {
-    const normalizedArgs = normalizeArgs(args);
-    const body = hasResolver(query)
-      ? { query: query.resolve(normalizedArgs) }
-      : { name: query.name, args: normalizedArgs };
-    return this.request("/query", body, "query");
-  }
-
-  async mutation<Mutation extends MutationReference<any, any>>(
-    mutation: Mutation,
-    args?: InferArgs<Mutation>,
-  ): Promise<InferResult<Mutation>> {
-    const normalizedArgs = normalizeArgs(args);
-    const body = hasResolver(mutation)
-      ? { mutation: mutation.resolve(normalizedArgs) }
-      : { name: mutation.name, args: normalizedArgs };
-    return this.request("/mutation", body, "mutation");
-  }
-
-  async action<Action extends ActionReference<any, any>>(
-    action: Action,
-    args?: InferArgs<Action>,
-  ): Promise<InferResult<Action>> {
-    const normalizedArgs = normalizeArgs(args);
-    const body = hasResolver(action)
-      ? { action: action.resolve(normalizedArgs) }
-      : { name: action.name, args: normalizedArgs };
-    return this.request("/action", body, "action");
-  }
-
-  async paginatedQuery<Query extends PaginatedQueryReference<any, any>>(
-    query: Query,
-    args: InferArgs<Query> | undefined,
-    pageSize: number,
-    cursor: string | null,
-  ): Promise<Page<InferResult<Query>>> {
-    const normalizedArgs = normalizeArgs(args);
-    const body = {
-      ...(hasResolver(query)
-        ? {
-            query: {
-              query: query.resolve(normalizedArgs),
-              page_size: pageSize,
-              after: cursor,
-            },
-          }
-        : {
-            name: query.name,
-            args: normalizedArgs,
-            page_size: pageSize,
-            cursor,
-          }),
-    };
-    return this.request("/query/paginated", body, "query");
-  }
-
-  async scheduleAfter<Mutation extends MutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAfterMs: number,
-  ): Promise<string> {
-    const normalizedArgs = normalizeArgs(args);
-    const body = hasResolver(mutation)
-      ? { mutation: mutation.resolve(normalizedArgs), run_after_ms: runAfterMs }
-      : { name: mutation.name, args: normalizedArgs, run_after_ms: runAfterMs };
-    const response = await this.request<{ job_id: string }>(
-      "/schedule/run_after",
-      body,
-      "mutation",
-    );
-    return response.job_id;
-  }
-
-  async scheduleAt<Mutation extends MutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAtMs: number,
-  ): Promise<string> {
-    const normalizedArgs = normalizeArgs(args);
-    const body = hasResolver(mutation)
-      ? { mutation: mutation.resolve(normalizedArgs), run_at_ms: runAtMs }
-      : { name: mutation.name, args: normalizedArgs, run_at_ms: runAtMs };
-    const response = await this.request<{ job_id: string }>(
-      "/schedule/run_at",
-      body,
-      "mutation",
-    );
-    return response.job_id;
-  }
-
-  async cancelScheduledFunction(jobId: string): Promise<void> {
-    await this.request<void>(`/schedule/${jobId}`, undefined, "mutation", "DELETE");
-  }
-
-  private async request<T>(
-    suffix: string,
-    body: unknown,
-    kind: RequestTracker["kind"],
-    method = "POST",
-  ): Promise<T> {
-    const requestId = this.nextRequestId++;
-    this.inflight.set(requestId, { startedAt: new Date(), kind });
-    try {
-      const fetchImpl = this.fetchImpl ?? globalThis.fetch;
-      let token = await this.getAuthToken(false);
-      let response = await fetchImpl(`${this.address}${suffix}`, {
-        method,
-        headers: {
-          ...(method !== "DELETE" ? { "Content-Type": "application/json" } : {}),
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-
-      if (response.status === 401 && this.authTokenFetcher) {
-        token = await this.getAuthToken(true);
-        response = await fetchImpl(`${this.address}${suffix}`, {
-          method,
-          headers: {
-            ...(method !== "DELETE" ? { "Content-Type": "application/json" } : {}),
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        });
-      }
-
-      const contentType = response.headers.get("content-type") ?? "";
-      const payload = contentType.includes("application/json")
-        ? await response.json()
-        : await response.text();
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          this.reportAuthState(false);
-        }
-        throw createApiError(
-          payload,
-          `neovex request failed with ${response.status}`,
-        );
-      }
-
-      this.reportAuthState(token !== null);
-      return payload as T;
-    } finally {
-      this.inflight.delete(requestId);
-    }
-  }
-
-  async getAuthToken(forceRefreshToken: boolean) {
-    if (!this.authTokenFetcher) {
-      return this.authToken ?? null;
-    }
-
-    const token = await this.authTokenFetcher({ forceRefreshToken });
-    this.authToken = token ?? undefined;
-    return token ?? null;
-  }
-
-  notifyAuthState(isAuthenticated: boolean) {
-    this.reportAuthState(isAuthenticated);
-  }
-
-  canRefreshAuthToken() {
-    return this.authTokenFetcher !== undefined;
-  }
-
-  private reportAuthState(isAuthenticated: boolean) {
-    this.authChangeListener?.(isAuthenticated);
-  }
-}
 
 export class NeovexClient {
   private readonly httpClient: NeovexHttpClient;
@@ -935,108 +694,3 @@ export class NeovexClient {
 }
 
 export class NeovexReactClient extends NeovexClient {}
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const segments = token.split(".");
-  if (segments.length !== 3) {
-    return null;
-  }
-  try {
-    return JSON.parse(decodeBase64UrlUtf8(segments[1])) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function decodeBase64UrlUtf8(segment: string): string {
-  const padded = segment.replace(/-/g, "+").replace(/_/g, "/");
-  const remainder = padded.length % 4;
-  const base64 = remainder === 0 ? padded : `${padded}${"=".repeat(4 - remainder)}`;
-  return decodeURIComponent(
-    Array.from(globalThis.atob(base64), (char) =>
-      `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`,
-    ).join(""),
-  );
-}
-
-function hasResolver<Args, Result>(
-  reference:
-    | QueryReference<Args, Result>
-    | PaginatedQueryReference<Args, Result>
-    | MutationReference<Args, Result>
-    | ActionReference<Args, Result>,
-): reference is
-  | (QueryReference<Args, Result> & { resolve: (args: Args) => QueryShape })
-  | (PaginatedQueryReference<Args, Result> & {
-      resolve: (args: Args) => QueryShape;
-    })
-  | (MutationReference<Args, Result> & {
-      resolve: (args: Args) => MutationShape;
-    })
-  | (ActionReference<Args, Result> & {
-      resolve: (args: Args) => ActionShape;
-    }) {
-  return typeof reference.resolve === "function";
-}
-
-function attachSocketListener(
-  socket: WebSocketLike,
-  type: string,
-  listener: (event: any) => void,
-) {
-  if (typeof socket.addEventListener === "function") {
-    socket.addEventListener(type, listener);
-    return;
-  }
-  if (typeof socket.on === "function") {
-    socket.on(type, (event) => {
-      if (type === "message") {
-        const payload =
-          event && typeof event === "object" && "data" in event
-            ? (event as { data: unknown }).data
-            : event;
-        listener({ data: typeof payload === "string" ? payload : String(payload) });
-        return;
-      }
-      listener(event);
-    });
-    return;
-  }
-  throw new Error(`Configured WebSocket implementation does not support "${type}" listeners.`);
-}
-
-function buildSubscribeMessage<Args, Result>(
-  query: LiveQueryReference<Args, Result>,
-  requestId: string,
-  args: Args,
-  options?: { pageSize?: number; cursor?: string | null },
-) {
-  if (hasResolver(query)) {
-    return {
-      type: "subscribe",
-      request_id: requestId,
-      query: query.resolve(args),
-    };
-  }
-
-  return {
-    type: "subscribe_named",
-    request_id: requestId,
-    name: query.name,
-    args,
-    ...(query.kind === "paginated_query" && typeof options?.pageSize === "number"
-      ? {
-          page_size: options.pageSize,
-          cursor: options.cursor ?? null,
-        }
-      : {}),
-  };
-}
-
-function areSubscriptionValuesEqual(previous: unknown, next: unknown) {
-  if (previous === undefined) {
-    return false;
-  }
-
-  return JSON.stringify(previous) === JSON.stringify(next);
-}

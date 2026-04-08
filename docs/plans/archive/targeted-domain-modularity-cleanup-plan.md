@@ -1,5 +1,9 @@
 # Targeted Domain Modularity Cleanup Control Plan
 
+Archived on 2026-04-08 after `TD1` through `TD5` completed. This file is
+preserved as a historical execution record and should not be resumed as a live
+control plane.
+
 This is the canonical execution control plane for the next focused cleanup pass
 after the archived queue-and-test-surface workstream.
 
@@ -287,11 +291,11 @@ silently skipping it.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | TD0 | `done` | reviewed the current post-queue-and-test-surface architecture and identified the next high-value targeted cleanup seams in `runtime.rs`, `tenant.rs`, `auth.rs`, and `browser.ts` | none | docs-only review and planning pass on 2026-04-08 |
-| TD1 | `todo` | extract the remaining inline runtime tests from `crates/neovex-runtime/src/runtime.rs` into concept-owned `runtime/tests/*.rs` modules | none | do this first; it is the only must-fix god-file item in this pass |
-| TD2 | `todo` | split `crates/neovex-engine/src/tenant.rs` into grouped domain-facade modules | TD1 recommended first | mechanical facade extraction over already-owned tenant subsystems |
-| TD3 | `todo` | convert `crates/neovex-core/src/auth.rs` into a directory module with separate principal and access ownership | TD1 and TD2 recommended first | preserve all public re-exports and policy semantics |
-| TD4 | `todo` | extract the HTTP client and browser utilities from `packages/neovex/src/browser.ts` while keeping the browser public API stable | TD1 through TD3 recommended first | keep `browser.ts` as the browser-client entrypoint and re-export surface |
-| TD5 | `todo` | update docs, run the full verification sweep, and archive the completed plan cleanly | TD1 through TD4 | final closure only |
+| TD1 | `done` | extracted the remaining inline runtime tests from `crates/neovex-runtime/src/runtime.rs` into concept-owned `runtime/tests/*.rs` modules and reduced `runtime.rs` to the shared harness plus module declarations | none | completed on 2026-04-08 with focused runtime verification |
+| TD2 | `done` | split `crates/neovex-engine/src/tenant.rs` into grouped domain-facade modules and reduced the root to tenant structure, constructors, lifecycle, and cross-domain diagnostics | TD1 recommended first | completed on 2026-04-08 with focused engine verification |
+| TD3 | `done` | converted `crates/neovex-core/src/auth.rs` into an `auth/` directory module with principal identity in `mod.rs`, access-policy ownership in `access.rs`, and extracted tests in `tests.rs` | TD1 and TD2 recommended first | completed on 2026-04-08 with focused core verification |
+| TD4 | `done` | extracted the browser HTTP client into `packages/neovex/src/http-client.ts` and shared browser helpers into `packages/neovex/src/browser-utils.ts` while keeping `browser.ts` as the browser-client entrypoint and public re-export surface | TD1 through TD3 recommended first | completed on 2026-04-08 with JS selftest and workspace build verification |
+| TD5 | `done` | updated the docs, completed the full verification sweep, and archived the completed plan cleanly | TD1 through TD4 | completed on 2026-04-08; `make ci` hit an environment-only `cargo deny` advisory-db lock limitation on a read-only path |
 
 ---
 
@@ -324,11 +328,11 @@ silently skipping it.
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | TD0 | done | start `TD1` by mapping the remaining inline runtime tests into six concept-owned files that match the existing `runtime/tests/` pattern |
-| TD1 | not started | extract the remaining inline runtime tests into new `runtime/tests/*.rs` files, then rerun runtime-focused verification |
-| TD2 | not started | split `tenant.rs` into grouped facade files while keeping the struct, constructors, and lifecycle entrypoints in the root |
-| TD3 | not started | convert `auth.rs` into `auth/mod.rs`, `auth/access.rs`, and `auth/tests.rs` with stable public re-exports |
-| TD4 | not started | move `NeovexHttpClient` and browser utilities out of `browser.ts`, then keep `NeovexClient` and re-exports in the root |
-| TD5 | not started | run the repo-wide sweep, update entrypoint docs, and archive the completed plan |
+| TD1 | done | start `TD2` by mapping the existing `TenantRuntime` delegation methods into grouped facade files under `crates/neovex-engine/src/tenant/` |
+| TD2 | done | start `TD3` by separating the principal-identity surface from the access-policy and read-filter compilation surface in `crates/neovex-core/src/auth.rs` |
+| TD3 | done | start `TD4` by separating the stateless request layer and shared browser helpers from the stateful `NeovexClient` entrypoint |
+| TD4 | done | start `TD5` by reconciling the docs, rerunning the repo-wide verification sweep, and archiving the completed plan |
+| TD5 | done | workstream closed; keep this record archived and start any future cleanup pass from a newly promoted active plan instead of reviving this one |
 
 ---
 
@@ -483,3 +487,8 @@ silently skipping it.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-08 | TD0 | done | Reviewed the live post-queue-and-test-surface architecture and validated the next targeted cleanup seams in `runtime.rs`, `tenant.rs`, `auth.rs`, and `packages/neovex/src/browser.ts`. Confirmed that these are real domain splits rather than arbitrary line-count targets, and authored this new active cleanup control plane to own the next pass. | docs-only review and planning pass; no new code verification claimed in this handoff | start `TD1` by mapping the remaining inline runtime tests into six concept-owned files under `crates/neovex-runtime/src/runtime/tests/` |
+| 2026-04-08 | TD1 | done | Extracted the remaining inline runtime tests into six concept-owned files under `crates/neovex-runtime/src/runtime/tests/` and reduced `runtime.rs` from 2718 lines to a 502-line shared-harness root. | `cargo test -p neovex-runtime --lib`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings` | start `TD2` by grouping the `TenantRuntime` delegation methods into domain facades under `crates/neovex-engine/src/tenant/` |
+| 2026-04-08 | TD2 | done | Extracted grouped `TenantRuntime` delegation methods into five tenant facade files and reduced `tenant.rs` to the tenant structure, constructors, lifecycle, and cross-domain diagnostics root. Updated `ARCHITECTURE.md` to reflect the new tenant facade layer. | `cargo test -p neovex-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings` | start `TD3` by converting `crates/neovex-core/src/auth.rs` into an `auth/` module tree with stable public re-exports |
+| 2026-04-08 | TD3 | done | Converted the flat auth file into `auth/mod.rs`, `auth/access.rs`, and `auth/tests.rs`, keeping principal identity and policy-revision helpers at the module root while moving access-policy evaluation behind `access.rs`. Updated `ARCHITECTURE.md` to reflect the new core auth ownership map. | `cargo test -p neovex-core`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-core --all-targets -- -D warnings` | start `TD4` by extracting `NeovexHttpClient` and browser helpers from `packages/neovex/src/browser.ts` |
+| 2026-04-08 | TD4 | done | Extracted the stateless HTTP request layer into `packages/neovex/src/http-client.ts` and the shared socket/auth/subscribe helpers into `packages/neovex/src/browser-utils.ts`, leaving `browser.ts` as the stateful browser-client entrypoint and public re-export surface. | `npm run test --workspace neovex`; `npm run build --workspaces --if-present` | start `TD5` by running the repo-wide verification sweep and archiving the completed plan cleanly |
+| 2026-04-08 | TD5 | done | Completed the full closure sweep, verified the Rust and JS workspaces, updated the plan index and `AGENTS.md`, and archived this control plane as a completed historical record. | `make check`; `make test`; `make clippy`; `npm run test --workspace neovex`; `npm run build --workspaces --if-present`; `make ci` failed for an environment-only reason because `cargo deny` could not lock `/Users/jack/.cargo/advisory-dbs/db.lock` on a read-only path | no further action in this plan; promote a new active plan for any future cleanup pass |

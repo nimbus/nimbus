@@ -159,6 +159,10 @@ file links (links go stale; symbol search does not).
 
 **`neovex-core`** — Shared types and validation. Zero I/O, zero external deps.
 
+- `auth/` — auth and access-policy composition root. `mod.rs` owns
+  `PrincipalContext`, `PrincipalSnapshot`, `PrincipalClaimSource`, and policy
+  revision fingerprinting; `access.rs` owns table access-policy structures,
+  predicate evaluation, and read-filter compilation.
 - `types.rs` — `TenantId`, `TableName`, `DocumentId`, `SequenceNumber`, `Timestamp`. All validated on construction (alphanumeric + `_` + `-`, max 128 chars).
 - `document.rs` — `Document` struct. Serializes to MessagePack for storage, JSON for wire. System fields `_id` and `_creationTime` added during JSON serialization.
 - `mutation.rs` — `Mutation` enum (`Insert`/`Update`/`Delete`),
@@ -289,7 +293,12 @@ file links (links go stale; symbol search does not).
   `load_tenants_with_scheduled_work`.
 - `service/tenants.rs` — Tenant CRUD and lifecycle management. Create/delete now use async storage-engine control APIs; deletion evicts the tenant from the registry, rejects new work through a tenant-local lifecycle primitive, waits for in-flight operations to drain, then removes the on-disk store.
 - `service/usage.rs` — `record_monthly_active_user` and `current_monthly_active_users` — delegates to the global `UsageStore` through the same async storage boundary used elsewhere.
-- `tenant.rs` — `TenantRuntime` is the tenant-local facade and composition root
+- `tenant.rs` — `TenantRuntime` is the tenant-local facade and composition root.
+  The root now keeps only tenant structure, constructors, lifecycle, and
+  cross-domain diagnostics while grouped facade files
+  (`tenant/document_cache_facade.rs`, `tenant/materialized_reads_facade.rs`,
+  `tenant/mutation_facade.rs`, `tenant/query_planning_facade.rs`, and
+  `tenant/subscription_delivery_facade.rs`) own the thin delegation surface
   over `tenant/document_cache.rs`, `tenant/lifecycle.rs`,
   `tenant/materialized_reads/`, `tenant/mutation.rs`,
   `tenant/query_planning.rs`, and `tenant/subscription_delivery.rs`. That
