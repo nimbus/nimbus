@@ -43,10 +43,6 @@ pub struct RuntimeMetricsSnapshot {
     pub retained_runtime_pool_entries: usize,
     pub retained_runtime_pool_evictions: u64,
     pub retained_runtime_pool_retirements: u64,
-    pub retained_runtime_main_realm_resets: u64,
-    pub retained_runtime_main_realm_reset_nanos_total: u64,
-    pub retained_runtime_bootstrap_replays: u64,
-    pub retained_runtime_bootstrap_replay_nanos_total: u64,
     pub bundle_loads: u64,
     pub bundle_load_nanos_total: u64,
     pub bundle_module_loads: u64,
@@ -158,16 +154,6 @@ impl RuntimeMetrics {
 
     pub fn record_warm_pool_discard_unquiesced(&self) {
         self.global.record_warm_pool_discard_unquiesced();
-    }
-
-    pub fn record_retained_runtime_main_realm_reset(&self, duration: Duration) {
-        self.global
-            .record_retained_runtime_main_realm_reset(duration);
-    }
-
-    pub fn record_retained_runtime_bootstrap_replay(&self, duration: Duration) {
-        self.global
-            .record_retained_runtime_bootstrap_replay(duration);
     }
 
     pub fn record_bundle_load(&self, duration: Duration) {
@@ -331,12 +317,6 @@ impl RuntimeMetrics {
             retained_runtime_pool_entries: global.retained_runtime_pool_entries,
             retained_runtime_pool_evictions: global.retained_runtime_pool_evictions,
             retained_runtime_pool_retirements: global.retained_runtime_pool_retirements,
-            retained_runtime_main_realm_resets: global.retained_runtime_main_realm_resets,
-            retained_runtime_main_realm_reset_nanos_total: global
-                .retained_runtime_main_realm_reset_nanos_total,
-            retained_runtime_bootstrap_replays: global.retained_runtime_bootstrap_replays,
-            retained_runtime_bootstrap_replay_nanos_total: global
-                .retained_runtime_bootstrap_replay_nanos_total,
             bundle_loads: global.bundle_loads,
             bundle_load_nanos_total: global.bundle_load_nanos_total,
             bundle_module_loads: global.bundle_module_loads,
@@ -488,8 +468,6 @@ mod tests {
         metrics.increment_retained_runtime_pool_entries();
         metrics.record_retained_runtime_pool_eviction();
         metrics.record_retained_runtime_pool_retirement();
-        metrics.record_retained_runtime_main_realm_reset(Duration::from_millis(3));
-        metrics.record_retained_runtime_bootstrap_replay(Duration::from_millis(4));
         metrics.record_bundle_load(Duration::from_millis(5));
         metrics.record_bundle_module_load(Duration::from_millis(6));
         metrics.record_bundle_evaluation(Duration::from_millis(7));
@@ -522,10 +500,6 @@ mod tests {
                 retained_runtime_pool_entries: 0,
                 retained_runtime_pool_evictions: 1,
                 retained_runtime_pool_retirements: 1,
-                retained_runtime_main_realm_resets: 1,
-                retained_runtime_main_realm_reset_nanos_total: 3_000_000,
-                retained_runtime_bootstrap_replays: 1,
-                retained_runtime_bootstrap_replay_nanos_total: 4_000_000,
                 bundle_loads: 1,
                 bundle_load_nanos_total: 5_000_000,
                 bundle_module_loads: 1,

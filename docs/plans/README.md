@@ -16,11 +16,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
 
-- `docs/plans/warm-pool-default-and-retained-pool-deprecation-plan.md`
-  - canonical plan for making WarmModulePool + CooperativeLocker the only
-    production runtime path; removes RetainedJsRuntimePool and ~900 lines of
-    reset_main_realm code across neovex, deno_core, and rusty_v8 forks
-
 ## Deferred design and experiment plans
 
 - `docs/plans/pluggable-storage-backend-plan.md`
@@ -30,8 +25,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
     compatibility
 - `docs/plans/warm-module-pool-plan.md`
   - **done** — all 6 phases complete; WarmModulePool delivers 22µs warm-hit
-    latency (50x over snapshot cache); follow-on deprecation work owned by
-    `warm-pool-default-and-retained-pool-deprecation-plan.md`
+    latency (50x over snapshot cache); deprecation of RetainedJsRuntimePool
+    complete (see archived deprecation plan)
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
@@ -82,6 +77,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/archive/indexing-bootstrap-and-scenario-surface-cleanup-plan.md`
   - completed control plane for storage indexing, runtime bootstrap, executor
     admission, and scenario-surface cleanup; historical record only
+- `docs/plans/warm-pool-default-and-retained-pool-deprecation-plan.md`
+  - **done** — all 6 phases (D0-D5) complete; made WarmModulePool +
+    CooperativeLocker the default, removed RetainedJsRuntimePool and ~1,200
+    lines of reset_main_realm code across neovex, deno_core, and rusty_v8 forks;
+    RunToCompletion + StartupSnapshotCache kept as per-bundle user option
 - `docs/plans/archive/`
   - home for completed historical plans that should not be resumed as active
     control planes unless explicitly requested

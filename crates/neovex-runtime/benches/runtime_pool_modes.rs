@@ -17,7 +17,6 @@ use tempfile::TempDir;
 #[derive(Clone, Copy)]
 enum PoolMode {
     StartupSnapshotCache,
-    RetainedJsRuntimePool,
     WarmModulePool,
 }
 
@@ -25,7 +24,6 @@ impl PoolMode {
     fn label(self) -> &'static str {
         match self {
             Self::StartupSnapshotCache => "startup_snapshot_cache",
-            Self::RetainedJsRuntimePool => "retained_jsruntime_pool",
             Self::WarmModulePool => "warm_module_pool",
         }
     }
@@ -33,7 +31,6 @@ impl PoolMode {
     fn runtime_pool_kind(self) -> RuntimePoolKind {
         match self {
             Self::StartupSnapshotCache => RuntimePoolKind::StartupSnapshotCache,
-            Self::RetainedJsRuntimePool => RuntimePoolKind::RetainedJsRuntimePool,
             Self::WarmModulePool => RuntimePoolKind::WarmModulePool,
         }
     }
@@ -178,15 +175,7 @@ fn build_runtime(
         routing_affinity: RuntimeRoutingAffinity::Tenant,
         max_concurrent_isolates: 1,
         worker_threads: 1,
-        max_retained_runtimes_per_worker: 4,
-        max_retained_runtimes_per_affinity_key_per_worker: 1,
-        // Retained pool leaks ~500KB/cycle from destroy_for_reset (known Rc
-        // leak, see warm-module-pool-plan.md "Rc Leak in destroy_for_reset").
-        // The warm pool avoids this entirely by never calling reset_main_realm.
-        // For the retained pool, cap reuses so each criterion closure call
-        // retires and rebuilds before exhausting the heap.
         max_heap_mb: 256,
-        max_retained_runtime_reuses: 200,
         // Criterion may run 16k+ iterations per closure call. Set the warm
         // reuse cap high enough that the benchmark doesn't hit retirement.
         max_warm_module_reuses: 1_000_000,
@@ -225,9 +214,7 @@ fn maybe_report_phase_metrics_once(
     let per_invocation =
         |nanos_total: u64| nanos_total as f64 / total_invocations as f64 / 1_000_000.0;
     eprintln!(
-        "phase-metrics {key}: reset={:.3}ms bootstrap={:.3}ms module_load={:.3}ms evaluation={:.3}ms bundle_total={:.3}ms",
-        per_invocation(snapshot.retained_runtime_main_realm_reset_nanos_total),
-        per_invocation(snapshot.retained_runtime_bootstrap_replay_nanos_total),
+        "phase-metrics {key}: module_load={:.3}ms evaluation={:.3}ms bundle_total={:.3}ms",
         per_invocation(snapshot.bundle_module_load_nanos_total),
         per_invocation(snapshot.bundle_evaluation_nanos_total),
         per_invocation(snapshot.bundle_load_nanos_total),
@@ -316,45 +303,25 @@ export {};
                 assert_eq!(snapshot.warm_pool_misses, 1);
                 assert_eq!(snapshot.warm_pool_hits, total_invocations - 1);
                 assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
-                assert_eq!(snapshot.retained_runtime_main_realm_resets, 0);
-                assert_eq!(snapshot.retained_runtime_bootstrap_replays, 0);
             }
-            _ => {
+            PoolMode::StartupSnapshotCache => {
                 assert_eq!(snapshot.bundle_loads, total_invocations);
                 assert_eq!(snapshot.bundle_module_loads, total_invocations);
                 assert_eq!(snapshot.bundle_evaluations, total_invocations);
             }
         }
-        match (self.pool_mode, self.scenario_kind) {
-            (PoolMode::StartupSnapshotCache, _) => {
+        match self.pool_mode {
+            PoolMode::StartupSnapshotCache => {
                 assert_eq!(snapshot.isolate_pool_misses, 1);
                 assert_eq!(
                     snapshot.isolate_pool_hits,
                     total_invocations.saturating_sub(1)
                 );
-                assert_eq!(snapshot.retained_runtime_main_realm_resets, 0);
-                assert_eq!(snapshot.retained_runtime_bootstrap_replays, 0);
                 assert_eq!(snapshot.retained_runtime_pool_entries, 0);
                 assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
-            (PoolMode::RetainedJsRuntimePool, _) => {
-                // Retained pool reuses are capped at 200 per runtime to bound
-                // the destroy_for_reset Rc leak. After retirement, a fresh
-                // runtime is built (additional miss). Validate structural
-                // invariants without assuming exact miss/hit counts.
-                assert!(snapshot.isolate_pool_misses >= 1);
-                assert!(snapshot.isolate_pool_hits > 0);
-                assert_eq!(
-                    snapshot.retained_runtime_main_realm_resets,
-                    snapshot.isolate_pool_hits
-                );
-                assert_eq!(
-                    snapshot.retained_runtime_bootstrap_replays,
-                    snapshot.isolate_pool_hits
-                );
-            }
-            (PoolMode::WarmModulePool, _) => {
+            PoolMode::WarmModulePool => {
                 // Already asserted above
             }
         }
@@ -469,28 +436,18 @@ export {};
             assert_eq!(snapshot.bundle_module_loads, total_invocations);
             assert_eq!(snapshot.bundle_evaluations, total_invocations);
         }
-        match (self.pool_mode, self.scenario_kind) {
-            (PoolMode::StartupSnapshotCache, _) => {
+        match self.pool_mode {
+            PoolMode::StartupSnapshotCache => {
                 assert_eq!(snapshot.isolate_pool_misses, 1);
                 assert_eq!(
                     snapshot.isolate_pool_hits,
                     total_invocations.saturating_sub(1)
                 );
-                assert_eq!(snapshot.retained_runtime_main_realm_resets, 0);
-                assert_eq!(snapshot.retained_runtime_bootstrap_replays, 0);
                 assert_eq!(snapshot.retained_runtime_pool_entries, 0);
                 assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
-            (PoolMode::RetainedJsRuntimePool, _) => {
-                assert!(snapshot.isolate_pool_misses >= 1);
-                assert!(snapshot.isolate_pool_hits > 0);
-                assert_eq!(
-                    snapshot.retained_runtime_main_realm_resets,
-                    snapshot.isolate_pool_hits
-                );
-            }
-            (PoolMode::WarmModulePool, _) => {
+            PoolMode::WarmModulePool => {
                 // Warm pool metrics are validated at the top-level match
             }
         }
@@ -516,16 +473,9 @@ fn pure_js_pool_modes_benchmark(c: &mut Criterion) {
             scenario_kind.execution_model(),
             RuntimeExecutionModel::CooperativeLocker
         ) {
-            &[
-                PoolMode::StartupSnapshotCache,
-                PoolMode::RetainedJsRuntimePool,
-                PoolMode::WarmModulePool,
-            ]
+            &[PoolMode::StartupSnapshotCache, PoolMode::WarmModulePool]
         } else {
-            &[
-                PoolMode::StartupSnapshotCache,
-                PoolMode::RetainedJsRuntimePool,
-            ]
+            &[PoolMode::StartupSnapshotCache]
         };
         for &pool_mode in pool_modes {
             group.bench_with_input(
@@ -560,22 +510,13 @@ fn async_host_batch_benchmark(c: &mut Criterion) {
         AsyncHostBatchScenarioKind::RunToCompletionFourTenants,
         AsyncHostBatchScenarioKind::CooperativeLockerFourTenants,
     ] {
-        // Cooperative async batch with retained pool is impractically slow
-        // (realm reset + bootstrap replay dominates the 1ms async delay).
-        // Skip it — the warm pool exists to replace it.
-        // Async batch with cooperative locker: skip RetainedJsRuntimePool
-        // (realm reset dominates the 1ms async delay) and skip WarmModulePool
-        // (the 4-thread concurrent dispatch path has a known queuing issue
-        // under warm pool return — sequential warm async works, see
-        // cooperative::warm_module_pool_cooperative_async_host_two_cycles).
         let pool_modes: &[PoolMode] = match scenario_kind {
             AsyncHostBatchScenarioKind::CooperativeLockerFourTenants => {
+                &[PoolMode::StartupSnapshotCache, PoolMode::WarmModulePool]
+            }
+            AsyncHostBatchScenarioKind::RunToCompletionFourTenants => {
                 &[PoolMode::StartupSnapshotCache]
             }
-            AsyncHostBatchScenarioKind::RunToCompletionFourTenants => &[
-                PoolMode::StartupSnapshotCache,
-                PoolMode::RetainedJsRuntimePool,
-            ],
         };
         for &pool_mode in pool_modes {
             group.bench_with_input(

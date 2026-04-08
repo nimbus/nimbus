@@ -9,6 +9,7 @@ use super::super::{install_bootstrap, runtime_extension};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeConstructionMode {
+    #[allow(dead_code)] // Used only in test code after RetainedJsRuntimePool removal
     Unsnapshotted,
     StartupSnapshot,
 }

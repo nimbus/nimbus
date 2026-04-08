@@ -26,14 +26,6 @@ impl CooperativeWorkerLoop {
                     runtime,
                 );
             }
-            RuntimePoolKind::RetainedJsRuntimePool => {
-                self.isolate_pool.return_runtime_for_invocation(
-                    runtime_owner,
-                    bundle,
-                    Some(context),
-                    runtime,
-                );
-            }
             RuntimePoolKind::StartupSnapshotCache => {
                 self.deferred_runtime_drops.push(runtime.runtime);
             }

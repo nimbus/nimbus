@@ -1,4 +1,5 @@
 use super::*;
+use crate::executor::RuntimeExecutor;
 use crate::limits::RuntimePoolKind;
 
 // Cooperative locker tests create V8 isolates with `use_locker: true`.
@@ -382,4 +383,105 @@ export {};
     }
 
     watchdog.shutdown();
+}
+
+/// Exercises the fix for the cooperative worker loop greedy admission deadlock.
+///
+/// Before the fix, `next_slot()` drained all pending jobs from the queue in a
+/// `while let` loop, each calling `block_on(acquire_initial())` which acquires
+/// the global isolate semaphore. With `max_concurrent_isolates: 1`, the second
+/// admission would block forever because the first admitted job still held the
+/// semaphore and couldn't release it (needs to be polled first).
+///
+/// The fix changes `while let` to `if let` + `continue` so each admitted job
+/// gets polled (releasing the semaphore via completion or async-host parking)
+/// before the next admission.
+#[test]
+fn cooperative_concurrent_dispatch_does_not_deadlock() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  const host = await ctx.db.get("messages", "doc-1");
+  return {
+    ok: true,
+    host,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+    };
+
+    for &pool_kind in &[
+        RuntimePoolKind::StartupSnapshotCache,
+        RuntimePoolKind::WarmModulePool,
+    ] {
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
+            runtime_pool_kind: pool_kind,
+            max_concurrent_isolates: 1,
+            worker_threads: 1,
+            ..RuntimeLimits::default()
+        }));
+        let runtime = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy.clone());
+        let executor = RuntimeExecutor::new(policy);
+
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let executor = executor.clone();
+                let runtime = runtime.clone();
+                let bundle = bundle.clone();
+                let request = request.clone();
+                let tenant = format!("tenant-{i}");
+                std::thread::spawn(move || {
+                    executor.invoke_blocking(
+                        runtime,
+                        bundle,
+                        request.clone(),
+                        RuntimeInvocationContext::top_level_for_tenant(&request, &tenant),
+                    )
+                })
+            })
+            .collect();
+
+        for (i, handle) in handles.into_iter().enumerate() {
+            // Wrap the join in a timeout: if the fix didn't work this would
+            // hang forever. We want to fail the test rather than hang CI.
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(handle.join());
+            });
+            let join_result = rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap_or_else(|_| {
+                    panic!("cooperative concurrent dispatch timed out for {pool_kind:?} thread {i}")
+                });
+            let invocation_result = join_result.unwrap_or_else(|_| {
+                panic!("cooperative concurrent dispatch thread {i} panicked for {pool_kind:?}")
+            });
+            invocation_result.unwrap_or_else(|e| {
+                panic!(
+                    "cooperative concurrent dispatch invocation {i} failed for {pool_kind:?}: {e}"
+                )
+            });
+        }
+    }
 }

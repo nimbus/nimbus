@@ -8,7 +8,7 @@ use crate::executor::RuntimeExecutor;
 use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::{RuntimeLimits, RuntimePolicy};
 
-use super::{InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeConstructionMode};
+use super::{InvocationRequest, NeovexRuntime, RuntimeBundle};
 
 impl NeovexRuntime {
     pub fn new(host: Arc<dyn HostBridge>) -> Self {
@@ -25,8 +25,6 @@ impl NeovexRuntime {
             policy,
             bypass_concurrency_limit: false,
             owned_executor: Arc::default(),
-            #[cfg(test)]
-            retained_runtime_construction_mode_for_test: RuntimeConstructionMode::Unsnapshotted,
         }
     }
 
@@ -39,8 +37,6 @@ impl NeovexRuntime {
             policy,
             bypass_concurrency_limit: true,
             owned_executor: Arc::default(),
-            #[cfg(test)]
-            retained_runtime_construction_mode_for_test: RuntimeConstructionMode::Unsnapshotted,
         }
     }
 
@@ -49,26 +45,6 @@ impl NeovexRuntime {
             policy,
             owned_executor: Arc::default(),
             ..self
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_retained_runtime_construction_mode_for_test(
-        mut self,
-        construction_mode: RuntimeConstructionMode,
-    ) -> Self {
-        self.retained_runtime_construction_mode_for_test = construction_mode;
-        self
-    }
-
-    pub(crate) fn retained_runtime_construction_mode(&self) -> RuntimeConstructionMode {
-        #[cfg(test)]
-        {
-            self.retained_runtime_construction_mode_for_test
-        }
-        #[cfg(not(test))]
-        {
-            RuntimeConstructionMode::Unsnapshotted
         }
     }
 

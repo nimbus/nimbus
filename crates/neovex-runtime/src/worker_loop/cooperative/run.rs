@@ -12,13 +12,20 @@ impl CooperativeWorkerLoop {
         shutdown: &RuntimeWorkerShutdown,
     ) -> Option<CooperativeRunnableSlot<CooperativeInvocation>> {
         loop {
-            while let Some(job) = queue.try_recv() {
-                self.admit_job(queue, job);
-            }
             self.drain_ready_parked_slots();
 
             if let Some(slot) = self.scheduler.pop_runnable() {
                 return Some(slot);
+            }
+
+            // Admit at most one job per iteration. Each admission calls
+            // block_on(acquire_initial()) which acquires the global isolate
+            // semaphore. Admitting a second job before the first has been
+            // polled (and released its semaphore via completion or parking)
+            // would deadlock the single-threaded worker runtime.
+            if let Some(job) = queue.try_recv() {
+                self.admit_job(queue, job);
+                continue;
             }
 
             if shutdown.is_cancelled() {
