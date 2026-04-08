@@ -1,9 +1,8 @@
-# Plan: Pluggable Storage Backend
+# Plan: SQLite Storage Backend Migration
 
-Canonical plan for abstracting the storage layer behind a backend-agnostic
-trait boundary, implementing SQLite as the primary embedded backend, and
-establishing the architecture for additional storage backends (Postgres,
-MySQL) and user-facing database bindings (D1, Hyperdrive-style proxy).
+This file keeps its historical filename, but its scope is now SQLite-only:
+move Neovex storage from redb to SQLite, benchmark SQLite against redb before
+cutover, then remove redb. Postgres and MySQL now belong to a later plan.
 
 ---
 
@@ -11,13 +10,15 @@ MySQL) and user-facing database bindings (D1, Hyperdrive-style proxy).
 
 - **Status:** `deferred`
 - **Primary owner:** this plan
-- **Activation gate:** developer approval; no code dependency on other plans
+- **Activation gate:** developer approval plus an explicit sequencing decision
+  with `docs/plans/encryption-at-rest-plan.md`, which still assumes a redb
+  `StorageBackend` seam
 
 ## How To Use This Plan
 
-- Read this before starting any storage backend work.
+- Read this before starting any SQLite storage migration work.
 - Treat the current git worktree plus this plan's ledger as progress state.
-- Resume any `in_progress` phase before starting a new one.
+- Resume any `in_progress` item before starting a new one.
 - Checkpoint state here before stopping, handing off, or likely context loss.
 
 ## Control Plan Rules
@@ -37,506 +38,439 @@ MySQL) and user-facing database bindings (D1, Hyperdrive-style proxy).
 
 ### Why now
 
-Neovex is pre-launch with zero production data. The current redb storage
-layer works but locks the system into a single embedded key-value backend
-with no query engine, no SQL, no replication ecosystem, no encryption at
-rest, and no path to user-facing D1/Postgres/MySQL database bindings.
+Neovex is pre-launch with zero production data. That gives us room to make a
+clean backend replacement instead of carrying long-lived compatibility layers.
 
-The market requires:
-- **D1 compatibility** (SQLite) for Workers/Vinext apps
-- **Postgres** for enterprise and the Next.js ORM ecosystem (Prisma, Drizzle)
-- **MySQL** for enterprise legacy and Aurora
-- **Reactive document database** capabilities across all backends
+SQLite is now the target embedded backend because it gives us:
 
-Convex Cloud runs on Postgres internally, and self-hosted Convex supports
-SQLite + Postgres. This validates the multi-backend approach.
+- a well-understood storage engine with mature tooling
+- expression indexes and SQL query planning for the document model
+- a practical path toward D1-adjacent storage semantics
+- a simpler operational story than keeping a custom redb-only storage layer
 
-### Role of redb going forward
+redb remains relevant only during the migration window:
 
-redb is not the long-term production backend. SQLite replaces it as the
-default embedded backend for production deployments. However, redb is
-retained for three reasons:
+- as the baseline for correctness parity checks
+- as the baseline for benchmark comparisons before removal
+- as the source implementation we are replacing, not a permanent co-equal
+  backend
 
-1. **Reference implementation.** A trait boundary validated against only one
-   backend is not a real abstraction. redb as a second implementation forces
-   the seam to be honest — if the traits only work with SQLite, they are
-   SQLite traits wearing a trait coat.
+Once the benchmark and parity gates are satisfied, this plan removes redb.
 
-2. **Test harness.** redb's `InMemoryBackend` provides fast in-memory
-   storage for unit tests that don't need SQL semantics. Until SQLite
-   in-memory equivalents are proven equally fast and reliable in the test
-   suite, redb remains a useful test backend.
+### Current verified state
 
-3. **Benchmark baseline.** Real-world performance comparisons between redb
-   and SQLite on the same trait boundary produce honest numbers. These
-   benchmarks validate that the abstraction overhead is acceptable and
-   identify any SQLite regressions relative to the known-working redb path.
+The current engine/storage contract is narrower and more concrete than the
+previous draft plan assumed:
 
-redb may be retired after SQLite is proven in production and the trait
-boundary is validated by a third backend (Postgres). Until then, it earns
-its keep as the reference that keeps the abstraction honest.
+- the async boundary already exists via `StorageEngine`,
+  `TenantReadStorage`, `TenantWriteStorage`, and `UsageStorage`
+- that async boundary still leaks concrete sync types through closures:
+  `Arc<TenantStore>` and `&mut TenantWriteTransaction`
+- the write path depends on `TenantWriteCommit<T>` and
+  `TenantWriteOutcome<T>`, including cancellable-before-commit semantics
+- direct mutations use validation callbacks
+  (`update_document_validated`, `delete_document_validated`)
+- execution units commit via `apply_resolved_write_batch(...)` and
+  `apply_execution_unit_batch(...)` over `ResolvedWrite` and
+  `ResolvedScheduleOp`
+- query planning depends on cancellable point, scan, and composite index
+  operations on both `TenantStore` and `TenantReadSnapshot`
+- the reactive system is driven by engine-owned `CommitEntry` values, not by
+  backend hooks
+- durable journal streaming, bootstrap export, materialized snapshot
+  export/restore, and durable/applied head tracking are first-class storage
+  responsibilities
+- scheduled execution deduplication is keyed by execution id
+  (`scheduled:{job.id}`), not by function name
 
-### Current state
+### Scope
 
-redb is **entirely encapsulated** within `neovex-storage`. The engine and
-server crates never import redb directly. The existing seams:
+This plan covers:
 
-| Seam | Status |
-|------|--------|
-| Async boundary traits (`StorageEngine`, `TenantReadStorage`, `TenantWriteStorage`, `UsageStorage`) | **Good** — already trait-based |
-| Sync store types (`TenantStore`, `TenantReadSnapshot`, `TenantWriteTransaction`) | **Needs work** — concrete types held by engine |
-| Error mapping | **Good** — all redb errors map to `Error::Storage` |
-| Serialization | **Needs work** — MessagePack is baked into storage code |
-| Engine references | **Needs work** — engine holds `Arc<RedbStorageEngine>`, `Arc<RedbTenantStorage>`, `Arc<TenantStore>` |
+- SQLite as the only target replacement backend for Neovex internal storage
+- a temporary redb-vs-SQLite migration window for parity tests and benchmarks
+- a benchmark gate before changing the default and before deleting redb
+- preserving the current engine-facing storage contract while swapping the
+  backend implementation
+- final removal of redb and migration-only backend-selection scaffolding
 
-### Two distinct use cases for "database support"
+This plan does not cover:
 
-1. **Neovex's own storage backend** — what stores tenant data, powers
-   subscriptions, and runs the reactive document model. This is the storage
-   engine (currently redb, future SQLite, Postgres, MySQL).
+- a general backend abstraction for future external databases
+- Postgres or MySQL internal storage
+- user-facing `env.DB` / `env.HYPERDRIVE` bindings
+- a long-lived migration or compatibility layer for launched users
 
-2. **User-facing database bindings** — what user code (Workers functions,
-   Vinext apps) can query via `env.DB` (D1), `env.HYPERDRIVE` (Postgres/MySQL
-   proxy), or ORMs. This is a service binding in the Workers API surface.
+Because Neovex is pre-launch, this plan prefers a clean replacement over a
+permanent dual-backend architecture. A redb-to-SQLite import tool is optional
+and only worth adding if local developer migration friction becomes real.
 
-This plan covers #1. User-facing bindings (#2) depend on the Workers API
-surface design and are out of scope here.
+### Cross-Plan Note
+
+`docs/plans/encryption-at-rest-plan.md` is currently redb-specific. If this
+SQLite migration activates, that plan cannot proceed unchanged. Before starting
+implementation, explicitly choose one of:
+
+- rewrite encryption-at-rest around SQLite
+- defer encryption-at-rest until after SQLite lands
+- retire the redb-specific parts of the current encryption plan
+
+### Follow-On Ownership
+
+- `docs/plans/external-sql-storage-backends-plan.md` owns future Postgres and
+  MySQL internal storage work after this SQLite migration is stable
 
 ---
 
 ## Architecture
 
-### Backend trait hierarchy
+### Guiding decisions
 
-The goal is a trait boundary that lets the engine work with any storage
-backend without knowing which one is active.
+1. Preserve the current engine/storage contract before changing backend
+   internals.
+2. Keep `CommitEntry` and the durable journal as the canonical reactive and
+   replication model.
+3. Use temporary migration scaffolding for redb vs SQLite instead of designing
+   a fully general object-safe backend abstraction now.
+4. Remove redb after parity and benchmark gates clear.
 
-```
-StorageBackend (new top-level trait)
-├── TenantBackend (per-tenant operations)
-│   ├── read: snapshot-based reads
-│   ├── write: transactional writes with commit hooks
-│   └── change_notifications: hook into reactive system
-├── UsageBackend (cross-tenant metering)
-└── BackendConfig (construction + configuration)
-```
+### Use SQLite vs Keep in Neovex
 
-The key addition vs the current traits: **change notification hooks** as a
-first-class part of the backend contract, so the reactive engine can
-subscribe to changes regardless of whether the backend is redb, SQLite, or
-Postgres.
+Use this rule throughout the migration:
 
-### Backend kinds
+- preserve Neovex semantics
+- replace Neovex mechanics whenever SQLite already provides an equivalent or
+  better primitive
 
-| Backend | Embedding model | Primary use case | Change notifications |
-|---------|----------------|-----------------|---------------------|
-| **redb** (current) | Embedded, pure Rust | Existing behavior, lightweight | Custom journal sequence model |
-| **SQLite** (rusqlite) | Embedded, bundled C | D1 compat, primary production | `update_hook` + `preupdate_hook` |
-| **Postgres** (future) | External connection | Enterprise, existing infra | `LISTEN`/`NOTIFY` or logical replication |
-| **MySQL** (future) | External connection | Enterprise legacy, Aurora | Binlog or polling |
+SQLite should replace current implementation details where it already gives us
+the right storage primitive:
 
-### Embedded vs external backends
+- transactions and atomic commit
+- WAL durability and concurrency behavior
+- table storage for documents, schemas, scheduler state, metadata, and
+  commit-log rows
+- expression indexes, including composite indexes
+- query planning for point lookups and indexed scans
+- prepared statements and normal SQL read/write execution
 
-Embedded backends (redb, SQLite) run in-process with per-tenant file
-isolation. External backends (Postgres, MySQL) connect over the network.
+Neovex should continue to own the parts that are product semantics rather than
+storage mechanics:
 
-The trait hierarchy must accommodate both:
-- Embedded: `BackendConfig::open(path)` → one file per tenant
-- External: `BackendConfig::connect(url)` → one schema/database per tenant
+- logical mutation commits via `CommitEntry`
+- durable journal cursor, bootstrap, and rebuild semantics
+- subscription fan-out behavior
+- scheduled execution dedupe semantics
+- schema validation, auth, and policy semantics
+- execution-unit conflict and dependency behavior
+- durable-head vs applied-head tracking while the engine still depends on it
 
-The async boundary pattern differs:
-- Embedded: `spawn_blocking` for sync I/O (current pattern)
-- External: native async via connection pool (tokio-postgres, sqlx)
+This plan should aggressively delete redb-specific implementation code, but it
+should not treat current Neovex product guarantees as accidental storage
+details just because SQLite has lower-level hooks or replication features.
 
-### Configuration
+### Engine-facing contract to preserve
 
-```toml
-# neovex.toml or CLI flags
-[storage]
-backend = "sqlite"  # "redb" | "sqlite" | "postgres" | "mysql"
+The SQLite path must support the behavior the engine already depends on today:
 
-# Embedded backends
-data_dir = "./data"
+- async read execution via `execute(...)` and `execute_cancellable(...)`
+- async write execution via `execute_write(...)` and
+  `execute_write_cancellable(...)`
+- `TenantWriteCommit<T>` and `TenantWriteOutcome<T>` semantics, including the
+  current pre-commit cancellation behavior
+- direct validated writes for insert/update/delete flows
+- scheduled execution dedupe keyed by execution id
+- execution-unit batch application over `ResolvedWrite` and
+  `ResolvedScheduleOp`
+- cancellable table scans and index scans, including composite exact-prefix and
+  range scans
+- `CommitEntry` generation during writes so the engine can continue calling
+  `process_commit(...)`
+- durable journal reads, streaming, bootstrap export, materialized snapshot
+  export/restore, and journal progress tracking
 
-# External backends (future)
-# database_url = "postgres://user:pass@host/db"
-```
+This plan should not reframe the migration around:
 
----
+- CRUD-only traits that omit batch operations, validation callbacks, or commit
+  wrappers
+- backend hooks as the primary reactive contract
+- object-safety or factory abstractions designed around hypothetical future
+  external backends
 
-## Phase 1: Abstract the Storage Seam
+### Temporary migration selection
 
-**Goal:** Make the engine backend-agnostic without changing behavior. redb
-remains the only implementation. All existing tests pass unchanged.
+During the migration window, temporary backend selection is acceptable because
+it is bounded and short-lived. The goal is to compare redb and SQLite on the
+same engine contract, not to ship a permanent pluggable-backend architecture.
 
-### SB1: Define backend traits
-
-Define the new trait hierarchy in `neovex-storage/src/backend/traits.rs`:
+Use an enum-backed or otherwise explicitly temporary selection layer rather
+than `Arc<dyn ...>` traits that force object-safety compromises up front.
 
 ```rust
-/// Top-level backend factory.
-pub trait StorageBackendFactory: Send + Sync + 'static {
-    type Tenant: TenantBackend;
-    type Usage: UsageBackend;
-
-    async fn open_tenant(&self, tenant_id: &TenantId, path: &Path) -> Result<Self::Tenant>;
-    async fn list_tenants(&self, data_dir: &Path) -> Result<Vec<TenantId>>;
-    async fn open_usage(&self, path: &Path) -> Result<Self::Usage>;
-    async fn delete_tenant(&self, tenant_id: &TenantId, path: &Path) -> Result<()>;
-}
-
-/// Per-tenant storage operations.
-pub trait TenantBackend: Send + Sync + 'static {
-    type ReadSnapshot: TenantReadOps + Send + 'static;
-    type WriteTransaction: TenantWriteOps + Send + 'static;
-
-    fn read_snapshot(&self) -> Result<Self::ReadSnapshot>;
-    fn begin_write(&self) -> Result<Self::WriteTransaction>;
-}
-
-/// Read operations on a consistent snapshot.
-pub trait TenantReadOps: Send + 'static {
-    fn get_document(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>>;
-    fn scan_table(&self, table: &TableName) -> Result<Vec<Document>>;
-    fn scan_index(&self, table: &TableName, index: &IndexDefinition, bounds: &IndexBounds) -> Result<Vec<Document>>;
-    fn get_schema(&self, table: &TableName) -> Result<Option<TableSchema>>;
-    fn get_all_schemas(&self) -> Result<HashMap<TableName, TableSchema>>;
-    fn list_tables(&self) -> Result<Vec<TableName>>;
-    fn get_sequence(&self) -> Result<u64>;
-    // ... scheduled job reads, journal reads, etc.
-}
-
-/// Write operations within a transaction.
-pub trait TenantWriteOps: Send + 'static {
-    fn insert_document(&mut self, table: &TableName, doc: &Document) -> Result<()>;
-    fn update_document(&mut self, table: &TableName, doc: &Document) -> Result<()>;
-    fn delete_document(&mut self, table: &TableName, id: &DocumentId) -> Result<()>;
-    fn set_schema(&mut self, table: &TableName, schema: &TableSchema) -> Result<()>;
-    fn commit(self) -> Result<CommitResult>;
-    // ... scheduled job writes, index maintenance, etc.
-}
-
-/// Commit result with change information for reactive notifications.
-pub struct CommitResult {
-    pub sequence: u64,
-    pub changes: Vec<ChangeRecord>,
-}
-
-pub struct ChangeRecord {
-    pub table: TableName,
-    pub document_id: DocumentId,
-    pub kind: ChangeKind,
-}
-
-pub enum ChangeKind {
-    Insert,
-    Update,
-    Delete,
+enum StorageBackendSelection {
+    Redb(...),
+    Sqlite(...),
 }
 ```
 
-### SB2: Implement redb backend behind new traits
+That temporary selection layer may exist in `neovex-storage`, `neovex-engine`,
+or both, but it must preserve the current call surface and be deleted once
+SQLite fully replaces redb.
 
-Move current `TenantStore`, `TenantReadSnapshot`, `TenantWriteTransaction`
-into `neovex-storage/src/backend/redb/` and implement the new traits. All
-existing behavior preserved. The current async boundary
-(`RedbStorageEngine`, `RedbTenantStorage`) wraps the new trait
-implementations.
+### SQLite storage model
 
-Directory structure after SB2:
-
-```
-neovex-storage/src/
-├── backend/
-│   ├── mod.rs          (trait definitions, re-exports)
-│   ├── traits.rs       (StorageBackendFactory, TenantBackend, etc.)
-│   └── redb/
-│       ├── mod.rs      (RedbBackendFactory)
-│       ├── store.rs    (RedbTenantBackend — wraps current TenantStore)
-│       ├── read.rs     (RedbReadSnapshot — wraps current TenantReadSnapshot)
-│       ├── write.rs    (RedbWriteTransaction — wraps current TenantWriteTransaction)
-│       ├── index/      (moved from current index/)
-│       ├── keys.rs     (moved from current keys.rs)
-│       └── ...         (other redb-specific modules)
-├── async_storage/      (unchanged — wraps backend traits)
-├── lib.rs              (re-exports backend traits + redb default)
-└── ...
-```
-
-### SB3: Remove concrete redb types from engine
-
-Replace all `Arc<RedbStorageEngine>`, `Arc<RedbTenantStorage>`,
-`Arc<TenantStore>` references in `neovex-engine` with trait-based
-alternatives. The engine becomes generic over the backend or uses trait
-objects.
-
-**Approach:** Use trait objects (`Arc<dyn TenantBackend>`) rather than
-generics to avoid monomorphization of the entire engine. The storage
-backend is selected once at startup, not per-call.
-
-### SB4: Verification
-
-- All existing tests pass with zero behavior change
-- No `redb` import exists outside `neovex-storage/src/backend/redb/`
-- Engine compiles against traits, not concrete types
-- `cargo check` with redb feature disabled compiles the engine (but not the
-  binary, which needs at least one backend)
-
----
-
-## Phase 2: SQLite Backend
-
-**Goal:** Implement a fully functional SQLite backend using rusqlite that
-passes all existing tests and adds reactive change notifications via
-SQLite hooks.
-
-### SB5: SQLite schema design
+The SQLite backend should preserve the logical model while using SQLite-native
+tables and indexes:
 
 ```sql
--- Per-tenant SQLite database (one .sqlite file per tenant)
--- Created by SqliteTenantBackend::open()
-
--- Document storage
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE documents (
     table_name TEXT NOT NULL,
     id TEXT NOT NULL,
-    data TEXT NOT NULL,           -- JSON (via JSON1 extension)
-    creation_time REAL NOT NULL,
+    data_json TEXT NOT NULL,
+    creation_time INTEGER NOT NULL,
     PRIMARY KEY (table_name, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_table
-    ON documents(table_name);
-
--- Dynamic indexes (created by set_schema)
--- CREATE INDEX idx_{table}_{field} ON documents(table_name, json_extract(data, '$.{field}'))
-
--- Schemas
-CREATE TABLE IF NOT EXISTS schemas (
+CREATE TABLE schemas (
     table_name TEXT NOT NULL PRIMARY KEY,
-    schema_data TEXT NOT NULL     -- JSON serialized TableSchema
+    schema_json TEXT NOT NULL
 );
 
--- Scheduled jobs
-CREATE TABLE IF NOT EXISTS scheduled_jobs (
+CREATE TABLE scheduled_jobs (
     id TEXT NOT NULL PRIMARY KEY,
-    data TEXT NOT NULL            -- JSON serialized ScheduledJob
+    data_json TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS running_scheduled_jobs (
+CREATE TABLE running_scheduled_jobs (
     id TEXT NOT NULL PRIMARY KEY,
-    data TEXT NOT NULL
+    data_json TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS scheduled_job_results (
+CREATE TABLE scheduled_job_results (
     job_id TEXT NOT NULL PRIMARY KEY,
-    data TEXT NOT NULL
+    data_json TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS scheduled_job_executions (
-    function_name TEXT NOT NULL PRIMARY KEY,
-    data TEXT NOT NULL
+CREATE TABLE scheduled_job_executions (
+    execution_id TEXT NOT NULL PRIMARY KEY
 );
 
-CREATE TABLE IF NOT EXISTS cron_jobs (
+CREATE TABLE cron_jobs (
     name TEXT NOT NULL PRIMARY KEY,
-    data TEXT NOT NULL
+    data_json TEXT NOT NULL
 );
 
--- Durable journal (replaces custom journal layer)
-CREATE TABLE IF NOT EXISTS journal (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-    mutation_data TEXT NOT NULL   -- JSON serialized DurableMutationRecord
+CREATE TABLE commit_log (
+    sequence INTEGER NOT NULL PRIMARY KEY,
+    record_blob BLOB NOT NULL
 );
 
--- Metadata
-CREATE TABLE IF NOT EXISTS metadata (
+CREATE TABLE metadata (
     key TEXT NOT NULL PRIMARY KEY,
-    value TEXT NOT NULL
+    value_blob BLOB NOT NULL
 );
-
--- Pragmas set on open
--- PRAGMA journal_mode = WAL;
--- PRAGMA synchronous = FULL;
--- PRAGMA busy_timeout = 5000;
--- PRAGMA foreign_keys = OFF;
--- PRAGMA cache_size = -8000;   -- 8MB cache
 ```
 
-### SB6: Implement SqliteTenantBackend
+Notes:
 
-Implement `TenantBackend`, `TenantReadOps`, `TenantWriteOps` for SQLite
-using rusqlite in `neovex-storage/src/backend/sqlite/`.
+- `documents.data_json` stores document fields in JSON text so SQLite JSON1
+  expressions can drive indexes and scans
+- `commit_log.record_blob` stores serialized `DurableMutationRecord` values so
+  integrity hashing and replay semantics remain explicit
+- `scheduled_job_executions` is keyed by `execution_id`, matching the current
+  deduplication contract
+- `metadata` continues to own sequence and journal-progress state
 
-Key implementation details:
-- `SqliteTenantBackend` holds `rusqlite::Connection` (single connection per
-  tenant, WAL mode allows concurrent reads via separate connections)
-- Read snapshots use `BEGIN DEFERRED` transactions for consistent reads
-- Write transactions use `BEGIN IMMEDIATE` for exclusive write access
-- JSON1 extension for document storage and querying
-- `json_extract()` for field-level index support
+### SQLite index strategy
 
-### SB7: SQLite change notifications
+SQLite indexes must preserve the current planner capabilities, including
+composite indexes. A single-field-only design is not sufficient.
 
-Wire `sqlite3_update_hook` and `sqlite3_preupdate_hook` into the
-`CommitResult` returned by `TenantWriteOps::commit()`. This replaces the
-custom journal-based change tracking:
+For each `IndexDefinition { name, fields }`, SQLite should create an expression
+index that matches the ordered field list:
 
-```rust
-// On SqliteTenantBackend::open():
-conn.update_hook(Some(|action, db_name, table_name, rowid| {
-    // Record change: table_name, rowid, INSERT/UPDATE/DELETE
-    // Pushed to a channel that the engine subscribes to
-}));
-
-conn.preupdate_hook(Some(|action, db_name, table_name, ...| {
-    // Record old/new values for fine-grained diff delivery
-}));
+```sql
+CREATE INDEX idx_{table}_{index_name}
+ON documents (
+    table_name,
+    json_extract(data_json, '$.field1'),
+    json_extract(data_json, '$.field2'),
+    id
+);
 ```
 
-The reactive engine (`neovex-engine`) receives `CommitResult` with change
-records and fans out to subscriptions exactly as it does today with the
-custom journal model.
+Requirements:
 
-### SB8: SQLite index management
+- support exact-match scans
+- support composite exact-prefix scans
+- support single-field and composite range scans
+- keep residual filtering in the engine where the current planner already does
+  so
+- add explicit parity tests for JSON comparison behavior, especially across
+  composite ranges
 
-Map the existing `IndexDefinition` model to SQLite indexes:
+### Reactive and journal model
 
-- `set_schema()` creates SQLite indexes via
-  `CREATE INDEX IF NOT EXISTS idx_{table}_{field} ON documents(table_name, json_extract(data, '$.{field}'))`
-- `scan_index()` generates `SELECT ... WHERE table_name = ? AND json_extract(data, '$.{field}') BETWEEN ? AND ?`
-- Drop/recreate on schema change
+The engine continues to own reactivity through `CommitEntry`.
 
-This replaces `~800 lines` of custom index encoding, keyspace, bounds,
-scan, and maintenance code with SQLite's native index engine.
-
-### SB9: SQLite verification
-
-- All existing engine and server tests pass against the SQLite backend
-- Subscription fan-out works via `update_hook` (not custom journal)
-- Index-backed queries use SQLite indexes (visible via `EXPLAIN QUERY PLAN`)
-- fsync durability verified with crash-recovery test
-- Performance comparison: SQLite vs redb on the existing benchmark harness
+- SQLite write transactions build `WriteOp` values and `CommitEntry` directly
+- the engine continues to call `process_commit(...)`
+- the durable journal remains explicit storage state, not an implementation
+  detail hidden behind SQLite hooks
+- `sqlite3_update_hook` / `preupdate_hook` may be explored later for debugging
+  or observability, but they are not required for core correctness, journaling,
+  or subscriptions in this plan
 
 ---
 
-## Phase 3: Backend Configuration and Selection
+## Phase 1: Codify the Migration Contract
 
-**Goal:** Make the backend selectable at startup and establish the
-architecture for future external backends.
+**Goal:** Define the SQLite migration around the actual current engine/storage
+surface instead of a greenfield CRUD abstraction.
 
-### SB10: Backend selection
+### SB1: Document the preserved contract from current call sites
 
-Add `--storage-backend` CLI flag and `NEOVEX_STORAGE_BACKEND` env var:
+- inventory the current engine call sites that depend on `TenantStore`,
+  `TenantReadSnapshot`, `TenantWriteTransaction`, `TenantWriteCommit<T>`, and
+  `TenantWriteOutcome<T>`
+- define the minimal migration contract around those operations
+- make journal/snapshot APIs explicit in the plan and in any migration-facing
+  interfaces
+- make scheduled execution dedupe and cancellation semantics explicit
 
-```
-neovex --storage-backend sqlite --data-dir ./data
-neovex --storage-backend redb --data-dir ./data
-```
+### SB2: Introduce temporary redb-vs-SQLite selection scaffolding
 
-Default: `sqlite` (changed from redb after SB9 verification).
+- add temporary startup/backend selection that can route the engine to redb or
+  SQLite during the migration window
+- keep this scaffolding intentionally temporary and local to the migration
+- do not introduce a permanent `StorageBackendFactory` abstraction designed for
+  Postgres/MySQL in this phase
 
-redb remains available for testing, benchmarking, and as the reference
-implementation that keeps the trait boundary honest.
+### SB3: Verification
 
-Implementation: `neovex-bin` constructs the appropriate
-`StorageBackendFactory` at startup and passes it to `Service::new()`.
-
-### SB11: Feature flags
-
-```toml
-[features]
-default = ["backend-sqlite", "backend-redb"]
-backend-redb = ["dep:redb"]
-backend-sqlite = ["dep:rusqlite"]
-# Future:
-# backend-postgres = ["dep:tokio-postgres"]
-# backend-mysql = ["dep:sqlx"]
-```
-
-Both backends are included by default during development. Production
-builds may exclude redb once SQLite is proven. The test suite runs against
-both backends to validate the trait boundary.
-
-### SB12: Cross-backend benchmark harness
-
-Extend the existing benchmark infrastructure to run the same workloads
-against both backends on the same hardware:
-
-- Document CRUD throughput (insert/update/delete per second)
-- Point read latency (p50, p99)
-- Index scan latency (p50, p99)
-- Subscription fan-out latency (mutation to WebSocket push)
-- Concurrent tenant load (50 active tenants, mixed read/write)
-
-These benchmarks produce the real-world numbers that justify the SQLite
-default and identify any regressions. They also validate that the trait
-boundary abstraction overhead (vtable dispatch) is not measurable relative
-to I/O costs.
-
-### SB13: Data migration utility
-
-Since Neovex is pre-launch, migration between backends is a
-nice-to-have, not a blocker. But for development and any early adopters:
-
-```
-neovex migrate --from redb --to sqlite --data-dir ./data
-```
-
-Reads all tenants from the source backend, writes to the target. Uses the
-backend trait boundary — the migration tool is backend-agnostic.
+- migration scaffolding compiles without changing behavior
+- the plan and code agree on the preserved contract
+- no object-safety workaround is required for this phase
 
 ---
 
-## Phase 4: External Backend Architecture (Future)
+## Phase 2: Implement SQLite Storage Parity
 
-**Goal:** Establish the pattern for Postgres and MySQL backends. These are
-deferred until post-launch but the trait design from Phase 1 must
-accommodate them.
+**Goal:** Implement SQLite with the same engine-visible behavior that redb
+currently provides.
 
-### Design considerations for external backends
+### SB4: Implement SQLite store foundation and async boundary
 
-| Concern | Embedded (redb, SQLite) | External (Postgres, MySQL) |
-|---------|------------------------|---------------------------|
-| Tenant isolation | One file per tenant | One schema or database per tenant |
-| Async model | `spawn_blocking` for sync I/O | Native async (`tokio-postgres`, `sqlx`) |
-| Connection management | Open file handle | Connection pool per tenant |
-| Change notifications | `update_hook` / custom journal | `LISTEN`/`NOTIFY` (Postgres) or polling (MySQL) |
-| Transactions | Local ACID | Network-round-trip ACID |
-| Latency | Microseconds (local NVMe) | Milliseconds (network) |
-| Single binary | Yes | Requires external database server |
+- add SQLite store open/create paths and the usage-store equivalent
+- mirror the current async read/write execution boundary for SQLite
+- configure WAL mode, synchronous level, busy timeout, and cache settings
+- preserve the current write parallelism and cancellation behavior at the async
+  boundary
 
-The `StorageBackendFactory` trait already accommodates this — `open_tenant`
-can open a file or establish a connection pool. The async boundary differs
-(embedded uses `spawn_blocking`, external uses native async) but both
-return the same trait objects.
+### SB5: Implement SQLite read path and query/index parity
 
-### Postgres backend (SB14, future)
+- implement point reads and cancellable table scans
+- implement planner-facing index scans for:
+  - exact equality
+  - prefix scans
+  - range scans
+  - composite prefix-plus-range scans
+- add parity tests that compare redb and SQLite results for the same query
+  corpora
 
-- `tokio-postgres` or `sqlx` for async Postgres
-- One Postgres schema per tenant (`CREATE SCHEMA tenant_{id}`)
-- Same table structure as SQLite but with Postgres-native types
-- `LISTEN`/`NOTIFY` for change notifications
-- Connection pooling via `deadpool-postgres` or `bb8`
-- Enables the Convex Cloud-compatible deployment model
+### SB6: Implement SQLite write path, scheduler, journal, and snapshot parity
 
-### MySQL backend (SB15, future)
+- implement validated direct writes
+- implement execution-unit batch apply using `ResolvedWrite` and
+  `ResolvedScheduleOp`
+- preserve scheduled execution dedupe keyed by execution id
+- build `CommitEntry` during SQLite writes and keep engine reactivity
+  commit-driven
+- implement durable journal append/read/stream/bootstrap
+- implement materialized journal snapshot export/restore/rebuild
+- preserve durable/applied head tracking and recovery semantics
 
-- `sqlx` with MySQL driver
-- One MySQL database per tenant
-- Binlog-based change detection or polling fallback
-- Enables enterprise Aurora/PlanetScale deployments
+### SB7: Verification
 
-### User-facing database bindings (separate plan)
+- SQLite passes targeted storage tests for CRUD, scheduler, journal, recovery,
+  and query planning
+- commit-driven subscription fan-out still works end-to-end
+- redb and SQLite agree on composite index and journal behavior for parity
+  corpora
 
-User-accessible `env.DB` (D1) and `env.HYPERDRIVE` (Postgres/MySQL proxy)
-are **Workers API surface features**, not storage backend features. They
-belong in the Workers compatibility plan, not here. The storage backend is
-what Neovex uses internally; user-facing bindings are what user code
-accesses through the runtime.
+---
 
-When the SQLite backend is active, `env.DB` can expose the tenant's SQLite
-database directly — this is D1 compatibility for free.
+## Phase 3: Validate, Benchmark, and Cut Over
+
+**Goal:** Prove SQLite is correct, measure it against redb, then make SQLite
+the default backend.
+
+### SB8: Wire engine, tests, and harnesses through SQLite
+
+- update `Service`, `TenantRuntime`, and related helpers to work through the
+  migration selection layer
+- migrate tests and fixtures that currently depend on concrete redb-backed
+  types
+- run the full workspace verification suite with SQLite enabled
+
+### SB9: Benchmark gate against redb
+
+Run the same workloads against redb and SQLite on the same machine before
+removing redb:
+
+- document CRUD throughput
+- point read latency
+- indexed query latency, including composite index paths
+- durable journal stream/bootstrap latency
+- subscription fan-out latency
+- concurrent multi-tenant mixed read/write load
+
+This phase produces a checked-in benchmark report and an explicit go/no-go
+decision for redb removal.
+
+### SB10: Switch the default backend to SQLite
+
+- make SQLite the default runtime backend during the final migration window
+- keep redb available only as a temporary explicit benchmark/parity fallback if
+  still needed
+- do not add a permanent dual-backend promise to operator-facing docs
+
+### SB11: Verification
+
+- full `make test`, `make clippy`, `make check`, and `cargo fmt --check` are
+  green with SQLite as the default
+- benchmark report is recorded and reviewed
+- any material SQLite regressions are either fixed or explicitly signed off
+  before redb removal proceeds
+
+---
+
+## Phase 4: Remove redb
+
+**Goal:** Delete the old backend and the temporary migration scaffolding once
+SQLite is proven.
+
+### SB12: Remove redb and migration-only selection code
+
+- delete redb storage code and redb-specific feature flags
+- delete temporary redb-vs-SQLite selection scaffolding
+- delete redb-only tests and fixtures that no longer make sense post-migration
+- simplify `Service`, `TenantRuntime`, and storage entry points back to a
+  single-backend model
+
+### SB13: Final cleanup and close-out
+
+- update docs and verification guidance so SQLite is the only internal backend
+- record any intentionally deferred follow-up work in
+  `docs/plans/external-sql-storage-backends-plan.md`
+- close out or revise redb-specific cross-plan assumptions, especially
+  encryption-at-rest
+
+### SB14: Verification
+
+- workspace compiles and tests without redb
+- no redb imports remain in the active codepath
+- documentation no longer promises redb support
+- the plan ledger records the benchmark gate that justified removal
 
 ---
 
@@ -544,84 +478,83 @@ database directly — this is D1 compatibility for free.
 
 | Phase | Status | Summary | Hard Dependencies | Gate Note |
 |-------|--------|---------|-------------------|-----------|
-| SB1 | `todo` | Define backend traits | none | ~200 lines in new `backend/traits.rs` |
-| SB2 | `todo` | Implement redb behind new traits | SB1 | Move + wrap existing code; zero behavior change |
-| SB3 | `todo` | Remove concrete redb types from engine | SB2 | Replace `Arc<RedbStorageEngine>` etc. with trait objects |
-| SB4 | `todo` | Verification: all tests pass, no redb leakage | SB3 | Gate before proceeding to Phase 2 |
-| SB5 | `todo` | SQLite schema design | SB4 | Design doc + CREATE TABLE statements |
-| SB6 | `todo` | Implement SqliteTenantBackend | SB5 | `TenantBackend` + `TenantReadOps` + `TenantWriteOps` for rusqlite |
-| SB7 | `todo` | SQLite change notifications via hooks | SB6 | `update_hook` + `preupdate_hook` wired to `CommitResult` |
-| SB8 | `todo` | SQLite index management | SB6 | `json_extract`-based indexes, schema-driven creation |
-| SB9 | `todo` | Verification: all tests pass on SQLite | SB6, SB7, SB8 | Performance comparison vs redb |
-| SB10 | `todo` | Backend selection (CLI + env var) | SB4, SB9 | Default changed to SQLite; redb retained as reference backend |
-| SB11 | `todo` | Feature flags for compile-time backend selection | SB10 | Both backends included by default; test suite runs against both |
-| SB12 | `todo` | Cross-backend benchmark harness | SB9, SB10 | Real-world performance comparison: SQLite vs redb on same traits |
-| SB13 | `todo` | Data migration utility | SB10 | Nice-to-have, not a blocker |
-| SB14 | `deferred` | Postgres backend | SB4 | Post-launch; enterprise feature |
-| SB15 | `deferred` | MySQL backend | SB4 | Post-launch; enterprise feature |
+| SB1 | `todo` | Document preserved engine/storage contract | none | Must derive from actual call sites, not CRUD ideals |
+| SB2 | `todo` | Add temporary migration selection scaffolding | SB1 | Temporary only; no permanent external-backend abstraction |
+| SB3 | `todo` | Phase 1 verification | SB1, SB2 | Confirms contract and migration setup before SQLite work |
+| SB4 | `todo` | SQLite store foundation and async boundary | SB3 | Preserve current cancellation and async semantics |
+| SB5 | `todo` | SQLite read/query/index parity | SB4 | Must include composite indexes and cancellable scans |
+| SB6 | `todo` | SQLite write/journal/scheduler parity | SB4 | Must preserve `CommitEntry`, journal, and snapshot behavior |
+| SB7 | `todo` | Phase 2 verification | SB5, SB6 | Gate before engine-wide cutover |
+| SB8 | `todo` | Engine/tests/harness integration | SB7 | Broad migration surface across engine and test helpers |
+| SB9 | `todo` | Benchmark gate vs redb | SB8 | Required before removing redb |
+| SB10 | `todo` | Switch default to SQLite | SB9 | redb may remain only as a temporary fallback |
+| SB11 | `todo` | Phase 3 verification | SB10 | Benchmarks and full verification must be recorded |
+| SB12 | `todo` | Remove redb and temporary scaffolding | SB11 | Delete redb once benchmark gate is satisfied |
+| SB13 | `todo` | Final cleanup and cross-plan follow-up | SB12 | Close out docs and deferred follow-ons |
+| SB14 | `todo` | Final verification | SB13 | Confirms SQLite-only state |
 
 ## Recommended Delivery Order
 
-1. **SB1-SB4** (Phase 1) — Abstract the seam. Zero behavior change. All
-   tests pass. This is a pure refactor.
-2. **SB5-SB9** (Phase 2) — SQLite backend. New capability. Verified against
-   existing test suite plus SQLite-specific tests.
-3. **SB10-SB11** (Phase 3) — Make it configurable. Change the default.
-4. **SB12** — Cross-backend benchmarks. Validates SQLite default with real
-   numbers.
-5. **SB13** — Migration utility. Nice-to-have.
-6. **SB14-SB15** — External backends. Post-launch, driven by enterprise
-   demand.
+1. **SB1-SB3** — Codify the real current contract and add only temporary
+   migration scaffolding.
+2. **SB4-SB7** — Implement SQLite parity for reads, writes, journal, scheduler,
+   and snapshots.
+3. **SB8-SB11** — Integrate broadly, benchmark against redb, then make SQLite
+   the default.
+4. **SB12-SB14** — Remove redb and close out the migration cleanly.
 
 ## Verification Contract
 
 | Phase | Required verification |
 |-------|---------------------|
-| SB1 | Trait definitions compile; existing code unchanged |
-| SB2 | All existing tests pass; redb code moved but not modified |
-| SB3 | Engine compiles against trait objects; no `use redb` outside backend/redb/ |
-| SB4 | Full `make test`, `make clippy`, `cargo fmt --check` green |
-| SB5 | SQL schema reviewed; CREATE TABLE statements verified in sqlite3 CLI |
-| SB6 | Document CRUD round-trips through SQLite backend |
-| SB7 | `update_hook` fires for all mutation types; `CommitResult` contains correct `ChangeRecord`s; subscription fan-out verified end-to-end |
-| SB8 | Indexed query uses SQLite index (verified via EXPLAIN QUERY PLAN); schema change rebuilds index |
-| SB9 | Full test suite passes on SQLite; latency comparison vs redb within 2x for reads, writes; fsync durability verified |
-| SB10 | `--storage-backend sqlite` and `--storage-backend redb` both work; default is sqlite |
-| SB11 | `cargo check --no-default-features --features backend-sqlite` compiles without redb; full test suite passes against both backends |
-| SB12 | Benchmark report: SQLite vs redb for CRUD throughput, point read latency, index scan latency, subscription fan-out, concurrent tenant load; trait abstraction overhead is not measurable relative to I/O |
-| SB13 | `neovex migrate --from redb --to sqlite` completes without data loss |
+| SB1 | Contract inventory reviewed against current engine/storage call sites |
+| SB2 | Temporary migration selection compiles without behavior change |
+| SB3 | Phase 1 review recorded; no permanent object-safety abstraction introduced |
+| SB4 | SQLite open/create paths work; async read/write boundary preserves cancellation semantics |
+| SB5 | Point reads, scans, exact scans, prefix scans, range scans, and composite scans pass parity tests |
+| SB6 | Direct writes, execution-unit batches, scheduler flows, durable journal, and snapshot export/restore pass targeted tests |
+| SB7 | SQLite targeted suite green; subscription and journal parity verified end-to-end |
+| SB8 | Full workspace verification green with SQLite wired through the engine and tests |
+| SB9 | Checked-in benchmark report comparing redb vs SQLite on agreed workloads |
+| SB10 | SQLite is the default backend; any temporary redb fallback is explicit and migration-only |
+| SB11 | Full `make test`, `make clippy`, `make check`, and `cargo fmt --check` green with SQLite default |
+| SB12 | Workspace compiles and tests without redb-specific runtime support |
+| SB13 | Docs and plan index updated; cross-plan follow-ups recorded |
+| SB14 | No active redb imports or operator-facing redb promises remain |
 
 ## Known Risks
 
 | Risk | Severity | Mitigation |
 |------|----------|-----------|
-| Trait abstraction adds runtime overhead (vtable dispatch) | LOW | Storage I/O dominates; vtable cost is nanoseconds vs microsecond-millisecond I/O |
-| SQLite JSON1 query performance for document model | MEDIUM | Benchmark in SB9; `json_extract` indexes mitigate; SQLite JSON performance is well-studied |
-| SQLite WAL checkpoint starvation under sustained writes | LOW | `PRAGMA wal_autocheckpoint` handles this; well-documented SQLite behavior |
-| `preupdate_hook` API stability in rusqlite | LOW | Feature has existed since rusqlite 0.28; SQLite API is stable since 3.18 (2017) |
-| Large refactor touches many files in Phase 1 | MEDIUM | SB2 is a pure move+wrap, no logic change; existing tests are the safety net |
-| Engine generic/trait-object boundary design | MEDIUM | Use `Arc<dyn TenantBackend>` not generics; avoids monomorphization explosion |
+| SQLite JSON comparison and index ordering differ from current redb index semantics | HIGH | Add explicit parity corpora for exact/prefix/range/composite scans before cutover |
+| Journal/snapshot parity is broader than a CRUD swap | HIGH | Keep journal/bootstrap/snapshot APIs explicit and verify them in targeted tests before engine-wide cutover |
+| Migration touches many engine tests and fixtures that currently name concrete redb types | MEDIUM | Budget an explicit engine/test integration phase instead of calling the work a pure refactor |
+| Benchmark gate may show unacceptable regressions and delay redb removal | MEDIUM | Require a checked-in benchmark report before default switch and before deletion |
+| Encryption-at-rest plan still assumes redb | MEDIUM | Resolve sequencing with `docs/plans/encryption-at-rest-plan.md` before activation |
+| Temporary migration scaffolding could become permanent by accident | MEDIUM | Mark it as migration-only in code and remove it in SB12 |
 
 ## Implementation Checkpoints
 
 | Phase | Checkpoint | Next Step |
 |-------|-----------|-----------|
-| SB1 | none yet | define `StorageBackendFactory`, `TenantBackend`, `TenantReadOps`, `TenantWriteOps` in new module |
-| SB2 | none yet | create `backend/redb/` directory, move existing store code, implement traits |
-| SB3 | none yet | replace `Arc<RedbStorageEngine>` with `Arc<dyn StorageBackendFactory>` in Service |
-| SB4 | none yet | run full test suite, verify no redb imports outside backend/redb/ |
-| SB5 | none yet | write and verify SQL schema in sqlite3 CLI |
-| SB6 | none yet | implement SqliteTenantBackend with read/write operations |
-| SB7 | none yet | wire update_hook + preupdate_hook to CommitResult |
-| SB8 | none yet | implement json_extract-based index creation and querying |
-| SB9 | none yet | run full test suite on SQLite backend, benchmark comparison |
-| SB10 | none yet | add CLI flag and env var for backend selection |
-| SB11 | none yet | add Cargo feature flags |
-| SB12 | none yet | extend benchmark harness to run same workloads against both backends |
-| SB13 | none yet | implement backend-agnostic migration tool |
+| SB1 | none yet | inventory current engine/storage contract and record preserved operations |
+| SB2 | none yet | add temporary redb-vs-SQLite selection scaffolding |
+| SB3 | none yet | review Phase 1 contract and scaffolding before SQLite implementation |
+| SB4 | none yet | implement SQLite store open/create paths and async boundary |
+| SB5 | none yet | implement planner-facing SQLite reads and composite indexes |
+| SB6 | none yet | implement SQLite writes, scheduler state, journal, and snapshot flows |
+| SB7 | none yet | run targeted SQLite parity suite |
+| SB8 | none yet | wire engine/tests/harnesses through SQLite |
+| SB9 | none yet | run and record benchmark comparison vs redb |
+| SB10 | none yet | switch default backend to SQLite |
+| SB11 | none yet | run full workspace verification with SQLite default |
+| SB12 | none yet | remove redb code and temporary migration selection |
+| SB13 | none yet | update docs and follow-on plans |
+| SB14 | none yet | record final SQLite-only verification |
 
 ## Execution Log
 
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
-| 2026-04-06 | meta | documented | Initial plan authored based on architecture discussion covering redb limitations, SQLite advantages for reactive document DB, D1/Workers compatibility, and enterprise database requirements. Convex Cloud confirmed to use Postgres internally with self-hosted supporting SQLite + Postgres. Current redb seam mapped: fully encapsulated in neovex-storage, async traits exist, sync types need abstraction, engine holds concrete types. | review of neovex-storage crate structure, async_storage traits, engine Service struct, and external market research | activate when developer approves |
+| 2026-04-06 | meta | documented | Initial version of this file was authored as a pluggable multi-backend plan with redb retained long-term. | doc review | revise scope before activation |
+| 2026-04-08 | meta | revised | Re-scoped this file to a SQLite-only migration plan. Fixed the contract sketch to match current engine/storage behavior, removed hook-driven reactivity as the core model, made journal/snapshot APIs explicit, required composite SQLite indexes, added a benchmark gate before redb removal, moved Postgres/MySQL to a separate later plan, and added an explicit rubric for what SQLite should replace versus what remains Neovex-owned product semantics. | review against current `neovex-engine` and `neovex-storage` call sites | activate only after developer approval and encryption-plan sequencing decision |

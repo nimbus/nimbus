@@ -13,10 +13,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
 ## Deferred design and experiment plans
 
 - `docs/plans/pluggable-storage-backend-plan.md`
-  - canonical plan for abstracting the storage layer behind a backend-agnostic
-    trait boundary, implementing SQLite as the primary embedded backend, and
-    establishing the architecture for Postgres/MySQL backends and D1
-    compatibility
+  - canonical plan for migrating Neovex internal storage from redb to SQLite,
+    benchmarking SQLite against redb before cutover, and then removing redb
+- `docs/plans/external-sql-storage-backends-plan.md`
+  - deferred follow-on plan for Postgres and MySQL internal storage backends
+    after the SQLite migration is stable
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
@@ -59,6 +60,8 @@ explicitly asked to review historical work.
   blocked), see `raw-v8-warm-backend-plan.md`.
 - For future wasmtime WASM backend work, start with
   `wasmtime-backend-plan.md`.
+- For future Postgres/MySQL internal storage work, start with
+  `external-sql-storage-backends-plan.md`.
 - For future agent OS capabilities via WASI Component Model, start with
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
