@@ -12,7 +12,21 @@ impl CooperativeWorkerLoop {
         runtime: ReusableRuntime,
     ) {
         match self.policy.limits().runtime_pool_kind {
-            RuntimePoolKind::RetainedJsRuntimePool | RuntimePoolKind::WarmModulePool => {
+            RuntimePoolKind::WarmModulePool => {
+                let mut runtime = runtime;
+                if runtime.runtime.reset_request_state().is_err() {
+                    self.policy.metrics().record_warm_pool_discard_unquiesced();
+                    return;
+                }
+                runtime.retained_reuse_count = runtime.retained_reuse_count.saturating_add(1);
+                self.isolate_pool.return_runtime_for_invocation(
+                    runtime_owner,
+                    bundle,
+                    Some(context),
+                    runtime,
+                );
+            }
+            RuntimePoolKind::RetainedJsRuntimePool => {
                 self.isolate_pool.return_runtime_for_invocation(
                     runtime_owner,
                     bundle,
