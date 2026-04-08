@@ -707,10 +707,13 @@ implementation. Violating them silently degrades warm-pool safety.
    The `reset_main_realm` investigation (2026-04-07) proved that calling
    `v8__Global__Reset` on handles from an old context while V8 internally
    still references the NativeContext causes nondeterministic SIGSEGV. The
-   warm pool avoids this entirely by keeping contexts alive — this is not
-   just a performance advantage but a correctness advantage over
-   `reset_main_realm`. If warm pool entries are evicted/retired, they must
-   go through `destroy()` (isolate disposal path), not `destroy_for_reset()`.
+   current fix (`destroy_for_reset` skips all cleanup) intentionally leaks
+   ~500KB/cycle — see "Rc Leak in `destroy_for_reset`" for the proposed
+   GC-finalizer-based solution. The warm pool avoids this entirely by
+   keeping contexts alive — this is not just a performance advantage but a
+   correctness advantage over `reset_main_realm`. If warm pool entries are
+   evicted/retired, they must go through `destroy()` (isolate disposal
+   path), not `destroy_for_reset()`.
 
 5. **Warm-pool feasibility is design-validated, not production-proven.** The
    six-agent audit and two review rounds confirmed the approach is architecturally
@@ -738,6 +741,96 @@ implementation. Violating them silently degrades warm-pool safety.
 | `unrefed_ops` stale entries affecting event loop pending state | MEDIUM | Clear the set during warm reset |
 | `v8::External` closures from `watch_promise` leak on abandoned promises | LOW | GC collects them after context cleanup; heap growth bounded by reuse limit |
 | `task_spawner_factory` internal fields are private | LOW | Add `pub(crate) clear()` method in fork |
+| `destroy_for_reset` Rc leak (~500KB/cycle) on the retained pool path | LOW (warm pool not affected) | See "Rc Leak in `destroy_for_reset`" section below. The warm pool avoids this entirely by keeping contexts alive. Only affects `RetainedJsRuntimePool` which uses `reset_main_realm`. |
+
+---
+
+## Rc Leak in `destroy_for_reset`
+
+### Context
+
+The `reset_main_realm` fix (2026-04-07) resolved the nondeterministic SIGSEGV
+by making `destroy_for_reset()` skip all V8 handle cleanup. The old context's
+`Rc<ContextState>` and `Rc<ModuleMap>` references from V8 embedder slots are
+intentionally **not recovered** via `Rc::from_raw`. This keeps the Global
+handles inside those structs alive — preventing the `v8__Global__Reset` calls
+that were corrupting V8's NativeContext references.
+
+### Problem
+
+Each `reset_main_realm` cycle leaks the embedder slot Rc references. After
+`destroy_for_reset` returns:
+
+- `Rc<ContextState>` strong count = 1 (embedder slot only; JsRealmInner's ref
+  was dropped when `self` was consumed)
+- `Rc<ModuleMap>` strong count = 1 (same)
+
+These Rcs keep the ContextState and ModuleMap alive, which keep their
+`Global<Function>`, `Global<Object>`, and `Global<ArrayBuffer>` handles alive,
+which keep the old V8 context reachable from V8's global handle list. Result:
+**~500KB of V8 heap growth per reset cycle** (confirmed via heap stats). V8's
+GC cannot collect the old context because the Global handles are still live
+roots.
+
+Without explicit GC (`low_memory_notification`), old contexts accumulate
+indefinitely. With explicit GC **before** the drain (while the old context is
+current), the heap is stable — but the leak still exists as unreclaimable Rust
+allocations.
+
+### Proposed Solution
+
+Use rusty_v8's existing `Context::set_slot<T>()` API to store the Rc references
+in the ContextAnnex's typed slot map during realm creation:
+
+```rust
+// In create_main_realm_from_bootstrap, after set_aligned_pointer_in_embedder_data:
+ctx.set_slot::<ContextState>(context_state.clone());
+ctx.set_slot::<ModuleMap>(module_map.clone());
+```
+
+When V8's GC collects the old context, the ContextAnnex's `Weak<Context>`
+guaranteed finalizer fires, which drops the annex, which drops its slot
+HashMap, which drops the `Rc<ContextState>` and `Rc<ModuleMap>`. This properly
+decrements the strong counts and frees the leaked Rust allocations.
+
+**Key safety question:** The ContextAnnex finalizer runs during V8's GC
+second-pass callback. At that point, V8 has already completed the first pass
+(cleared the weak handle). Dropping the Rc triggers `Global::Drop` on the
+handles inside ContextState, which calls `v8__Global__Reset` (removing the
+handle from V8's global handle list). This is safe during the second-pass
+callback because:
+
+1. V8 has already determined the context is unreachable (first pass completed)
+2. `v8__Global__Reset` / `V8::DisposeGlobal` only removes the handle from an
+   internal list — it does not dereference the heap object
+3. The NativeContext references that caused the original crash (from compiled
+   code, feedback vectors, microtask metadata) are no longer live because V8
+   is collecting the context
+
+**Contrast with the original crash:** The original SIGSEGV happened because
+`destroy_for_reset` dropped Globals while the event loop was about to run
+`PerformMicrotaskCheckpoint` — V8 still had live NativeContext references from
+compiled code. In the GC finalizer path, V8 has already swept those references.
+
+### Implementation Notes
+
+- This is a **deno_core-level change**, not a rusty_v8 change. The existing
+  `Context::set_slot<T>()` API is sufficient.
+- Requires `ContextState: 'static` and `ModuleMap: 'static` — both should hold
+  since they use `Rc`, `RefCell`, `Cell` (all `'static`).
+- Must be validated with a targeted test: 32-cycle snapshot reset with
+  `low_memory_notification()` after each cycle to force GC, confirming both
+  heap stability AND no SIGSEGV from the finalizer-triggered Global drops.
+- The ArrayBuffer backing stores (with `_no_op_deleter`) point into ContextState
+  memory. If the Rc drop frees ContextState while V8's ArrayBufferSweeper still
+  tracks those buffers, the sweeper would encounter stale pointers. Mitigation:
+  `shared_array_buffers` handles are also in ContextState — when the Rc drops,
+  the Global<ArrayBuffer> handles drop first (removing them from V8's tracking),
+  then the backing store memory is freed. Drop order within a struct is
+  declaration order in Rust, so `shared_array_buffers` must be declared before
+  `tick_info`, `immediate_info`, `timer_info`, `timer_expiry` in ContextState.
+- **Not blocking for warm pool.** The warm pool keeps contexts alive and never
+  calls `destroy_for_reset`. This only affects `RetainedJsRuntimePool`.
 
 ---
 
@@ -812,3 +905,4 @@ Each phase must demonstrate:
 | 2026-04-06 | meta | revised | Re-reviewed the full plan against the live Neovex bootstrap/runtime surfaces. Resolved the remaining WM2/WM3 inconsistency by removing the stored `handler_fn` / `module_id` warm-hit path from the first implementation and keeping the unchanged `execute_script("globalThis.__neovexInvoke({request_json})")` dispatch contract as the only active plan. Also tightened the fork-reset contract around `OpState`: the current design is valid because Neovex only persists `RuntimeHostState` and refreshes `RuntimeCancellationState` + `SharedInvocationPermit` per invocation, but future request-local `OpState` usage (`resource_table`, `gotham_state`, `unrefed_resources`, or other generic slots) must either be explicitly cleared or make the runtime ineligible for warm reuse. | document review against `warm-module-pool-plan.md`, `runtime/bootstrap/state.rs`, `runtime/bootstrap/ops.rs`, and live fork `ops.rs` | keep first implementation on the unchanged `__neovexInvoke` ABI; treat additional request-local `OpState` as an explicit maintenance gate for warm reuse |
 | 2026-04-06 | meta | revised | Verified WM1 fork changes against the live `0.395.0-locker.1` Locker fork surface. The warm pool is `CooperativeLocker`-only, so warm runtimes use `use_locker: true` — `ensure_v8_lock_held()` is NOT a no-op on this path. Added fork lineage section documenting that WM1 is applied to `0.395.0-locker.1` (or Phase 5 successor) to produce a new `0.395.0-locker.2` tag instead of repairing `0.395.0-locker.1` again. `reset_request_state(&mut self)` must ensure the V8 lock is held before any V8 access, with an explicit top-of-method `ensure_v8_lock_held()` as the clearest pattern. `is_warm_reuse_safe(&mut self)` also needs `&mut self` on the Locker path, but the requirement is outcome-based: it must keep the lock held before scope creation / V8-backed state reads, whether that happens via an explicit `ensure_v8_lock_held()` call or via helpers like `scope!`, `v8_isolate()`, and `v8_isolate_ptr()` that already perform the same check. WM1 verification contract now requires all negative tests to pass with `use_locker: true`, not just the standard path. | audit of `ensure_v8_lock_held()` at `jsruntime.rs:713`, `ManagedIsolate::Lockable` lock path at `managed_isolate.rs:132-137`, `reset_main_realm()` Locker pattern at `jsruntime.rs:1564-1566`, `scope!` macro at `jsruntime.rs:670-678`, `v8_isolate()` / `v8_isolate_ptr()` lock checks at `jsruntime.rs:1644-1651`, `EventLoopPendingState::new_from_scope()` scope requirement at `jsruntime.rs:3123-3127`, and cooperative runtime startup using `use_locker: true` at `runtime.rs:507` | WM1 implementation must test on the Locker path; fork tag versioning is explicit |
 | 2026-04-07 | meta | revised | Updated plan with findings from the `reset_main_realm` root cause investigation. The true root cause of the nondeterministic SIGSEGV was eagerly dropping V8 Global handles (via `v8__Global__Reset`) during context teardown while V8 internally still references the old context's NativeContext through compiled code, feedback vectors, and microtask queue metadata. The fix: `destroy_for_reset()` skips all V8 handle cleanup and intentionally leaks ContextState/ModuleMap Rc refs from embedder slots, keeping Global handles alive until V8's GC collects the old context. All 4 previously-crashing 32-cycle tests now pass 20/20. Plan updates: (1) Activation gate dependency is now satisfied. (2) WM1 `reset_request_state()` must drain foreground tasks (within ContextScope) before microtask checkpoint, use TryCatch for the checkpoint, and loop until both queues are empty. (3) Invariant #3 expanded to include foreground drain and TryCatch requirements. (4) Invariant #10 refined: rusty_v8's ContextAnnex creates internal `Weak<Context>` handles, but these don't affect warm-pool semantics since contexts are kept alive. (5) New maintenance invariant #4: V8 Global handles must not be eagerly dropped during context teardown. (6) New known risk: V8 foreground tasks from background threads must be drained between requests. The warm pool's design decision to avoid context destruction is now validated as both a performance and correctness advantage over the `reset_main_realm` path. | 20/20 test pass confirmation across all 4 snapshot-born 32-cycle tests; heap stats analysis showing ~500KB/cycle leak without GC (stable with GC); separate-runtime control experiment proving same-isolate reset is the trigger | activation gate met; plan eligible for promotion after Locker Phase 5 |
+| 2026-04-07 | meta | revised | Added "Rc Leak in `destroy_for_reset`" section documenting the ~500KB/cycle memory leak on the retained pool path, its root cause (intentionally leaked Rc refs from embedder slots to prevent SIGSEGV), and the proposed GC-finalizer-based solution using rusty_v8's existing `Context::set_slot<T>()` API. Updated maintenance invariant #4 to cross-reference the leak. Added known risk entry. Confirmed no rusty_v8 changes are needed — the existing API surface is sufficient for the fix. The warm pool is not affected since it keeps contexts alive. | review of rusty_v8 `set_slot`/`clear_all_slots`/`detach_all_slots` API surface; ContextAnnex weak finalizer lifecycle analysis; V8 GC second-pass callback safety analysis for `Global::Reset` | implement the `set_slot`-based deferred cleanup as a follow-up when retained pool production hardening begins |
