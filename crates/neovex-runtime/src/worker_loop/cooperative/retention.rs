@@ -9,16 +9,15 @@ impl CooperativeWorkerLoop {
         runtime_owner: &crate::runtime::NeovexRuntime,
         bundle: &crate::runtime::RuntimeBundle,
         context: &crate::RuntimeInvocationContext,
-        runtime: ReusableRuntime,
+        mut runtime: ReusableRuntime,
     ) {
         match self.policy.limits().runtime_pool_kind {
             RuntimePoolKind::WarmPool => {
-                let mut runtime = runtime;
                 if runtime.runtime.reset_request_state().is_err() {
                     self.policy.metrics().record_warm_pool_discard_unquiesced();
                     return;
                 }
-                runtime.retained_reuse_count = runtime.retained_reuse_count.saturating_add(1);
+                runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
                 self.isolate_pool.return_runtime_for_invocation(
                     runtime_owner,
                     bundle,

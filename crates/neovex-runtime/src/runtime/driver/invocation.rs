@@ -17,7 +17,7 @@ use super::super::{
 
 pub(crate) struct RuntimeInvocationDriver {
     pub(crate) runtime: JsRuntime,
-    pub(crate) retained_reuse_count: usize,
+    pub(crate) warm_reuse_count: usize,
     pub(crate) construction_mode: RuntimeConstructionMode,
     policy: Arc<RuntimePolicy>,
     permit: SharedInvocationPermit,
@@ -61,7 +61,7 @@ impl RuntimeInvocationDriver {
         let runtime = if result.is_ok() && !replacement_required {
             Some(ReusableRuntime {
                 runtime: self.runtime,
-                retained_reuse_count: self.retained_reuse_count,
+                warm_reuse_count: self.warm_reuse_count,
                 construction_mode: self.construction_mode,
             })
         } else {
@@ -126,7 +126,7 @@ impl NeovexRuntime {
             let is_warm_hit = matches!(
                 self.policy.limits().runtime_pool_kind,
                 crate::limits::RuntimePoolKind::WarmPool,
-            ) && driver.retained_reuse_count > 0;
+            ) && driver.warm_reuse_count > 0;
             let invoke = async {
                 if !is_warm_hit {
                     self.load_bundle_with_trace(
@@ -176,7 +176,7 @@ impl NeovexRuntime {
                     self.policy.metrics().record_warm_pool_discard_unquiesced();
                     return result;
                 }
-                runtime.retained_reuse_count = runtime.retained_reuse_count.saturating_add(1);
+                runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
             }
             pool.return_runtime_for_invocation(self, &bundle, Some(&context), runtime);
         }
@@ -193,7 +193,7 @@ impl NeovexRuntime {
     ) -> Result<RuntimeInvocationDriver> {
         let ReusableRuntime {
             mut runtime,
-            retained_reuse_count,
+            warm_reuse_count,
             construction_mode,
         } = runtime;
         let timeout = self.policy.limits().execution_timeout;
@@ -256,7 +256,7 @@ impl NeovexRuntime {
 
         Ok(RuntimeInvocationDriver {
             runtime,
-            retained_reuse_count,
+            warm_reuse_count,
             construction_mode,
             policy: self.policy.clone(),
             permit,
