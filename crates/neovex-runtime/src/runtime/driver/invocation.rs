@@ -123,15 +123,21 @@ impl NeovexRuntime {
                     .clone()
             };
             let external_cancellation_triggered = driver.external_cancellation_triggered.clone();
+            let is_warm_hit = matches!(
+                self.policy.limits().runtime_pool_kind,
+                crate::limits::RuntimePoolKind::WarmModulePool,
+            ) && driver.retained_reuse_count > 0;
             let invoke = async {
-                self.load_bundle_with_trace(
-                    &mut driver.runtime,
-                    &bundle,
-                    driver.construction_mode,
-                    Some(&context),
-                    Some(&request),
-                )
-                .await?;
+                if !is_warm_hit {
+                    self.load_bundle_with_trace(
+                        &mut driver.runtime,
+                        &bundle,
+                        driver.construction_mode,
+                        Some(&context),
+                        Some(&request),
+                    )
+                    .await?;
+                }
                 self.invoke_loaded_bundle_with_trace(
                     &mut driver.runtime,
                     &request,
@@ -159,7 +165,18 @@ impl NeovexRuntime {
         };
 
         let (result, reusable_runtime) = driver.finalize_with_runtime(result).await;
-        if let (Some(pool), Some(runtime)) = (isolate_pool, reusable_runtime) {
+        if let (Some(pool), Some(mut runtime)) = (isolate_pool, reusable_runtime) {
+            if matches!(
+                self.policy.limits().runtime_pool_kind,
+                crate::limits::RuntimePoolKind::WarmModulePool,
+            ) {
+                // Clear event loop state while preserving evaluated modules.
+                // If the runtime is not quiescent, discard instead of pooling.
+                if runtime.runtime.reset_request_state().is_err() {
+                    return result;
+                }
+                runtime.retained_reuse_count = runtime.retained_reuse_count.saturating_add(1);
+            }
             pool.return_runtime_for_invocation(self, &bundle, Some(&context), runtime);
         }
         result

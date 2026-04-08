@@ -569,7 +569,7 @@ dependencies = [
 [[package]]
 name = "deno_core"
 version = "0.395.0"
-source = "git+https://github.com/agentstation/deno_core?tag=0.395.0-locker.1#54257a8a0044938eb686a23db50c2bf4260d7b8f"
+source = "git+https://github.com/agentstation/deno_core?tag=0.395.0-locker.2#f10265b9b3124e855bf478dce039f51098c0181d"
 dependencies = [
  "anyhow",
  "az",

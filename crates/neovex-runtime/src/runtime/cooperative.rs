@@ -229,15 +229,20 @@ impl NeovexRuntime {
             permit,
             true,
         )?;
-        if let Err(error) = self
-            .load_bundle_with_trace(
-                &mut driver.runtime,
-                &bundle,
-                driver.construction_mode,
-                Some(&context),
-                Some(&request),
-            )
-            .await
+        let is_warm_hit = matches!(
+            self.policy.limits().runtime_pool_kind,
+            crate::limits::RuntimePoolKind::WarmModulePool,
+        ) && driver.retained_reuse_count > 0;
+        if !is_warm_hit
+            && let Err(error) = self
+                .load_bundle_with_trace(
+                    &mut driver.runtime,
+                    &bundle,
+                    driver.construction_mode,
+                    Some(&context),
+                    Some(&request),
+                )
+                .await
         {
             let error = driver.finalize(Err(error)).await.expect_err(
                 "cooperative slot startup error finalization should preserve the failure",

@@ -103,7 +103,6 @@ mod tests {
             .unwrap_or(default)
     }
 
-
     fn acquire_runtime_suite_lock() -> MutexGuard<'static, ()> {
         static IN_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         IN_PROCESS_LOCK
@@ -2437,112 +2436,90 @@ export {};
             });
         });
 
-        worker_thread
-            .join()
-            .expect("current-thread snapshot-aware delayed bundle-then-script thread should not panic");
+        worker_thread.join().expect(
+            "current-thread snapshot-aware delayed bundle-then-script thread should not panic",
+        );
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_bundle_load()
-     {
+    fn snapshot_born_reset_cycles_with_bundle_load() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_CYCLES",
             8,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, false, false, false, false,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, false, false, false, false);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_bundle_load_stress()
-     {
+    fn snapshot_born_reset_cycles_with_bundle_load_stress() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_STRESS_CYCLES",
             32,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, false, false, false, false,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, false, false, false, false);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_fresh_bundle_cache()
-     {
+    fn snapshot_born_reset_cycles_with_fresh_bundle_cache() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_FRESH_CACHE_CYCLES",
             32,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, true, false, false, false,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, true, false, false, false);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_pre_reset_settle()
-     {
+    fn snapshot_born_reset_cycles_with_pre_reset_settle() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_RESET_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, false, false, true, false,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, false, false, true, false);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_pre_reset_yield_and_settle()
-     {
+    fn snapshot_born_reset_cycles_with_pre_reset_yield_and_settle() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_RESET_YIELD_AND_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, false, true, true, false,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, false, true, true, false);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_post_reset_settle()
-     {
+    fn snapshot_born_reset_cycles_with_post_reset_settle() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_POST_RESET_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, false, false, false, true,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, false, false, false, true);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_pre_and_post_reset_settle()
-     {
+    fn snapshot_born_reset_cycles_with_pre_and_post_reset_settle() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let cycles = stress_env_usize(
             "NEOVEX_SNAPSHOT_AWARE_RESET_CURRENT_THREAD_DELAYED_BUNDLE_THEN_SCRIPT_PRE_AND_POST_RESET_SETTLE_CYCLES",
             32,
         );
-        run_snapshot_born_reset_cycles_with_bundle_load(
-            cycles, false, false, true, true,
-        );
+        run_snapshot_born_reset_cycles_with_bundle_load(cycles, false, false, true, true);
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_extra_drain()
-     {
+    fn snapshot_born_reset_cycles_with_extra_drain() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
         let worker_thread = std::thread::spawn(|| {
@@ -2669,8 +2646,7 @@ export {};
     }
 
     #[test]
-    fn snapshot_born_reset_cycles_with_tokio_yield()
-     {
+    fn snapshot_born_reset_cycles_with_tokio_yield() {
         init_test_tracing();
         let _test_lock = acquire_snapshot_reset_test_lock();
 

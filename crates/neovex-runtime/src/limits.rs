@@ -46,12 +46,22 @@ pub enum RuntimePoolKind {
     /// pays main-realm reset, bootstrap replay, and bundle reload costs, so it
     /// should not be assumed to improve single-request latency.
     RetainedJsRuntimePool,
+    /// Retain whole JsRuntime instances with evaluated modules alive across
+    /// invocations. No realm reset, no module reload — only surgical
+    /// per-request state cleanup via `reset_request_state()`.
+    ///
+    /// Requires `CooperativeLocker` execution model. Fails fast with
+    /// `RunToCompletion`.
+    WarmModulePool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeModuleStateSemantics {
     FreshPerInvocation,
+    /// Modules persist across invocations by contract. Module-level side
+    /// effects (e.g. `let counter = 0`) accumulate across requests.
+    WarmPerBundle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -71,6 +81,8 @@ pub struct RuntimeLimits {
     pub max_retained_runtimes_per_worker: usize,
     pub max_retained_runtimes_per_affinity_key_per_worker: usize,
     pub max_retained_runtime_reuses: usize,
+    pub max_warm_module_pool_entries_per_worker: usize,
+    pub max_warm_module_reuses: usize,
     pub max_heap_mb: usize,
     pub initial_heap_mb: usize,
     pub execution_timeout: Duration,
@@ -84,22 +96,47 @@ pub struct RuntimeLimits {
 
 impl RuntimeLimits {
     pub fn module_state_semantics(&self) -> RuntimeModuleStateSemantics {
-        RuntimeModuleStateSemantics::FreshPerInvocation
+        match self.runtime_pool_kind {
+            RuntimePoolKind::WarmModulePool => RuntimeModuleStateSemantics::WarmPerBundle,
+            _ => RuntimeModuleStateSemantics::FreshPerInvocation,
+        }
     }
 
     pub fn reset_capabilities(&self) -> RuntimeResetCapabilities {
-        let user_module_state_per_invocation = matches!(
-            self.runtime_pool_kind,
-            RuntimePoolKind::RetainedJsRuntimePool
-        );
-        RuntimeResetCapabilities {
-            op_state_per_invocation: true,
-            bootstrap_state_per_invocation: true,
-            user_module_state_per_invocation,
+        match self.runtime_pool_kind {
+            RuntimePoolKind::WarmModulePool => RuntimeResetCapabilities {
+                op_state_per_invocation: true,
+                bootstrap_state_per_invocation: true,
+                user_module_state_per_invocation: false,
+            },
+            RuntimePoolKind::RetainedJsRuntimePool => RuntimeResetCapabilities {
+                op_state_per_invocation: true,
+                bootstrap_state_per_invocation: true,
+                user_module_state_per_invocation: true,
+            },
+            RuntimePoolKind::StartupSnapshotCache => RuntimeResetCapabilities {
+                op_state_per_invocation: true,
+                bootstrap_state_per_invocation: true,
+                user_module_state_per_invocation: true,
+            },
         }
     }
 
     pub fn normalized(&self) -> Self {
+        // WarmModulePool requires CooperativeLocker — fail fast.
+        if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmModulePool)
+            && !matches!(
+                self.execution_model,
+                RuntimeExecutionModel::CooperativeLocker
+            )
+        {
+            panic!(
+                "WarmModulePool requires CooperativeLocker execution model, \
+                 got {:?}",
+                self.execution_model
+            );
+        }
+
         let max_concurrent_isolates = self.max_concurrent_isolates.max(1);
         let worker_threads = self.worker_threads.max(max_concurrent_isolates).max(1);
         let max_heap_mb = self.max_heap_mb.max(1);
@@ -123,6 +160,10 @@ impl RuntimeLimits {
                 .max_retained_runtimes_per_affinity_key_per_worker
                 .max(1),
             max_retained_runtime_reuses: self.max_retained_runtime_reuses.max(1),
+            max_warm_module_pool_entries_per_worker: self
+                .max_warm_module_pool_entries_per_worker
+                .max(1),
+            max_warm_module_reuses: self.max_warm_module_reuses.max(1),
             max_heap_mb,
             initial_heap_mb,
             execution_timeout: self.execution_timeout,
@@ -160,6 +201,8 @@ impl Default for RuntimeLimits {
             max_retained_runtimes_per_worker: 4,
             max_retained_runtimes_per_affinity_key_per_worker: 1,
             max_retained_runtime_reuses: 1000,
+            max_warm_module_pool_entries_per_worker: 4,
+            max_warm_module_reuses: 10_000,
             max_heap_mb: 128,
             initial_heap_mb: 8,
             execution_timeout: Duration::from_secs(30),

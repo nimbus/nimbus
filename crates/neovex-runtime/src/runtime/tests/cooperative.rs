@@ -161,8 +161,7 @@ export {};
 }
 
 #[test]
-fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking()
-{
+fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
