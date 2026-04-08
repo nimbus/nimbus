@@ -68,7 +68,7 @@ impl ConvexRegistry {
 
         // Use RunToCompletion + StartupSnapshotCache as the safe default for
         // the ConvexRegistry. Production callers should override with
-        // `.with_runtime_limits()` to use CooperativeLocker + WarmModulePool.
+        // `.with_runtime_limits()` to use CooperativeLocker + WarmPool.
         let runtime_policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
             execution_model: neovex_runtime::RuntimeExecutionModel::RunToCompletion,
             runtime_pool_kind: neovex_runtime::RuntimePoolKind::StartupSnapshotCache,

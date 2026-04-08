@@ -125,7 +125,7 @@ impl NeovexRuntime {
             let external_cancellation_triggered = driver.external_cancellation_triggered.clone();
             let is_warm_hit = matches!(
                 self.policy.limits().runtime_pool_kind,
-                crate::limits::RuntimePoolKind::WarmModulePool,
+                crate::limits::RuntimePoolKind::WarmPool,
             ) && driver.retained_reuse_count > 0;
             let invoke = async {
                 if !is_warm_hit {
@@ -168,7 +168,7 @@ impl NeovexRuntime {
         if let (Some(pool), Some(mut runtime)) = (isolate_pool, reusable_runtime) {
             if matches!(
                 self.policy.limits().runtime_pool_kind,
-                crate::limits::RuntimePoolKind::WarmModulePool,
+                crate::limits::RuntimePoolKind::WarmPool,
             ) {
                 // Clear event loop state while preserving evaluated modules.
                 // If the runtime is not quiescent, discard instead of pooling.

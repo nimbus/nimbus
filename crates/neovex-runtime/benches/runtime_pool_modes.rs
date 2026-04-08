@@ -17,21 +17,21 @@ use tempfile::TempDir;
 #[derive(Clone, Copy)]
 enum PoolMode {
     StartupSnapshotCache,
-    WarmModulePool,
+    WarmPool,
 }
 
 impl PoolMode {
     fn label(self) -> &'static str {
         match self {
             Self::StartupSnapshotCache => "startup_snapshot_cache",
-            Self::WarmModulePool => "warm_module_pool",
+            Self::WarmPool => "warm_pool",
         }
     }
 
     fn runtime_pool_kind(self) -> RuntimePoolKind {
         match self {
             Self::StartupSnapshotCache => RuntimePoolKind::StartupSnapshotCache,
-            Self::WarmModulePool => RuntimePoolKind::WarmModulePool,
+            Self::WarmPool => RuntimePoolKind::WarmPool,
         }
     }
 }
@@ -178,7 +178,7 @@ fn build_runtime(
         max_heap_mb: 256,
         // Criterion may run 16k+ iterations per closure call. Set the warm
         // reuse cap high enough that the benchmark doesn't hit retirement.
-        max_warm_module_reuses: 1_000_000,
+        max_warm_reuses: 1_000_000,
         ..RuntimeLimits::default()
     };
     let policy = Arc::new(RuntimePolicy::new(limits));
@@ -295,7 +295,7 @@ export {};
         let snapshot = self.metrics_snapshot();
         let total_invocations = self.tenant_labels.len() as u64 + measured_iterations;
         match self.pool_mode {
-            PoolMode::WarmModulePool => {
+            PoolMode::WarmPool => {
                 // Warm pool: cold miss only on first bundle load (all tenants
                 // share the same bundle identity). All subsequent invocations
                 // are warm hits that skip module loading entirely.
@@ -321,7 +321,7 @@ export {};
                 assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
-            PoolMode::WarmModulePool => {
+            PoolMode::WarmPool => {
                 // Already asserted above
             }
         }
@@ -431,7 +431,7 @@ export {};
     fn assert_metrics(&self, measured_batches: u64) {
         let snapshot = self.metrics_snapshot();
         let total_invocations = 4 + measured_batches.saturating_mul(4);
-        if !matches!(self.pool_mode, PoolMode::WarmModulePool) {
+        if !matches!(self.pool_mode, PoolMode::WarmPool) {
             assert_eq!(snapshot.bundle_loads, total_invocations);
             assert_eq!(snapshot.bundle_module_loads, total_invocations);
             assert_eq!(snapshot.bundle_evaluations, total_invocations);
@@ -447,7 +447,7 @@ export {};
                 assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
-            PoolMode::WarmModulePool => {
+            PoolMode::WarmPool => {
                 // Warm pool metrics are validated at the top-level match
             }
         }
@@ -473,7 +473,7 @@ fn pure_js_pool_modes_benchmark(c: &mut Criterion) {
             scenario_kind.execution_model(),
             RuntimeExecutionModel::CooperativeLocker
         ) {
-            &[PoolMode::StartupSnapshotCache, PoolMode::WarmModulePool]
+            &[PoolMode::StartupSnapshotCache, PoolMode::WarmPool]
         } else {
             &[PoolMode::StartupSnapshotCache]
         };
@@ -512,7 +512,7 @@ fn async_host_batch_benchmark(c: &mut Criterion) {
     ] {
         let pool_modes: &[PoolMode] = match scenario_kind {
             AsyncHostBatchScenarioKind::CooperativeLockerFourTenants => {
-                &[PoolMode::StartupSnapshotCache, PoolMode::WarmModulePool]
+                &[PoolMode::StartupSnapshotCache, PoolMode::WarmPool]
             }
             AsyncHostBatchScenarioKind::RunToCompletionFourTenants => {
                 &[PoolMode::StartupSnapshotCache]

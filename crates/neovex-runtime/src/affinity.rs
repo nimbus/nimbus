@@ -12,6 +12,7 @@ pub(crate) enum RuntimeAffinityKey {
         function_name: String,
     },
     Script {
+        tenant_label: Option<String>,
         entrypoint: PathBuf,
         expected_sha256: Option<String>,
     },
@@ -37,11 +38,9 @@ pub(crate) fn runtime_affinity_key(
                 })
         }),
         RuntimeRoutingAffinity::Script => Some(RuntimeAffinityKey::Script {
-            entrypoint: bundle.bundle_identity().entrypoint().to_path_buf(),
-            expected_sha256: bundle
-                .bundle_identity()
-                .expected_sha256()
-                .map(str::to_owned),
+            tenant_label: bundle.identity().tenant_label().map(str::to_owned),
+            entrypoint: bundle.identity().entrypoint().to_path_buf(),
+            expected_sha256: bundle.identity().expected_sha256().map(str::to_owned),
         }),
     }
 }

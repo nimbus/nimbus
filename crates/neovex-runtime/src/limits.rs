@@ -44,7 +44,7 @@ pub enum RuntimePoolKind {
     ///
     /// Requires `CooperativeLocker` execution model. Fails fast with
     /// `RunToCompletion`.
-    WarmModulePool,
+    WarmPool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -70,8 +70,8 @@ pub struct RuntimeLimits {
     pub runtime_pool_kind: RuntimePoolKind,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
-    pub max_warm_module_pool_entries_per_worker: usize,
-    pub max_warm_module_reuses: usize,
+    pub max_warm_pool_entries_per_worker: usize,
+    pub max_warm_reuses: usize,
     pub max_heap_mb: usize,
     pub initial_heap_mb: usize,
     pub execution_timeout: Duration,
@@ -86,14 +86,14 @@ pub struct RuntimeLimits {
 impl RuntimeLimits {
     pub fn module_state_semantics(&self) -> RuntimeModuleStateSemantics {
         match self.runtime_pool_kind {
-            RuntimePoolKind::WarmModulePool => RuntimeModuleStateSemantics::WarmPerBundle,
+            RuntimePoolKind::WarmPool => RuntimeModuleStateSemantics::WarmPerBundle,
             _ => RuntimeModuleStateSemantics::FreshPerInvocation,
         }
     }
 
     pub fn reset_capabilities(&self) -> RuntimeResetCapabilities {
         match self.runtime_pool_kind {
-            RuntimePoolKind::WarmModulePool => RuntimeResetCapabilities {
+            RuntimePoolKind::WarmPool => RuntimeResetCapabilities {
                 op_state_per_invocation: true,
                 bootstrap_state_per_invocation: true,
                 user_module_state_per_invocation: false,
@@ -107,15 +107,15 @@ impl RuntimeLimits {
     }
 
     pub fn normalized(&self) -> Self {
-        // WarmModulePool requires CooperativeLocker — fail fast.
-        if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmModulePool)
+        // WarmPool requires CooperativeLocker — fail fast.
+        if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmPool)
             && !matches!(
                 self.execution_model,
                 RuntimeExecutionModel::CooperativeLocker
             )
         {
             panic!(
-                "WarmModulePool requires CooperativeLocker execution model, \
+                "WarmPool requires CooperativeLocker execution model, \
                  got {:?}",
                 self.execution_model
             );
@@ -139,10 +139,8 @@ impl RuntimeLimits {
             runtime_pool_kind: self.runtime_pool_kind,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
-            max_warm_module_pool_entries_per_worker: self
-                .max_warm_module_pool_entries_per_worker
-                .max(1),
-            max_warm_module_reuses: self.max_warm_module_reuses.max(1),
+            max_warm_pool_entries_per_worker: self.max_warm_pool_entries_per_worker.max(1),
+            max_warm_reuses: self.max_warm_reuses.max(1),
             max_heap_mb,
             initial_heap_mb,
             execution_timeout: self.execution_timeout,
@@ -174,11 +172,11 @@ impl Default for RuntimeLimits {
         Self {
             backend_kind: RuntimeBackendKind::DenoCore,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
-            runtime_pool_kind: RuntimePoolKind::WarmModulePool,
+            runtime_pool_kind: RuntimePoolKind::WarmPool,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,
-            max_warm_module_pool_entries_per_worker: 4,
-            max_warm_module_reuses: 10_000,
+            max_warm_pool_entries_per_worker: 4,
+            max_warm_reuses: 10_000,
             max_heap_mb: 128,
             initial_heap_mb: 8,
             execution_timeout: Duration::from_secs(30),

@@ -33,10 +33,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
         body["limits"]["execution_model"],
         json!("cooperative_locker")
     );
-    assert_eq!(
-        body["limits"]["runtime_pool_kind"],
-        json!("warm_module_pool")
-    );
+    assert_eq!(body["limits"]["runtime_pool_kind"], json!("warm_pool"));
     assert_eq!(
         body["limits"]["module_state_semantics"],
         json!("warm_per_bundle")
@@ -55,8 +52,8 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     );
     assert_eq!(body["limits"]["routing_affinity"], json!("tenant"));
     assert!(body["limits"]["routing_affinity_max_entries"].is_u64());
-    assert!(body["limits"]["max_warm_module_pool_entries_per_worker"].is_u64());
-    assert!(body["limits"]["max_warm_module_reuses"].is_u64());
+    assert!(body["limits"]["max_warm_pool_entries_per_worker"].is_u64());
+    assert!(body["limits"]["max_warm_reuses"].is_u64());
     assert_eq!(body["limits"]["max_heap_mb"], json!(128));
     assert_eq!(body["limits"]["initial_heap_mb"], json!(8));
     assert_eq!(body["limits"]["execution_timeout_ms"], json!(30_000));

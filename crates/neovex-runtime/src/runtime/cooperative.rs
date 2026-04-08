@@ -231,7 +231,7 @@ impl NeovexRuntime {
         )?;
         let is_warm_hit = matches!(
             self.policy.limits().runtime_pool_kind,
-            crate::limits::RuntimePoolKind::WarmModulePool,
+            crate::limits::RuntimePoolKind::WarmPool,
         ) && driver.retained_reuse_count > 0;
         if !is_warm_hit
             && let Err(error) = self
