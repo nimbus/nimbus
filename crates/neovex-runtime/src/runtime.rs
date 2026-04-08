@@ -492,7 +492,7 @@ mod tests {
 
     mod cooperative;
     mod locker;
-    mod retained_pool;
+    mod warm_pool;
 
     #[tokio::test]
     async fn runtime_loads_bundle_and_invokes_host_bridge() {
@@ -2421,7 +2421,12 @@ export {};
         )
         .expect("tampered bundle should write");
 
-        let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: crate::limits::RuntimePoolKind::StartupSnapshotCache,
+            ..RuntimeLimits::default()
+        }));
+        let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
         let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
             .expect("bundle integrity metadata should build");
         let error = runtime
@@ -2614,7 +2619,12 @@ export {};
             RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
         let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
             .expect("bundle integrity metadata should build");
-        let runtime = NeovexRuntime::new(Arc::new(RecordingHost::default()));
+        let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+            execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: crate::limits::RuntimePoolKind::StartupSnapshotCache,
+            ..RuntimeLimits::default()
+        }));
+        let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
         let request = InvocationRequest {
             kind: InvocationKind::Query,
             function_name: "messages:list".to_string(),
