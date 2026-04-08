@@ -3,10 +3,17 @@
 Why Neovex embeds V8 via a `deno_core` fork, why the workerd multi-threaded
 warm-isolate model is not pursued as-is, and what future paths exist.
 
-This document captures the evaluated tradeoff space as of 2026-04-06 so that
+This document captures the evaluated tradeoff space as of 2026-04-08 so that
 future contributors do not re-derive these decisions from scratch. It is a
 research rationale, not an execution plan — see `docs/plans/README.md` for
 active plans.
+
+**Update 2026-04-08:** The warm module pool (`WarmModulePool`) is now
+implemented and benchmarked at **22µs warm-hit latency** — a 50x improvement
+over `StartupSnapshotCache` (1.1ms). This changes the architecture analysis
+significantly: the thread-pinning cost that was the primary concern is now
+dwarfed by the warm pool's per-invocation savings. See the updated sections
+below.
 
 ---
 
@@ -292,6 +299,34 @@ code, and handles bursts better. The only advantage of thread-pinned is that
 it avoids the ~20-50ns Locker mutex cost per call and works with deno_core's
 `!Send` constraint.
 
+### 6. Warm module pool impact on the thread-pinning cost (2026-04-08)
+
+The warm module pool changes the cost analysis significantly:
+
+| Metric | Before warm pool | With warm pool | Impact |
+|--------|-----------------|----------------|--------|
+| Per-invocation latency | 1.1ms (snapshot) / 1.8ms (retained) | **22µs** | 50x faster |
+| Thread busy time per request | 1-2ms JS + host I/O | **22µs** + host I/O | Thread freed 50x sooner |
+| Head-of-line blocking duration | 1-50ms (JS execution dominates) | Host I/O dominates (JS is 22µs) | **Mostly eliminated** |
+| Effective V8 throughput | ~60-80% | **~90-95%** (warm hits near-instant) | Approaches shared pool |
+| Memory leak per reset cycle | ~500KB (`destroy_for_reset`) | **0** (no realm reset) | Warm pool is leak-free |
+
+**The key insight:** The thread-pinning cost analysis assumed 1-50ms of
+thread-blocking per V8 call. With 22µs warm hits, the JS execution phase is
+negligible — head-of-line blocking is now dominated by host I/O latency (which
+yields the V8 lock via cooperative scheduling anyway). The practical gap
+between thread-pinned and shared-pool models is much smaller than the original
+analysis suggested, because the warm pool eliminates the largest source of
+blocking (JS compilation + module loading + bootstrap replay).
+
+The `!Send` constraint remains meaningful technical debt for:
+- Memory deduplication (isolate duplication across threads)
+- Extreme burst handling (when all threads are in host I/O simultaneously)
+- Architectural simplicity (shared pool needs no affinity routing)
+
+But the urgency of resolving `!Send` is lower now that warm-hit latency is
+22µs instead of 1.1ms.
+
 ---
 
 ## Why deno_core (Not Raw V8, Not Wasmtime, Not a Sidecar)
@@ -462,9 +497,9 @@ an acceptable long-term tradeoff.
 ## What the Locker Fork Actually Provides
 
 The V8 Locker fork (`v147.0.0-locker.1`) and deno_core Locker fork
-(`0.395.0-locker.1`) are **not** about cross-thread isolate mobility — the
+(`0.395.0-locker.2`) are **not** about cross-thread isolate mobility — the
 `!Send` constraint on `JsRuntime` prevents that. They provide cooperative
-scheduling within the thread-pinned model:
+scheduling within the thread-pinned model, plus the warm module pool:
 
 1. **Cooperative multi-isolate scheduling on a single thread.** Multiple
    `JsRuntime` instances on the same worker thread use explicit `acquire_v8_lock`
@@ -476,10 +511,14 @@ scheduling within the thread-pinned model:
    allow creating isolates on one thread and parking them on another during
    setup, rebalancing, or shutdown — not on the request hot path.
 
-3. **A foundation for the warm module pool.** The warm module pool plan
-   (`docs/plans/warm-module-pool-plan.md`) keeps evaluated JS modules alive
-   across invocations. It requires the Locker-based cooperative scheduling
-   model for correct multi-entry warm pools with FIFO waiter fairness.
+3. **The warm module pool (implemented).** The warm module pool
+   (`docs/plans/warm-module-pool-plan.md`, all 6 phases done) keeps evaluated
+   JS modules alive across invocations. Warm-hit latency: **22µs** vs 1.1ms
+   for snapshot cache (50x improvement). The warm pool uses
+   `reset_request_state()` (206 production lines in the fork) for surgical
+   per-request cleanup while preserving module state. This is the same
+   contract that workerd and OpenWorkers implement — achieved through fork
+   changes, not a separate raw-V8 backend.
 
 ### What we'd want but can't have with deno_core
 
@@ -496,6 +535,17 @@ necessary.
 ---
 
 ## Future Paths
+
+### Deprecate RetainedJsRuntimePool in favor of WarmModulePool
+
+The warm module pool is strictly better than the retained pool:
+- **50x faster** warm-hit latency (22µs vs 1.1ms)
+- **Zero memory leak** (no `destroy_for_reset` Rc leak)
+- **Simpler** (no `reset_main_realm`, no bootstrap replay, no module reload)
+
+The retained pool's only advantage is `RunToCompletion` support, which is
+not the production execution model. Deprecating it removes ~200 lines of
+`reset_main_realm` complexity and the associated SIGSEGV risk surface.
 
 ### If deno_core fork maintenance becomes unsustainable
 
@@ -547,12 +597,15 @@ The path to true cross-thread warm isolates would be:
    and prove correctness under concurrent access. This is effectively a
    permanent fork divergence from upstream deno_core.
 
-None of these are required before launch, but the `!Send` constraint is
-meaningful technical debt — not an acceptable long-term state. On Neovex's
-target hardware (6-16 threads, 300-2,000 tenants), thread-pinning wastes
-CPU capacity during V8 bursts and duplicates warm isolate memory. The
-medium-term path should resolve `!Send` through one of the options above,
-prioritized by the ratio of implementation effort to tenant density gained.
+None of these are required before launch. The `!Send` constraint is
+technical debt but at lower urgency than originally assessed — the warm
+module pool's 22µs warm-hit latency eliminates most of the practical cost
+of thread-pinning (head-of-line blocking from JS execution). The remaining
+costs (memory duplication, burst handling) are real but secondary.
+
+The medium-term path should resolve `!Send` only if post-launch metrics
+show that memory duplication or burst-handling inefficiency is a material
+scaling bottleneck — not as a preemptive architecture investment.
 
 ---
 
@@ -566,12 +619,22 @@ prioritized by the ratio of implementation effort to tenant density gained.
 | Deno sidecar | Full | Lost | N/A | Delegated | Low |
 | workerd embed (C++ FFI) | Partial (Workers APIs) | Full | Low (2-20 MB/isolate) | Cross-thread | Medium (C++ FFI) |
 
-The current choice (deno_core fork, thread-pinned, cooperative Locker) is the
-pragmatic launch path given the requirement for npm ecosystem access with
-in-process sandbox control. The `!Send` constraint is meaningful technical
-debt: on Neovex's target hardware (6-16 threads, 300-2,000 tenants per
-server), thread-pinning wastes CPU during V8 bursts and duplicates warm
-isolate memory on servers where RAM is the primary scaling constraint.
-Resolving `!Send` — whether through a thinner raw V8 embedding, workerd
-integration, or a `Send`-capable deno_core fork — should be a medium-term
-priority after launch.
+The current choice (deno_core fork, thread-pinned, cooperative Locker, warm
+module pool) is the launch path. With the warm module pool delivering 22µs
+warm-hit latency (50x over snapshot cache), the thread-pinning cost is
+significantly reduced — JS execution is no longer the dominant source of
+thread blocking.
+
+The `!Send` constraint remains technical debt but at lower urgency than
+originally assessed. The warm pool eliminates the largest practical cost of
+thread-pinning (head-of-line blocking from 1-50ms JS execution) by reducing
+the JS phase to 22µs. The remaining thread-pinning costs (memory duplication,
+burst handling, routing complexity) are real but secondary to the 50x
+per-invocation improvement already achieved.
+
+The `RetainedJsRuntimePool` is a candidate for deprecation — it is strictly
+worse than `WarmModulePool` (slower, leaks ~500KB/cycle from
+`destroy_for_reset`, more complex). The only remaining advantage of the
+retained pool is that it works with `RunToCompletion` execution model, but
+the warm pool's `CooperativeLocker` requirement aligns with the production
+deployment model.
