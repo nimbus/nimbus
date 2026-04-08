@@ -1,4 +1,5 @@
 use super::*;
+use crate::limits::RuntimePoolKind;
 
 // Cooperative locker tests create V8 isolates with `use_locker: true`.
 // V8's internal state tracking is corrupted when locker-enabled and
@@ -253,4 +254,132 @@ export {};
     panic!(
         "cooperative locker slot should complete within a bounded number of polls; sequence={sequence:?}"
     );
+}
+
+#[test]
+fn warm_module_pool_cooperative_async_host_two_cycles() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_module_pool_cooperative_async_host_two_cycles_inner());
+}
+
+async fn warm_module_pool_cooperative_async_host_two_cycles_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({
+    request,
+    sessionId: `${request.kind}:${request.function_name}`,
+  });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+    };
+    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+        execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
+        runtime_pool_kind: RuntimePoolKind::WarmModulePool,
+        max_concurrent_isolates: 1,
+        worker_threads: 1,
+        ..RuntimeLimits::default()
+    }));
+    let runtime_owner = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+    let watchdog = WatchdogTimer::new();
+
+    let expected = serde_json::json!({
+        "operation": "convex.ctx.db.get",
+        "payload": {
+            "table": "messages",
+            "id": "doc-1",
+            "session_id": "query:messages:list",
+        },
+    });
+
+    for cycle in 0..2 {
+        let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
+        let mut permit =
+            SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+        permit
+            .acquire_initial(std::time::Instant::now())
+            .await
+            .expect("permit should admit invocation");
+
+        let mut slot = runtime_owner
+            .start_cooperative_locker_runtime_slot(
+                &mut isolate_pool,
+                CooperativeRuntimeSlotStart {
+                    invocation: RuntimeInvocationExecution {
+                        watchdog: watchdog.clone(),
+                        bundle: bundle.clone(),
+                        request: request.clone(),
+                        context: RuntimeInvocationContext::top_level(&request),
+                        external_cancellation: None,
+                        permit: permit.clone(),
+                    },
+                    activity_signal,
+                },
+            )
+            .await
+            .unwrap_or_else(|e| panic!("cycle {cycle}: slot should start: {e}"));
+
+        let mut completed = false;
+        for poll_index in 0..20 {
+            match slot
+                .poll_once()
+                .await
+                .unwrap_or_else(|e| panic!("cycle {cycle} poll {poll_index}: {e}"))
+            {
+                CooperativeRuntimeSlotPoll::Runnable => continue,
+                CooperativeRuntimeSlotPoll::Completed => {
+                    completed = true;
+                    break;
+                }
+                CooperativeRuntimeSlotPoll::Parked => {
+                    panic!("cycle {cycle}: immediate async host should not park");
+                }
+            }
+        }
+        assert!(completed, "cycle {cycle}: should complete within 20 polls");
+
+        let (result, returned_runtime) = slot
+            .finish_with_result_and_runtime(Ok(expected.clone()))
+            .await;
+        result.unwrap_or_else(|e| panic!("cycle {cycle}: finalize should succeed: {e}"));
+
+        if let Some(mut rt) = returned_runtime {
+            rt.runtime
+                .reset_request_state()
+                .unwrap_or_else(|e| panic!("cycle {cycle}: reset should succeed: {e}"));
+            rt.retained_reuse_count = rt.retained_reuse_count.saturating_add(1);
+            isolate_pool.return_runtime_for_invocation(
+                &runtime_owner,
+                &bundle,
+                Some(&RuntimeInvocationContext::top_level(&request)),
+                rt,
+            );
+        }
+
+        let ready_jobs = permit.finish_invocation().await;
+        assert!(ready_jobs.is_empty());
+    }
+
+    watchdog.shutdown();
 }
