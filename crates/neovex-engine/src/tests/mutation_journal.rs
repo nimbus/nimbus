@@ -51,7 +51,12 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
     assert!(matches!(error, Error::Cancelled));
 
     probe.release();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    timeout(
+        Duration::from_secs(1),
+        probe.wait_until_released_from_first_check(),
+    )
+    .await
+    .expect("blocking cancellation check should unwind after release");
 }
 
 #[tokio::test]
@@ -102,7 +107,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
 
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
-    let handle = tokio::spawn({
+    let mut handle = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -121,7 +126,12 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     });
 
     cancel.notify_one();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        timeout(Duration::from_millis(100), &mut handle)
+            .await
+            .is_err(),
+        "queued canceled mutation should remain blocked behind the earlier durable append until apply resumes"
+    );
     faults.release();
 
     timeout(Duration::from_secs(1), blocker)
@@ -611,19 +621,13 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
         }
     });
 
-    timeout(Duration::from_secs(1), async {
-        loop {
-            let stats = service
-                .mutation_admission_stats_for_testing(&tenant_id)
-                .expect("admission stats should load while the journal is paused");
-            if stats.queue_depth == 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("second mutation should remain buffered at the admission gate");
+    wait_for_mutation_admission_stats(
+        &service,
+        &tenant_id,
+        "second mutation should remain buffered at the admission gate",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
 
     assert!(
         timeout(Duration::from_millis(150), &mut second_insert)
@@ -712,7 +716,7 @@ async fn mutation_journal_never_expires_admitted_work() {
         .expect("journal pause handle should load");
     pause.arm();
 
-    let admitted_insert = {
+    let mut admitted_insert = {
         let service = Arc::clone(&service);
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
@@ -736,7 +740,12 @@ async fn mutation_journal_never_expires_admitted_work() {
         "journal worker should pause after admitting the mutation to the journal queue"
     );
 
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        timeout(Duration::from_millis(100), &mut admitted_insert)
+            .await
+            .is_err(),
+        "admitted mutation should remain pending while the journal worker pause is armed"
+    );
     pause.release();
 
     let document_id = timeout(Duration::from_secs(1), admitted_insert)
@@ -1305,7 +1314,13 @@ async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_appl
     assert!(matches!(error, Error::Cancelled));
 
     faults.release();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    wait_for_mutation_journal_stats(
+        &service,
+        &tenant_id,
+        "point read cancellation cleanup should drain applied visibility after releasing the durable fault",
+        |stats| stats.applied_head == stats.durable_head && stats.apply_lag == 0,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1348,7 +1363,13 @@ async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_a
     assert!(matches!(error, Error::Cancelled));
 
     faults.release();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    wait_for_mutation_journal_stats(
+        &service,
+        &tenant_id,
+        "query cancellation cleanup should drain applied visibility after releasing the durable fault",
+        |stats| stats.applied_head == stats.durable_head && stats.apply_lag == 0,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1395,7 +1416,13 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_waiting_fo
     assert!(matches!(error, Error::Cancelled));
 
     faults.release();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    wait_for_mutation_journal_stats(
+        &service,
+        &tenant_id,
+        "pagination cancellation cleanup should drain applied visibility after releasing the durable fault",
+        |stats| stats.applied_head == stats.durable_head && stats.apply_lag == 0,
+    )
+    .await;
 }
 
 #[tokio::test]

@@ -4,9 +4,9 @@ use neovex_core::{
     CreateCronRequest, FieldSchema, FieldType, Mutation, Query, ScheduleRequest,
     ScheduledJobOutcome, ScheduledJobResult, TableName, TableSchema, TenantId, Timestamp,
 };
-use neovex_test_support::{
+use neovex_testing::{
     DeterministicHarness, RestartBoundary, RestartPoint, ScenarioMetadata, ScriptedRestartSchedule,
-    ServiceFixture,
+    ServiceFixture, wait_for_value,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -727,6 +727,8 @@ async fn scheduler_wakes_promptly_when_earlier_work_arrives() {
             },
         )
         .expect("later schedule should succeed");
+    // Let the scheduler observe the far-future wake-up before we inject the
+    // earlier job that should force a prompt wake.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     service
@@ -739,19 +741,18 @@ async fn scheduler_wakes_promptly_when_earlier_work_arrives() {
         )
         .expect("immediate schedule should succeed");
 
-    let documents = timeout(Duration::from_secs(2), async {
-        loop {
-            let documents = service
+    let documents = wait_for_value(
+        "scheduler should wake and execute immediate work",
+        Duration::from_secs(2),
+        Duration::ZERO,
+        || async {
+            service
                 .list_documents(&tenant_id, &tasks_table())
-                .expect("list should succeed");
-            if !documents.is_empty() {
-                return documents;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("scheduler should wake and execute immediate work");
+                .expect("list should succeed")
+        },
+        |documents| !documents.is_empty(),
+    )
+    .await;
 
     assert_eq!(documents.len(), 1);
     assert_eq!(
@@ -814,19 +815,18 @@ async fn scheduler_tick_processes_other_tenants_while_one_tenant_is_paused() {
         "tenant-a scheduled mutation should pause before the journal drain"
     );
 
-    let tenant_b_documents = timeout(Duration::from_secs(2), async {
-        loop {
-            let documents = service
+    let tenant_b_documents = wait_for_value(
+        "tenant-b scheduled work should not be blocked by tenant-a",
+        Duration::from_secs(2),
+        Duration::ZERO,
+        || async {
+            service
                 .list_documents(&tenant_b, &tasks_table())
-                .expect("tenant-b documents should list");
-            if !documents.is_empty() {
-                return documents;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("tenant-b scheduled work should not be blocked by tenant-a");
+                .expect("tenant-b documents should list")
+        },
+        |documents| !documents.is_empty(),
+    )
+    .await;
 
     assert_eq!(tenant_b_documents.len(), 1);
     assert_eq!(

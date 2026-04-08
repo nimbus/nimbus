@@ -541,20 +541,13 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
         )
         .expect("update should succeed");
 
-    timeout(Duration::from_secs(1), async {
-        loop {
-            if service
-                .active_subscription_count(&tenant_id)
-                .expect("subscription count should load")
-                == 0
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("slow subscription should still be dropped after async delivery attempts");
+    wait_for_active_subscription_count(
+        &service,
+        &tenant_id,
+        "slow subscription should still be dropped after async delivery attempts",
+        0,
+    )
+    .await;
 
     let initial = rx
         .recv()
@@ -1155,25 +1148,27 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
         .await
         .expect("read operation should enter its first cancellation check");
 
-    let delete_task = tokio::spawn({
+    let mut delete_task = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move { service.delete_tenant_async(tenant_id).await }
     });
-    tokio::time::sleep(Duration::from_millis(25)).await;
     assert!(
-        !delete_task.is_finished(),
+        timeout(Duration::from_millis(100), &mut delete_task)
+            .await
+            .is_err(),
         "tenant deletion should wait for the in-flight operation"
     );
 
-    let ensure_task = tokio::spawn({
+    let mut ensure_task = tokio::spawn({
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         async move { service.ensure_tenant_exists_async(tenant_id).await }
     });
-    tokio::time::sleep(Duration::from_millis(25)).await;
     assert!(
-        !ensure_task.is_finished(),
+        timeout(Duration::from_millis(100), &mut ensure_task)
+            .await
+            .is_err(),
         "new work should remain blocked behind tenant deletion"
     );
 

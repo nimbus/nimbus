@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use neovex_core::{Query, SequenceNumber, TableName};
-use neovex_test_support::ServiceFixture;
+use neovex_testing::ServiceFixture;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};

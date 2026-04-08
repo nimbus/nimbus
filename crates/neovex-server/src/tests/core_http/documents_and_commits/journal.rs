@@ -1,5 +1,5 @@
-use super::faults::BlockingFaultInjector;
 use super::*;
+use neovex_testing::BlockingFaultInjector;
 
 #[tokio::test]
 async fn journal_route_returns_ordered_cursor_pages() {

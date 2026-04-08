@@ -3,10 +3,11 @@ pub(crate) use neovex_core::{
     OrderBy, OrderDirection, Page, PaginatedQuery, PrincipalContext, Query, SequenceNumber,
     TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
-pub(crate) use neovex_test_support::{
-    GeneratedTaskHistory, GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation,
-    GeneratedTaskRecord, ServiceFixture, VerificationHarnessMode,
+pub(crate) use neovex_testing::{
+    BlockingFaultInjector, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
+    GeneratedTaskPageExpectation, GeneratedTaskRecord, ServiceFixture, VerificationHarnessMode,
     replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
+    wait_for_value,
 };
 pub(crate) use serde_json::json;
 pub(crate) use std::collections::BTreeSet;
@@ -25,8 +26,8 @@ pub(crate) use crate::service::{
 };
 pub(crate) use crate::tenant::DOCUMENT_CACHE_CAPACITY;
 pub(crate) use crate::test_support::{
-    BlockingFaultInjector, messages_schema, messages_table, owner_matches_subject_rule,
-    owner_write_policy, principal_with_subject, read_only_owner_policy,
+    messages_schema, messages_table, owner_matches_subject_rule, owner_write_policy,
+    principal_with_subject, read_only_owner_policy,
 };
 pub(crate) use crate::verification::{
     ConsistencyScope, collect_durable_journal_bootstrap_mismatches,
@@ -81,20 +82,58 @@ pub(crate) async fn wait_for_mutation_journal_stats(
     description: &str,
     predicate: impl Fn(&crate::tenant::MutationJournalStats) -> bool,
 ) -> crate::tenant::MutationJournalStats {
-    let started_at = tokio::time::Instant::now();
-    loop {
-        let stats = service
-            .mutation_journal_stats_for_testing(tenant_id)
-            .expect("mutation journal stats should load");
-        if predicate(&stats) {
-            return stats;
-        }
-        assert!(
-            started_at.elapsed() < Duration::from_secs(1),
-            "timed out waiting for {description}; last mutation journal stats: {stats:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            service
+                .mutation_journal_stats_for_testing(tenant_id)
+                .expect("mutation journal stats should load")
+        },
+        predicate,
+    )
+    .await
+}
+
+pub(crate) async fn wait_for_mutation_admission_stats(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    description: &str,
+    predicate: impl Fn(&crate::tenant::MutationAdmissionStats) -> bool,
+) -> crate::tenant::MutationAdmissionStats {
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            service
+                .mutation_admission_stats_for_testing(tenant_id)
+                .expect("mutation admission stats should load")
+        },
+        predicate,
+    )
+    .await
+}
+
+pub(crate) async fn wait_for_active_subscription_count(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    description: &str,
+    expected_count: usize,
+) -> usize {
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            service
+                .active_subscription_count(tenant_id)
+                .expect("subscription count should load")
+        },
+        |count| *count == expected_count,
+    )
+    .await
 }
 
 pub(crate) fn filter(field: &str, op: FilterOp, value: serde_json::Value) -> Filter {
@@ -426,6 +465,7 @@ pub(crate) fn assert_generated_task_page_matches(
 pub(crate) struct BlockingCancellationProbe {
     entered: Notify,
     cancel: Notify,
+    released: Notify,
     cancelled: AtomicBool,
     first_check: AtomicBool,
     release_gate: (Mutex<bool>, Condvar),
@@ -454,6 +494,7 @@ impl BlockingCancellationProbe {
         Arc::new(Self {
             entered: Notify::new(),
             cancel: Notify::new(),
+            released: Notify::new(),
             cancelled: AtomicBool::new(false),
             first_check: AtomicBool::new(true),
             release_gate: (Mutex::new(false), Condvar::new()),
@@ -478,6 +519,10 @@ impl BlockingCancellationProbe {
         cvar.notify_all();
     }
 
+    pub(crate) async fn wait_until_released_from_first_check(&self) {
+        self.released.notified().await;
+    }
+
     pub(crate) async fn cancel_wait(self: Arc<Self>) {
         self.cancel.notified().await;
     }
@@ -495,6 +540,7 @@ impl BlockingCancellationProbe {
                         .wait(released)
                         .expect("blocking cancellation probe should wait for release");
                 }
+                self.released.notify_one();
             }
 
             if self.cancelled.load(Ordering::SeqCst) {

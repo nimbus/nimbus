@@ -1,12 +1,22 @@
-mod blocking_fault_injector;
+mod eventual;
+mod faults;
 mod http_api_fixture;
+mod repro;
+mod runtime_profiles;
 mod server_fixture;
 mod service_fixture;
 mod simulation;
 mod websocket_fixture;
 
-pub use blocking_fault_injector::BlockingFaultInjector;
+pub use eventual::{wait_for_condition, wait_for_value};
+pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector};
 pub use http_api_fixture::HttpApiFixture;
+pub use repro::DeterministicTestCase;
+pub use runtime_profiles::{
+    bounded_fairness_runtime_test_limits, cooperative_startup_snapshot_runtime_test_limits,
+    cooperative_warm_pool_runtime_test_limits, product_default_runtime_test_limits,
+    run_to_completion_snapshot_runtime_test_limits,
+};
 pub use server_fixture::ServerFixture;
 pub use service_fixture::ServiceFixture;
 pub use simulation::{

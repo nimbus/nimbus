@@ -5,8 +5,6 @@ pub(super) use std::sync::Arc;
 pub(super) use neovex_storage::{FaultPoint, ManualClock};
 pub(super) use tokio::time::{Duration, timeout};
 
-#[path = "documents_and_commits/faults.rs"]
-mod faults;
 #[path = "documents_and_commits/generated_history.rs"]
 mod generated_history;
 

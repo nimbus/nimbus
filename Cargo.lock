@@ -1590,7 +1590,7 @@ dependencies = [
  "futures",
  "neovex-core",
  "neovex-storage",
- "neovex-test-support",
+ "neovex-testing",
  "proptest",
  "serde",
  "serde_json",
@@ -1632,7 +1632,7 @@ dependencies = [
  "neovex-engine",
  "neovex-runtime",
  "neovex-storage",
- "neovex-test-support",
+ "neovex-testing",
  "reqwest",
  "ring",
  "serde",
@@ -1661,13 +1661,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-test-support"
+name = "neovex-testing"
 version = "0.1.0"
 dependencies = [
  "axum",
  "futures",
  "http",
  "neovex-core",
+ "neovex-runtime",
  "neovex-storage",
  "reqwest",
  "serde_json",

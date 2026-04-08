@@ -440,19 +440,18 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
         }
     });
 
-    timeout(Duration::from_millis(200), async {
-        loop {
-            let stats = service
+    wait_for_value(
+        "materialized serving waiter should register",
+        Duration::from_millis(200),
+        Duration::ZERO,
+        || async {
+            service
                 .serving_snapshot_manager_stats_for_testing(&tenant_id)
-                .expect("serving snapshot manager stats should load");
-            if stats.waiter_count == 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("waiter should register");
+                .expect("serving snapshot manager stats should load")
+        },
+        |stats| stats.waiter_count == 1,
+    )
+    .await;
 
     service
         .insert_document(
@@ -1091,10 +1090,18 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         move || service.query_documents(&tenant_id, &query)
     });
 
-    tokio::time::sleep(Duration::from_millis(25)).await;
-    let stats = service
-        .materialized_read_surface_stats_for_testing(&tenant_id)
-        .expect("materialized surface stats should load");
+    let stats = wait_for_value(
+        "second materialized reader should stay in-flight without publishing a second table",
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            service
+                .materialized_read_surface_stats_for_testing(&tenant_id)
+                .expect("materialized surface stats should load")
+        },
+        |stats| stats.in_flight_load_count == 1,
+    )
+    .await;
     assert_eq!(stats.in_flight_load_count, 1);
     assert_eq!(stats.table_load_count, 0);
     assert_eq!(stats.bypass_count, 0);

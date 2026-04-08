@@ -3,15 +3,14 @@ use std::sync::Arc;
 use neovex_core::{
     Error, IndexDefinition, OrderBy, OrderDirection, PrincipalContext, Query, TenantId, Timestamp,
 };
-use neovex_test_support::ServiceFixture;
+use neovex_testing::{BlockingFaultInjector, ServiceFixture};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, timeout};
 
 use crate::Service;
 use crate::test_support::{
-    BlockingFaultInjector, messages_schema, messages_table, owner_read_write_policy,
-    principal_with_subject,
+    messages_schema, messages_table, owner_read_write_policy, principal_with_subject,
 };
 use neovex_storage::{FaultPoint, ManualClock};
 

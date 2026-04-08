@@ -278,7 +278,7 @@ async fn convex_http_demo_action_then_http_post_and_follow_up_action_all_complet
 
 #[tokio::test]
 async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_up_action() {
-    let faults = neovex_test_support::BlockingFaultInjector::new(
+    let faults = neovex_testing::BlockingFaultInjector::new(
         neovex_storage::FaultPoint::JournalDurableAppendBeforeApply,
     );
     let harness = DeterministicHarness::with_fault_injector(

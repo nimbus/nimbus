@@ -1,5 +1,5 @@
 [package]
-name = "neovex-test-support"
+name = "neovex-testing"
 version = "0.1.0"
 edition = "2024"
 publish.workspace = true
@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 axum.workspace = true
 neovex-core = { path = "../neovex-core" }
+neovex-runtime = { path = "../neovex-runtime" }
 neovex-storage = { path = "../neovex-storage" }
 futures.workspace = true
 http.workspace = true

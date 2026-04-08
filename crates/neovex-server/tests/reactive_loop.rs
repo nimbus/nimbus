@@ -3,9 +3,10 @@ use std::fs;
 use neovex_engine::{Service, run_scheduler};
 use neovex_runtime::RuntimeBundle;
 use neovex_server::{ConvexRegistry, build_router, build_router_with_convex};
-use neovex_test_support::{
+use neovex_testing::{
     BlockingFaultInjector, DeterministicHarness, HttpApiFixture, ScenarioMetadata, ServerFixture,
-    ServiceFixture, WebSocketFixture,
+    ServiceFixture, WebSocketFixture, run_to_completion_snapshot_runtime_test_limits,
+    wait_for_value,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -41,10 +42,31 @@ fn convex_registry_with_bundle(
         )
         .expect("convex runtime bundle hash should write");
     }
-    let registry =
-        ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+    let registry = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect("convex registry should load")
+        .with_runtime_limits(run_to_completion_snapshot_runtime_test_limits());
     std::mem::forget(tempdir);
     registry
+}
+
+async fn wait_for_active_subscription_count(
+    service: &std::sync::Arc<Service>,
+    tenant_id: &neovex_core::TenantId,
+    description: &str,
+    expected_count: usize,
+) -> usize {
+    wait_for_value(
+        description,
+        Duration::from_secs(2),
+        Duration::ZERO,
+        || async {
+            service
+                .active_subscription_count(tenant_id)
+                .expect("subscription count should load")
+        },
+        |count| *count == expected_count,
+    )
+    .await
 }
 
 #[path = "reactive_loop/manifest/mod.rs"]

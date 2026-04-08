@@ -1,15 +1,9 @@
-use std::sync::{Arc, Condvar, Mutex};
-
 use neovex_core::{
     AccessOperator, AccessPredicate, AccessRule, AccessValue, FieldSchema, FieldType,
     IndexDefinition, PrincipalClaimSource, PrincipalContext, TableAccessPolicy, TableName,
     TableSchema,
 };
 use serde_json::json;
-use tokio::sync::Notify;
-
-use neovex_storage::{FaultInjector, FaultPoint};
-
 pub(crate) fn messages_table(name: &str) -> TableName {
     TableName::new(name).expect("table name should be valid")
 }
@@ -98,53 +92,5 @@ pub(crate) fn messages_schema(
         ],
         indexes,
         access_policy,
-    }
-}
-
-pub(crate) struct BlockingFaultInjector {
-    point: FaultPoint,
-    entered: Notify,
-    release_gate: (Mutex<bool>, Condvar),
-}
-
-impl BlockingFaultInjector {
-    pub(crate) fn new(point: FaultPoint) -> Arc<Self> {
-        Arc::new(Self {
-            point,
-            entered: Notify::new(),
-            release_gate: (Mutex::new(false), Condvar::new()),
-        })
-    }
-
-    pub(crate) async fn wait_until_entered(&self) {
-        self.entered.notified().await;
-    }
-
-    pub(crate) fn release(&self) {
-        let (lock, cvar) = &self.release_gate;
-        let mut released = lock
-            .lock()
-            .expect("blocking fault injector should acquire release lock");
-        *released = true;
-        cvar.notify_all();
-    }
-}
-
-impl FaultInjector for BlockingFaultInjector {
-    fn check(&self, point: FaultPoint) -> neovex_core::Result<()> {
-        if point != self.point {
-            return Ok(());
-        }
-        self.entered.notify_one();
-        let (lock, cvar) = &self.release_gate;
-        let mut released = lock
-            .lock()
-            .expect("blocking fault injector should acquire release lock");
-        while !*released {
-            released = cvar
-                .wait(released)
-                .expect("blocking fault injector should wait for release");
-        }
-        Ok(())
     }
 }
