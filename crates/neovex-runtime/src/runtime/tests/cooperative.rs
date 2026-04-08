@@ -8,14 +8,6 @@ use super::*;
 
 #[test]
 fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion() {
-    run_ignored_repro_in_subprocess(
-        "runtime::tests::cooperative::runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_subprocess",
-    );
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate V8 locker state"]
-fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion_subprocess() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -169,15 +161,7 @@ export {};
 }
 
 #[test]
-fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking() {
-    run_ignored_repro_in_subprocess(
-        "runtime::tests::cooperative::runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_subprocess",
-    );
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate V8 locker state"]
-fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking_subprocess()
+fn runtime_cooperative_locker_slot_completes_immediate_async_host_work_without_parking()
 {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

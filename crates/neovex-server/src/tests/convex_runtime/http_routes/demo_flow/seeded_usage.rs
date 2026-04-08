@@ -54,7 +54,6 @@ async fn convex_http_demo_faulted_seeded_usage_scenario_matches_model() {
 }
 
 #[tokio::test]
-#[ignore = "run through verification harness pr mode"]
 async fn verification_harness_pr_generated_history_seed_corpus_matches_model_on_convex_demo_surface()
  {
     run_seeded_usage_verification_corpus(
@@ -66,7 +65,6 @@ async fn verification_harness_pr_generated_history_seed_corpus_matches_model_on_
 }
 
 #[tokio::test]
-#[ignore = "run through verification harness nightly mode"]
 async fn verification_harness_nightly_generated_history_seed_corpus_matches_model_on_convex_demo_surface()
  {
     run_seeded_usage_verification_corpus(
@@ -78,7 +76,6 @@ async fn verification_harness_nightly_generated_history_seed_corpus_matches_mode
 }
 
 #[tokio::test]
-#[ignore = "run through verification harness pr mode"]
 async fn verification_harness_pr_generated_history_seed_corpus_matches_model_on_faulted_convex_demo_surface()
  {
     run_seeded_usage_verification_corpus(
@@ -90,7 +87,6 @@ async fn verification_harness_pr_generated_history_seed_corpus_matches_model_on_
 }
 
 #[tokio::test]
-#[ignore = "run through verification harness nightly mode"]
 async fn verification_harness_nightly_generated_history_seed_corpus_matches_model_on_faulted_convex_demo_surface()
  {
     run_seeded_usage_verification_corpus(
