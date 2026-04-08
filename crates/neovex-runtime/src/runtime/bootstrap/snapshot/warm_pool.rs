@@ -26,7 +26,7 @@ pub(crate) struct WarmPoolEntry {
 
 pub(crate) struct ReusableRuntime {
     pub(crate) runtime: JsRuntime,
-    pub(crate) retained_reuse_count: usize,
+    pub(crate) warm_reuse_count: usize,
     pub(crate) construction_mode: RuntimeConstructionMode,
 }
 
@@ -34,7 +34,7 @@ impl ReusableRuntime {
     pub(crate) fn fresh(runtime: JsRuntime, construction_mode: RuntimeConstructionMode) -> Self {
         Self {
             runtime,
-            retained_reuse_count: 0,
+            warm_reuse_count: 0,
             construction_mode,
         }
     }
@@ -101,7 +101,7 @@ impl RuntimeWorkerIsolatePool {
                     self.warmed = true;
                     return Ok(ReusableRuntime {
                         runtime: entry.runtime,
-                        retained_reuse_count: entry.reuse_count,
+                        warm_reuse_count: entry.reuse_count,
                         construction_mode: entry.construction_mode,
                     });
                 }
@@ -165,7 +165,7 @@ impl RuntimeWorkerIsolatePool {
                 if runtime.runtime.is_v8_lock_held() {
                     runtime.runtime.release_v8_lock();
                 }
-                if runtime.retained_reuse_count >= runtime_owner.policy.limits().max_warm_reuses {
+                if runtime.warm_reuse_count >= runtime_owner.policy.limits().max_warm_reuses {
                     runtime_owner.policy.metrics().record_warm_pool_retirement();
                     return;
                 }
@@ -174,7 +174,7 @@ impl RuntimeWorkerIsolatePool {
                     runtime: runtime.runtime,
                     bundle_identity: bundle.identity().clone(),
                     affinity_key,
-                    reuse_count: runtime.retained_reuse_count,
+                    reuse_count: runtime.warm_reuse_count,
                     last_used_sequence,
                     construction_mode: runtime.construction_mode,
                 });

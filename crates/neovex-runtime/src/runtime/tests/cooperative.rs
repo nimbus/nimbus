@@ -369,7 +369,7 @@ export {};
             rt.runtime
                 .reset_request_state()
                 .unwrap_or_else(|e| panic!("cycle {cycle}: reset should succeed: {e}"));
-            rt.retained_reuse_count = rt.retained_reuse_count.saturating_add(1);
+            rt.warm_reuse_count = rt.warm_reuse_count.saturating_add(1);
             isolate_pool.return_runtime_for_invocation(
                 &runtime_owner,
                 &bundle,
