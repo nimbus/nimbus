@@ -16,6 +16,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - plan for forking rusty_v8 and deno_core into agentstation/* to merge V8
     Locker API (PR #1896) for multi-isolate pooling and cooperative scheduling
 
+- `docs/plans/warm-pool-default-and-retained-pool-deprecation-plan.md`
+  - canonical plan for making WarmModulePool + CooperativeLocker the only
+    production runtime path; removes RetainedJsRuntimePool and ~900 lines of
+    reset_main_realm code across neovex, deno_core, and rusty_v8 forks
+
 ## Deferred design and experiment plans
 
 - `docs/plans/pluggable-storage-backend-plan.md`
@@ -24,17 +29,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     establishing the architecture for Postgres/MySQL backends and D1
     compatibility
 - `docs/plans/warm-module-pool-plan.md`
-  - primary owner of warm execution work via surgical `deno_core` fork changes
-    and a `WarmModulePool` pool kind; supersedes the raw-V8 backend plan as the
-    primary path to warm-loaded-code semantics; activates after Locker fork plan
-    Phase 5 completes
+  - **done** — all 6 phases complete; WarmModulePool delivers 22µs warm-hit
+    latency (50x over snapshot cache); follow-on deprecation work owned by
+    `warm-pool-default-and-retained-pool-deprecation-plan.md`
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
 - `docs/plans/raw-v8-warm-backend-plan.md`
-  - deferred fallback for warm execution via a separate raw-V8 backend;
-    superseded by `warm-module-pool-plan.md` as the primary path; use only if a
-    fundamental `deno_core` limitation blocks the fork approach
+  - **closed** — activation gate never met; warm module pool succeeded through
+    fork changes, making the raw-V8 backend unnecessary; preserved as research
+    context only
 - `docs/plans/wasmtime-backend-plan.md`
   - canonical plan for adding a wasmtime-based WASM backend alongside the
     existing `deno_core` V8 backend; covers backend abstraction refactor, WIT
