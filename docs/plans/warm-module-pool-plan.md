@@ -842,7 +842,7 @@ compiled code. In the GC finalizer path, V8 has already swept those references.
 | WM1 | `done` | deno_core fork: `is_warm_reuse_safe(&mut self)` + `reset_request_state(&mut self)` with full quiescence guard, Locker-compatible (`ensure_v8_lock_held()` pattern) | Locker fork plan Phase 5 complete; `RetainedJsRuntimePool` proven green with `reset_main_realm()` on remote fork | tagged `0.395.0-locker.2` at `f10265b`; 483 lines added across 7 files; 8 warm reuse tests (including Locker path); negative tests for pending ops and scheduled ticks |
 | WM2 | `done` | Neovex warm pool infrastructure: `WarmPoolEntry`, pool take/return, eviction, `CooperativeLocker`-only validation | WM0, WM1 | Implemented across `limits.rs`, `retained_pool.rs`, `retention.rs` |
 | WM3 | `done` | Neovex warm invocation path: skip `load_bundle_with_trace()` on warm hit, `reset_request_state()` on return, discard if not quiescent | WM0, WM2 | Implemented in `invocation.rs`, `cooperative.rs`, `retention.rs` |
-| WM4 | `todo` | Observability: warm pool metrics including `discard_unquiesced` | WM2 | ~50 lines across metrics files |
+| WM4 | `done` | Observability: warm pool metrics including `discard_unquiesced` | WM2 | 4 counters across `global.rs`, `metrics.rs`, wired into pool take/return/discard |
 | WM5 | `todo` | Benchmark validation and promotion decision | WM3, WM4 | use `runtime_pool_modes.rs` harness; `CooperativeLocker` only; compare fresh vs retained vs warm; record absolute latency and throughput |
 
 ## Recommended Delivery Order
@@ -861,7 +861,7 @@ compiled code. In the GC finalizer path, V8 has already swept those references.
 | WM1 | done | `is_warm_reuse_safe()` + `reset_request_state()` landed in fork at `0.395.0-locker.2` (`f10265b`). 206 production lines + 277 test lines across 7 files. Helpers: `ExceptionState::clear_request_state`, `ModuleMap::clear_pending_state`, `RuntimeActivityTraces::clear_traces`, `V8TaskSpawnerFactory::clear`, `ExternalOpsTracker::reset`. 8 tests: module preservation, exception cleanup, async op quiescence, repeated cycles, negative (pending op, scheduled tick), Locker sync, Locker async. Neovex Cargo.toml updated to `0.395.0-locker.2`. |
 | WM2 | done | `WarmModulePool` variant on `RuntimePoolKind`, `WarmPerBundle` on `RuntimeModuleStateSemantics`, `WarmPoolEntry` struct, bundle-identity-matched take/return, LRU eviction, retirement at reuse cap, CooperativeLocker-only validation (panic on RunToCompletion), warm pool limit fields. Test: `warm_module_pool_with_run_to_completion_fails_fast`. |
 | WM3 | done | Warm-hit branch skips `load_bundle_with_trace` in both `invoke_bundle_unmanaged` and `start_cooperative_locker_runtime_slot`. Post-handler `reset_request_state()` called before return to pool; discards runtime on non-quiescent state. `retain_or_defer_runtime_drop` handles `WarmModulePool` alongside `RetainedJsRuntimePool`. |
-| WM4 | none yet | add warm pool counters including `discard_unquiesced` to runtime metrics |
+| WM4 | done | `warm_pool_hits`, `warm_pool_misses`, `warm_pool_retirements`, `warm_pool_discard_unquiesced` counters added to `RuntimeGlobalCounters`, `RuntimeGlobalCountersSnapshot`, `RuntimeMetricsSnapshot`, and `RuntimeMetrics`. Wired into pool take (hit/miss), pool return (retirement), and invocation driver (discard_unquiesced). |
 | WM5 | none yet | run `runtime_pool_modes.rs` benchmark under `CooperativeLocker`, compare all three pool kinds |
 
 ## Verification Contract

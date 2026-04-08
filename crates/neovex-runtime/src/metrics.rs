@@ -72,6 +72,10 @@ pub struct RuntimeMetricsSnapshot {
     pub in_flight_canceled_host_ops: u64,
     pub nested_local_dispatches: u64,
     pub fallback_cross_isolate_dispatches: u64,
+    pub warm_pool_hits: u64,
+    pub warm_pool_misses: u64,
+    pub warm_pool_retirements: u64,
+    pub warm_pool_discard_unquiesced: u64,
     pub host_operations: std::collections::BTreeMap<String, RuntimeHostOperationMetricsSnapshot>,
     pub tenants: std::collections::BTreeMap<String, RuntimeTenantMetricsSnapshot>,
     pub recent_request_correlations: Vec<RuntimeRequestCorrelationSnapshot>,
@@ -138,6 +142,22 @@ impl RuntimeMetrics {
 
     pub fn record_retained_runtime_pool_retirement(&self) {
         self.global.record_retained_runtime_pool_retirement();
+    }
+
+    pub fn record_warm_pool_hit(&self) {
+        self.global.record_warm_pool_hit();
+    }
+
+    pub fn record_warm_pool_miss(&self) {
+        self.global.record_warm_pool_miss();
+    }
+
+    pub fn record_warm_pool_retirement(&self) {
+        self.global.record_warm_pool_retirement();
+    }
+
+    pub fn record_warm_pool_discard_unquiesced(&self) {
+        self.global.record_warm_pool_discard_unquiesced();
     }
 
     pub fn record_retained_runtime_main_realm_reset(&self, duration: Duration) {
@@ -342,6 +362,10 @@ impl RuntimeMetrics {
             in_flight_canceled_host_ops: global.in_flight_canceled_host_ops,
             nested_local_dispatches: global.nested_local_dispatches,
             fallback_cross_isolate_dispatches: global.fallback_cross_isolate_dispatches,
+            warm_pool_hits: global.warm_pool_hits,
+            warm_pool_misses: global.warm_pool_misses,
+            warm_pool_retirements: global.warm_pool_retirements,
+            warm_pool_discard_unquiesced: global.warm_pool_discard_unquiesced,
             host_operations: self.host_operations.snapshot(),
             tenants: self.tenants.snapshot(),
             recent_request_correlations: self.recent_request_correlations.snapshot(),
@@ -527,6 +551,10 @@ mod tests {
                 in_flight_canceled_host_ops: 1,
                 nested_local_dispatches: 1,
                 fallback_cross_isolate_dispatches: 1,
+                warm_pool_hits: 0,
+                warm_pool_misses: 0,
+                warm_pool_retirements: 0,
+                warm_pool_discard_unquiesced: 0,
                 host_operations: BTreeMap::new(),
                 tenants: BTreeMap::new(),
                 recent_request_correlations: Vec::new(),

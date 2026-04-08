@@ -173,6 +173,7 @@ impl NeovexRuntime {
                 // Clear event loop state while preserving evaluated modules.
                 // If the runtime is not quiescent, discard instead of pooling.
                 if runtime.runtime.reset_request_state().is_err() {
+                    self.policy.metrics().record_warm_pool_discard_unquiesced();
                     return result;
                 }
                 runtime.retained_reuse_count = runtime.retained_reuse_count.saturating_add(1);
