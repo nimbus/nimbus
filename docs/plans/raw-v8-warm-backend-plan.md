@@ -1,10 +1,12 @@
 # Plan: Raw V8 Warm Backend
 
-> **Superseded.** This plan is now a deferred fallback. The primary path to warm
-> execution semantics is `docs/plans/warm-module-pool-plan.md`, which achieves
-> the same goal through surgical `deno_core` fork changes (~90 lines) instead of
-> building a separate raw-V8 engine. Use this plan only if a fundamental
-> `deno_core` limitation blocks the fork approach.
+> **Superseded and closed.** The warm module pool plan
+> (`docs/plans/warm-module-pool-plan.md`) achieved 50x warm-hit speedup (22µs vs
+> 1.1ms) through surgical `deno_core` fork changes without building a separate
+> raw-V8 engine. The activation gate for this plan — "fork approach proves
+> infeasible" — was never met. The fork approach succeeded.
+>
+> This plan is preserved as research context only. Do not promote it.
 
 Deferred design plan for a future raw-V8 warm-execution backend in
 `neovex-runtime`.
@@ -18,11 +20,10 @@ context for any future warm-execution work.
 
 ## Status
 
-- **Status:** `deferred` (superseded by `warm-module-pool-plan.md`)
-- **Primary owner:** `docs/plans/warm-module-pool-plan.md` for warm execution;
-  this plan for raw-V8 fallback only
-- **Activation gate:** promote only if `warm-module-pool-plan.md` is blocked by
-  a fundamental `deno_core` limitation that surgical fork changes cannot address
+- **Status:** `closed` (superseded by `warm-module-pool-plan.md`, which completed
+  all 6 phases and validated 50x warm-hit speedup on 2026-04-08)
+- **Primary owner:** `docs/plans/warm-module-pool-plan.md` (done)
+- **Activation gate:** never met — the fork approach succeeded
 
 ## How To Use This Plan
 
@@ -524,13 +525,35 @@ When promoted, the raw backend should not be considered viable without:
 - explicit diagnostics proving warm hits, evictions, retirements, and discard
   reasons
 
-## Current Decision
+## Current Decision (Updated 2026-04-08)
 
-Until this plan is promoted:
+This plan is **closed**. The warm module pool plan achieved warm execution
+semantics through `deno_core` fork changes, proving the raw-V8 backend
+unnecessary:
 
-- continue the current `deno_core` backend work in
-  `docs/plans/v8-locker-fork-plan.md`
-- use code cache as the near-term compile-cost optimization
-- keep `retained_jsruntime_pool` as fresh-realm reuse
-- treat true warm execution as a follow-on backend, not as a mutation of the
-  current one
+- **`WarmModulePool`** delivers 22µs warm-hit latency (50x over snapshot cache)
+  without a second backend
+- **`reset_request_state()`** in the fork provides surgical per-request cleanup
+  while preserving evaluated modules — the exact contract this plan proposed
+  building from scratch on raw V8
+- **`RetainedJsRuntimePool`** is a candidate for deprecation — the warm pool is
+  strictly better (faster, no memory leak from `destroy_for_reset`)
+- The raw-V8 backend's ~3-6 month estimated build cost was avoided entirely
+
+### What this plan got right
+
+The research and reference inventory remain valuable:
+- The workerd/OpenWorkers patterns (FIFO fairness, warm-hit callbacks, bounded
+  retirement, selective reset) were implemented in the fork approach
+- The separation between scheduling and request-local state was preserved
+- The "build, do not adopt" recommendation held — Neovex copied patterns, not
+  crate dependencies
+
+### What this plan got wrong
+
+The core assumption — "do not push warm-loaded-context semantics into the
+`deno_core` fork" — was wrong. The fork changes were surgical (206 production
+lines) and the existing `deno_core` event loop, op system, and module loader
+all worked correctly for warm reuse. The plan overestimated the fork divergence
+risk and underestimated how much of the warm contract could be built additively
+on top of existing `deno_core` surfaces.
