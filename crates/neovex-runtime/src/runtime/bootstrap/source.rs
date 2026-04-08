@@ -108,7 +108,7 @@ function __neovexCollectConstraintFilters(builderFn, label) {
   return [...builder.__filters];
 }
 
-function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
+function __neovexCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId) {
   return Object.freeze({
     __builderId: builderId,
     withIndex(indexName, builderFn) {
@@ -117,33 +117,31 @@ function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
         index_name: indexName,
         filters: __neovexCollectConstraintFilters(builderFn, "withIndex"),
       });
-      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+      return __neovexCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
     },
     filter(builderFn) {
       syncHostValue("op_neovex_ctx_query_filter", {
         builder_id: builderId,
         filters: __neovexCollectConstraintFilters(builderFn, "filter"),
       });
-      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+      return __neovexCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
     },
     order(direction) {
       syncHostValue("op_neovex_ctx_query_order", {
         builder_id: builderId,
         direction,
       });
-      return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+      return __neovexCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
     },
     collect() {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_collect", {
+      return asyncHostValue("op_neovex_ctx_query_collect", {
         builder_id: builderId,
-        session_id: sessionId,
       });
     },
     take(limit) {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_take", {
+      return asyncHostValue("op_neovex_ctx_query_take", {
         builder_id: builderId,
         limit,
-        session_id: sessionId,
       });
     },
     async paginate(paginationOpts) {
@@ -155,11 +153,10 @@ function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
       }
       const cursor =
         typeof paginationOpts.cursor === "string" ? paginationOpts.cursor : null;
-      const page = await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
+      const page = await asyncHostValue("op_neovex_ctx_query_paginate", {
         builder_id: builderId,
         page_size: paginationOpts.numItems,
         cursor,
-        session_id: sessionId,
       });
       const pageItems = Array.isArray(page?.data) ? page.data : [];
       const hasContinuation =
@@ -179,15 +176,13 @@ function __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId) {
       };
     },
     first() {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_first", {
+      return asyncHostValue("op_neovex_ctx_query_first", {
         builder_id: builderId,
-        session_id: sessionId,
       });
     },
     unique() {
-      return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_unique", {
+      return asyncHostValue("op_neovex_ctx_query_unique", {
         builder_id: builderId,
-        session_id: sessionId,
       });
     },
   });
@@ -247,8 +242,18 @@ async function __neovexRunNamedFunction(
 }
 
 let __neovexNextSessionId = 1;
+let __neovexInvocationGeneration = 0;
 
 globalThis.__neovexCreateContext = function(options = {}) {
+  const myGeneration = __neovexInvocationGeneration;
+
+  const guardStale = () => {
+    if (__neovexInvocationGeneration !== myGeneration) {
+      throw new Error(
+        "This ctx object is from a previous invocation and cannot be reused"
+      );
+    }
+  };
   const sessionId =
     typeof options.sessionId === "string" && options.sessionId.length > 0
       ? options.sessionId
@@ -274,17 +279,21 @@ globalThis.__neovexCreateContext = function(options = {}) {
       : null;
   const throwOnMissingIdentity = requestAuth?.throw_on_missing_identity === true;
 
-  const syncHostValue = (opName, payload) =>
-    globalThis.__neovexSyncHostValue(opName, {
+  const syncHostValue = (opName, payload) => {
+    guardStale();
+    return globalThis.__neovexSyncHostValue(opName, {
       session_id: sessionId,
       ...(payload ?? {}),
     });
+  };
 
-  const asyncHostValue = (opName, payload) =>
-    globalThis.__neovexAsyncHostValue(opName, {
+  const asyncHostValue = (opName, payload) => {
+    guardStale();
+    return globalThis.__neovexAsyncHostValue(opName, {
       session_id: sessionId,
       ...(payload ?? {}),
     });
+  };
 
   const cloneAuthIdentityOrThrow = (identity) => {
     if (identity) {
@@ -301,14 +310,17 @@ globalThis.__neovexCreateContext = function(options = {}) {
   return {
     auth: Object.freeze({
       async getUserIdentity() {
+        guardStale();
         return cloneAuthIdentityOrThrow(authIdentity);
       },
       async getVerifiedIdentity() {
+        guardStale();
         return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
       },
     }),
     db: {
       async get(tableOrId, maybeId) {
+        guardStale();
         if (maybeId === undefined) {
           if (
             tableOrId &&
@@ -334,7 +346,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
       },
       query(table) {
         const builderId = syncHostValue("op_neovex_ctx_query_start", { table });
-        return __neovexCreateQueryBuilder(syncHostValue, builderId, sessionId);
+        return __neovexCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
       },
       insert(table, fields) {
         return asyncHostValue("op_neovex_ctx_db_insert", {
@@ -380,6 +392,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
       },
     },
       runQuery(functionRef, args = {}) {
+        guardStale();
         return __neovexRunNamedFunction(
           syncHostValue,
           "op_neovex_ctx_run_query",
@@ -392,6 +405,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
       );
     },
       runMutation(functionRef, args = {}) {
+        guardStale();
         return __neovexRunNamedFunction(
           syncHostValue,
           "op_neovex_ctx_run_mutation",
@@ -404,6 +418,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
       );
     },
       runAction(functionRef, args = {}) {
+        guardStale();
         return __neovexRunNamedFunction(
           syncHostValue,
           "op_neovex_ctx_run_action",
@@ -430,7 +445,8 @@ Object.freeze(globalThis.__neovexCreateContext);
 // the fork exposes an explicit snapshot-safe alternative.
 const POST_BOOTSTRAP_SOURCE: &str = "delete globalThis.Deno;";
 
-const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str = "__neovexNextSessionId = 1;";
+const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str =
+    "__neovexNextSessionId = 1; __neovexInvocationGeneration++;";
 
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     runtime

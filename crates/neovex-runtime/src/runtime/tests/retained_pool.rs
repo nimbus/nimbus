@@ -1,5 +1,172 @@
 use super::*;
 
+/// Tests that the generation guard prevents stale ctx objects from making host
+/// calls after the generation counter is bumped. Within a single invocation,
+/// we create a ctx, manually bump the generation via execute_script, then try
+/// to use the old ctx — it should throw.
+#[tokio::test]
+async fn stale_ctx_throws_on_host_call_after_generation_bump() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request, sessionId: "s1" });
+  // Use ctx normally — should work.
+  const normalResult = await ctx.db.get("messages", "doc-1");
+
+  // Simulate a warm reset by bumping the generation counter.
+  __neovexInvocationGeneration++;
+
+  // Now try to use the old ctx — should throw.
+  const errors = [];
+  try {
+    await ctx.db.get("messages", "doc-2");
+  } catch (e) {
+    errors.push("db.get: " + e.message);
+  }
+  try {
+    await ctx.auth.getUserIdentity();
+  } catch (e) {
+    errors.push("getUserIdentity: " + e.message);
+  }
+  try {
+    await ctx.auth.getVerifiedIdentity();
+  } catch (e) {
+    errors.push("getVerifiedIdentity: " + e.message);
+  }
+  try {
+    ctx.db.query("messages");
+  } catch (e) {
+    errors.push("db.query: " + e.message);
+  }
+  try {
+    await ctx.db.insert("messages", { text: "hello" });
+  } catch (e) {
+    errors.push("db.insert: " + e.message);
+  }
+  try {
+    await ctx.runQuery({ name: "messages:list" });
+  } catch (e) {
+    errors.push("runQuery: " + e.message);
+  }
+  try {
+    await ctx.scheduler.runAfter(1000, { name: "messages:cleanup" });
+  } catch (e) {
+    errors.push("scheduler.runAfter: " + e.message);
+  }
+
+  return {
+    normalOk: normalResult !== null,
+    staleErrorCount: errors.length,
+    errors,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+        runtime_pool_kind: crate::limits::RuntimePoolKind::RetainedJsRuntimePool,
+        max_concurrent_isolates: 1,
+        worker_threads: 1,
+        ..RuntimeLimits::default()
+    }));
+    let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: Some(test_invocation_auth("user-1")),
+    };
+
+    let result = runtime
+        .invoke_bundle(&bundle, &request)
+        .await
+        .expect("invocation should succeed");
+    assert_eq!(
+        result["normalOk"], true,
+        "ctx should work before generation bump"
+    );
+    assert_eq!(
+        result["staleErrorCount"], 7,
+        "all 7 ctx methods should throw after generation bump: {result:?}"
+    );
+    let errors = result["errors"].as_array().expect("errors should be array");
+    for error in errors {
+        assert!(
+            error.as_str().unwrap().contains("previous invocation"),
+            "stale error should mention previous invocation: {error}"
+        );
+    }
+}
+
+/// Tests that ctx created during the current generation works normally —
+/// the guard does not interfere with regular usage.
+#[tokio::test]
+async fn current_ctx_works_normally_during_same_invocation() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request, sessionId: "s1" });
+  const result = await ctx.db.get("messages", "doc-1");
+  const identity = await ctx.auth.getUserIdentity();
+  return { ok: true, hasResult: result !== null, hasIdentity: identity !== null };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+        runtime_pool_kind: crate::limits::RuntimePoolKind::RetainedJsRuntimePool,
+        max_concurrent_isolates: 1,
+        worker_threads: 1,
+        ..RuntimeLimits::default()
+    }));
+    let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: Some(test_invocation_auth("user-1")),
+    };
+
+    // Run two invocations — both should work fine with fresh ctx
+    for i in 0..2 {
+        let result = runtime
+            .invoke_bundle(&bundle, &request)
+            .await
+            .unwrap_or_else(|e| panic!("invocation {i} should succeed: {e}"));
+        assert_eq!(result["ok"], true, "invocation {i} should return ok");
+    }
+}
+
+#[test]
+#[should_panic(expected = "WarmModulePool requires CooperativeLocker")]
+fn warm_module_pool_with_run_to_completion_fails_fast() {
+    let _policy = Arc::new(RuntimePolicy::new(RuntimeLimits {
+        execution_model: crate::limits::RuntimeExecutionModel::RunToCompletion,
+        runtime_pool_kind: crate::limits::RuntimePoolKind::WarmModulePool,
+        max_concurrent_isolates: 1,
+        worker_threads: 1,
+        ..RuntimeLimits::default()
+    }));
+}
+
 #[test]
 fn retained_runtime_pool_tracks_snapshot_seeded_construction_mode_for_test() {
     let _guard = acquire_runtime_suite_lock();
