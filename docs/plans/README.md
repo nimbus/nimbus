@@ -9,12 +9,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via redb
     `StorageBackend` trait
+- `docs/plans/pluggable-storage-backend-plan.md`
+  - active SQLite storage migration control plan for replacing redb, proving
+    parity, benchmarking against redb, and then removing redb
 
 ## Deferred design and experiment plans
 
-- `docs/plans/pluggable-storage-backend-plan.md`
-  - canonical plan for migrating Neovex internal storage from redb to SQLite,
-    benchmarking SQLite against redb before cutover, and then removing redb
 - `docs/plans/external-sql-storage-backends-plan.md`
   - deferred follow-on plan for Postgres and MySQL internal storage backends
     after the SQLite migration is stable
@@ -53,6 +53,8 @@ explicitly asked to review historical work.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
+- For active SQLite internal storage migration work, start with
+  `pluggable-storage-backend-plan.md`.
 - If no active cleanup, refactor, or verification hardening control plane is
   listed above, author or promote a new active plan before resuming generic
   work.
