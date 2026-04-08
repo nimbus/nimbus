@@ -108,6 +108,7 @@ impl RuntimeWorkerIsolatePool {
                 if let Some(entry) =
                     self.take_warm_pool_entry(&bundle_identity, affinity_key.as_ref())
                 {
+                    runtime_owner.policy.metrics().record_warm_pool_hit();
                     runtime_owner.policy.metrics().record_isolate_pool_hit();
                     self.warmed = true;
                     return Ok(ReusableRuntime {
@@ -118,6 +119,7 @@ impl RuntimeWorkerIsolatePool {
                 }
 
                 // Cold miss: build a fresh runtime
+                runtime_owner.policy.metrics().record_warm_pool_miss();
                 runtime_owner.policy.metrics().record_isolate_pool_miss();
                 let snapshot = runtime_owner.bootstrap_snapshot()?;
                 let runtime = runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?;
@@ -219,10 +221,7 @@ impl RuntimeWorkerIsolatePool {
                 if runtime.retained_reuse_count
                     >= runtime_owner.policy.limits().max_warm_module_reuses
                 {
-                    runtime_owner
-                        .policy
-                        .metrics()
-                        .record_retained_runtime_pool_retirement();
+                    runtime_owner.policy.metrics().record_warm_pool_retirement();
                     return;
                 }
                 let last_used_sequence = self.next_warm_sequence();

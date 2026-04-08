@@ -44,6 +44,10 @@ pub(super) struct RuntimeGlobalCounters {
     in_flight_canceled_host_ops: AtomicU64,
     nested_local_dispatches: AtomicU64,
     fallback_cross_isolate_dispatches: AtomicU64,
+    warm_pool_hits: AtomicU64,
+    warm_pool_misses: AtomicU64,
+    warm_pool_retirements: AtomicU64,
+    warm_pool_discard_unquiesced: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +91,10 @@ pub(super) struct RuntimeGlobalCountersSnapshot {
     pub in_flight_canceled_host_ops: u64,
     pub nested_local_dispatches: u64,
     pub fallback_cross_isolate_dispatches: u64,
+    pub warm_pool_hits: u64,
+    pub warm_pool_misses: u64,
+    pub warm_pool_retirements: u64,
+    pub warm_pool_discard_unquiesced: u64,
 }
 
 impl RuntimeGlobalCounters {
@@ -288,6 +296,26 @@ impl RuntimeGlobalCounters {
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
+    pub(super) fn record_warm_pool_hit(&self) {
+        self.warm_pool_hits
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_warm_pool_miss(&self) {
+        self.warm_pool_misses
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_warm_pool_retirement(&self) {
+        self.warm_pool_retirements
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_warm_pool_discard_unquiesced(&self) {
+        self.warm_pool_discard_unquiesced
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
     pub(super) fn snapshot(&self) -> RuntimeGlobalCountersSnapshot {
         RuntimeGlobalCountersSnapshot {
             active_isolates: self.active_isolates.load(DIAGNOSTIC_COUNTER_ORDERING),
@@ -376,6 +404,12 @@ impl RuntimeGlobalCounters {
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             fallback_cross_isolate_dispatches: self
                 .fallback_cross_isolate_dispatches
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            warm_pool_hits: self.warm_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
+            warm_pool_misses: self.warm_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
+            warm_pool_retirements: self.warm_pool_retirements.load(DIAGNOSTIC_COUNTER_ORDERING),
+            warm_pool_discard_unquiesced: self
+                .warm_pool_discard_unquiesced
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
         }
     }
