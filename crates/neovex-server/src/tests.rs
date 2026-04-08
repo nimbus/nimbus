@@ -9,12 +9,14 @@ use axum::{Json, Router, extract::State, routing::get};
 use base64::Engine;
 use neovex_core::{TableName, TenantId};
 use neovex_engine::{Service, run_scheduler};
-use neovex_runtime::{RuntimeBundle, RuntimeLimits};
-pub(crate) use neovex_test_support::{
-    DeterministicHarness, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
-    GeneratedTaskPageExpectation, GeneratedTaskRecord, HttpApiFixture, ScenarioMetadata,
-    ServerFixture, ServiceFixture, VerificationHarnessMode, WebSocketFixture,
-    replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
+use neovex_runtime::RuntimeBundle;
+pub(crate) use neovex_testing::{
+    DeterministicHarness, DeterministicTestCase, GeneratedTaskHistory,
+    GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
+    HttpApiFixture, ScenarioMetadata, ServerFixture, ServiceFixture, VerificationHarnessMode,
+    WebSocketFixture, replay_generated_task_history_async,
+    run_to_completion_snapshot_runtime_test_limits, selected_generated_task_history_seed_corpus,
+    wait_for_condition, wait_for_value,
 };
 use reqwest::StatusCode;
 use ring::rand::SystemRandom;
@@ -139,8 +141,9 @@ fn convex_registry_with_routes_and_bundle_and_auth_and_schema(
         )
         .expect("convex runtime bundle hash should write");
     }
-    let registry =
-        ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+    let registry = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect("convex registry should load")
+        .with_runtime_limits(run_to_completion_snapshot_runtime_test_limits());
     std::mem::forget(tempdir);
     registry
 }
@@ -175,18 +178,31 @@ async fn wait_for_runtime_metrics(
     description: &str,
     predicate: impl Fn(&neovex_runtime::RuntimeMetricsSnapshot) -> bool,
 ) -> neovex_runtime::RuntimeMetricsSnapshot {
-    let started_at = tokio::time::Instant::now();
-    loop {
-        let metrics = registry.runtime_metrics_snapshot();
-        if predicate(&metrics) {
-            return metrics;
-        }
-        assert!(
-            started_at.elapsed() < Duration::from_secs(3),
-            "timed out waiting for {description}; last runtime metrics: {metrics:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    wait_for_runtime_metrics_case_impl(registry, description.to_string(), predicate).await
+}
+
+async fn wait_for_runtime_metrics_case(
+    registry: &ConvexRegistry,
+    case: DeterministicTestCase,
+    description: &str,
+    predicate: impl Fn(&neovex_runtime::RuntimeMetricsSnapshot) -> bool,
+) -> neovex_runtime::RuntimeMetricsSnapshot {
+    wait_for_runtime_metrics_case_impl(registry, case.failure_context(description), predicate).await
+}
+
+async fn wait_for_runtime_metrics_case_impl(
+    registry: &ConvexRegistry,
+    description: String,
+    predicate: impl Fn(&neovex_runtime::RuntimeMetricsSnapshot) -> bool,
+) -> neovex_runtime::RuntimeMetricsSnapshot {
+    wait_for_value(
+        &description,
+        Duration::from_secs(3),
+        Duration::from_millis(25),
+        || async { registry.runtime_metrics_snapshot() },
+        predicate,
+    )
+    .await
 }
 
 #[path = "tests/auth_fixtures/mod.rs"]
@@ -204,3 +220,5 @@ mod core_http;
 mod registry_and_license;
 #[path = "tests/scheduling.rs"]
 mod scheduling;
+#[path = "tests/verification_harness.rs"]
+mod verification_harness;

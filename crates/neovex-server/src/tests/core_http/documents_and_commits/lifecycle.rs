@@ -1,5 +1,5 @@
-use super::faults::BlockingFaultInjector;
 use super::*;
+use neovex_testing::BlockingFaultInjector;
 
 #[tokio::test]
 async fn create_tenant_and_run_document_lifecycle() {

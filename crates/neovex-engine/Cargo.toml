@@ -23,6 +23,6 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-neovex-test-support = { path = "../neovex-test-support" }
+neovex-testing = { path = "../neovex-testing" }
 proptest = "1"
 tempfile.workspace = true

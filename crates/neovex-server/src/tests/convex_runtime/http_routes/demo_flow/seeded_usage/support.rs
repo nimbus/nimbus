@@ -1,41 +1,6 @@
 use super::*;
 
-pub(super) struct ArmedBlockingFaultInjector {
-    armed: std::sync::atomic::AtomicBool,
-    inner: std::sync::Arc<neovex_test_support::BlockingFaultInjector>,
-}
-
-impl ArmedBlockingFaultInjector {
-    pub(super) fn new(point: neovex_storage::FaultPoint) -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self {
-            armed: std::sync::atomic::AtomicBool::new(false),
-            inner: neovex_test_support::BlockingFaultInjector::new(point),
-        })
-    }
-
-    pub(super) fn arm(&self) {
-        self.armed.store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    pub(super) async fn wait_until_entered(&self) {
-        self.inner.wait_until_entered().await;
-    }
-
-    pub(super) fn release(&self) {
-        self.armed
-            .store(false, std::sync::atomic::Ordering::Release);
-        self.inner.release();
-    }
-}
-
-impl neovex_storage::FaultInjector for ArmedBlockingFaultInjector {
-    fn check(&self, point: neovex_storage::FaultPoint) -> neovex_core::Result<()> {
-        if !self.armed.load(std::sync::atomic::Ordering::Acquire) {
-            return Ok(());
-        }
-        self.inner.check(point)
-    }
-}
+pub(super) use neovex_testing::ArmedBlockingFaultInjector;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct MessageSnapshot {

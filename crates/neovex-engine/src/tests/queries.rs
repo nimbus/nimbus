@@ -766,7 +766,12 @@ async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work
     assert!(matches!(error, Error::Cancelled));
 
     probe.release();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    timeout(
+        Duration::from_secs(1),
+        probe.wait_until_released_from_first_check(),
+    )
+    .await
+    .expect("blocking cancellation check should unwind after release");
 }
 
 #[tokio::test]
@@ -842,7 +847,12 @@ async fn query_documents_async_cancellable_returns_cancelled_during_index_scan()
     assert!(matches!(error, Error::Cancelled));
 
     probe.release();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    timeout(
+        Duration::from_secs(1),
+        probe.wait_until_released_from_first_check(),
+    )
+    .await
+    .expect("blocking cancellation check should unwind after release");
 }
 
 #[tokio::test]

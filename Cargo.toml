@@ -7,7 +7,7 @@ members = [
     "crates/neovex-engine",
     "crates/neovex-server",
     "crates/neovex-storage",
-    "crates/neovex-test-support",
+    "crates/neovex-testing",
 ]
 resolver = "2"
 
