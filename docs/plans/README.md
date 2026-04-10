@@ -15,6 +15,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Deferred design and experiment plans
 
+- `docs/plans/microvm-runtime-plan.md`
+  - canonical plan for adding a libkrun-based microVM runtime that runs
+    OCI/Docker images as hardware-isolated services; V8 isolates interact with
+    running services via vsock/TSI; covers OCI image management, VMM
+    integration, host-guest communication, and engine integration
+- `docs/plans/krun-embedded-plan.md`
+  - canonical plan for creating `agentstation/krun-embedded`, a patched and
+    packaged libkrun embeddable as a Cargo dependency; patches out `_exit()`,
+    embeds guest kernel, exposes safe Rust API; optional prerequisite for
+    microvm-runtime-plan Phase M2 (enables single-binary deployment)
 - `docs/plans/external-sql-storage-backends-plan.md`
   - deferred follow-on plan for Postgres and MySQL internal storage backends
     after the SQLite migration is stable
