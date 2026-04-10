@@ -277,9 +277,52 @@ packages (Path B)
 - Parent detects boot readiness (READY signal)
 - Parent detects VM exit, crash, and can force-kill
 
+### Phase M2b: Custom Guest Init (neovex-init)
+
+**Goal:** Build a custom guest init binary that supports graceful shutdown
+via vsock and tini-style signal forwarding.
+
+**Why:** libkrun's built-in `init.c` does NOT handle signals, does NOT
+listen on vsock, and has no grace period logic. Without a custom init, the
+only way to stop a VM is SIGKILL (instant death, potential data loss).
+See `docs/research/vm-lifecycle-probes.md` for the full analysis.
+
+**Scope:**
+- `neovex-init/src/main.rs`: ~200 lines Rust, compiled as
+  `x86_64-unknown-linux-musl` static binary
+- Mount filesystems (`/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`)
+- Read OCI config from `.krun_config.json` (same format as crun)
+- **vsock shutdown listener** on port 10000: receives SHUTDOWN message with
+  grace period, sends SIGTERM to workload process group, waits, SIGKILL
+- **Signal forwarding:** tini/dumb-init pattern — register handlers, forward
+  to workload process group via `kill(-child_pid, sig)`
+- **Zombie reaping:** `waitpid(-1, WNOHANG)` in main loop (PID 1 obligation)
+- Exit code propagation via `ioctl(KRUN_EXIT_CODE_IOCTL)`
+- Inject into rootfs at `/sbin/neovex-init` during OCI unpack (Phase M1)
+
+**Modeled on:**
+- [`krallin/tini`](https://github.com/krallin/tini/blob/master/src/tini.c) —
+  signal forwarding, zombie reaping (~300 lines C)
+- [`Yelp/dumb-init`](https://github.com/Yelp/dumb-init/blob/master/dumb-init.c) —
+  session leader, process group signals (~200 lines C)
+- Kata Containers agent — vsock shutdown protocol
+  ([`src/agent/src/rpc.rs`](https://github.com/kata-containers/kata-containers/blob/main/src/agent/src/rpc.rs))
+- libkrun AWS Nitro signal proxy — signal forwarding over vsock (4-byte int)
+
+**Dependencies:** Phase M1 (OCI unpack provides the rootfs to inject init into)
+
+**Acceptance criteria:**
+- Static musl binary, zero runtime deps, ~1-2MB
+- Boots in a libkrun VM, mounts filesystems, execs workload
+- SHUTDOWN over vsock → SIGTERM to workload → grace period → SIGKILL →
+  exit code propagated to host
+- Zombie processes reaped (no defunct processes accumulate)
+- Host receives correct exit code via `child.wait()`
+
 ### Phase M3: Host ↔ Guest Communication
 
-**Goal:** V8 isolates can talk to services running in microVMs.
+**Goal:** V8 isolates can talk to services running in microVMs, with full
+lifecycle management including graceful shutdown.
 
 **Two communication channels, serving different purposes:**
 
@@ -293,27 +336,80 @@ connects using standard TCP — no custom protocol needed.
 V8 isolate → TcpStream::connect("127.0.0.1:15432") → TSI → guest postgres:5432
 ```
 
-#### vsock for lifecycle management (secondary)
+#### vsock for lifecycle management (required)
 
-vsock is used for signals that don't map to TCP:
-- Guest-level health introspection (Layer 5 observability)
-- Graceful shutdown signaling
-- Log streaming from guest
-- Custom neovex ↔ guest control protocol (future)
+vsock is **required** for graceful shutdown (not optional). Also used for:
+- Shutdown signaling (SHUTDOWN message → neovex-init)
+- Guest-level health introspection (future)
+- Log streaming from guest (future)
 
 **Scope:**
-- `neovex-vmm/src/service.rs`: TSI port mapping, connection pooling to
-  guest services
-- `neovex-vmm/src/vsock.rs`: vsock connection for lifecycle management
-  (optional — only if Layers 1-4 observability proves insufficient)
-- Port conflict management: auto-assign unique host ports per VM
+- `neovex-vmm/src/service.rs`: TSI port mapping, auto-assign unique host
+  ports per VM, connection pooling
+- `neovex-vmm/src/vsock.rs`: vsock connection for shutdown signaling
+- `neovex-vmm/src/lifecycle.rs`: Probe engine — startup, readiness, liveness
+  checks with configurable thresholds (see Probe Model below)
+- `neovex-vmm/src/shutdown.rs`: Graceful shutdown sequence
+
+**Probe model** (modeled on Kubernetes, see `docs/research/vm-lifecycle-probes.md`):
+
+| Probe | Purpose | Mechanism | On Failure |
+|-------|---------|-----------|------------|
+| **Startup** | Service finished booting | TCP connect or HTTP GET via TSI | Wait (don't kill during startup_grace) |
+| **Readiness** | Service can serve traffic | TCP connect or HTTP GET via TSI | Stop routing V8 calls (don't kill) |
+| **Liveness** | Service is not hung | Timeout on readiness check | Restart VM (per restart_policy) |
+
+```rust
+struct ProbeConfig {
+    check: HealthCheck,           // Tcp { port } or Http { port, path }
+    startup_grace: Duration,      // default: 10s — don't probe before this
+    interval: Duration,           // default: 10s
+    timeout: Duration,            // default: 5s
+    failure_threshold: u32,       // default: 3
+    success_threshold: u32,       // default: 1
+    shutdown_grace: Duration,     // default: 30s
+}
+
+enum HealthCheck {
+    Tcp { port: u16 },
+    Http { port: u16, path: String },
+}
+```
+
+**Graceful shutdown sequence:**
+
+```
+handle.shutdown(grace: 30s)
+  1. Connect to guest vsock port 10000
+  2. Send SHUTDOWN { grace_period: 30s }
+  3. neovex-init: SIGTERM → workload, wait grace, SIGKILL remaining
+  4. VM exits, child.wait() returns exit code
+  5. [Fallback: if no exit within grace + 5s, SIGKILL helper process]
+```
+
+**Restart policy:**
+
+```rust
+enum RestartPolicy {
+    Never,
+    OnFailure { max_restarts: u32, backoff: BackoffConfig },
+    Always { max_restarts: u32, backoff: BackoffConfig },
+}
+struct BackoffConfig {
+    initial: Duration,    // 1s
+    max: Duration,        // 60s
+    multiplier: f64,      // 2.0
+    reset_after: Duration, // 300s — reset backoff after stable
+}
+```
 
 **Acceptance criteria:**
-- Can boot a `postgres:16` image in a microVM
-- Can connect to postgres from the host via TSI-mapped port
-- Can run SQL queries from a test program
-- Multiple VMs with the same guest port get unique host port mappings
+- Can boot `postgres:16` in a microVM, connect via TSI, run queries
+- Graceful shutdown: `handle.shutdown()` → postgres gets SIGTERM → clean exit
 - Health check detects when postgres is ready to accept connections
+- Health check detects when postgres hangs (timeout → liveness failure)
+- Restart policy: VM restarts on crash with exponential backoff
+- Multiple VMs with same guest port get unique host port mappings
 
 ### Phase M4: Engine Integration
 
@@ -361,9 +457,10 @@ vsock is used for signals that don't map to TCP:
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: OCI Image Management | `todo` | none | |
-| M2: VMM Helper Binary | `todo` | libkrun installed | |
-| M3: Host ↔ Guest Comms | `todo` | M2 | |
-| M4: Engine Integration | `todo` | M1, M2, M3 | |
+| M2: VMM Integration | `todo` | krun-embedded (Path A) or libkrun system pkg (Path B) | |
+| M2b: Custom Guest Init | `todo` | M1 (injects into rootfs) | ~200 lines Rust, musl static |
+| M3: Host ↔ Guest Comms | `todo` | M2, M2b | Probes, graceful shutdown, TSI |
+| M4: Engine Integration | `todo` | M1, M2, M2b, M3 | |
 | M5: Developer Experience | `todo` | M4 | |
 
 ---
@@ -394,7 +491,12 @@ vsock is used for signals that don't map to TCP:
 | Project | Relevance | What to study |
 |---------|-----------|---------------|
 | **crun krun handler** (`containers/crun/src/libcrun/handlers/krun.c`) | Canonical libkrun consumer | `.krun_config.json` format, API call order, exit code propagation |
-| **Fly.io init-snapshot** (`superfly/init-snapshot`) | Custom init design | vsock API, snapshot-ready lifecycle (if we add Firecracker later) |
+| **Fly.io init-snapshot** ([`superfly/init-snapshot`](https://github.com/superfly/init-snapshot)) | Custom init design | vsock API, snapshot-ready lifecycle |
+| **tini** ([`krallin/tini`](https://github.com/krallin/tini/blob/master/src/tini.c)) | PID 1 signal forwarding | Signal handling, zombie reaping (~300 lines C) |
+| **dumb-init** ([`Yelp/dumb-init`](https://github.com/Yelp/dumb-init/blob/master/dumb-init.c)) | PID 1 signal forwarding | Session leader, process group signals (~200 lines C) |
+| **Kata agent** ([`kata-containers`](https://github.com/kata-containers/kata-containers/blob/main/src/agent/src/rpc.rs)) | vsock shutdown protocol | ttrpc over vsock, SignalProcess/DestroySandbox RPCs |
+| **K8s kubelet prober** ([`pkg/kubelet/prober/`](https://github.com/kubernetes/kubernetes/tree/master/pkg/kubelet/prober)) | Probe state machine | Three-probe model, threshold transitions |
+| **Docker health** ([`daemon/health.go`](https://github.com/moby/moby/blob/master/daemon/health.go)) | Health check state machine | starting/healthy/unhealthy states |
 | **smolvm** (`smol-machines/smolvm`) | Helper binary pattern | fork/subprocess model for libkrun |
 | **muvm** (`AsahiLinux/muvm`) | Singleton VM pattern | RPC to running VM, vsock port management |
 

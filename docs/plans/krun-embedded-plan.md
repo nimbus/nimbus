@@ -509,10 +509,22 @@ layered observability.
 
 - **Does not patch libkrun.** No `_exit()` modification, no `mem::forget()`,
   no fork of libkrun's behavior. Uses upstream as-is.
-- **Does not implement guest-side health agents.** Layer 5 observability
-  (vsock agent) is deferred to `microvm-runtime-plan.md` Phase M3+.
 - **Does not handle OCI image management.** That belongs in
   `microvm-runtime-plan.md` Phase M1.
+- **Does not implement `neovex-init`.** The custom guest init binary is
+  delivered by `microvm-runtime-plan.md` Phase M2b. This plan's observability
+  layers 1-4 work without a custom init; Layer 5 (vsock agent) and graceful
+  shutdown require it.
+
+## Key Research References
+
+- `docs/research/vm-lifecycle-probes.md` — cross-platform probe comparison
+  (K8s, Docker, Fly.io, systemd, Nomad), graceful shutdown patterns, vsock
+  shutdown protocol design, neovex-init architecture
+- `docs/research/libkrun-evaluation.md` — libkrun API, `_exit()` analysis,
+  crun/muvm/krunkit patterns
+- `docs/research/firecracker-container-runtime.md` — approach comparison,
+  OCI pipeline, Firecracker alternative
 
 ---
 
