@@ -226,7 +226,8 @@ crates/
 
 ### Phase M2: VMM Integration
 
-**Goal:** Boot a microVM from a rootfs directory, managed by neovex.
+**Goal:** Boot a microVM from a rootfs directory, managed by neovex, with
+full lifecycle observability.
 
 **Two implementation paths depending on krun-embedded availability:**
 
@@ -236,11 +237,12 @@ If `docs/plans/krun-embedded-plan.md` Phase K3 is complete:
 
 - `neovex-vmm` depends on `krun` crate from `agentstation/krun-embedded`
 - `neovex-vmm/src/vm.rs`: Uses `MicroVm::builder()` API to configure and
-  start VMs on dedicated threads
-- No helper binary needed — VMM runs in-process on `std::thread`
-- No system dependencies — kernel embedded in binary
+  start VMs via the re-exec self pattern (child process per VM, zero leaks)
+- `neovex` main.rs adds `--internal-vmm` check (~10 lines) for the re-exec
+  entry point
+- No system dependencies — libkrun + kernel embedded in binary
 
-#### Path B: Without krun-embedded (fallback — helper binary)
+#### Path B: Without krun-embedded (fallback — separate helper binary)
 
 If krun-embedded is not yet available:
 
@@ -250,6 +252,21 @@ If krun-embedded is not yet available:
 - `PR_SET_PDEATHSIG(SIGKILL)` for cleanup
 - Requires system-installed libkrun + libkrunfw
 
+**Both paths use the same process model:** a child process per VM, monitored
+by the parent via `waitpid()`. The only difference is whether the child is a
+re-exec of neovex itself (Path A) or a separate helper binary (Path B).
+
+**Observability (both paths):**
+
+| Layer | Signal | Implementation |
+|-------|--------|----------------|
+| Process liveness | Running / exited / crashed | `child.try_wait()` |
+| Boot readiness | VMM configured, guest booting | Child writes `READY` to stdout |
+| Service readiness | TCP service accepting connections | `TcpStream::connect()` via TSI port map |
+| Hang detection | Service stopped responding | Timeout on TCP health check |
+
+See `docs/plans/krun-embedded-plan.md` Observability Model section for details.
+
 **Dependencies:** krun-embedded (Path A) OR libkrun + libkrunfw system
 packages (Path B)
 
@@ -257,29 +274,46 @@ packages (Path B)
 - Can boot Alpine in a microVM from an unpacked OCI rootfs directory
 - `echo "hello from VM"` works via the OCI entrypoint
 - VM exits with the workload's exit code, neovex reads it
-- Parent can monitor VM lifecycle (running, exited, crashed)
+- Parent detects boot readiness (READY signal)
+- Parent detects VM exit, crash, and can force-kill
 
-### Phase M3: Host ↔ Guest Communication (vsock)
+### Phase M3: Host ↔ Guest Communication
 
 **Goal:** V8 isolates can talk to services running in microVMs.
 
-**Scope:**
-- `neovex-vmm/src/vsock.rs`: Connect to guest vsock ports via libkrun's UDS
-  proxy (if applicable) or TSI port mapping
-- Define a protocol for V8 ↔ VM service calls (JSON-RPC over vsock, or
-  HTTP proxy — TBD based on what services expect)
-- `neovex-vmm/src/helper.rs`: Spawn helper with vsock port config, monitor
-  lifecycle
+**Two communication channels, serving different purposes:**
 
-**Key design decision:** Many Docker services (postgres, redis, HTTP APIs)
-speak standard protocols (TCP). With TSI, the guest service binds a port and
-the host can connect via `localhost:<mapped_port>`. This might mean vsock is
-only needed for lifecycle management, not for service traffic.
+#### TSI for service traffic (primary)
+
+Most Docker services speak standard TCP protocols (postgres on 5432, redis on
+6379, HTTP on 80/443). TSI transparently maps guest ports to host ports. V8
+connects using standard TCP — no custom protocol needed.
+
+```
+V8 isolate → TcpStream::connect("127.0.0.1:15432") → TSI → guest postgres:5432
+```
+
+#### vsock for lifecycle management (secondary)
+
+vsock is used for signals that don't map to TCP:
+- Guest-level health introspection (Layer 5 observability)
+- Graceful shutdown signaling
+- Log streaming from guest
+- Custom neovex ↔ guest control protocol (future)
+
+**Scope:**
+- `neovex-vmm/src/service.rs`: TSI port mapping, connection pooling to
+  guest services
+- `neovex-vmm/src/vsock.rs`: vsock connection for lifecycle management
+  (optional — only if Layers 1-4 observability proves insufficient)
+- Port conflict management: auto-assign unique host ports per VM
 
 **Acceptance criteria:**
-- Can boot a postgres:16 image in a microVM
+- Can boot a `postgres:16` image in a microVM
 - Can connect to postgres from the host via TSI-mapped port
-- Can connect via vsock for lifecycle management (health check, shutdown)
+- Can run SQL queries from a test program
+- Multiple VMs with the same guest port get unique host port mappings
+- Health check detects when postgres is ready to accept connections
 
 ### Phase M4: Engine Integration
 
@@ -385,27 +419,28 @@ vsock would still be used for:
 
 ## Open Questions
 
-1. **TSI port mapping vs vsock for service traffic:** Should V8 connect to
-   services via TSI-mapped TCP ports (simpler, standard protocols) or via
-   vsock (more control, no port conflicts)? Likely TSI for standard services,
-   vsock for neovex-specific lifecycle.
+1. **Multi-VM port conflicts:** If two VMs both run postgres on 5432, TSI
+   port mapping needs unique host ports. Auto-assign from a pool? User-
+   specified? Likely auto-assign with a configurable range (e.g., 15000-16000).
 
-2. **Multi-VM port conflicts:** If two VMs both run postgres on 5432, TSI
-   port mapping needs unique host ports. How should this be managed?
-   Auto-assign? User-specified?
-
-3. **Image layer caching strategy:** Share layers across images (content-
+2. **Image layer caching strategy:** Share layers across images (content-
    addressable by digest) or keep separate rootfs directories per image?
    Shared layers save disk; separate directories are simpler.
 
-4. **VM restart policy:** If a service VM crashes, should neovex auto-restart
+3. **VM restart policy:** If a service VM crashes, should neovex auto-restart
    it? With backoff? Configurable per service?
 
-5. **Resource defaults:** What are sensible default vCPU/RAM for service VMs
+4. **Resource defaults:** What are sensible default vCPU/RAM for service VMs
    on constrained hardware (2 cores, 8GB)? Probably 1 vCPU, 256MB RAM.
 
-6. **libkrun installation story:** Should neovex check for libkrun at startup
-   and provide install instructions? Or bundle it?
+### Resolved questions
+
+- **TSI vs vsock for service traffic:** Resolved — TSI for standard TCP
+  services (primary), vsock for lifecycle management only (secondary).
+- **libkrun installation:** Resolved — krun-embedded bundles everything.
+  Fallback to system-installed libkrun if krun-embedded is not used.
+- **`_exit()` and resource leaks:** Resolved — re-exec self pattern gives
+  process isolation with zero leaks. No `mem::forget()` needed.
 
 ---
 

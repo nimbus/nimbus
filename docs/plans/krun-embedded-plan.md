@@ -1,9 +1,9 @@
 # Plan: krun-embedded — Embeddable libkrun for Neovex
 
 Canonical design and execution plan for creating `agentstation/krun-embedded`,
-a patched and packaged libkrun that can be embedded in Neovex as a Cargo
-dependency, eliminating the need for system-installed libkrun/libkrunfw and
-enabling a single-binary deployment.
+a packaged libkrun that neovex can consume as a Cargo dependency, eliminating
+the need for system-installed libkrun/libkrunfw and enabling a single-binary
+deployment.
 
 ---
 
@@ -43,8 +43,7 @@ libkrun is the best VMM for neovex's use case (long-running Docker-image-based
 service VMs), but it has two deployment problems:
 
 1. **`_exit()` on VM shutdown** — `krun_start_enter()` calls `libc::_exit()`
-   when the VM exits, killing the entire process. This prevents in-process
-   embedding and forces a helper binary / child process pattern.
+   when the VM exits, killing the entire process.
 
 2. **System dependencies** — requires `libkrun.so` and `libkrunfw.so`
    installed on the system. libkrunfw bundles a custom Linux kernel with TSI
@@ -52,154 +51,190 @@ service VMs), but it has two deployment problems:
    installation.
 
 **Goal:** Create a Cargo-consumable crate that:
-- Patches out `_exit()` so `krun_start_enter()` returns cleanly
 - Embeds the guest kernel (from libkrunfw) as `include_bytes!`
+- Statically links libkrun (no system `.so` needed)
 - Exposes a safe, idiomatic Rust API
+- Uses the re-exec self pattern to handle `_exit()` with zero resource leaks
 - Allows neovex to be deployed as a single binary + `/dev/kvm`
 
 ---
 
-## The Patch
+## Architecture: Re-exec Self Pattern
 
-The `_exit()` fix requires changes in two locations. The patch is intentionally
-minimal to reduce rebase burden against upstream.
+### Why not patch `_exit()`?
 
-### Patch 1: `src/vmm/src/lib.rs` — Replace `_exit()` with event loop break
+An earlier version of this plan proposed patching `_exit()` out of libkrun and
+using `std::mem::forget()` to avoid broken Drop impls. **This was rejected
+because it leaks ~10-20MB of memory and file descriptors per VM lifecycle.**
+For a server that creates/destroys VMs over time, this leads to resource
+exhaustion.
 
-```rust
-// BEFORE (upstream):
-pub fn stop(&mut self, exit_code: i32) {
-    info!("Vmm is stopping.");
-    for observer in &self.exit_observers {
-        observer
-            .lock()
-            .expect("Poisoned mutex for exit observer")
-            .on_vmm_exit();
-    }
-    unsafe {
-        libc::_exit(exit_code);
-    }
-}
+### The re-exec self pattern
 
-// AFTER (patched):
-pub fn stop(&mut self, exit_code: i32) {
-    info!("Vmm is stopping.");
-    for observer in &self.exit_observers {
-        observer
-            .lock()
-            .expect("Poisoned mutex for exit observer")
-            .on_vmm_exit();
-    }
-    // Store exit code for the event loop to read, instead of killing
-    // the process. The event loop in krun_start_enter() checks this
-    // and breaks out.
-    self.exit_code.store(exit_code, Ordering::SeqCst);
-}
+Instead of trying to make `krun_start_enter()` return cleanly, we accept that
+it kills the process — and make that process a **child** of neovex. The child
+is a re-execution of the same binary in VMM mode:
+
+```
+neovex binary (single binary, contains everything)
+  │
+  ├── Server mode (default):  neovex serve
+  │     tokio + V8 + engine + VM manager
+  │     spawns child processes for each VM
+  │
+  └── VMM mode (internal):    neovex --internal-vmm
+        reads config from stdin
+        calls krun_start_enter()
+        _exit() kills only this child process
+        OS reclaims ALL resources — zero leaks
 ```
 
-### Patch 2: `src/libkrun/src/lib.rs` — Break the event loop and return
-
 ```rust
-// BEFORE (upstream):
-loop {
-    match event_manager.run() {
-        Ok(_) => {}
-        Err(e) => {
-            error!("Error in EventManager loop: {e:?}");
-            return -libc::EINVAL;
-        }
-    }
-}
+// When neovex needs to start a VM:
+let mut child = Command::new(std::env::current_exe()?)
+    .arg("--internal-vmm")
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()?;
 
-// AFTER (patched):
-loop {
-    match event_manager.run() {
-        Ok(_) => {
-            // Check if stop() was called (exit_code changed from sentinel)
-            let code = vmm_exit_code.load(Ordering::SeqCst);
-            if code != i32::MAX {
-                // Intentionally leak the VMM and all devices to avoid
-                // running untested Drop impls. The maintainers confirmed
-                // (issue #373) that clean shutdown paths are "untested or
-                // not implemented at all." Leaking is safe: bounded memory
-                // (~10-20MB per VM), reclaimed by OS at process exit.
-                std::mem::forget(_vmm);
-                return code;
-            }
-        }
-        Err(e) => {
-            error!("Error in EventManager loop: {e:?}");
-            return -libc::EINVAL;
-        }
-    }
-}
+// Send VM config
+child.stdin.take().unwrap().write_all(&config_json).await?;
+
+// Monitor the child — full observability (see Observability section)
 ```
 
-**Why `std::mem::forget()` instead of Drop:**
-
-The upstream maintainers explicitly stated (issue #373, mtjhrc): "We probably
-don't have proper Drop implementations in places, don't handle a lot of
-objects lifetimes (e.g. using RawFd) and we don't have mechanisms for stopping
-worker threads cleanly."
-
-`mem::forget()` is the correct tool here: it prevents the VMM, device objects,
-and vCPU handles from running their (broken) destructors. The leaked memory is:
-- **Bounded:** ~10-20MB per VM lifecycle (VMM struct + device state)
-- **Reclaimable:** OS reclaims everything at process exit
-- **Acceptable for the use case:** VMs run for minutes/hours; a few MB of
-  leaked state per VM lifecycle is negligible
-
-If upstream fixes Drop impls in v2, this can be changed to proper cleanup.
-
-### Signal handler considerations
-
-The signal handler in `src/vmm/src/signal_handler.rs` also calls `_exit()` for
-SIGBUS, SIGSEGV, SIGSYS. These are crash handlers and should remain as-is —
-a segfault in the VMM should still terminate the process. Only the normal
-shutdown path (guest exits cleanly) is patched.
+**Why this is correct:**
+- **Zero leaks:** `_exit()` kills the child process, OS reclaims all memory,
+  FDs, KVM state, threads. Nothing accumulates.
+- **No patch needed:** Uses upstream libkrun as-is. No fork maintenance.
+- **Single binary:** The VMM code (libkrun + kernel) is statically linked
+  into the neovex binary. `current_exe()` re-executes the same file.
+- **Process isolation:** A VMM bug or guest escape only compromises the child,
+  not the neovex server. This is the same security model as Firecracker.
 
 ---
 
-## Kernel Embedding
+## Observability Model
 
-libkrunfw compiles a Linux kernel and packages it as a C shared library via
-`bin2cbundle.py`. The kernel binary (~15-20MB), qboot BIOS (~64KB), and
-initrd (~1MB) are embedded as byte arrays.
+The re-exec pattern provides rich observability through layered signals, from
+cheapest (always available) to deepest (requires guest cooperation).
 
-### Strategy: Download pre-built, embed via `include_bytes!`
-
-```rust
-// krun-kernel/src/lib.rs
-/// Pre-built vmlinux from libkrunfw releases (with TSI patches)
-pub static KERNEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vmlinux"));
-
-/// QBOOT BIOS for x86_64 boot
-pub static QBOOT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/qboot.rom"));
-
-/// Minimal initrd with libkrun's init
-pub static INITRD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/initrd"));
-```
+### Layer 1: Process Liveness (free)
 
 ```rust
-// krun-kernel/build.rs
-fn main() {
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    let version = "5.3.0"; // match libkrunfw version
-
-    // Download pre-built kernel from libkrunfw GitHub releases
-    // These are the .so files — we extract the embedded kernel bytes
-    // OR: download the raw kernel/qboot/initrd artifacts if published
-    download_kernel_artifacts(&out_dir, version);
+// Always available — OS-level signal
+match child.try_wait()? {
+    None => { /* VM process alive = VMM event loop running */ }
+    Some(status) => {
+        if status.success() {
+            // Workload exited cleanly (exit code 0)
+        } else if let Some(code) = status.code() {
+            // Workload exited with error code
+        } else {
+            // Killed by signal (crash, OOM, SIGKILL)
+            let signal = status.signal().unwrap();
+        }
+    }
 }
 ```
 
-**Alternative:** Build libkrunfw from source in `build.rs`. This requires a
-full kernel build toolchain and takes ~10 minutes. Only viable for CI, not
-developer builds. Pre-built artifacts are strongly preferred.
+| Signal | Meaning |
+|--------|---------|
+| `try_wait()` returns `None` | VM is running |
+| Exit code 0 | Workload exited successfully |
+| Exit code N | Workload exited with error |
+| Signal SIGSEGV/SIGABRT | VMM crashed |
+| Signal SIGKILL | OOM killer or force kill |
 
-**Binary size impact:** +15-20MB for the kernel. Neovex already embeds V8
-(~30-50MB), so the total binary would be ~80-100MB. This is acceptable for
-a single-binary server deployment.
+### Layer 2: Boot Readiness (one line in child)
+
+The child writes to stdout after configuring libkrun but before entering the
+event loop:
+
+```rust
+// In VMM mode (child process):
+fn vmm_main(config: VmConfig) {
+    let ctx = krun_create_ctx();
+    // ... configure VM ...
+    
+    // Signal parent that VMM is configured and about to start
+    println!("READY");
+    
+    krun_start_enter(ctx);
+}
+```
+
+Parent reads this:
+```rust
+let mut line = String::new();
+let stdout = child.stdout.as_mut().unwrap();
+stdout.read_line(&mut line).await?;
+assert_eq!(line.trim(), "READY");
+// VM is now booting
+```
+
+### Layer 3: Service Readiness via TSI (no guest-side code)
+
+TSI maps guest ports to the host. The parent TCP-connects to check if the
+service inside the VM is accepting connections:
+
+```rust
+// Poll until service is ready
+let start = Instant::now();
+loop {
+    match TcpStream::connect(("127.0.0.1", tsi_mapped_port)).await {
+        Ok(_) => break, // Service is accepting connections
+        Err(_) if start.elapsed() < timeout => {
+            sleep(Duration::from_millis(250)).await;
+        }
+        Err(e) => return Err(anyhow!("Service failed to start: {e}")),
+    }
+}
+```
+
+This works for any TCP service (postgres, redis, HTTP APIs) without any
+guest-side health check code.
+
+### Layer 4: Hang Detection (timeout on health check)
+
+If the service stops responding to TCP connects (Layer 3) for a configurable
+duration, the VM is considered hung:
+
+```rust
+let health_check = TcpStream::connect(addr);
+match timeout(Duration::from_secs(5), health_check).await {
+    Ok(Ok(_)) => VmHealth::Healthy,
+    Ok(Err(_)) => VmHealth::ServiceDown,
+    Err(_) => VmHealth::Hung, // timeout — VM may be deadlocked
+}
+```
+
+Remediation options: log warning, restart VM, notify user.
+
+### Layer 5: Guest-Level Health via vsock (deepest, optional)
+
+For advanced introspection beyond "is the port open," a lightweight vsock
+agent inside the VM can report:
+
+- Process status (is PID 1 healthy? is the workload running?)
+- Resource usage (CPU, memory, disk from `/proc`)
+- Application-level health (custom health check endpoint)
+- Graceful shutdown (clean stop instead of SIGKILL)
+
+This requires adding a small sidecar to the guest rootfs. **Not needed for
+the initial implementation** — Layers 1-4 provide sufficient observability
+for most service VMs. Add when neovex needs `ctx.services.db.status()`.
+
+### Summary
+
+| Layer | What it tells you | Cost | When to add |
+|-------|-------------------|------|-------------|
+| 1. Process liveness | Running / exited / crashed | Free | Always |
+| 2. Boot readiness | VMM configured, guest booting | 1 line | Phase K3 |
+| 3. Service readiness | TCP service accepting connections | TSI (free) | Phase K3 |
+| 4. Hang detection | Service stopped responding | Timeout wrapper | Phase K3 |
+| 5. Guest health | Deep introspection (CPU, memory, app health) | vsock agent | Future (M3+) |
 
 ---
 
@@ -212,12 +247,9 @@ agentstation/krun-embedded/
   LICENSE                     # Apache 2.0 (same as libkrun)
 
   crates/
-    krun-core/                # patched libkrun (git submodule + patches)
+    krun-core/                # libkrun as a Rust crate (upstream, no patches)
       libkrun/                # git submodule → containers/libkrun
-      patches/
-        0001-replace-exit-with-return.patch
-      Cargo.toml              # re-exports libkrun's src/libkrun with patches
-      build.rs                # applies patches to submodule at build time
+      Cargo.toml              # re-exports libkrun's crate with features
 
     krun-kernel/              # kernel bytes embedded
       build.rs                # downloads pre-built kernel from libkrunfw releases
@@ -228,13 +260,15 @@ agentstation/krun-embedded/
       src/
         lib.rs                # MicroVm, VmConfig, VmHandle
         builder.rs            # MicroVm::builder() fluent API
-        handle.rs             # VmHandle: wait(), shutdown(), vsock_connect()
+        handle.rs             # VmHandle: wait(), shutdown(), health()
+        vmm_mode.rs           # --internal-vmm entry point
+        observability.rs      # Health check layers
 ```
 
 ### The safe API (`krun` crate)
 
 ```rust
-use krun::{MicroVm, VsockPort};
+use krun::{MicroVm, VmHandle, VmHealth, VsockPort};
 
 // Configure a VM
 let vm = MicroVm::builder()
@@ -243,149 +277,207 @@ let vm = MicroVm::builder()
     .root("/path/to/unpacked/oci/rootfs")
     .workdir("/app")
     .env("DATABASE_URL", "postgres://localhost:5432/mydb")
-    .env("NODE_ENV", "production")
-    .vsock_port(VsockPort::stream(10000))  // for neovex ↔ guest comms
+    .vsock_port(VsockPort::stream(10000))
+    .tsi_port_map(5432, 15432)  // guest 5432 → host 15432
     .build()?;
 
-// Start the VM on a dedicated OS thread
-let handle = vm.start()?;
+// Start the VM (re-execs current binary in VMM mode)
+let handle = vm.start().await?;
+// handle.start() internally does:
+//   1. Command::new(current_exe()).arg("--internal-vmm").spawn()
+//   2. Sends config via stdin
+//   3. Waits for "READY" on stdout
+//   4. Returns VmHandle
 
-// Connect to a vsock port on the guest
-let stream = handle.vsock_connect(10000).await?;
+// Check service readiness
+handle.wait_for_service(15432, Duration::from_secs(30)).await?;
 
-// Wait for the VM to exit (blocks)
+// Health check
+match handle.health(15432).await {
+    VmHealth::Healthy => { /* service responding */ }
+    VmHealth::ServiceDown => { /* port not accepting connections */ }
+    VmHealth::Hung => { /* timeout on health check */ }
+    VmHealth::Exited(code) => { /* VM process exited */ }
+}
+
+// Graceful stop
+handle.kill().await?;  // SIGTERM → wait → SIGKILL
+
+// Or wait for natural exit
 let exit_code = handle.wait().await?;
-
-// OR: trigger graceful shutdown
-handle.shutdown()?;
 ```
 
-**Thread model:**
+### VMM mode entry point
 
+```rust
+// krun/src/vmm_mode.rs
+// This runs in the re-exec'd child process
+
+pub fn vmm_main() -> ! {
+    // Prevent orphan processes if parent dies
+    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL); }
+
+    // Read config from stdin
+    let config: VmConfig = serde_json::from_reader(std::io::stdin()).unwrap();
+
+    let ctx = unsafe { krun_create_ctx() };
+    unsafe {
+        krun_set_vm_config(ctx, config.vcpus, config.ram_mib);
+        krun_set_root(ctx, &config.root);
+        krun_set_workdir(ctx, &config.workdir);
+
+        for (k, v) in &config.env {
+            krun_set_env(ctx, &format!("{k}={v}"));
+        }
+
+        for port in &config.vsock_ports {
+            krun_add_vsock_port(ctx, port.guest_port, port.socket_type);
+        }
+
+        for (guest, host) in &config.tsi_port_map {
+            krun_set_port_map(ctx, *guest, *host);
+        }
+    }
+
+    // Signal parent: VMM configured, about to boot
+    println!("READY");
+
+    // Enter the VM — this never returns. _exit() is called on VM shutdown.
+    // OS reclaims all resources. Zero leaks.
+    unsafe { krun_start_enter(ctx) };
+
+    unreachable!()
+}
 ```
-neovex tokio runtime
-  │
-  ├── VmHandle::start() spawns std::thread (NOT tokio)
-  │     └── krun_start_enter() blocks on this thread
-  │           └── VMM event loop runs here
-  │           └── vCPU threads spawned by KVM
-  │
-  ├── VmHandle::wait() uses tokio::sync::oneshot
-  │     └── Notified when the event loop breaks and returns
-  │
-  ├── VmHandle::vsock_connect() uses tokio::net::UnixStream
-  │     └── Connects to libkrun's vsock UDS proxy
+
+### How neovex integrates
+
+```rust
+// In neovex's main.rs:
+fn main() {
+    // Check for internal VMM mode before doing anything else
+    if std::env::args().any(|a| a == "--internal-vmm") {
+        krun::vmm_mode::vmm_main();
+        // unreachable — vmm_main calls _exit()
+    }
+
+    // Normal neovex server startup
+    // ...
+}
 ```
 
-`krun_start_enter()` must run on a dedicated `std::thread` because:
-- It blocks indefinitely (event loop)
-- KVM_RUN ioctl blocks the thread
-- It must NOT run on a tokio worker thread
-
-The `VmHandle` bridges this to tokio's async world via channels and `AsyncFd`.
+This adds ~10 lines to neovex's main.rs. The entire VMM mode is handled
+by the `krun` crate.
 
 ---
 
-## Upstream Strategy
+## Kernel Embedding
 
-### Contribute the patch
+libkrunfw compiles a Linux kernel (with TSI patches) and packages it as a
+shared library. The kernel binary (~15-20MB), qboot BIOS (~64KB), and initrd
+(~1MB) are embedded as byte arrays.
 
-The `_exit()` → `mem::forget()` + return patch should be submitted upstream
-to `containers/libkrun` as a PR. Arguments:
+### Strategy: Download pre-built artifacts in build.rs
 
-1. **Minimal diff** — two functions changed, ~10 lines
-2. **No behavior change for existing consumers** — crun, muvm, krunkit all
-   call `krun_start_enter()` in a sacrificial process where the return value
-   is ignored (process was going to exit anyway)
-3. **Enables library embedding** — the stated goal of PR #494 (Rust API)
-4. **`mem::forget()` is honest** — it acknowledges the broken Drop paths
-   instead of pretending cleanup works
-5. **Aligns with v2 direction** — maintainers already want this; this gives
-   them an incremental step
+```rust
+// krun-kernel/build.rs
+fn main() {
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let version = "5.3.0";
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
-**If accepted upstream:** `krun-embedded` becomes a thin wrapper that embeds
-the kernel and provides the safe API. No patch maintenance needed.
+    // Download from libkrunfw GitHub releases
+    let base_url = format!(
+        "https://github.com/containers/libkrunfw/releases/download/v{version}"
+    );
 
-**If rejected:** Maintain the patch as a rebase-able series. The patch is
-small enough (~10 lines) that rebasing on new libkrun releases is trivial.
+    download(&format!("{base_url}/vmlinux-{arch}"), &format!("{out_dir}/vmlinux"));
+    download(&format!("{base_url}/qboot-{arch}.rom"), &format!("{out_dir}/qboot.rom"));
+    download(&format!("{base_url}/initrd-{arch}"), &format!("{out_dir}/initrd"));
+}
+```
 
-### Track upstream version
+**Binary size impact:** +15-20MB for the kernel. Neovex already embeds V8
+(~30-50MB), so the total binary would be ~80-100MB. Acceptable for a
+single-binary server deployment.
 
-Pin to specific libkrun tags (e.g., v1.17.4). When upstream releases a new
-version:
-1. Update the git submodule
-2. Rebase the patch (if still needed)
-3. Test
-4. Tag a new krun-embedded release
+**Alternative:** Download kernel on first run instead of embedding. Keeps the
+binary smaller (~60-70MB) but requires network access on first start.
+Configurable via cargo feature flag.
 
 ---
 
 ## Phase Plan
 
-### Phase K1: Repository Setup and Patch
+### Phase K1: Repository Setup
 
-**Goal:** Create the `agentstation/krun-embedded` repo with the patched
-libkrun that returns from `krun_start_enter()` instead of calling `_exit()`.
+**Goal:** Create the `agentstation/krun-embedded` repo with libkrun as a
+buildable Cargo dependency.
 
 **Scope:**
 - Create repo with workspace structure
 - Add `containers/libkrun` as git submodule pinned to v1.17.4
-- Create and apply the two-location patch
-- Verify: `krun_start_enter()` returns exit code when VM shuts down
-- Verify: calling process survives after VM exits
+- `krun-core` crate that re-exports libkrun's `src/libkrun` crate
+- Verify: can build and link libkrun statically from the workspace
 
 **Acceptance criteria:**
-- A test program calls `krun_start_enter()`, the VM runs `echo hello && exit 0`,
-  and the test program continues executing after the VM exits
-- The test program can read the exit code (0)
-- No segfaults, no deadlocks on the happy path
+- `cargo build` succeeds in the workspace
+- A test binary can call `krun_create_ctx()` and `krun_free_ctx()`
 
 ### Phase K2: Kernel Embedding
 
 **Goal:** Embed the guest kernel so no system-installed libkrunfw is needed.
 
 **Scope:**
-- `krun-kernel` crate with `build.rs` that downloads pre-built kernel from
-  libkrunfw GitHub releases
+- `krun-kernel` crate with `build.rs` that downloads pre-built kernel
+  artifacts from libkrunfw GitHub releases
 - `include_bytes!` for kernel, qboot, initrd
 - Modify `krun-core` to use embedded kernel instead of `dlopen("libkrunfw.so")`
-- Verify: VM boots without any system-installed libkrunfw
 
 **Acceptance criteria:**
 - Boot Alpine rootfs using only the embedded kernel
 - No libkrunfw.so on the system
-- Binary size is documented
+- Binary size documented
 
-### Phase K3: Safe Rust API
+### Phase K3: Safe Rust API + Observability
 
-**Goal:** Expose a clean, safe Rust API that neovex can depend on.
+**Goal:** Expose a clean, safe Rust API with the re-exec self pattern and
+layered observability.
 
 **Scope:**
 - `krun` crate with `MicroVm::builder()` fluent API
-- `VmHandle` with `start()`, `wait()`, `shutdown()`, `vsock_connect()`
-- Thread management (dedicated `std::thread` for the event loop)
-- Tokio bridge (`VmHandle` is `Send + Sync`, works from async context)
-- Error types (KVM not available, kernel load failed, etc.)
+- `VmHandle` with `start()`, `wait()`, `kill()`, `health()`,
+  `wait_for_service()`
+- Re-exec self pattern: `vmm_mode::vmm_main()` entry point
+- Observability layers 1-4:
+  - Process liveness via `try_wait()`
+  - Boot readiness via stdout `READY` signal
+  - Service readiness via TCP connect (TSI)
+  - Hang detection via timeout on health check
+- `VmHealth` enum: `Healthy`, `ServiceDown`, `Hung`, `Exited(i32)`
+- `PR_SET_PDEATHSIG(SIGKILL)` in child for cleanup
 
 **Acceptance criteria:**
-- Can boot a VM, connect via vsock, exchange messages, shut down cleanly
-- Works from within a tokio runtime
-- API is `Send + Sync` — VmHandle can be stored in an Arc and shared
+- Can boot a VM, wait for service readiness, health check, shut down cleanly
+- VmHandle is `Send + Sync` — works from async context
+- No resource leaks after VM shutdown (verified with `/proc/self/fd` count)
 - `cargo doc` produces clean documentation
+- Integration test: boot Alpine, run `nc -l -p 8080`, connect from host via
+  TSI, shut down, verify process cleaned up
 
-### Phase K4: Upstream PR
+### Phase K4: Upstream Engagement
 
-**Goal:** Submit the `_exit()` patch to `containers/libkrun`.
+**Goal:** Engage with libkrun maintainers on the embedding use case.
 
 **Scope:**
-- Clean up the patch for upstream contribution
-- Write PR description explaining the rationale
-- Respond to review feedback
-- If accepted: remove patch from krun-embedded, depend on upstream directly
+- Open an issue on `containers/libkrun` describing the krun-embedded approach
+- Ask about official support for static linking + kernel embedding
+- Propose the re-exec pattern as a documented use case
+- If maintainers are receptive, explore contributing the safe API upstream
 
 **Acceptance criteria:**
-- PR submitted with tests
-- Maintainer feedback addressed
+- Issue opened, feedback received
+- Any upstream changes that simplify krun-embedded are tracked
 
 ---
 
@@ -393,10 +485,10 @@ libkrun that returns from `krun_start_enter()` instead of calling `_exit()`.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| K1: Repo + Patch | `todo` | libkrun source, KVM access | |
-| K2: Kernel Embedding | `todo` | K1 | libkrunfw release artifacts |
-| K3: Safe Rust API | `todo` | K1 | |
-| K4: Upstream PR | `todo` | K1 tested and stable | |
+| K1: Repo Setup | `todo` | libkrun source, KVM access | |
+| K2: Kernel Embedding | `todo` | K1, libkrunfw release artifacts | |
+| K3: Safe API + Observability | `todo` | K1 | Can parallelize with K2 |
+| K4: Upstream Engagement | `todo` | K1 tested and stable | |
 
 ---
 
@@ -404,24 +496,23 @@ libkrun that returns from `krun_start_enter()` instead of calling `_exit()`.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| `mem::forget()` causes resource leaks | Certain | Low — bounded, ~10-20MB per VM | Acceptable for long-running VMs; OS reclaims at process exit |
-| Patch doesn't apply to future libkrun versions | Low | Medium | Patch is ~10 lines; rebase is trivial |
-| Upstream rejects the patch | Medium | Low | Maintain as fork; patch is tiny |
-| Embedded kernel becomes stale | Medium | Low | Track libkrunfw releases; update periodically |
-| vCPU worker threads don't stop after `mem::forget()` | Medium | Medium | Test thoroughly; may need to signal vCPU threads to exit before breaking event loop |
-| `mem::forget()` leaks file descriptors (KVM, eventfd) | Likely | Low | FDs are reclaimed at process exit; for in-process use, may accumulate — test with repeated VM creation |
+| libkrunfw doesn't publish raw kernel artifacts in releases | Medium | Medium | Build from source in CI, cache the artifacts |
+| libkrun internal crate APIs change between versions | Medium | Low | Pin to submodule tag, update deliberately |
+| Static linking issues (symbol conflicts, missing deps) | Medium | Medium | Test early in K1; may need build.rs tweaks |
+| Re-exec pattern doesn't work on all platforms | Low | Medium | Linux-only initially; `current_exe()` is reliable on Linux |
+| TSI port mapping has conflicts with multiple VMs | Medium | Low | Assign unique host ports per VM; document in API |
+| Binary size too large with embedded kernel | Low | Low | Optional feature flag for download-on-first-use |
 
-### FD leak concern for in-process embedding
+---
 
-If neovex creates and destroys many VMs in-process (without process exit),
-`mem::forget()` will leak KVM fds, eventfds, and other kernel resources.
-Linux has a default per-process fd limit of 1024 (soft) / 1048576 (hard).
+## What This Plan Does NOT Do
 
-**Mitigations:**
-- Phase K3 should track fd count before/after VM lifecycle and log warnings
-- For high-volume VM creation, the helper binary pattern (process per VM) is
-  still available as a fallback — the OS reclaims all fds at process exit
-- Long term: contribute proper Drop impls upstream (post K4)
+- **Does not patch libkrun.** No `_exit()` modification, no `mem::forget()`,
+  no fork of libkrun's behavior. Uses upstream as-is.
+- **Does not implement guest-side health agents.** Layer 5 observability
+  (vsock agent) is deferred to `microvm-runtime-plan.md` Phase M3+.
+- **Does not handle OCI image management.** That belongs in
+  `microvm-runtime-plan.md` Phase M1.
 
 ---
 
