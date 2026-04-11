@@ -157,7 +157,7 @@ impl BenchmarkConfig {
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p neovex-engine --release --example mysql_provider_benchmarks -- [--markdown <path>] [--workload <slug>] [--mysql-url <connection-string>] [--rtt-ms <delay>]"
+        "Usage: cargo bench -p neovex-engine --bench mysql-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--mysql-url <connection-string>] [--rtt-ms <delay>]"
     );
 }
 

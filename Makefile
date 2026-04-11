@@ -49,19 +49,19 @@ lint: fmt-check clippy
 
 # Benchmark retained embedded providers on the storage migration workloads
 bench-embedded-providers:
-	cargo run -p neovex-engine --release --example embedded_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),)
+	cargo bench -p neovex-engine --bench embedded-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),)
 
 # Benchmark the Postgres provider against embedded SQLite plus injected RTT sensitivity
 bench-postgres-provider:
-	cargo run -p neovex-engine --release --example postgres_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
+	cargo bench -p neovex-engine --bench postgres-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
 
 # Benchmark the MySQL provider against embedded SQLite plus injected RTT sensitivity
 bench-mysql-provider:
-	cargo run -p neovex-engine --release --example mysql_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
+	cargo bench -p neovex-engine --bench mysql-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
 
 # Benchmark the replica-connected SQLite provider against embedded SQLite plus replica-specific catch-up drills
 bench-sqlite-replica-provider:
-	cargo run -p neovex-engine --release --example sqlite_replica_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
+	cargo bench -p neovex-engine --bench sqlite-replica-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
 
 # Dependency audit (licenses + vulnerabilities)
 deny:

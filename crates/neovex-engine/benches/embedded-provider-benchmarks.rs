@@ -97,7 +97,7 @@ impl BenchmarkConfig {
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p neovex-engine --release --example embedded_provider_benchmarks -- [--markdown <path>] [--workload <slug>]"
+        "Usage: cargo bench -p neovex-engine --bench embedded-provider-benchmarks -- [--markdown <path>] [--workload <slug>]"
     );
 }
 
