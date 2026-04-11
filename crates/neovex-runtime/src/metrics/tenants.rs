@@ -19,7 +19,7 @@ pub struct RuntimeDurationDistributionSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct RuntimeTenantMetricsSnapshot {
-    pub active_isolates: usize,
+    pub active_runtime_instances: usize,
     pub started_invocations: u64,
     pub completed_invocations: u64,
     pub rejected_invocations: u64,
@@ -46,7 +46,7 @@ struct RuntimeDurationDistribution {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct RuntimeTenantMetrics {
-    active_isolates: usize,
+    active_runtime_instances: usize,
     started_invocations: u64,
     completed_invocations: u64,
     rejected_invocations: u64,
@@ -66,15 +66,15 @@ pub(super) struct RuntimeTenantRegistry {
 }
 
 impl RuntimeTenantRegistry {
-    pub(super) fn increment_active_isolates(&self, tenant_label: Option<&str>) {
+    pub(super) fn increment_active_runtime_instances(&self, tenant_label: Option<&str>) {
         self.update(tenant_label, |metrics| {
-            metrics.active_isolates += 1;
+            metrics.active_runtime_instances += 1;
         });
     }
 
-    pub(super) fn decrement_active_isolates(&self, tenant_label: Option<&str>) {
+    pub(super) fn decrement_active_runtime_instances(&self, tenant_label: Option<&str>) {
         self.update(tenant_label, |metrics| {
-            metrics.active_isolates = metrics.active_isolates.saturating_sub(1);
+            metrics.active_runtime_instances = metrics.active_runtime_instances.saturating_sub(1);
         });
     }
 
@@ -143,7 +143,7 @@ impl RuntimeTenantRegistry {
                 (
                     tenant.clone(),
                     RuntimeTenantMetricsSnapshot {
-                        active_isolates: metrics.active_isolates,
+                        active_runtime_instances: metrics.active_runtime_instances,
                         started_invocations: metrics.started_invocations,
                         completed_invocations: metrics.completed_invocations,
                         rejected_invocations: metrics.rejected_invocations,

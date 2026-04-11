@@ -3,6 +3,7 @@ use std::rc::Rc;
 use deno_core::{JsRuntime, PollEventLoopOptions};
 
 use super::*;
+use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 
 #[tokio::test]
 async fn pooled_runtime_invocations_keep_module_state_fresh() {
@@ -23,7 +24,7 @@ export {};
     .expect("bundle should write");
 
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -48,8 +49,8 @@ export {};
     assert_eq!(first, serde_json::json!({ "moduleLoadCount": 1 }));
     assert_eq!(second, serde_json::json!({ "moduleLoadCount": 1 }));
     let metrics = executor.policy().metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
 }
 
 #[tokio::test]
@@ -75,7 +76,7 @@ export {};
     .expect("bundle should write");
 
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -128,9 +129,9 @@ export {};
         })
     );
     let metrics = executor.policy().metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
-    assert_eq!(metrics.isolate_pool_replacements, 0);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_replacements, 0);
 }
 
 #[tokio::test]
@@ -166,8 +167,8 @@ export {};
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
     );
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
-    let mut runtime = isolate_pool
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let mut runtime = v8_runtime_pool
         .take_runtime(&runtime_owner, &bundle)
         .expect("runtime should build from snapshot")
         .runtime;
@@ -197,7 +198,7 @@ export {};
 
     let mut driver = runtime_owner
         .prepare_runtime_invocation_driver(
-            ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot),
+            ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot),
             watchdog.clone(),
             None,
             permit.clone(),
@@ -233,7 +234,7 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
-            "operation": "convex.ctx.db.get",
+            "operation": "ctx_db_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -255,8 +256,8 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
     );
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
-    let mut runtime = isolate_pool
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let mut runtime = v8_runtime_pool
         .take_runtime(&runtime_owner, &bundle)
         .expect("runtime should build from snapshot")
         .runtime;
@@ -290,7 +291,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     assert_eq!(
         first,
         serde_json::json!({
-            "operation": "convex.ctx.db.get",
+            "operation": "ctx_db_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -301,7 +302,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     assert_eq!(
         second_without_reset,
         serde_json::json!({
-            "operation": "convex.ctx.db.get",
+            "operation": "ctx_db_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -312,7 +313,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     assert_eq!(
         third_after_reset,
         serde_json::json!({
-            "operation": "convex.ctx.db.get",
+            "operation": "ctx_db_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",

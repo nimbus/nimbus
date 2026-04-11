@@ -10,7 +10,8 @@ use crate::metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeBackendKind {
-    DenoCore,
+    #[serde(rename = "v8")]
+    V8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -75,7 +76,7 @@ pub struct RuntimeLimits {
     pub max_heap_mb: usize,
     pub initial_heap_mb: usize,
     pub execution_timeout: Duration,
-    pub max_concurrent_isolates: usize,
+    pub max_concurrent_runtime_instances: usize,
     pub worker_threads: usize,
     pub max_active_top_level_invocations_per_tenant: usize,
     pub max_in_flight_top_level_invocations_per_tenant: usize,
@@ -121,14 +122,17 @@ impl RuntimeLimits {
             );
         }
 
-        let max_concurrent_isolates = self.max_concurrent_isolates.max(1);
-        let worker_threads = self.worker_threads.max(max_concurrent_isolates).max(1);
+        let max_concurrent_runtime_instances = self.max_concurrent_runtime_instances.max(1);
+        let worker_threads = self
+            .worker_threads
+            .max(max_concurrent_runtime_instances)
+            .max(1);
         let max_heap_mb = self.max_heap_mb.max(1);
         let initial_heap_mb = self.initial_heap_mb.max(1).min(max_heap_mb);
         let max_active_top_level_invocations_per_tenant = self
             .max_active_top_level_invocations_per_tenant
             .max(1)
-            .min(max_concurrent_isolates);
+            .min(max_concurrent_runtime_instances);
         let max_in_flight_top_level_invocations_per_tenant = self
             .max_in_flight_top_level_invocations_per_tenant
             .max(max_active_top_level_invocations_per_tenant)
@@ -144,7 +148,7 @@ impl RuntimeLimits {
             max_heap_mb,
             initial_heap_mb,
             execution_timeout: self.execution_timeout,
-            max_concurrent_isolates,
+            max_concurrent_runtime_instances,
             worker_threads,
             max_active_top_level_invocations_per_tenant,
             max_in_flight_top_level_invocations_per_tenant,
@@ -157,12 +161,12 @@ impl RuntimeLimits {
 
 impl Default for RuntimeLimits {
     fn default() -> Self {
-        let max_concurrent_isolates = std::thread::available_parallelism()
+        let max_concurrent_runtime_instances = std::thread::available_parallelism()
             .unwrap_or(NonZeroUsize::MIN)
             .get();
-        let worker_threads = max_concurrent_isolates.saturating_mul(2).max(1);
+        let worker_threads = max_concurrent_runtime_instances.saturating_mul(2).max(1);
         let max_active_top_level_invocations_per_tenant =
-            max_concurrent_isolates.saturating_sub(1).max(1);
+            max_concurrent_runtime_instances.saturating_sub(1).max(1);
         let max_in_flight_top_level_invocations_per_tenant =
             max_active_top_level_invocations_per_tenant
                 .saturating_mul(2)
@@ -170,7 +174,7 @@ impl Default for RuntimeLimits {
                 .max(max_active_top_level_invocations_per_tenant);
         let routing_affinity_max_entries = worker_threads.saturating_mul(256).max(1024);
         Self {
-            backend_kind: RuntimeBackendKind::DenoCore,
+            backend_kind: RuntimeBackendKind::V8,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
@@ -180,7 +184,7 @@ impl Default for RuntimeLimits {
             max_heap_mb: 128,
             initial_heap_mb: 8,
             execution_timeout: Duration::from_secs(30),
-            max_concurrent_isolates,
+            max_concurrent_runtime_instances,
             worker_threads,
             max_active_top_level_invocations_per_tenant,
             max_in_flight_top_level_invocations_per_tenant,
@@ -194,7 +198,7 @@ impl Default for RuntimeLimits {
 #[derive(Debug)]
 pub struct RuntimePolicy {
     limits: RuntimeLimits,
-    isolate_semaphore: Arc<Semaphore>,
+    runtime_instance_semaphore: Arc<Semaphore>,
     metrics: Arc<RuntimeMetrics>,
 }
 
@@ -202,7 +206,9 @@ impl RuntimePolicy {
     pub fn new(limits: RuntimeLimits) -> Self {
         let limits = limits.normalized();
         Self {
-            isolate_semaphore: Arc::new(Semaphore::new(limits.max_concurrent_isolates)),
+            runtime_instance_semaphore: Arc::new(Semaphore::new(
+                limits.max_concurrent_runtime_instances,
+            )),
             metrics: Arc::new(RuntimeMetrics::default()),
             limits,
         }
@@ -212,8 +218,8 @@ impl RuntimePolicy {
         &self.limits
     }
 
-    pub(crate) fn isolate_semaphore(&self) -> Arc<Semaphore> {
-        self.isolate_semaphore.clone()
+    pub(crate) fn runtime_instance_semaphore(&self) -> Arc<Semaphore> {
+        self.runtime_instance_semaphore.clone()
     }
 
     pub fn metrics(&self) -> Arc<RuntimeMetrics> {

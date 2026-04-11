@@ -27,6 +27,7 @@ tokio.workspace = true
 tokio-native-tls.workspace = true
 tokio-postgres.workspace = true
 tower-service.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 serial_test.workspace = true

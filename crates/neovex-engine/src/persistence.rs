@@ -8,23 +8,23 @@ use neovex_core::{
 use neovex_storage::{
     DurableJournalBootstrap, DurableJournalPage, EmbeddedPersistenceProvider,
     EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
-    JournalProgress, LibsqlReplicaProvider, LibsqlReplicaTenantStorage, LibsqlReplicaTenantStore,
-    LibsqlReplicaWriteTransaction, MonthlyActiveUsersSnapshot, MySqlProvider, MySqlReadSnapshot,
-    MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction, OpenedEmbeddedRedbTenant,
-    OpenedEmbeddedSqliteTenant, OpenedLibsqlReplicaTenant, OpenedMySqlTenant, OpenedPostgresTenant,
-    PostgresProvider, PostgresReadSnapshot, PostgresTenantStorage, PostgresTenantStore,
-    PostgresWriteTransaction, QueryReadStore, RedbTenantStorage, ResolvedScheduleOp, ResolvedWrite,
-    SqliteReadSnapshot, SqliteTenantStorage, SqliteTenantStore,
-    TenantReadSnapshot as RedbReadSnapshot, TenantReadStorage, TenantStore as RedbTenantStore,
-    TenantWriteCommit, TenantWriteOutcome, TenantWriteStorage,
-    TenantWriteTransaction as RedbWriteTransaction, UsageStorage,
+    JournalProgress, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
+    LibsqlReplicaTenantStorage, LibsqlReplicaTenantStore, LibsqlReplicaWriteTransaction,
+    MonthlyActiveUsersSnapshot, MySqlProvider, MySqlReadSnapshot, MySqlTenantStorage,
+    MySqlTenantStore, MySqlWriteTransaction, OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant,
+    OpenedLibsqlReplicaTenant, OpenedMySqlTenant, OpenedPostgresTenant, PostgresProvider,
+    PostgresReadSnapshot, PostgresTenantStorage, PostgresTenantStore, PostgresWriteTransaction,
+    QueryReadStore, RedbTenantStorage, ResolvedScheduleOp, ResolvedWrite, SqliteReadSnapshot,
+    SqliteTenantStorage, SqliteTenantStore, TenantReadSnapshot as RedbReadSnapshot,
+    TenantReadStorage, TenantStore as RedbTenantStore, TenantWriteCommit, TenantWriteOutcome,
+    TenantWriteStorage, TenantWriteTransaction as RedbWriteTransaction, UsageStorage,
 };
 
 #[derive(Clone)]
 pub(crate) enum PersistenceProvider {
     Redb(Arc<EmbeddedRedbProvider>),
     Sqlite(Arc<EmbeddedSqliteProvider>),
-    SqliteReplica(Arc<LibsqlReplicaProvider>),
+    LibsqlReplica(Arc<LibsqlReplicaProvider>),
     Postgres(Arc<PostgresProvider>),
     MySql(Arc<MySqlProvider>),
 }
@@ -43,7 +43,7 @@ pub(crate) struct OpenedTenantPersistence {
 pub(crate) enum TenantPersistence {
     Redb(Arc<RedbTenantStore>),
     Sqlite(Arc<SqliteTenantStore>),
-    SqliteReplica(Arc<LibsqlReplicaTenantStore>),
+    LibsqlReplica(Arc<LibsqlReplicaTenantStore>),
     Postgres(Arc<PostgresTenantStore>),
     MySql(Arc<MySqlTenantStore>),
 }
@@ -52,7 +52,7 @@ pub(crate) enum TenantPersistence {
 pub(crate) enum TenantPersistenceExecutor {
     Redb(Arc<RedbTenantStorage>),
     Sqlite(Arc<SqliteTenantStorage>),
-    SqliteReplica(Arc<LibsqlReplicaTenantStorage>),
+    LibsqlReplica(Arc<LibsqlReplicaTenantStorage>),
     Postgres(Arc<PostgresTenantStorage>),
     MySql(Arc<MySqlTenantStorage>),
 }
@@ -60,7 +60,7 @@ pub(crate) enum TenantPersistenceExecutor {
 pub(crate) enum TenantPersistenceSnapshot {
     Redb(RedbReadSnapshot),
     Sqlite(Arc<Mutex<SqliteReadSnapshot>>),
-    SqliteReplica(Arc<Mutex<SqliteReadSnapshot>>),
+    LibsqlReplica(Arc<Mutex<SqliteReadSnapshot>>),
     Postgres(PostgresReadSnapshot),
     MySql(MySqlReadSnapshot),
 }
@@ -333,7 +333,7 @@ macro_rules! delegate_store_method {
             match self {
                 Self::Redb(store) => store.$name($($arg),*),
                 Self::Sqlite(store) => store.$name($($arg),*),
-                Self::SqliteReplica(store) => store.$name($($arg),*),
+                Self::LibsqlReplica(store) => store.$name($($arg),*),
                 Self::Postgres(store) => store.$name($($arg),*),
                 Self::MySql(store) => store.$name($($arg),*),
             }
@@ -346,7 +346,7 @@ impl PersistenceProvider {
         match self {
             Self::Redb(engine) => engine.list_tenants().await,
             Self::Sqlite(engine) => engine.list_tenants().await,
-            Self::SqliteReplica(engine) => engine.list_tenants().await,
+            Self::LibsqlReplica(engine) => engine.list_tenants().await,
             Self::Postgres(engine) => engine.list_tenants().await,
             Self::MySql(engine) => engine.list_tenants().await,
         }
@@ -359,8 +359,8 @@ impl PersistenceProvider {
         match self {
             Self::Redb(engine) => map_opened_redb_tenant(engine.create_tenant(tenant_id).await),
             Self::Sqlite(engine) => map_opened_sqlite_tenant(engine.create_tenant(tenant_id).await),
-            Self::SqliteReplica(engine) => {
-                map_opened_sqlite_replica_tenant(engine.create_opened_tenant(tenant_id).await)
+            Self::LibsqlReplica(engine) => {
+                map_opened_libsql_replica_tenant(engine.create_opened_tenant(tenant_id).await)
             }
             Self::Postgres(engine) => {
                 map_opened_postgres_tenant(engine.create_opened_tenant(tenant_id).await)
@@ -384,10 +384,10 @@ impl PersistenceProvider {
                 .open_existing_tenant(tenant_id)
                 .await
                 .map(|opened| opened.map(map_opened_sqlite_tenant_sync)),
-            Self::SqliteReplica(engine) => engine
+            Self::LibsqlReplica(engine) => engine
                 .open_existing_opened_tenant(tenant_id)
                 .await
-                .map(|opened| opened.map(map_opened_sqlite_replica_tenant_sync)),
+                .map(|opened| opened.map(map_opened_libsql_replica_tenant_sync)),
             Self::Postgres(engine) => engine
                 .open_existing_opened_tenant(tenant_id)
                 .await
@@ -403,7 +403,7 @@ impl PersistenceProvider {
         match self {
             Self::Redb(engine) => engine.delete_tenant(tenant_id).await,
             Self::Sqlite(engine) => engine.delete_tenant(tenant_id).await,
-            Self::SqliteReplica(engine) => engine.delete_tenant(tenant_id).await,
+            Self::LibsqlReplica(engine) => engine.delete_tenant(tenant_id).await,
             Self::Postgres(engine) => engine.delete_tenant(tenant_id).await,
             Self::MySql(engine) => engine.delete_tenant(tenant_id).await,
         }
@@ -413,7 +413,7 @@ impl PersistenceProvider {
         match self {
             Self::Redb(engine) => engine.tenant_exists(tenant_id).await,
             Self::Sqlite(engine) => engine.tenant_exists(tenant_id).await,
-            Self::SqliteReplica(engine) => engine.tenant_exists(tenant_id).await,
+            Self::LibsqlReplica(engine) => engine.tenant_exists(tenant_id).await,
             Self::Postgres(engine) => engine.tenant_exists(tenant_id).await,
             Self::MySql(engine) => engine.tenant_exists(tenant_id).await,
         }
@@ -430,8 +430,8 @@ impl PersistenceProvider {
             (Self::Sqlite(engine), TenantPersistence::Sqlite(store)) => Ok(
                 TenantPersistenceExecutor::Sqlite(engine.read_storage_for_store(store)),
             ),
-            (Self::SqliteReplica(engine), TenantPersistence::SqliteReplica(store)) => Ok(
-                TenantPersistenceExecutor::SqliteReplica(engine.read_storage_for_store(store)),
+            (Self::LibsqlReplica(engine), TenantPersistence::LibsqlReplica(store)) => Ok(
+                TenantPersistenceExecutor::LibsqlReplica(engine.read_storage_for_store(store)),
             ),
             (Self::Postgres(engine), TenantPersistence::Postgres(store)) => Ok(
                 TenantPersistenceExecutor::Postgres(engine.read_storage_for_store(store)),
@@ -468,7 +468,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.replace_table_schema(table_schema),
             Self::Sqlite(store) => store.replace_table_schema(table_schema),
-            Self::SqliteReplica(store) => store.replace_table_schema(table_schema),
+            Self::LibsqlReplica(store) => store.replace_table_schema(table_schema),
             Self::Postgres(store) => store.replace_table_schema(table_schema),
             Self::MySql(store) => store.replace_table_schema(table_schema),
         }
@@ -478,7 +478,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.delete_table_schema(table),
             Self::Sqlite(store) => store.delete_table_schema(table),
-            Self::SqliteReplica(store) => store.delete_table_schema(table),
+            Self::LibsqlReplica(store) => store.delete_table_schema(table),
             Self::Postgres(store) => store.delete_table_schema(table),
             Self::MySql(store) => store.delete_table_schema(table),
         }
@@ -491,7 +491,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.append_durable_records_batch(records),
             Self::Sqlite(store) => store.append_durable_records_batch(records),
-            Self::SqliteReplica(store) => store.append_durable_records_batch(records),
+            Self::LibsqlReplica(store) => store.append_durable_records_batch(records),
             Self::Postgres(store) => store.append_durable_records_batch(records),
             Self::MySql(store) => store.append_durable_records_batch(records),
         }
@@ -504,7 +504,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.apply_durable_records_batch(records),
             Self::Sqlite(store) => store.apply_durable_records_batch(records),
-            Self::SqliteReplica(store) => store.apply_durable_records_batch(records),
+            Self::LibsqlReplica(store) => store.apply_durable_records_batch(records),
             Self::Postgres(store) => store.apply_durable_records_batch(records),
             Self::MySql(store) => store.apply_durable_records_batch(records),
         }
@@ -514,7 +514,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.insert_scheduled_job(job),
             Self::Sqlite(store) => store.insert_scheduled_job(job),
-            Self::SqliteReplica(store) => store.insert_scheduled_job(job),
+            Self::LibsqlReplica(store) => store.insert_scheduled_job(job),
             Self::Postgres(store) => store.insert_scheduled_job(job),
             Self::MySql(store) => store.insert_scheduled_job(job),
         }
@@ -524,7 +524,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.claim_due_jobs(now),
             Self::Sqlite(store) => store.claim_due_jobs(now),
-            Self::SqliteReplica(store) => store.claim_due_jobs(now),
+            Self::LibsqlReplica(store) => store.claim_due_jobs(now),
             Self::Postgres(store) => store.claim_due_jobs(now),
             Self::MySql(store) => store.claim_due_jobs(now),
         }
@@ -534,7 +534,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.complete_scheduled_job(job_id),
             Self::Sqlite(store) => store.complete_scheduled_job(job_id),
-            Self::SqliteReplica(store) => store.complete_scheduled_job(job_id),
+            Self::LibsqlReplica(store) => store.complete_scheduled_job(job_id),
             Self::Postgres(store) => store.complete_scheduled_job(job_id),
             Self::MySql(store) => store.complete_scheduled_job(job_id),
         }
@@ -544,7 +544,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.cancel_scheduled_job(job_id),
             Self::Sqlite(store) => store.cancel_scheduled_job(job_id),
-            Self::SqliteReplica(store) => store.cancel_scheduled_job(job_id),
+            Self::LibsqlReplica(store) => store.cancel_scheduled_job(job_id),
             Self::Postgres(store) => store.cancel_scheduled_job(job_id),
             Self::MySql(store) => store.cancel_scheduled_job(job_id),
         }
@@ -555,7 +555,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.record_scheduled_job_result(result),
             Self::Sqlite(store) => store.record_scheduled_job_result(result),
-            Self::SqliteReplica(store) => store.record_scheduled_job_result(result),
+            Self::LibsqlReplica(store) => store.record_scheduled_job_result(result),
             Self::Postgres(store) => store.record_scheduled_job_result(result),
             Self::MySql(store) => store.record_scheduled_job_result(result),
         }
@@ -565,7 +565,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.save_cron_job(cron),
             Self::Sqlite(store) => store.save_cron_job(cron),
-            Self::SqliteReplica(store) => store.save_cron_job(cron),
+            Self::LibsqlReplica(store) => store.save_cron_job(cron),
             Self::Postgres(store) => store.save_cron_job(cron),
             Self::MySql(store) => store.save_cron_job(cron),
         }
@@ -575,7 +575,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.delete_cron_job(name),
             Self::Sqlite(store) => store.delete_cron_job(name),
-            Self::SqliteReplica(store) => store.delete_cron_job(name),
+            Self::LibsqlReplica(store) => store.delete_cron_job(name),
             Self::Postgres(store) => store.delete_cron_job(name),
             Self::MySql(store) => store.delete_cron_job(name),
         }
@@ -585,7 +585,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.recover_running_jobs(now),
             Self::Sqlite(store) => store.recover_running_jobs(now),
-            Self::SqliteReplica(store) => store.recover_running_jobs(now),
+            Self::LibsqlReplica(store) => store.recover_running_jobs(now),
             Self::Postgres(store) => store.recover_running_jobs(now),
             Self::MySql(store) => store.recover_running_jobs(now),
         }
@@ -599,7 +599,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.apply_execution_unit_batch(writes, schedule_ops),
             Self::Sqlite(store) => store.apply_execution_unit_batch(writes, schedule_ops),
-            Self::SqliteReplica(store) => store.apply_execution_unit_batch(writes, schedule_ops),
+            Self::LibsqlReplica(store) => store.apply_execution_unit_batch(writes, schedule_ops),
             Self::Postgres(store) => store.apply_execution_unit_batch(writes, schedule_ops),
             Self::MySql(store) => store.apply_execution_unit_batch(writes, schedule_ops),
         }
@@ -609,7 +609,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.check_fault(point),
             Self::Sqlite(store) => store.check_fault(point),
-            Self::SqliteReplica(store) => store.check_fault(point),
+            Self::LibsqlReplica(store) => store.check_fault(point),
             Self::Postgres(store) => store.check_fault(point),
             Self::MySql(_store) => Ok(()),
         }
@@ -621,8 +621,8 @@ impl TenantPersistence {
             Self::Sqlite(store) => store
                 .read_snapshot()
                 .map(|snapshot| TenantPersistenceSnapshot::Sqlite(Arc::new(Mutex::new(snapshot)))),
-            Self::SqliteReplica(store) => store.read_snapshot().map(|snapshot| {
-                TenantPersistenceSnapshot::SqliteReplica(Arc::new(Mutex::new(snapshot)))
+            Self::LibsqlReplica(store) => store.read_snapshot().map(|snapshot| {
+                TenantPersistenceSnapshot::LibsqlReplica(Arc::new(Mutex::new(snapshot)))
             }),
             Self::Postgres(store) => store
                 .read_snapshot()
@@ -635,9 +635,24 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.get(table, id),
             Self::Sqlite(store) => store.get(table, id),
-            Self::SqliteReplica(store) => store.get(table, id),
+            Self::LibsqlReplica(store) => store.get(table, id),
             Self::Postgres(store) => store.get(table, id),
             Self::MySql(store) => store.get(table, id),
+        }
+    }
+
+    pub(crate) fn libsql_replica_freshness_stats(&self) -> Option<LibsqlReplicaFreshnessStats> {
+        match self {
+            Self::LibsqlReplica(store) => store.replica_freshness_stats().ok(),
+            Self::Redb(_) | Self::Sqlite(_) | Self::Postgres(_) | Self::MySql(_) => None,
+        }
+    }
+
+    pub(crate) fn invalidate_schema_cache(&self) {
+        match self {
+            Self::Postgres(store) => store.invalidate_schema_cache(),
+            Self::MySql(store) => store.invalidate_schema_cache(),
+            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) => {}
         }
     }
 
@@ -657,7 +672,7 @@ impl TenantPersistence {
             Self::Sqlite(store) => {
                 store.scan_table_matching_cancellable(table, check_cancel, include_document)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.scan_table_matching_cancellable(table, check_cancel, include_document)
             }
             Self::Postgres(store) => {
@@ -673,7 +688,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.insert(document),
             Self::Sqlite(store) => store.insert(document),
-            Self::SqliteReplica(store) => store.insert(document),
+            Self::LibsqlReplica(store) => store.insert(document),
             Self::Postgres(store) => store.insert(document),
             Self::MySql(store) => store.insert(document),
         }
@@ -687,7 +702,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.insert_with_indexes(document, indexes),
             Self::Sqlite(store) => store.insert_with_indexes(document, indexes),
-            Self::SqliteReplica(store) => store.insert_with_indexes(document, indexes),
+            Self::LibsqlReplica(store) => store.insert_with_indexes(document, indexes),
             Self::Postgres(store) => store.insert_with_indexes(document, indexes),
             Self::MySql(store) => store.insert_with_indexes(document, indexes),
         }
@@ -701,7 +716,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.insert_once(document, execution_id),
             Self::Sqlite(store) => store.insert_once(document, execution_id),
-            Self::SqliteReplica(store) => store.insert_once(document, execution_id),
+            Self::LibsqlReplica(store) => store.insert_once(document, execution_id),
             Self::Postgres(store) => store.insert_once(document, execution_id),
             Self::MySql(store) => store.insert_once(document, execution_id),
         }
@@ -716,7 +731,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.insert_with_indexes_once(document, indexes, execution_id),
             Self::Sqlite(store) => store.insert_with_indexes_once(document, indexes, execution_id),
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.insert_with_indexes_once(document, indexes, execution_id)
             }
             Self::Postgres(store) => {
@@ -739,7 +754,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.update_validated(table, id, patch, validate),
             Self::Sqlite(store) => store.update_validated(table, id, patch, validate),
-            Self::SqliteReplica(store) => store.update_validated(table, id, patch, validate),
+            Self::LibsqlReplica(store) => store.update_validated(table, id, patch, validate),
             Self::Postgres(store) => store.update_validated(table, id, patch, validate),
             Self::MySql(store) => store.update_validated(table, id, patch, validate),
         }
@@ -763,7 +778,7 @@ impl TenantPersistence {
             Self::Sqlite(store) => {
                 store.update_validated_once(table, id, patch, execution_id, validate)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.update_validated_once(table, id, patch, execution_id, validate)
             }
             Self::Postgres(store) => {
@@ -793,7 +808,7 @@ impl TenantPersistence {
             Self::Sqlite(store) => {
                 store.update_with_indexes_validated(table, id, patch, indexes, validate)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.update_with_indexes_validated(table, id, patch, indexes, validate)
             }
             Self::Postgres(store) => {
@@ -834,7 +849,7 @@ impl TenantPersistence {
                 execution_id,
                 validate,
             ),
-            Self::SqliteReplica(store) => store.update_with_indexes_validated_once(
+            Self::LibsqlReplica(store) => store.update_with_indexes_validated_once(
                 table,
                 id,
                 patch,
@@ -873,7 +888,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.delete_validated_returning_document(table, id, validate),
             Self::Sqlite(store) => store.delete_validated_returning_document(table, id, validate),
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.delete_validated_returning_document(table, id, validate)
             }
             Self::Postgres(store) => store.delete_validated_returning_document(table, id, validate),
@@ -894,7 +909,7 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.delete_validated_once(table, id, execution_id, validate),
             Self::Sqlite(store) => store.delete_validated_once(table, id, execution_id, validate),
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.delete_validated_once(table, id, execution_id, validate)
             }
             Self::Postgres(store) => store.delete_validated_once(table, id, execution_id, validate),
@@ -919,7 +934,7 @@ impl TenantPersistence {
             Self::Sqlite(store) => {
                 store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
             }
             Self::Postgres(store) => {
@@ -949,7 +964,7 @@ impl TenantPersistence {
             Self::Sqlite(store) => {
                 store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
             }
             Self::Postgres(store) => {
@@ -979,9 +994,9 @@ impl TenantPersistenceExecutor {
                     .execute(move |store| task(TenantPersistence::Sqlite(store)))
                     .await
             }
-            Self::SqliteReplica(storage) => {
+            Self::LibsqlReplica(storage) => {
                 storage
-                    .execute(move |store| task(TenantPersistence::SqliteReplica(store)))
+                    .execute(move |store| task(TenantPersistence::LibsqlReplica(store)))
                     .await
             }
             Self::Postgres(storage) => {
@@ -1024,10 +1039,10 @@ impl TenantPersistenceExecutor {
                     })
                     .await
             }
-            Self::SqliteReplica(storage) => {
+            Self::LibsqlReplica(storage) => {
                 storage
                     .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
-                        task(TenantPersistence::SqliteReplica(store), check_cancel)
+                        task(TenantPersistence::LibsqlReplica(store), check_cancel)
                     })
                     .await
             }
@@ -1064,7 +1079,7 @@ impl TenantPersistenceExecutor {
                     .execute_write(move |transaction| task(transaction))
                     .await
             }
-            Self::SqliteReplica(storage) => {
+            Self::LibsqlReplica(storage) => {
                 storage
                     .execute_write(move |transaction| task(transaction))
                     .await
@@ -1109,7 +1124,7 @@ impl TenantPersistenceExecutor {
                     })
                     .await
             }
-            Self::SqliteReplica(storage) => {
+            Self::LibsqlReplica(storage) => {
                 storage
                     .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
                         task(transaction)
@@ -1142,7 +1157,7 @@ impl TenantPersistenceSnapshot {
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .applied_sequence(),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .applied_sequence(),
@@ -1158,7 +1173,7 @@ impl TenantPersistenceSnapshot {
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .get(table, id),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .get(table, id),
@@ -1189,7 +1204,7 @@ impl TenantPersistenceSnapshot {
                     check_cancel,
                     include_document,
                 ),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .scan_table_matching_with_filters_cancellable(
@@ -1242,7 +1257,7 @@ impl QueryReadStore for TenantPersistence {
                 check_cancel,
                 include_document,
             ),
-            Self::SqliteReplica(store) => store.scan_table_matching_with_filters_cancellable(
+            Self::LibsqlReplica(store) => store.scan_table_matching_with_filters_cancellable(
                 table,
                 filters,
                 check_cancel,
@@ -1277,7 +1292,7 @@ impl QueryReadStore for TenantPersistence {
             Self::Sqlite(store) => {
                 store.index_scan_eq_cancellable(table, index_name, value, check_cancel)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.index_scan_eq_cancellable(table, index_name, value, check_cancel)
             }
             Self::Postgres(store) => {
@@ -1303,7 +1318,7 @@ impl QueryReadStore for TenantPersistence {
             Self::Sqlite(store) => {
                 store.index_scan_prefix_cancellable(table, index_name, prefix_values, check_cancel)
             }
-            Self::SqliteReplica(store) => {
+            Self::LibsqlReplica(store) => {
                 store.index_scan_prefix_cancellable(table, index_name, prefix_values, check_cancel)
             }
             Self::Postgres(store) => {
@@ -1344,7 +1359,7 @@ impl QueryReadStore for TenantPersistence {
                 end_inclusive,
                 check_cancel,
             ),
-            Self::SqliteReplica(store) => store.index_scan_range_cancellable(
+            Self::LibsqlReplica(store) => store.index_scan_range_cancellable(
                 table,
                 index_name,
                 start,
@@ -1406,7 +1421,7 @@ impl QueryReadStore for TenantPersistence {
                 end_inclusive,
                 check_cancel,
             ),
-            Self::SqliteReplica(store) => store.index_scan_composite_range_cancellable(
+            Self::LibsqlReplica(store) => store.index_scan_composite_range_cancellable(
                 table,
                 index_name,
                 exact_prefix,
@@ -1471,7 +1486,7 @@ impl QueryReadStore for TenantPersistenceSnapshot {
                     check_cancel,
                     include_document,
                 ),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .scan_table_matching_with_filters_cancellable(
@@ -1510,7 +1525,7 @@ impl QueryReadStore for TenantPersistenceSnapshot {
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .index_scan_eq_cancellable(table, index_name, value, check_cancel),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .index_scan_eq_cancellable(table, index_name, value, check_cancel),
@@ -1541,7 +1556,7 @@ impl QueryReadStore for TenantPersistenceSnapshot {
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .index_scan_prefix_cancellable(table, index_name, prefix_values, check_cancel),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .index_scan_prefix_cancellable(table, index_name, prefix_values, check_cancel),
@@ -1592,7 +1607,7 @@ impl QueryReadStore for TenantPersistenceSnapshot {
                     end_inclusive,
                     check_cancel,
                 ),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .index_scan_range_cancellable(
@@ -1660,7 +1675,7 @@ impl QueryReadStore for TenantPersistenceSnapshot {
                     end_inclusive,
                     check_cancel,
                 ),
-            Self::SqliteReplica(snapshot) => snapshot
+            Self::LibsqlReplica(snapshot) => snapshot
                 .lock()
                 .expect("sqlite read snapshot lock should not be poisoned")
                 .index_scan_composite_range_cancellable(
@@ -1723,18 +1738,18 @@ fn map_opened_sqlite_tenant_sync(opened: OpenedEmbeddedSqliteTenant) -> OpenedTe
     }
 }
 
-fn map_opened_sqlite_replica_tenant(
+fn map_opened_libsql_replica_tenant(
     result: Result<OpenedLibsqlReplicaTenant>,
 ) -> Result<OpenedTenantPersistence> {
-    result.map(map_opened_sqlite_replica_tenant_sync)
+    result.map(map_opened_libsql_replica_tenant_sync)
 }
 
-fn map_opened_sqlite_replica_tenant_sync(
+fn map_opened_libsql_replica_tenant_sync(
     opened: OpenedLibsqlReplicaTenant,
 ) -> OpenedTenantPersistence {
     OpenedTenantPersistence {
-        persistence: TenantPersistence::SqliteReplica(opened.store),
-        executor: TenantPersistenceExecutor::SqliteReplica(opened.read_storage),
+        persistence: TenantPersistence::LibsqlReplica(opened.store),
+        executor: TenantPersistenceExecutor::LibsqlReplica(opened.read_storage),
     }
 }
 

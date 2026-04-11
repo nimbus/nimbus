@@ -33,10 +33,9 @@ The tenant persistence mode is selected with `--tenant-provider`:
   embedded SQLite with one tenant file per tenant
 - `redb`
   retained embedded redb provider
-- `sqlite-replica`
-  future replica-connected SQLite provider family; today the typed config is
-  wired and validated, but service construction still fails clearly until the
-  provider implementation lands
+- `libsql-replica`
+  libsql remote-primary provider family with a provider-owned local SQLite
+  derivative cache
 - `postgres`
   Postgres-backed external tenant persistence
 - `mysql`
@@ -47,13 +46,13 @@ Provider-specific flags:
 | Flag | Meaning |
 | --- | --- |
 | `--control-data-dir` | optional override for the local redb control-plane directory |
-| `--sqlite-url` | canonical libsql primary URL for `--tenant-provider=sqlite-replica` |
-| `--sqlite-auth-token` | optional auth token for the libsql primary |
-| `--sqlite-admin-url` | required libsql admin/provisioning API URL for namespace lifecycle when `--tenant-provider=sqlite-replica` |
-| `--sqlite-admin-auth-header` | optional `Authorization` header value for the libsql admin API |
-| `--sqlite-metadata-namespace` | provider metadata namespace for replica-connected SQLite routing |
-| `--sqlite-tenant-namespace-prefix` | prefix used when deriving per-tenant libsql namespaces |
-| `--sqlite-replica-cache-dir` | provider-owned local cache root for embedded replica files |
+| `--libsql-url` | canonical libsql primary URL for `--tenant-provider=libsql-replica` |
+| `--libsql-auth-token` | optional auth token for the libsql primary |
+| `--libsql-admin-url` | required libsql admin/provisioning API URL for namespace lifecycle when `--tenant-provider=libsql-replica` |
+| `--libsql-admin-auth-header` | optional `Authorization` header value for the libsql admin API |
+| `--libsql-metadata-namespace` | provider metadata namespace for libsql replica routing |
+| `--libsql-tenant-namespace-prefix` | prefix used when deriving per-tenant libsql namespaces |
+| `--libsql-replica-cache-dir` | provider-owned local cache root for embedded derivative replica files |
 | `--postgres-url` | canonical Postgres resource URL |
 | `--postgres-metadata-schema` | provider metadata schema for Postgres routing |
 | `--postgres-tenant-schema-prefix` | prefix used when deriving per-tenant Postgres schemas |
@@ -76,7 +75,7 @@ environment variables or the JSON config file referenced by `--config` or
 | `--runtime-heap-mb` | `128` | V8 heap limit per isolate in megabytes |
 | `--runtime-initial-heap-mb` | `8` | initial V8 heap size per isolate in megabytes |
 | `--runtime-timeout-secs` | `30` | maximum wall-clock runtime invocation time |
-| `--runtime-max-isolates` | available hardware parallelism | maximum concurrent top-level runtime isolates |
+| `--runtime-max-instances` | available hardware parallelism | maximum concurrent top-level runtime instances |
 | `--runtime-max-nested-calls` | `64` | maximum nested `ctx.run*` invocations per request tree |
 
 ## Startup Behavior

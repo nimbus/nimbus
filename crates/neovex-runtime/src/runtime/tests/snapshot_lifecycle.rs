@@ -1,6 +1,7 @@
 use deno_core::JsRuntime;
 
 use super::*;
+use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 
 #[tokio::test]
 async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
@@ -48,7 +49,7 @@ export {};
         .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
-        "operation": "convex.ctx.db.get",
+        "operation": "ctx_db_get",
         "payload": {
             "table": "messages",
             "id": "doc-1",
@@ -58,7 +59,7 @@ export {};
     let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_CYCLES", 32);
     let watchdog = WatchdogTimer::new();
     let mut reusable_runtime =
-        ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
+        ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);
 
     for cycle in 0..cycles {
         let mut permit = SharedInvocationPermit::new(
@@ -165,7 +166,7 @@ export {};
         .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
-        "operation": "convex.ctx.db.get",
+        "operation": "ctx_db_get",
         "payload": {
             "table": "messages",
             "id": "doc-1",
@@ -175,7 +176,7 @@ export {};
     let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_FRESH_OWNER_CYCLES", 32);
     let watchdog = WatchdogTimer::new();
     let mut reusable_runtime =
-        ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
+        ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);
 
     for cycle in 0..cycles {
         let runtime_owner = NeovexRuntime::with_policy(
@@ -293,7 +294,7 @@ export {};
                 .create_runtime(&bundle, Some(snapshot), false)
                 .expect("snapshot-born runtime should build");
             let expected = serde_json::json!({
-                "operation": "convex.ctx.db.get",
+                "operation": "ctx_db_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -303,7 +304,7 @@ export {};
             let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_CURRENT_THREAD_CYCLES", 32);
             let watchdog = WatchdogTimer::new();
             let mut reusable_runtime =
-                ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot);
+                ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);
 
             for cycle in 0..cycles {
                 let mut permit = SharedInvocationPermit::new(
@@ -398,8 +399,8 @@ export {};
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
     );
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
-    let mut runtime = isolate_pool
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let mut runtime = v8_runtime_pool
         .take_runtime(&runtime_owner, &bundle)
         .expect("runtime should build from snapshot")
         .runtime;

@@ -80,7 +80,7 @@ where
                     function = %context.function_name,
                     kind = context.kind,
                     execution_ms = execution.as_secs_f64() * 1000.0,
-                    active_isolates = metrics.snapshot().active_isolates,
+                    active_runtime_instances = metrics.snapshot().active_runtime_instances,
                     "runtime worker invocation completed"
                 );
             }
@@ -92,7 +92,7 @@ where
                     function = %context.function_name,
                     kind = context.kind,
                     execution_ms = execution.as_secs_f64() * 1000.0,
-                    active_isolates = metrics.snapshot().active_isolates,
+                    active_runtime_instances = metrics.snapshot().active_runtime_instances,
                     "runtime invocation completed"
                 );
             }

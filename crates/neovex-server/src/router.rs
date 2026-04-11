@@ -8,6 +8,7 @@ use tower_http::services::ServeDir;
 
 use crate::adapters::convex::{self, ConvexRegistry};
 use crate::license::LicenseState;
+use crate::sandbox::{EmptySandboxCatalog, SandboxCatalog};
 use crate::state::AppState;
 use crate::{http, ws};
 
@@ -18,9 +19,39 @@ pub fn build_router(service: Arc<Service>) -> Router {
     build_router_with_license(service, LicenseState::community())
 }
 
+/// Builds the Neovex HTTP/WebSocket router without Convex support and with an explicit sandbox catalog.
+pub fn build_router_with_sandbox_catalog(
+    service: Arc<Service>,
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> Router {
+    build_router_with_license_and_sandbox_catalog(
+        service,
+        LicenseState::community(),
+        sandbox_catalog,
+    )
+}
+
 /// Builds the Neovex HTTP/WebSocket router with an explicit license state.
 pub fn build_router_with_license(service: Arc<Service>, license_state: LicenseState) -> Router {
-    let state = Arc::new(AppState::with_license_state(service, license_state));
+    build_router_with_license_and_sandbox_catalog(
+        service,
+        license_state,
+        Arc::new(EmptySandboxCatalog),
+    )
+}
+
+/// Builds the Neovex HTTP/WebSocket router with an explicit license state and sandbox catalog.
+pub fn build_router_with_license_and_sandbox_catalog(
+    service: Arc<Service>,
+    license_state: LicenseState,
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> Router {
+    let state = Arc::new(AppState::with_license_state_and_sandbox_catalog(
+        service,
+        license_state,
+        sandbox_catalog,
+    ));
+    let _sandbox_catalog = state.sandbox_catalog();
     build_core_router()
         .layer(build_cors_layer())
         .with_state(state)
@@ -28,7 +59,25 @@ pub fn build_router_with_license(service: Arc<Service>, license_state: LicenseSt
 
 /// Builds the Neovex HTTP/WebSocket router with Convex support enabled.
 pub fn build_router_with_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> Router {
-    build_router_with_convex_and_license(service, convex_registry, LicenseState::community())
+    build_router_with_convex_and_sandbox_catalog(
+        service,
+        convex_registry,
+        Arc::new(EmptySandboxCatalog),
+    )
+}
+
+/// Builds the Neovex HTTP/WebSocket router with Convex support enabled and with an explicit sandbox catalog.
+pub fn build_router_with_convex_and_sandbox_catalog(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> Router {
+    build_router_with_convex_and_license_and_sandbox_catalog(
+        service,
+        convex_registry,
+        LicenseState::community(),
+        sandbox_catalog,
+    )
 }
 
 /// Builds the Neovex HTTP/WebSocket router with Convex support and an explicit license state.
@@ -37,11 +86,30 @@ pub fn build_router_with_convex_and_license(
     convex_registry: ConvexRegistry,
     license_state: LicenseState,
 ) -> Router {
-    let state = Arc::new(AppState::with_convex_registry_and_license_state(
+    build_router_with_convex_and_license_and_sandbox_catalog(
         service,
         convex_registry,
         license_state,
-    ));
+        Arc::new(EmptySandboxCatalog),
+    )
+}
+
+/// Builds the Neovex HTTP/WebSocket router with Convex support, license state, and sandbox catalog.
+pub fn build_router_with_convex_and_license_and_sandbox_catalog(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    license_state: LicenseState,
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> Router {
+    let state = Arc::new(
+        AppState::with_convex_registry_and_license_state_and_sandbox_catalog(
+            service,
+            convex_registry,
+            license_state,
+            sandbox_catalog,
+        ),
+    );
+    let _sandbox_catalog = state.sandbox_catalog();
     build_core_router()
         .merge(build_convex_router())
         .layer(build_cors_layer())

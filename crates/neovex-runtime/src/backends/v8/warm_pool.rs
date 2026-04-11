@@ -1,15 +1,12 @@
-use deno_core::JsRuntime;
-
 use crate::affinity::{RuntimeAffinityKey, runtime_affinity_key};
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::limits::RuntimePoolKind;
-use crate::runtime::bundle::RuntimeBundleIdentity;
-use crate::runtime::{NeovexRuntime, RuntimeBundle};
+use crate::runtime::{NeovexRuntime, RuntimeBundle, RuntimeBundleIdentity};
 
-use super::startup::RuntimeConstructionMode;
+use super::{embedder::JsRuntime, startup::V8RuntimeConstructionMode};
 
-pub(crate) struct RuntimeWorkerIsolatePool {
+pub(crate) struct V8WorkerRuntimePool {
     warmed: bool,
     warm_pool: Vec<WarmPoolEntry>,
     next_warm_sequence: u64,
@@ -21,17 +18,17 @@ pub(crate) struct WarmPoolEntry {
     pub(crate) affinity_key: Option<RuntimeAffinityKey>,
     pub(crate) reuse_count: usize,
     pub(crate) last_used_sequence: u64,
-    pub(crate) construction_mode: RuntimeConstructionMode,
+    pub(crate) construction_mode: V8RuntimeConstructionMode,
 }
 
-pub(crate) struct ReusableRuntime {
+pub(crate) struct ReusableV8Runtime {
     pub(crate) runtime: JsRuntime,
     pub(crate) warm_reuse_count: usize,
-    pub(crate) construction_mode: RuntimeConstructionMode,
+    pub(crate) construction_mode: V8RuntimeConstructionMode,
 }
 
-impl ReusableRuntime {
-    pub(crate) fn fresh(runtime: JsRuntime, construction_mode: RuntimeConstructionMode) -> Self {
+impl ReusableV8Runtime {
+    pub(crate) fn fresh(runtime: JsRuntime, construction_mode: V8RuntimeConstructionMode) -> Self {
         Self {
             runtime,
             warm_reuse_count: 0,
@@ -40,7 +37,7 @@ impl ReusableRuntime {
     }
 }
 
-impl RuntimeWorkerIsolatePool {
+impl V8WorkerRuntimePool {
     pub(crate) fn new() -> Self {
         Self {
             warmed: false,
@@ -54,7 +51,7 @@ impl RuntimeWorkerIsolatePool {
         &mut self,
         runtime_owner: &NeovexRuntime,
         bundle: &RuntimeBundle,
-    ) -> Result<ReusableRuntime> {
+    ) -> Result<ReusableV8Runtime> {
         self.take_runtime_with_options(runtime_owner, bundle, false)
     }
 
@@ -64,7 +61,7 @@ impl RuntimeWorkerIsolatePool {
         runtime_owner: &NeovexRuntime,
         bundle: &RuntimeBundle,
         use_locker: bool,
-    ) -> Result<ReusableRuntime> {
+    ) -> Result<ReusableV8Runtime> {
         self.take_runtime_with_options_for_invocation(runtime_owner, bundle, None, use_locker)
     }
 
@@ -73,7 +70,7 @@ impl RuntimeWorkerIsolatePool {
         runtime_owner: &NeovexRuntime,
         bundle: &RuntimeBundle,
         context: Option<&RuntimeInvocationContext>,
-    ) -> Result<ReusableRuntime> {
+    ) -> Result<ReusableV8Runtime> {
         self.take_runtime_with_options_for_invocation(runtime_owner, bundle, context, false)
     }
 
@@ -83,12 +80,12 @@ impl RuntimeWorkerIsolatePool {
         bundle: &RuntimeBundle,
         context: Option<&RuntimeInvocationContext>,
         use_locker: bool,
-    ) -> Result<ReusableRuntime> {
-        match runtime_owner.policy.limits().runtime_pool_kind {
+    ) -> Result<ReusableV8Runtime> {
+        match runtime_owner.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
             RuntimePoolKind::WarmPool => {
                 let affinity_key = runtime_affinity_key(
-                    runtime_owner.policy.limits().routing_affinity,
+                    runtime_owner.policy().limits().routing_affinity,
                     context,
                     bundle,
                 );
@@ -96,10 +93,10 @@ impl RuntimeWorkerIsolatePool {
                 if let Some(entry) =
                     self.take_warm_pool_entry(&bundle_identity, affinity_key.as_ref())
                 {
-                    runtime_owner.policy.metrics().record_warm_pool_hit();
-                    runtime_owner.policy.metrics().record_isolate_pool_hit();
+                    runtime_owner.policy().metrics().record_warm_pool_hit();
+                    runtime_owner.policy().metrics().record_runtime_pool_hit();
                     self.warmed = true;
-                    return Ok(ReusableRuntime {
+                    return Ok(ReusableV8Runtime {
                         runtime: entry.runtime,
                         warm_reuse_count: entry.reuse_count,
                         construction_mode: entry.construction_mode,
@@ -107,32 +104,32 @@ impl RuntimeWorkerIsolatePool {
                 }
 
                 // Cold miss: build a fresh runtime
-                runtime_owner.policy.metrics().record_warm_pool_miss();
-                runtime_owner.policy.metrics().record_isolate_pool_miss();
+                runtime_owner.policy().metrics().record_warm_pool_miss();
+                runtime_owner.policy().metrics().record_runtime_pool_miss();
                 let snapshot = runtime_owner.bootstrap_snapshot()?;
                 let runtime = runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?;
                 self.warmed = true;
-                return Ok(ReusableRuntime::fresh(
+                return Ok(ReusableV8Runtime::fresh(
                     runtime,
-                    RuntimeConstructionMode::StartupSnapshot,
+                    V8RuntimeConstructionMode::StartupSnapshot,
                 ));
             }
         }
         let snapshot = runtime_owner.bootstrap_snapshot()?;
         if self.warmed {
-            runtime_owner.policy.metrics().record_isolate_pool_hit();
+            runtime_owner.policy().metrics().record_runtime_pool_hit();
             runtime_owner
                 .create_runtime(bundle, Some(snapshot), use_locker)
                 .map(|runtime| {
-                    ReusableRuntime::fresh(runtime, RuntimeConstructionMode::StartupSnapshot)
+                    ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot)
                 })
         } else {
-            runtime_owner.policy.metrics().record_isolate_pool_miss();
+            runtime_owner.policy().metrics().record_runtime_pool_miss();
             let runtime = runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?;
             self.warmed = true;
-            Ok(ReusableRuntime::fresh(
+            Ok(ReusableV8Runtime::fresh(
                 runtime,
-                RuntimeConstructionMode::StartupSnapshot,
+                V8RuntimeConstructionMode::StartupSnapshot,
             ))
         }
     }
@@ -142,10 +139,10 @@ impl RuntimeWorkerIsolatePool {
         runtime_owner: &NeovexRuntime,
         bundle: &RuntimeBundle,
         context: Option<&RuntimeInvocationContext>,
-        runtime: ReusableRuntime,
+        runtime: ReusableV8Runtime,
     ) {
         let affinity_key = runtime_affinity_key(
-            runtime_owner.policy.limits().routing_affinity,
+            runtime_owner.policy().limits().routing_affinity,
             context,
             bundle,
         );
@@ -156,17 +153,20 @@ impl RuntimeWorkerIsolatePool {
         &mut self,
         runtime_owner: &NeovexRuntime,
         bundle: &RuntimeBundle,
-        mut runtime: ReusableRuntime,
+        mut runtime: ReusableV8Runtime,
         affinity_key: Option<RuntimeAffinityKey>,
     ) {
-        match runtime_owner.policy.limits().runtime_pool_kind {
+        match runtime_owner.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
             RuntimePoolKind::WarmPool => {
                 if runtime.runtime.is_v8_lock_held() {
                     runtime.runtime.release_v8_lock();
                 }
-                if runtime.warm_reuse_count >= runtime_owner.policy.limits().max_warm_reuses {
-                    runtime_owner.policy.metrics().record_warm_pool_retirement();
+                if runtime.warm_reuse_count >= runtime_owner.policy().limits().max_warm_reuses {
+                    runtime_owner
+                        .policy()
+                        .metrics()
+                        .record_warm_pool_retirement();
                     return;
                 }
                 let last_used_sequence = self.next_warm_sequence();
@@ -179,7 +179,7 @@ impl RuntimeWorkerIsolatePool {
                     construction_mode: runtime.construction_mode,
                 });
                 runtime_owner
-                    .policy
+                    .policy()
                     .metrics()
                     .increment_retained_runtime_pool_entries();
                 self.enforce_warm_pool_bounds(runtime_owner);
@@ -228,7 +228,7 @@ impl RuntimeWorkerIsolatePool {
 
     fn enforce_warm_pool_bounds(&mut self, runtime_owner: &NeovexRuntime) {
         let max_entries = runtime_owner
-            .policy
+            .policy()
             .limits()
             .max_warm_pool_entries_per_worker;
         while self.warm_pool.len() > max_entries {
@@ -242,11 +242,11 @@ impl RuntimeWorkerIsolatePool {
             {
                 self.warm_pool.swap_remove(index);
                 runtime_owner
-                    .policy
+                    .policy()
                     .metrics()
                     .record_retained_runtime_pool_eviction();
                 runtime_owner
-                    .policy
+                    .policy()
                     .metrics()
                     .decrement_retained_runtime_pool_entries();
             } else {

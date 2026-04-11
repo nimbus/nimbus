@@ -38,7 +38,7 @@ export {};
     limits.max_heap_mb = 8;
     limits.initial_heap_mb = 4;
     limits.execution_timeout = std::time::Duration::from_secs(2);
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     let runtime = NeovexRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
     let error = runtime
         .invoke_bundle(

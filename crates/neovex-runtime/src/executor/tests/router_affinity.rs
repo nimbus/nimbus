@@ -5,7 +5,7 @@ async fn worker_router_prefers_tenant_affinity_for_warm_worker_reuse() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.max_concurrent_isolates = 2;
+    limits.max_concurrent_runtime_instances = 2;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -70,7 +70,7 @@ async fn worker_router_uses_least_loaded_fallback_when_affinity_is_absent() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.max_concurrent_isolates = 2;
+    limits.max_concurrent_runtime_instances = 2;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -148,7 +148,7 @@ async fn worker_router_can_affinitize_by_function() {
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
     limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::Function;
-    limits.max_concurrent_isolates = 2;
+    limits.max_concurrent_runtime_instances = 2;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -212,7 +212,7 @@ async fn worker_router_can_affinitize_by_script_identity() {
     let (_bundle_dir_b, bundle_path_b) = write_runtime_id_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
     limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::Script;
-    limits.max_concurrent_isolates = 2;
+    limits.max_concurrent_runtime_instances = 2;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -273,7 +273,7 @@ async fn worker_router_can_disable_affinity() {
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
     limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::None;
-    limits.max_concurrent_isolates = 2;
+    limits.max_concurrent_runtime_instances = 2;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -318,7 +318,7 @@ async fn worker_router_bounds_affinity_cache_and_records_evictions() {
     let mut limits = cooperative_warm_pool_runtime_test_limits();
     limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::Tenant;
     limits.routing_affinity_max_entries = 1;
-    limits.max_concurrent_isolates = 2;
+    limits.max_concurrent_runtime_instances = 2;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());

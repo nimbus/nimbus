@@ -1,4 +1,4 @@
-use crate::runtime::subscriptions::RuntimeSubscriptionHandle;
+use crate::execution::subscriptions::RuntimeSubscriptionHandle;
 
 use super::*;
 

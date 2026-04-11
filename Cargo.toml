@@ -3,6 +3,7 @@ members = [
     "crates/neovex",
     "crates/neovex-bin",
     "crates/neovex-runtime",
+    "crates/neovex-sandbox",
     "crates/neovex-core",
     "crates/neovex-engine",
     "crates/neovex-server",
@@ -51,7 +52,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-native-tls = "0.3"
 tokio-postgres = "0.7"
 tokio-util = { version = "0.7", features = ["rt"] }
-tokio-tungstenite = "0.27"
+tokio-tungstenite = "0.28"
 tower-service = "0.3"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tracing = "0.1"

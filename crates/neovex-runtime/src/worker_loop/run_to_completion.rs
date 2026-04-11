@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::backend::{DenoRuntimeBackendFactory, RuntimeBackendFactory, RuntimeBackendInvocation};
+use crate::backends::v8::V8RuntimeBackendFactory;
+use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
 use crate::error::NeovexRuntimeError;
 use crate::executor::{
     RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit, run_invocation_lifecycle,
@@ -29,7 +30,7 @@ pub(crate) struct RunToCompletionWorkerLoopFactory {
 impl RunToCompletionWorkerLoopFactory {
     pub(crate) fn new(watchdog: WatchdogTimer) -> Self {
         Self {
-            backend_factory: Arc::new(DenoRuntimeBackendFactory),
+            backend_factory: Arc::new(V8RuntimeBackendFactory),
             watchdog,
             #[cfg(test)]
             test_state: None,
@@ -63,7 +64,7 @@ struct RunToCompletionWorkerLoop {
     worker_id: usize,
     policy: Arc<RuntimePolicy>,
     watchdog: WatchdogTimer,
-    backend: Box<dyn crate::backend::RuntimeBackend>,
+    backend: Box<dyn RuntimeBackend>,
     worker_runtime: tokio::runtime::Runtime,
 }
 
@@ -72,7 +73,7 @@ impl RunToCompletionWorkerLoop {
         worker_id: usize,
         policy: Arc<RuntimePolicy>,
         watchdog: WatchdogTimer,
-        backend: Box<dyn crate::backend::RuntimeBackend>,
+        backend: Box<dyn RuntimeBackend>,
         #[cfg(test)] test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
     ) -> Self {
         let worker_runtime = tokio::runtime::Builder::new_current_thread()

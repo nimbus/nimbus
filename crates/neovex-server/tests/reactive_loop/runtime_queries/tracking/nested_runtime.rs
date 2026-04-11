@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn convex_runtime_nested_query_subscription_tracks_inner_runtime_reads() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     let registry = convex_registry_with_bundle(
         json!([
             {
@@ -165,9 +165,9 @@ export {};
 
     let metrics = registry.runtime_metrics_snapshot();
     assert_eq!(
-        metrics.isolate_pool_hits + metrics.isolate_pool_misses,
+        metrics.runtime_pool_hits + metrics.runtime_pool_misses,
         2,
         "bootstrap plus one reactive reevaluation should account for two pool outcomes"
     );
-    assert_eq!(metrics.isolate_pool_replacements, 0);
+    assert_eq!(metrics.runtime_pool_replacements, 0);
 }

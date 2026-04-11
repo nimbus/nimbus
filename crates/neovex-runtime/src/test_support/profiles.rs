@@ -56,7 +56,7 @@ pub(crate) fn bounded_fairness_runtime_test_limits() -> RuntimeLimits {
     RuntimeLimits {
         execution_model: RuntimeExecutionModel::RunToCompletion,
         runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
-        max_concurrent_isolates: 2,
+        max_concurrent_runtime_instances: 2,
         worker_threads: 2,
         max_active_top_level_invocations_per_tenant: 1,
         max_in_flight_top_level_invocations_per_tenant: 1,

@@ -9,7 +9,7 @@ struct RuntimeCursorBoundaryPayload {
     doc_id: String,
 }
 
-pub(in crate::runtime::read_tracking) fn decode_runtime_cursor_boundary(
+pub(in crate::execution::read_tracking) fn decode_runtime_cursor_boundary(
     cursor: &Cursor,
 ) -> Option<(Vec<Option<Value>>, DocumentId)> {
     let bytes = URL_SAFE_NO_PAD.decode(&cursor.0).ok()?;
@@ -18,7 +18,7 @@ pub(in crate::runtime::read_tracking) fn decode_runtime_cursor_boundary(
     Some((payload.sort_values, document_id))
 }
 
-pub(in crate::runtime::read_tracking) fn extract_runtime_cursor_boundary(
+pub(in crate::execution::read_tracking) fn extract_runtime_cursor_boundary(
     order: Option<&OrderBy>,
     value: &Value,
 ) -> Option<(Vec<Option<Value>>, DocumentId)> {

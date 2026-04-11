@@ -1,4 +1,5 @@
 use super::*;
+use crate::backends::v8::V8WorkerRuntimePool;
 use crate::executor::RuntimeExecutor;
 use crate::limits::RuntimePoolKind;
 
@@ -87,7 +88,7 @@ export {};
     let host = Arc::new(DeferredAsyncHost::default());
     let runtime_owner =
         NeovexRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
@@ -98,7 +99,7 @@ export {};
 
     let mut slot = runtime_owner
         .start_cooperative_locker_runtime_slot(
-            &mut isolate_pool,
+            &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
                 invocation: RuntimeInvocationExecution {
                     watchdog: watchdog.clone(),
@@ -131,7 +132,13 @@ export {};
         }
     }
     assert!(parked, "deferred async host work should eventually park");
-    assert_eq!(runtime_owner.policy.metrics_snapshot().active_isolates, 0);
+    assert_eq!(
+        runtime_owner
+            .policy
+            .metrics_snapshot()
+            .active_runtime_instances,
+        0
+    );
 
     let initial_generation = activity_signal.current_generation();
     host.release();
@@ -180,7 +187,7 @@ export {};
         serde_json::json!({
             "ok": true,
             "host": {
-                "operation": "convex.ctx.db.get",
+                "operation": "ctx_db_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -192,7 +199,13 @@ export {};
 
     let ready_jobs = permit.finish_invocation().await;
     assert!(ready_jobs.is_empty());
-    assert_eq!(runtime_owner.policy.metrics_snapshot().active_isolates, 0);
+    assert_eq!(
+        runtime_owner
+            .policy
+            .metrics_snapshot()
+            .active_runtime_instances,
+        0
+    );
     watchdog.shutdown();
 }
 
@@ -245,7 +258,7 @@ export {};
         Arc::new(AsyncEchoHost),
         cooperative_warm_pool_runtime_test_policy(),
     );
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
@@ -256,7 +269,7 @@ export {};
 
     let mut slot = runtime_owner
         .start_cooperative_locker_runtime_slot(
-            &mut isolate_pool,
+            &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
                 invocation: RuntimeInvocationExecution {
                     watchdog: watchdog.clone(),
@@ -283,7 +296,7 @@ export {};
             assert_eq!(
                 result,
                 serde_json::json!({
-                    "operation": "convex.ctx.db.get",
+                    "operation": "ctx_db_get",
                     "payload": {
                         "table": "messages",
                         "id": "doc-1",
@@ -345,15 +358,15 @@ export {};
         auth: None,
     };
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime_owner = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
 
     let expected = serde_json::json!({
-        "operation": "convex.ctx.db.get",
+        "operation": "ctx_db_get",
         "payload": {
             "table": "messages",
             "id": "doc-1",
@@ -372,7 +385,7 @@ export {};
 
         let mut slot = runtime_owner
             .start_cooperative_locker_runtime_slot(
-                &mut isolate_pool,
+                &mut v8_runtime_pool,
                 CooperativeRuntimeSlotStart {
                     invocation: RuntimeInvocationExecution {
                         watchdog: watchdog.clone(),
@@ -417,7 +430,7 @@ export {};
                 .reset_request_state()
                 .unwrap_or_else(|e| panic!("cycle {cycle}: reset should succeed: {e}"));
             rt.warm_reuse_count = rt.warm_reuse_count.saturating_add(1);
-            isolate_pool.return_runtime_for_invocation(
+            v8_runtime_pool.return_runtime_for_invocation(
                 &runtime_owner,
                 &bundle,
                 Some(&RuntimeInvocationContext::top_level(&request)),
@@ -436,7 +449,8 @@ export {};
 ///
 /// Before the fix, `next_slot()` drained all pending jobs from the queue in a
 /// `while let` loop, each calling `block_on(acquire_initial())` which acquires
-/// the global isolate semaphore. With `max_concurrent_isolates: 1`, the second
+/// the global runtime-instance semaphore. With
+/// `max_concurrent_runtime_instances: 1`, the second
 /// admission would block forever because the first admitted job still held the
 /// semaphore and couldn't release it (needs to be polled first).
 ///
@@ -493,7 +507,7 @@ export {};
             }
             RuntimePoolKind::WarmPool => cooperative_warm_pool_runtime_test_limits(),
         };
-        limits.max_concurrent_isolates = 1;
+        limits.max_concurrent_runtime_instances = 1;
         limits.worker_threads = 1;
         let policy = Arc::new(RuntimePolicy::new(limits));
         let runtime = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy.clone());

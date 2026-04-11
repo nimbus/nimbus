@@ -44,7 +44,7 @@ impl CooperativeWorkerLoop {
                 continue;
             }
 
-            self.drain_deferred_runtime_drops_if_idle();
+            self.drain_deferred_v8_runtime_drops_if_idle();
             let job = queue.recv_blocking()?;
             self.admit_job(queue, job);
         }
@@ -107,7 +107,7 @@ impl WorkerLoop for CooperativeWorkerLoop {
                             result,
                         ));
                     self.scheduler.finish(slot_id);
-                    self.drain_deferred_runtime_drops_if_idle();
+                    self.drain_deferred_v8_runtime_drops_if_idle();
                     queue.complete_job(job, result, ready_jobs);
                 }
                 Err(error) => {
@@ -140,12 +140,12 @@ impl WorkerLoop for CooperativeWorkerLoop {
                             result,
                         ));
                     self.scheduler.finish(slot_id);
-                    self.drain_deferred_runtime_drops_if_idle();
+                    self.drain_deferred_v8_runtime_drops_if_idle();
                     queue.complete_job(job, result, ready_jobs);
                 }
             }
         }
 
-        self.deferred_runtime_drops.clear();
+        self.deferred_v8_runtime_drops.clear();
     }
 }

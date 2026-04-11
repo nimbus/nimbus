@@ -1,20 +1,19 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use deno_core::{JsRuntimeForSnapshot, RuntimeOptions};
-
 use crate::error::Result;
+use crate::runtime::bootstrap::{install_bootstrap, runtime_extension};
 
-use super::super::{install_bootstrap, runtime_extension};
+use super::embedder::{JsRuntimeForSnapshot, RuntimeOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeConstructionMode {
+pub(crate) enum V8RuntimeConstructionMode {
     #[allow(dead_code)] // Used only in test helpers
     Unsnapshotted,
     StartupSnapshot,
 }
 
-impl RuntimeConstructionMode {
+impl V8RuntimeConstructionMode {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Unsnapshotted => "unsnapshotted",
@@ -27,11 +26,11 @@ impl RuntimeConstructionMode {
     }
 }
 
-pub(crate) struct RuntimeStartupSnapshot {
+pub(crate) struct V8StartupSnapshot {
     bytes: &'static [u8],
 }
 
-impl RuntimeStartupSnapshot {
+impl V8StartupSnapshot {
     fn new(bytes: Box<[u8]>) -> Self {
         // deno_core currently accepts startup snapshots as &'static [u8]. The
         // worker pool keeps a single bootstrap snapshot for its own lifetime,
@@ -48,11 +47,11 @@ impl RuntimeStartupSnapshot {
 }
 
 #[cfg(test)]
-static RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
+static V8_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
-pub(crate) fn create_bootstrap_snapshot() -> Result<RuntimeStartupSnapshot> {
+pub(crate) fn create_v8_startup_snapshot() -> Result<V8StartupSnapshot> {
     #[cfg(test)]
-    RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
+    V8_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
 
     // BOOTSTRAP_SOURCE runs here too, so keep it snapshot-safe. In particular,
     // post-bootstrap cleanup like `delete globalThis.Deno` must stay in the
@@ -63,10 +62,10 @@ pub(crate) fn create_bootstrap_snapshot() -> Result<RuntimeStartupSnapshot> {
         ..Default::default()
     });
     install_bootstrap(&mut runtime)?;
-    Ok(RuntimeStartupSnapshot::new(runtime.snapshot()))
+    Ok(V8StartupSnapshot::new(runtime.snapshot()))
 }
 
 #[cfg(test)]
-pub(crate) fn bootstrap_snapshot_build_count_for_test() -> usize {
-    RUNTIME_BOOTSTRAP_SNAPSHOT_BUILDS.load(Ordering::Relaxed)
+pub(crate) fn v8_bootstrap_snapshot_build_count_for_test() -> usize {
+    V8_BOOTSTRAP_SNAPSHOT_BUILDS.load(Ordering::Relaxed)
 }

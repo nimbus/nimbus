@@ -2,8 +2,8 @@ use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::{Arc, RwLock};
 
 use deadpool_postgres::{
     BuildError, Client, GenericClient, Manager, ManagerConfig, Pool, PoolError, RecyclingMethod,
@@ -101,6 +101,7 @@ pub struct PostgresTenantStore {
     provider: PostgresProvider,
     tenant_id: TenantId,
     schema_name: String,
+    schema_cache: Arc<RwLock<Option<Schema>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -137,9 +138,11 @@ pub struct PostgresWriteTransaction {
     provider: PostgresProvider,
     tenant_id: TenantId,
     schema_name: String,
+    schema_cache: Arc<RwLock<Option<Schema>>>,
     client: Option<Client>,
     commit_writes: Vec<WriteOp>,
     notification: PendingPostgresNotification,
+    schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
 
@@ -485,6 +488,7 @@ impl PostgresTenantStore {
             provider,
             tenant_id: registration.tenant_id,
             schema_name: registration.schema_name,
+            schema_cache: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -494,6 +498,10 @@ impl PostgresTenantStore {
 
     pub fn schema_name(&self) -> &str {
         &self.schema_name
+    }
+
+    pub fn invalidate_schema_cache(&self) {
+        invalidate_schema_cache_handle(&self.schema_cache);
     }
 
     pub fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
@@ -546,17 +554,27 @@ impl PostgresTenantStore {
     }
 
     pub fn load_schema(&self) -> Result<Schema> {
+        if let Some(schema) = cached_schema(&self.schema_cache) {
+            return Ok(schema);
+        }
         let provider = self.provider.clone();
         let schema_name = self.schema_name.clone();
-        self.block_on(async move {
+        let schema = self.block_on(async move {
             let client = provider.client().await?;
             load_schema_from_session(&client, &schema_name).await
-        })
+        })?;
+        publish_schema_cache(&self.schema_cache, &schema);
+        Ok(schema)
     }
 
     pub async fn load_schema_async(&self) -> Result<Schema> {
+        if let Some(schema) = cached_schema(&self.schema_cache) {
+            return Ok(schema);
+        }
         let client = self.provider.client().await?;
-        load_schema_from_session(&client, &self.schema_name).await
+        let schema = load_schema_from_session(&client, &self.schema_name).await?;
+        publish_schema_cache(&self.schema_cache, &schema);
+        Ok(schema)
     }
 
     pub fn latest_sequence(&self) -> Result<SequenceNumber> {
@@ -1015,15 +1033,10 @@ impl PostgresTenantStore {
     }
 
     fn load_table_schema(&self, table: &TableName) -> Result<TableSchema> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let table = table.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_table_schema_from_session(&client, &schema_name, &table)
-                .await?
-                .ok_or(Error::SchemaNotFound(table))
-        })
+        self.load_schema()?
+            .get_table(table)
+            .cloned()
+            .ok_or(Error::SchemaNotFound(table.clone()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1789,9 +1802,11 @@ impl PostgresWriteTransaction {
             provider,
             tenant_id,
             schema_name,
+            schema_cache: store.schema_cache.clone(),
             client: Some(client),
             commit_writes: Vec::new(),
             notification: PendingPostgresNotification::default(),
+            schema_cache_changed: false,
             check_cancel: Box::new(check_cancel),
         };
         if let Err(error) = (|| -> Result<()> {
@@ -1815,6 +1830,7 @@ impl PostgresWriteTransaction {
         self.upsert_table_schema(table_schema)?;
         self.create_table_indexes(table_schema)?;
         self.notification.schema_changed = true;
+        self.schema_cache_changed = true;
         Ok(())
     }
 
@@ -1825,6 +1841,7 @@ impl PostgresWriteTransaction {
         }
         self.delete_table_schema_entry(table)?;
         self.notification.schema_changed = true;
+        self.schema_cache_changed = true;
         Ok(())
     }
 
@@ -2356,6 +2373,9 @@ impl PostgresWriteTransaction {
             .fault_injector
             .check(FaultPoint::StorageCommitBeforeVisibility)?;
         self.batch_execute("COMMIT")?;
+        if self.schema_cache_changed {
+            invalidate_schema_cache_handle(&self.schema_cache);
+        }
         self.provider
             .fault_injector
             .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
@@ -2740,6 +2760,22 @@ fn quote_literal(value: &str) -> String {
     }
     quoted.push('\'');
     quoted
+}
+
+fn cached_schema(schema_cache: &RwLock<Option<Schema>>) -> Option<Schema> {
+    schema_cache.read().ok().and_then(|guard| guard.clone())
+}
+
+fn publish_schema_cache(schema_cache: &RwLock<Option<Schema>>, schema: &Schema) {
+    if let Ok(mut guard) = schema_cache.write() {
+        *guard = Some(schema.clone());
+    }
+}
+
+fn invalidate_schema_cache_handle(schema_cache: &RwLock<Option<Schema>>) {
+    if let Ok(mut guard) = schema_cache.write() {
+        *guard = None;
+    }
 }
 
 fn qualified_table(schema_name: &str, table_name: &str) -> String {

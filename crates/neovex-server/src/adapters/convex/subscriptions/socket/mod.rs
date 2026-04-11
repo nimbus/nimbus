@@ -7,8 +7,8 @@ use super::types::{
     ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
 };
 use super::*;
+use crate::execution::subscriptions::subscribe_runtime_base_queries;
 use crate::owned_tasks::OwnedTaskSet;
-use crate::runtime::subscriptions::subscribe_runtime_base_queries;
 use neovex_engine::{SubscriptionCleanupHandle, SubscriptionRegistration};
 
 mod forwarding;
@@ -20,7 +20,7 @@ enum ActiveSubscription {
     Direct {
         cleanup_handles: Vec<SubscriptionCleanupHandle>,
     },
-    Runtime(crate::runtime::subscriptions::RuntimeSubscriptionHandle),
+    Runtime(crate::execution::subscriptions::RuntimeSubscriptionHandle),
 }
 
 impl ActiveSubscription {
@@ -32,7 +32,7 @@ impl ActiveSubscription {
     }
 
     fn from_runtime_handle(
-        handle: crate::runtime::subscriptions::RuntimeSubscriptionHandle,
+        handle: crate::execution::subscriptions::RuntimeSubscriptionHandle,
     ) -> Self {
         Self::Runtime(handle)
     }

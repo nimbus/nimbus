@@ -1,11 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use deno_core::{CancelFuture, OpState};
-use deno_error::JsErrorBox;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::backends::v8::embedder::{CancelFuture, JsErrorBox, OpState};
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostCallOperation, HostCallRequest};
 

@@ -25,7 +25,7 @@ async fn permit_suspend_frees_capacity() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -89,7 +89,7 @@ async fn parked_invocation_resumes_after_host_completion() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -137,7 +137,7 @@ async fn parked_invocation_counts_toward_in_flight_limit() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = bounded_fairness_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 2;
     limits.max_in_flight_top_level_invocations_per_tenant = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
@@ -241,7 +241,7 @@ async fn timeout_excludes_permit_reacquire_wait() {
     let (_sync_bundle_dir, sync_bundle_path) = write_sync_query_builder_bundle();
     let mut limits = bounded_fairness_runtime_test_limits();
     limits.execution_timeout = Duration::from_millis(120);
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 2;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -328,7 +328,7 @@ pub(crate) async fn tenant_queue_limit_rejections_record_metrics_inner() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = bounded_fairness_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
     let host = Arc::new(TenantFairnessHost::default());

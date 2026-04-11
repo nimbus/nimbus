@@ -285,7 +285,7 @@ export {};
         result,
         serde_json::json!({
             "insert": {
-                "operation": "convex.ctx.db.insert",
+                "operation": "ctx_db_insert",
                 "payload": {
                     "table": "messages",
                     "fields": { "body": "hello" },
@@ -293,7 +293,7 @@ export {};
                 }
             },
             "patch": {
-                "operation": "convex.ctx.db.patch",
+                "operation": "ctx_db_patch",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -302,7 +302,7 @@ export {};
                 }
             },
             "deletion": {
-                "operation": "convex.ctx.db.delete",
+                "operation": "ctx_db_delete",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -310,7 +310,7 @@ export {};
                 }
             },
             "runAfter": {
-                "operation": "convex.ctx.scheduler.run_after",
+                "operation": "ctx_scheduler_run_after",
                 "payload": {
                     "delay_ms": 100,
                     "name": "messages:storeInternal",
@@ -320,7 +320,7 @@ export {};
                 }
             },
             "runAt": {
-                "operation": "convex.ctx.scheduler.run_at",
+                "operation": "ctx_scheduler_run_at",
                 "payload": {
                     "timestamp_ms": 500,
                     "name": "messages:storeInternal",
@@ -330,7 +330,7 @@ export {};
                 }
             },
             "cancel": {
-                "operation": "convex.ctx.scheduler.cancel",
+                "operation": "ctx_scheduler_cancel",
                 "payload": {
                     "job_id": "job-1",
                     "session_id": "session-1",
@@ -592,7 +592,7 @@ export {};
         result,
         serde_json::json!({
             "query": {
-                "operation": "convex.ctx.run_query",
+                "operation": "ctx_run_query",
                 "payload": {
                     "name": "messages:list",
                     "visibility": "public",
@@ -601,7 +601,7 @@ export {};
                 }
             },
             "mutation": {
-                "operation": "convex.ctx.run_mutation",
+                "operation": "ctx_run_mutation",
                 "payload": {
                     "name": "messages:storeInternal",
                     "visibility": "internal",
@@ -610,7 +610,7 @@ export {};
                 }
             },
             "action": {
-                "operation": "convex.ctx.run_action",
+                "operation": "ctx_run_action",
                 "payload": {
                     "name": "messages:sendViaAction",
                     "visibility": "public",

@@ -28,7 +28,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
         .json::<serde_json::Value>()
         .await
         .expect("runtime metrics json should parse");
-    assert_eq!(body["limits"]["runtime_backend"], json!("deno_core"));
+    assert_eq!(body["limits"]["runtime_backend"], json!("v8"));
     assert_eq!(
         body["limits"]["execution_model"],
         json!("cooperative_locker")
@@ -57,7 +57,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["limits"]["max_heap_mb"], json!(128));
     assert_eq!(body["limits"]["initial_heap_mb"], json!(8));
     assert_eq!(body["limits"]["execution_timeout_ms"], json!(30_000));
-    assert!(body["limits"]["max_concurrent_isolates"].is_u64());
+    assert!(body["limits"]["max_concurrent_runtime_instances"].is_u64());
     assert!(body["limits"]["worker_threads"].is_u64());
     assert!(body["limits"]["max_active_top_level_invocations_per_tenant"].is_u64());
     assert!(body["limits"]["max_in_flight_top_level_invocations_per_tenant"].is_u64());
@@ -98,7 +98,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(body["metrics"]["tenants"], json!({}));
     assert_eq!(body["metrics"]["recent_request_correlations"], json!([]));
     assert_eq!(
-        body["metrics"]["fallback_cross_isolate_dispatches"],
+        body["metrics"]["fallback_cross_runtime_dispatches"],
         json!(0)
     );
 }

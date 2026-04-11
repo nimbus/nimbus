@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use deno_core::ModuleSpecifier;
 use sha2::{Digest, Sha256};
 
+use crate::backends::v8::embedder::ModuleSpecifier;
 use crate::error::{NeovexRuntimeError, Result};
 use crate::module_loader::BundleModuleCodeCache;
 

@@ -28,7 +28,7 @@ async fn async_host_call_records_precancel_metric() {
     let result = execute_async_host_call(
         RuntimeAsyncHostCallTrace::new(tracing::Span::none(), "convex runtime async host call"),
         policy.metrics(),
-        "convex.ctx.db.get",
+        convex_host_operation_name(HostCallOperation::CtxDbGet),
         cancellation,
         async { Ok(json!("unexpected")) },
     )
@@ -40,7 +40,10 @@ async fn async_host_call_records_precancel_metric() {
     assert_eq!(snapshot.precanceled_host_ops, 1);
     assert_eq!(snapshot.in_flight_canceled_host_ops, 0);
     assert_eq!(
-        host_operation_metrics(&policy, "convex.ctx.db.get"),
+        host_operation_metrics(
+            &policy,
+            convex_host_operation_name(HostCallOperation::CtxDbGet)
+        ),
         RuntimeHostOperationMetricsSnapshot {
             started: 0,
             succeeded: 0,
@@ -68,7 +71,7 @@ async fn async_host_call_records_cooperative_read_cancellation() {
                     "convex runtime async host call",
                 ),
                 metrics,
-                "convex.ctx.db.get",
+                convex_host_operation_name(HostCallOperation::CtxDbGet),
                 cancellation.clone(),
                 async move {
                     started.notify_one();
@@ -95,7 +98,10 @@ async fn async_host_call_records_cooperative_read_cancellation() {
     assert_eq!(snapshot.precanceled_host_ops, 0);
     assert_eq!(snapshot.in_flight_canceled_host_ops, 1);
     assert_eq!(
-        host_operation_metrics(&policy, "convex.ctx.db.get"),
+        host_operation_metrics(
+            &policy,
+            convex_host_operation_name(HostCallOperation::CtxDbGet)
+        ),
         RuntimeHostOperationMetricsSnapshot {
             started: 1,
             succeeded: 0,
@@ -125,7 +131,7 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
                     "convex runtime async host call",
                 ),
                 metrics,
-                "convex.ctx.db.insert",
+                convex_host_operation_name(HostCallOperation::CtxDbInsert),
                 cancellation,
                 async move {
                     started.notify_one();
@@ -156,7 +162,10 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
     let snapshot = policy.metrics_snapshot();
     assert_eq!(snapshot.canceled_host_ops, 0);
     assert_eq!(
-        host_operation_metrics(&policy, "convex.ctx.db.insert"),
+        host_operation_metrics(
+            &policy,
+            convex_host_operation_name(HostCallOperation::CtxDbInsert)
+        ),
         RuntimeHostOperationMetricsSnapshot {
             started: 1,
             succeeded: 1,

@@ -39,7 +39,7 @@ pub(crate) async fn runtime_diagnostics(
                 .execution_timeout
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64,
-            max_concurrent_isolates: limits.max_concurrent_isolates,
+            max_concurrent_runtime_instances: limits.max_concurrent_runtime_instances,
             worker_threads: limits.worker_threads,
             max_active_top_level_invocations_per_tenant: limits
                 .max_active_top_level_invocations_per_tenant,

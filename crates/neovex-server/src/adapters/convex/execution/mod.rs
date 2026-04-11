@@ -3,19 +3,19 @@
 use super::*;
 
 mod async_ops;
-mod runtime;
+mod runtime_backed;
 mod sync_ops;
 mod types;
 
-pub(super) use crate::runtime::errors::{
+pub(super) use crate::execution::errors::{
     check_host_cancellation, ensure_runtime_host_not_cancelled, runtime_error_to_core,
 };
-pub(super) use crate::runtime::invocations::next_runtime_server_request_id;
+pub(super) use crate::execution::invocations::next_runtime_server_request_id;
 pub(super) use async_ops::{
     dispatch_convex_mutation_async, execute_convex_action_async, execute_query_result_async,
     execute_schedule_command_async,
 };
-pub(super) use runtime::{
+pub(super) use runtime_backed::{
     bootstrap_runtime_named_subscription_async, invoke_named_convex_function_async_cancellable,
     invoke_named_convex_function_with_trace_async_cancellable,
 };

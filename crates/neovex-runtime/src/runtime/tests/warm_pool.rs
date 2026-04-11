@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::bootstrap::RuntimeWorkerIsolatePool;
+use crate::backends::v8::V8WorkerRuntimePool;
 
 pub(super) const CROSS_TENANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
     IsolatedRuntimeTestCase::new(
@@ -14,7 +14,7 @@ pub(super) const CROSS_TENANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
 fn warm_pool_with_run_to_completion_fails_fast() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.runtime_pool_kind = crate::limits::RuntimePoolKind::WarmPool;
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let _policy = Arc::new(RuntimePolicy::new(limits));
 }
@@ -117,14 +117,14 @@ export {};
         .expect("tenant-b bundle should build");
 
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime_owner = NeovexRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
 
     // Step 1: Take a runtime for tenant-A (cold miss — pool is empty).
-    let reusable_a = isolate_pool
+    let reusable_a = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle_tenant_a, true)
         .expect("tenant-a cold take should succeed");
     let metrics_after_cold = runtime_owner.policy.metrics_snapshot();
@@ -132,12 +132,17 @@ export {};
     assert_eq!(metrics_after_cold.warm_pool_hits, 0);
 
     // Return the runtime to the pool under tenant-A's identity.
-    isolate_pool.return_runtime_for_invocation(&runtime_owner, &bundle_tenant_a, None, reusable_a);
-    assert_eq!(isolate_pool.warm_pool_count_for_test(), 1);
+    v8_runtime_pool.return_runtime_for_invocation(
+        &runtime_owner,
+        &bundle_tenant_a,
+        None,
+        reusable_a,
+    );
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
 
     // Step 2: Attempt take for tenant-B → must be a cold miss because the
     // pooled entry belongs to tenant-A.
-    let reusable_b = isolate_pool
+    let reusable_b = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle_tenant_b, true)
         .expect("tenant-b cold take should succeed");
     let metrics_after_cross = runtime_owner.policy.metrics_snapshot();
@@ -151,14 +156,19 @@ export {};
     );
 
     // The tenant-A entry should still be in the pool (tenant-B got a fresh one).
-    assert_eq!(isolate_pool.warm_pool_count_for_test(), 1);
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
 
     // Return tenant-B's runtime.
-    isolate_pool.return_runtime_for_invocation(&runtime_owner, &bundle_tenant_b, None, reusable_b);
-    assert_eq!(isolate_pool.warm_pool_count_for_test(), 2);
+    v8_runtime_pool.return_runtime_for_invocation(
+        &runtime_owner,
+        &bundle_tenant_b,
+        None,
+        reusable_b,
+    );
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 2);
 
     // Step 3: Take for tenant-A again → must be a warm hit.
-    let _reusable_a2 = isolate_pool
+    let _reusable_a2 = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle_tenant_a, true)
         .expect("tenant-a warm take should succeed");
     let metrics_after_warm = runtime_owner.policy.metrics_snapshot();
@@ -172,5 +182,5 @@ export {};
     );
 
     // Pool should now have 1 entry (tenant-B's).
-    assert_eq!(isolate_pool.warm_pool_count_for_test(), 1);
+    assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
 }

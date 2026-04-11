@@ -21,7 +21,7 @@ flowchart TD
 
     subgraph rust["Rust · single binary"]
         T2["Server · axum, WebSocket"]
-        T3["Runtime · deno_core, V8"]
+        T3["Runtime · V8 (via deno_core)"]
         T4["Engine"]
         T5["Storage · SQLite / redb, JSON / blobs"]
 
@@ -63,12 +63,15 @@ flowchart TD
         Server["neovex-server · transport"]
         Engine["neovex-engine · logic"]
         Runtime["neovex-runtime · V8 execution"]
+        Sandbox["neovex-sandbox · isolation seam"]
         Storage["neovex-storage · persistence"]
         Core["neovex-core · types"]
 
         Server --> Engine
         Server --> Runtime
+        Server --> Sandbox
         Runtime -.->|HostBridge| Engine
+        Sandbox --> Core
         Engine --> Storage
         Engine & Storage --> Core
     end
@@ -116,6 +119,11 @@ connects the two independent subsystems below it:
   at runtime, V8 handler code reaches the engine, but at the crate level, the
   runtime knows nothing about it. This is dependency inversion: the runtime
   declares what it needs; the server provides it.
+
+- **neovex-sandbox** is the generic isolation and sandbox-orchestration seam.
+  It currently exposes backend-agnostic sandbox lifecycle contracts and the
+  first server-facing catalog seam, while concrete krun-backed, Firecracker,
+  and other backend implementations remain deferred.
 
 The server has two request paths. **Native** requests (Neovex HTTP/WS API) go
 directly to async engine methods; read and write paths now await an explicit
@@ -378,10 +386,13 @@ metering.
   per-commit metadata for the intermediate records.
 - `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification), then fans loaded tenants out through a bounded concurrent scheduler tick so one slow tenant does not stall other due work.
 
-**`neovex-runtime`** — Standalone V8 execution environment with zero workspace dependencies. Defines the `HostBridge` trait for dependency-inverted host integration; the runtime never imports engine or storage types directly.
+**`neovex-runtime`** — Standalone execution runtime, currently V8-backed, with
+zero workspace dependencies. Defines the `HostBridge` trait for
+dependency-inverted host integration; the runtime never imports engine or
+storage types directly.
 
-- `runtime.rs` — `NeovexRuntime` and `ConvexRuntime`: the runtime composition
-  root. It now keeps the public type surface while delegating public runtime
+- `runtime.rs` — `NeovexRuntime`: the runtime composition root. It now keeps
+  the public type surface while delegating public runtime
   construction and convenience invocation entrypoints to `runtime/facade.rs`,
   invocation-driver ownership to the `runtime/driver/` module tree
   (`invocation.rs` for driver lifecycle and finalize paths, `loading.rs` for
@@ -390,25 +401,35 @@ metering.
   snapshot-seeded tracing), cooperative slot startup plus wake/poll handling
   to `runtime/cooperative.rs`, error/serialization helpers to
   `runtime/helpers.rs`, invocation/auth types to `runtime/invocation.rs`,
-  bundle identity and integrity handling to `runtime/bundle.rs`, and
-  bootstrap ownership to the `runtime/bootstrap/` module tree.
+  bundle identity and integrity handling to `runtime/bundle.rs`, and the
+  current V8-backed bootstrap layer to the `runtime/bootstrap/` module tree.
 - `runtime/invocation.rs` — `InvocationKind`, `InvocationRequest`, `InvocationAuth`, `RuntimeUserIdentity`, and `VerifiedUserIdentity`: the public invocation and auth payload surface for runtime calls.
 - `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
-- `runtime/bootstrap/mod.rs` — thin bootstrap composition root that wires the runtime bootstrap module tree together.
+- `backends/mod.rs` — worker-local `RuntimeBackendFactory` /
+  `RuntimeBackend` traits plus the shared invocation envelope that keeps
+  backend-specific state out of `RuntimeExecutor`.
+- `backends/v8/` — current V8 backend implementation. `mod.rs` owns the
+  worker-local backend adapter plus deferred V8-runtime drop handling,
+  `embedder.rs` centralizes the current `deno_core` integration behind a
+  V8-owned namespace, `startup.rs` owns startup-snapshot construction and
+  build accounting, and `warm_pool.rs` owns reusable-runtime state,
+  affinity-aware warm-pool reuse, and pool-bounds enforcement.
+- `runtime/bootstrap/mod.rs` — thin composition root for the current V8-backed
+  bootstrap module tree. This remains bootstrap glue for the existing V8
+  backend, not a proven backend-neutral abstraction.
 - `runtime/bootstrap/payloads.rs` — host-call payload schemas plus the runtime host-call envelope used by the bootstrap op surface.
-- `runtime/bootstrap/ops.rs` — thin bootstrap op composition root. It now keeps
-  the extension registration surface while delegating sync query-builder ops to
-  `ops/sync_query_builder.rs`, async query and terminal ops to
-  `ops/async_query.rs`, mutation/action/scheduler plus write-effect ops to
-  `ops/async_effects.rs`, nested runtime ops to `ops/nested_runtime.rs`, and
-  shared sync/async host-call permit glue to `ops/shared.rs`.
-- `runtime/bootstrap/source.rs` — bootstrap JavaScript source and the installation/finalization helpers that load it into a `JsRuntime`.
-- `runtime/bootstrap/state.rs` — installation of host bridge, cancellation state, and shared permit state into `OpState`, plus runtime timeout-controller ownership.
-- `runtime/bootstrap/snapshot.rs` — thin composition root for startup-snapshot
-  ownership. `snapshot/startup.rs` owns construction vocabulary, startup
-  snapshot creation, and snapshot-build test accounting, while
-  `snapshot/retained_pool.rs` owns retained-runtime entry state, affinity-aware
-  reuse, and pool-bounds enforcement.
+- `runtime/bootstrap/ops.rs` — thin bootstrap op composition root for the
+  current V8/`deno_core` host-op surface. It keeps the extension registration
+  surface while delegating sync query-builder ops to `ops/sync_query_builder.rs`,
+  async query and terminal ops to `ops/async_query.rs`,
+  mutation/action/scheduler plus write-effect ops to `ops/async_effects.rs`,
+  nested runtime ops to `ops/nested_runtime.rs`, and shared sync/async
+  host-call permit glue to `ops/shared.rs`.
+- `runtime/bootstrap/source.rs` — bootstrap JavaScript source plus the
+  installation/finalization helpers that load it into a `JsRuntime`.
+- `runtime/bootstrap/state.rs` — installation of host bridge, cancellation
+  state, and shared permit state into V8 `OpState`, plus runtime
+  timeout-controller ownership.
 - `executor.rs` — `RuntimeExecutor`: the executor composition root and inline
   executor regression surface. `executor/facade.rs` owns the public executor
   type, worker-thread startup and shutdown, and executor test-state scaffolds;
@@ -430,20 +451,46 @@ metering.
 - `worker_loop/mod.rs` — `WorkerLoopFactory`, `WorkerLoop`, and execution-model routing for runtime workers.
 - `worker_loop/cooperative.rs` — composition root for the cooperative worker loop (the default execution model). Delegates admission and completion flow to `cooperative/execution.rs`, slot-state and parked/runnable scheduling to `cooperative/scheduler.rs`, warm-pool return plus deferred-drop ownership to `cooperative/retention.rs`, and the main worker run/shutdown loop to `cooperative/run.rs`.
 - `worker_loop/run_to_completion.rs` — run-to-completion worker-loop implementation, available as an explicit per-bundle execution model option for bundles that need guaranteed fresh-per-invocation isolation.
-- `backend.rs` — Worker-local `RuntimeBackendFactory` / `RuntimeBackend` helpers. The current `DenoRuntimeBackend` keeps the run-to-completion `invoke(...)` helper below the worker-loop seam so runtime-specific types stay out of `RuntimeExecutor`.
-- `host.rs` — `HostBridge` trait and `HostCallRequest` struct defining the contract between V8 guest code and Rust host operations (db queries, mutations, scheduler commands, `ctx.run*` delegation).
+- `host.rs` — `HostBridge` trait plus `HostCallRequest` /
+  `HostCallOperation`: the generic runtime-side contract between V8 guest code
+  and Rust host operations (db queries, mutations, scheduler commands,
+  `ctx.run*` delegation). Adapter-specific wire names such as Convex
+  `convex.*` labels now live at the server adapter boundary rather than in the
+  runtime crate.
 - `context.rs` — `RuntimeInvocationContext`: per-request metadata (invocation ID, function name, kind, auth identity) threaded through the runtime and host bridge.
-- `limits.rs` — `RuntimeLimits` (heap, timeout, max isolates, worker threads, per-tenant active/in-flight/queued caps, max nested calls) and `RuntimePolicy` (enforces limits + owns the isolate concurrency semaphore).
+- `limits.rs` — `RuntimeLimits` (heap, timeout, max runtime instances, worker
+  threads, per-tenant active/in-flight/queued caps, max nested calls) and
+  `RuntimePolicy` (enforces limits + owns the runtime concurrency semaphore).
 - `metrics.rs` — runtime metrics composition root. It now composes
-  `metrics/global.rs` (global isolate, queue, pool, bundle, timeout, and
+  `metrics/global.rs` (global runtime-instance, queue, pool, bundle, timeout,
+  and
   cancellation counters), `host_operations.rs` (per-operation host-call
   metrics), `tenants.rs` (per-tenant counters plus queue or execution
   distributions), and `correlations.rs` (recent request-correlation retention
   and snapshot assembly) behind the stable `RuntimeMetrics` /
   `RuntimeMetricsSnapshot` surface.
-- `module_loader.rs` — Custom `deno_core` module loader that restricts ESM imports to the bundle root.
+- `module_loader.rs` — `RestrictedModuleLoader`: custom `deno_core` module
+  loader that restricts ESM imports to the bundle root.
 - `watchdog.rs` — `WatchdogTimer`: shared timeout and external-cancellation watchdog owned by `RuntimeExecutor`, replacing the old per-invocation watchdog OS threads.
-- `error.rs` — `NeovexRuntimeError` and `ConvexRuntimeError` with variants for timeout, cancellation, heap exceeded, contract violations, and user-thrown errors.
+- `error.rs` — `NeovexRuntimeError` with variants for timeout, cancellation,
+  heap exceeded, contract violations, and user-thrown errors.
+
+**`neovex-sandbox`** — Generic isolation and sandbox-orchestration seam. This
+crate currently owns backend-agnostic types and traits only; concrete sandbox
+backends are intentionally deferred behind backend-owned module paths that have
+not landed yet.
+
+- `backend.rs` — `SandboxBackend` plus `SandboxBackendKind` and the async
+  future alias used for sandbox lifecycle operations.
+- `spec.rs` — `SandboxSpec`: tenant-scoped sandbox launch intent and backend
+  selection.
+- `instance.rs` — `SandboxId`, `SandboxHandle`, and `SandboxStatus`: stable
+  sandbox-instance identity and status projection.
+- `endpoint.rs` — `PublishedEndpoint` plus `PublishedEndpointProtocol`: the
+  canonical endpoint-publication surface that server-side registries can map
+  into runtime-facing service discovery.
+- `error.rs` — `SandboxError`: generic backend-unavailable, not-found, and
+  operation-failed variants for the sandbox seam.
 
 ### Async Ownership Boundaries
 
@@ -508,18 +555,18 @@ timer and explicitly disarm them before `JsRuntime` teardown. This keeps the
 watchdog lifecycle executor-owned and replaces the old "up to two watchdog
 threads per invocation" model with one shared watchdog thread per executor.
 
-`RuntimeExecutor` also decouples worker threads from JS permits. Parked deno
+`RuntimeExecutor` also decouples worker threads from JS permits. Parked V8-backed
 invocations hold their worker thread because `JsRuntime` is `!Send` and only
 one runtime may safely exist per thread, but async host ops now release the JS
 permit and the per-tenant active slot through `SharedInvocationPermit`. Another
 worker can use that freed capacity while the parked invocation waits to
 re-acquire its permit. The executor's primary extensibility seam is
-`WorkerLoopFactory` / `WorkerLoop`; the current `DenoRuntimeBackend` stays
+`WorkerLoopFactory` / `WorkerLoop`; the current V8 backend stays
 worker-local beneath that seam.
 
 **`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
-- `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`. `serve` starts the axum listener.
+- `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`, and the new `_and_sandbox_catalog` variants expose the first explicit server-facing sandbox seam. `serve` starts the axum listener.
 - `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
 - `ws.rs` / `ws/socket.rs` — Neovex-native WebSocket upgrade and session
   composition. `ws/socket/transport.rs` owns socket reader, writer, and
@@ -549,28 +596,31 @@ worker-local beneath that seam.
   message handling, runtime transform application, and active-subscription
   cleanup. `named_subscriptions.rs` is now the composition root over
   `named_subscriptions/direct.rs` (native direct-registration flow) and
-  `named_subscriptions/runtime.rs` (runtime-backed bootstrap, initial publish,
-  and forwarding ownership). The session still owns its sender and forwarder
-  tasks through `OwnedTaskSet`, and runtime-backed active subscriptions own
-  their bridge tasks so auth changes, unsubscribe, and disconnect drain those
-  children explicitly.
-- `runtime/subscriptions.rs` — Runtime subscription bootstrap for derived base
+  `named_subscriptions/runtime_backed.rs` (runtime-backed bootstrap, initial
+  publish, and forwarding ownership). The session still owns its sender and
+  forwarder tasks through `OwnedTaskSet`, and runtime-backed active
+  subscriptions own their bridge tasks so auth changes, unsubscribe, and
+  disconnect drain those children explicitly.
+- `execution/subscriptions.rs` — Runtime subscription bootstrap for derived base
   queries. It registers the underlying engine subscriptions, rewrites their
   events onto the public subscription id, and now keeps those bridge tasks
   attached to the active subscription lifecycle instead of detaching them.
 - `convex/execution/`, `convex/http_actions/`, `convex/subscriptions/`, and `convex/handlers/` — Shared Convex support execution, HTTP route dispatch, and live subscription plumbing.
 - `convex/host_bridge/read_tracking/` — Runtime read-set tracking used by runtime-backed Convex support subscriptions for narrower-than-table-level invalidation.
 - `protocol.rs` — Request/response DTOs. `ClientMessage` (Subscribe/Unsubscribe) and `ServerMessage` (SubscriptionResult/Error).
-- `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, and `LicenseState`. `AppError` maps `Error` variants to HTTP status codes.
+- `sandbox.rs` — `SandboxCatalog` and `EmptySandboxCatalog`: server-owned
+  service-discovery seam for mapping tenant-and-name lookups onto sandbox
+  handles without coupling `neovex-sandbox` directly into request handlers.
+- `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, `LicenseState`, and the injected `SandboxCatalog`. `AppError` maps `Error` variants to HTTP status codes.
 
-**`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-server`, and `neovex-storage` so downstream consumers depend on a single crate.
+**`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-sandbox`, `neovex-server`, and `neovex-storage` so downstream consumers depend on a single crate.
 
 **`neovex-bin`** — CLI entry point. Lowers runtime CLI, env, and JSON config
 into typed `ServicePersistenceConfig`, then parses `--port`,
 local data-directory and control-plane overrides, provider-specific settings
 such as `--postgres-url`, `--convex-app-dir`, `--license-file`, and runtime
 limit flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
-`--runtime-timeout-secs`, `--runtime-max-isolates`,
+`--runtime-timeout-secs`, `--runtime-max-instances`,
 `--runtime-worker-threads`, `--runtime-max-nested-calls`). Loads tenants with
 scheduled work, spawns the scheduler, optionally loads the Convex registry and
 license state, starts the server, and handles graceful shutdown.
@@ -662,7 +712,7 @@ Use names like:
 
 - `EmbeddedRedbProvider`
 - `EmbeddedSqliteProvider`
-- `SqliteReplicaProvider`
+- `LibsqlReplicaProvider`
 - `PostgresProvider`
 - `MySqlProvider`
 
@@ -792,8 +842,9 @@ pressure, and tenant cleanup.
 
 ### Replica-connected SQLite provider shape
 
-Future `SqliteReplicaProvider` work must not mean "open a SQLite file across
-the network." SQLite's own network and WAL guidance make raw network-mounted
+The concrete first replica-connected SQLite family is
+`LibsqlReplicaProvider`. It must not mean "open a SQLite file across the
+network." SQLite's own network and WAL guidance make raw network-mounted
 database files an unacceptable provider shape.
 
 The admissible future shape is a concrete client/server or embedded-replica
@@ -815,9 +866,18 @@ closer to the provider semantics Neovex needs. Plain `rusqlite` or
 `sqlx::Sqlite` remain good local SQLite tools, but they do not solve the
 replica-topology problem on their own.
 
-The first concrete activation should be narrower than "any libsql mode." It
-should pair a remote-primary `libsql` connection for writes and strong reads
-with provider-owned replica cache files per tenant for read-serving only.
+The current concrete activation is narrower than "any libsql mode." The
+`LibsqlReplicaProvider` family pairs a remote-primary `libsql` connection for
+writes and authoritative state with provider-owned per-tenant local SQLite
+cache files for read-serving only.
+
+That distinction matters:
+
+- embedded SQLite means the local tenant file is authoritative state
+- `LibsqlReplicaProvider` means the remote `libsql` primary is authoritative
+  and the local SQLite file is derivative cache state
+- replica reads remain correct only when the provider-owned durable/applied
+  sequence barrier proves that cache freshness is sufficient
 Today the safest first sync model is a Neovex-owned snapshot or catch-up
 refresher over the remote `libsql` SQL connection, producing provider-owned
 local SQLite cache files directly. The main Neovex process must not assume it
@@ -1819,8 +1879,8 @@ representations: `to_msgpack()` for disk, `to_json()` for clients.
 
 **Runtime observability.** When Convex support is enabled, the
 `GET /debug/runtime/metrics` endpoint exposes live executor/runtime counters:
-active isolates, queued invocations, worker dispatches, cancellations,
-timeouts, same-isolate nested dispatches, and cross-isolate fallback
+active runtime instances, queued invocations, worker dispatches,
+cancellations, timeouts, nested local dispatches, and fallback cross-runtime
 dispatches. This endpoint is not available in the native-only router.
 
 **Engine observability.** On both the native-only and Convex-enabled routers,

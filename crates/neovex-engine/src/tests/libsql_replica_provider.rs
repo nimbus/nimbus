@@ -18,25 +18,26 @@ use testcontainers_modules::testcontainers::{
 
 use super::*;
 use crate::{
-    ControlPlaneConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,
-    TenantProviderConfig, TenantRoutingConfig,
+    ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, PersistenceDialect,
+    PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
+    TenantRoutingConfig,
 };
 
-const SQLITE_URL_ENV: &str = "NEOVEX_SQLITE_URL";
-const SQLITE_AUTH_TOKEN_ENV: &str = "NEOVEX_SQLITE_AUTH_TOKEN";
-const SQLITE_ADMIN_URL_ENV: &str = "NEOVEX_SQLITE_ADMIN_URL";
-const SQLITE_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_SQLITE_ADMIN_AUTH_HEADER";
+const LIBSQL_URL_ENV: &str = "NEOVEX_LIBSQL_URL";
+const LIBSQL_AUTH_TOKEN_ENV: &str = "NEOVEX_LIBSQL_AUTH_TOKEN";
+const LIBSQL_ADMIN_URL_ENV: &str = "NEOVEX_LIBSQL_ADMIN_URL";
+const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial(sqlite_replica_provider)]
-async fn typed_sqlite_replica_config_reads_seeded_remote_state_and_reopens() {
-    with_shared_sqlite_replica_service_configs(
+#[serial_test::serial(libsql_replica_provider)]
+async fn typed_libsql_replica_config_reads_seeded_remote_state_and_reopens() {
+    with_shared_libsql_replica_service_configs(
         |service_config_a, service_config_b, provider_config| async move {
             let provider = LibsqlReplicaProvider::connect(provider_config.clone())
                 .await
                 .expect("replica provider should connect");
-            let tenant_id = TenantId::new("sqlite-replica-tenant").expect("tenant id should build");
+            let tenant_id = TenantId::new("libsql-replica-tenant").expect("tenant id should build");
             let registration = provider
                 .create_tenant(&tenant_id)
                 .await
@@ -105,10 +106,10 @@ async fn typed_sqlite_replica_config_reads_seeded_remote_state_and_reopens() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial(sqlite_replica_provider)]
-async fn typed_sqlite_replica_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
-    with_sqlite_replica_service_config(|service_config, _provider_config| async move {
-        let tenant_id = TenantId::new("sqlite-replica-mutations").expect("tenant id should build");
+#[serial_test::serial(libsql_replica_provider)]
+async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
+    with_libsql_replica_service_config(|service_config, _provider_config| async move {
+        let tenant_id = TenantId::new("libsql-replica-mutations").expect("tenant id should build");
         let service = Arc::new(
             Service::new_with_persistence_config(service_config)
                 .await
@@ -232,12 +233,12 @@ async fn typed_sqlite_replica_config_supports_async_schema_mutation_journal_and_
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial(sqlite_replica_provider)]
-async fn sqlite_replica_background_poll_refreshes_loaded_runtime_schema_and_journal_state() {
-    with_shared_sqlite_replica_service_configs(
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_journal_state() {
+    with_shared_libsql_replica_service_configs(
         |service_config_a, service_config_b, _provider_config| async move {
             let tenant_id =
-                TenantId::new("sqlite-replica-poll-journal").expect("tenant id should build");
+                TenantId::new("libsql-replica-poll-journal").expect("tenant id should build");
             let service_a = Arc::new(
                 Service::new_with_persistence_config(service_config_a)
                     .await
@@ -318,6 +319,31 @@ async fn sqlite_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
                     .and_then(|value| value.as_str()),
                 Some("External")
             );
+            let diagnostics = service_b
+                .tenant_engine_diagnostics_async(tenant_id.clone())
+                .await
+                .expect("tenant diagnostics should surface replica freshness");
+            let freshness = diagnostics
+                .libsql_replica_freshness
+                .expect("libsql-replica diagnostics should include freshness stats");
+            assert_eq!(freshness.required_sequence, SequenceNumber(1));
+            assert_eq!(freshness.local_applied_sequence, SequenceNumber(1));
+            assert_eq!(freshness.refresh_error_count, 0);
+            assert!(
+                freshness.incremental_refresh_count
+                    + freshness.full_snapshot_refresh_count
+                    + freshness.incremental_fallback_to_snapshot_count
+                    >= 1,
+                "replica diagnostics should show at least one refresh path"
+            );
+            assert_ne!(
+                freshness.last_barrier_path,
+                LibsqlReplicaBarrierPath::Unknown
+            );
+            assert_ne!(
+                freshness.last_refresh_path,
+                LibsqlReplicaRefreshPath::Unknown
+            );
 
             service_a.quiesce().await;
             service_b.quiesce().await;
@@ -327,12 +353,12 @@ async fn sqlite_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial(sqlite_replica_provider)]
-async fn sqlite_replica_background_poll_loads_unloaded_tenants_with_scheduled_work() {
-    with_shared_sqlite_replica_service_configs(
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_work() {
+    with_shared_libsql_replica_service_configs(
         |service_config_a, service_config_b, _provider_config| async move {
             let tenant_id =
-                TenantId::new("sqlite-replica-poll-scheduler").expect("tenant id should build");
+                TenantId::new("libsql-replica-poll-scheduler").expect("tenant id should build");
             let service_a = Arc::new(
                 Service::new_with_persistence_config(service_config_a)
                     .await
@@ -419,12 +445,12 @@ async fn sqlite_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
     .await;
 }
 
-async fn with_sqlite_replica_service_config<F, Fut>(test: F)
+async fn with_libsql_replica_service_config<F, Fut>(test: F)
 where
     F: FnOnce(ServicePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
-    with_shared_sqlite_replica_service_configs(
+    with_shared_libsql_replica_service_configs(
         |service_config, _unused, provider_config| async move {
             test(service_config, provider_config).await;
         },
@@ -432,7 +458,7 @@ where
     .await;
 }
 
-async fn with_shared_sqlite_replica_service_configs<F, Fut>(test: F)
+async fn with_shared_libsql_replica_service_configs<F, Fut>(test: F)
 where
     F: FnOnce(
         ServicePersistenceConfig,
@@ -473,7 +499,7 @@ where
                 replica_cache_dir: replica_cache_dir_a.path().to_path_buf(),
             },
             pool: PoolConfig::default(),
-            credentials: ProviderCredentials::SqliteReplica {
+            credentials: ProviderCredentials::LibsqlReplica {
                 primary_url: connection.primary_url().to_string(),
                 auth_token: connection.auth_token().map(ToOwned::to_owned),
                 admin_api_url: connection.admin_api_url().to_string(),
@@ -556,17 +582,17 @@ impl TestConnection {
 }
 
 async fn test_connection() -> Option<TestConnection> {
-    if let Ok(primary_url) = env::var(SQLITE_URL_ENV) {
-        let admin_api_url = env::var(SQLITE_ADMIN_URL_ENV).unwrap_or_else(|_| {
+    if let Ok(primary_url) = env::var(LIBSQL_URL_ENV) {
+        let admin_api_url = env::var(LIBSQL_ADMIN_URL_ENV).unwrap_or_else(|_| {
             panic!(
-                "{SQLITE_ADMIN_URL_ENV} is required when {SQLITE_URL_ENV} is set for sqlite-replica engine tests"
+                "{LIBSQL_ADMIN_URL_ENV} is required when {LIBSQL_URL_ENV} is set for libsql-replica engine tests"
             )
         });
         return Some(TestConnection::External {
             primary_url,
-            auth_token: env::var(SQLITE_AUTH_TOKEN_ENV).ok(),
+            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
             admin_api_url,
-            admin_auth_header: env::var(SQLITE_ADMIN_AUTH_HEADER_ENV).ok(),
+            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
         });
     }
 
@@ -590,7 +616,7 @@ async fn test_connection() -> Option<TestConnection> {
         Ok(container) => container,
         Err(error) => {
             eprintln!(
-                "skipping sqlite-replica engine test because no explicit libsql URL was provided and container startup failed: {error}"
+                "skipping libsql-replica engine test because no explicit libsql URL was provided and container startup failed: {error}"
             );
             return None;
         }
@@ -620,7 +646,7 @@ async fn test_connection() -> Option<TestConnection> {
     .is_err()
     {
         eprintln!(
-            "skipping sqlite-replica engine test because the libsql container never became ready"
+            "skipping libsql-replica engine test because the libsql container never became ready"
         );
         return None;
     }

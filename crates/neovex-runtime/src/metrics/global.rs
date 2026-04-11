@@ -5,7 +5,7 @@ use super::{DIAGNOSTIC_COUNTER_ORDERING, duration_to_nanos};
 
 #[derive(Debug, Default)]
 pub(super) struct RuntimeGlobalCounters {
-    active_isolates: AtomicUsize,
+    active_runtime_instances: AtomicUsize,
     queued_invocations: AtomicUsize,
     worker_dispatched_invocations: AtomicU64,
     worker_affinity_routed_invocations: AtomicU64,
@@ -21,9 +21,9 @@ pub(super) struct RuntimeGlobalCounters {
     bundle_module_load_nanos_total: AtomicU64,
     bundle_evaluations: AtomicU64,
     bundle_evaluation_nanos_total: AtomicU64,
-    isolate_pool_hits: AtomicU64,
-    isolate_pool_misses: AtomicU64,
-    isolate_pool_replacements: AtomicU64,
+    runtime_pool_hits: AtomicU64,
+    runtime_pool_misses: AtomicU64,
+    runtime_pool_replacements: AtomicU64,
     started_invocations: AtomicU64,
     completed_invocations: AtomicU64,
     queue_wait_nanos_total: AtomicU64,
@@ -39,7 +39,7 @@ pub(super) struct RuntimeGlobalCounters {
     precanceled_host_ops: AtomicU64,
     in_flight_canceled_host_ops: AtomicU64,
     nested_local_dispatches: AtomicU64,
-    fallback_cross_isolate_dispatches: AtomicU64,
+    fallback_cross_runtime_dispatches: AtomicU64,
     warm_pool_hits: AtomicU64,
     warm_pool_misses: AtomicU64,
     warm_pool_retirements: AtomicU64,
@@ -48,7 +48,7 @@ pub(super) struct RuntimeGlobalCounters {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct RuntimeGlobalCountersSnapshot {
-    pub active_isolates: usize,
+    pub active_runtime_instances: usize,
     pub queued_invocations: usize,
     pub worker_dispatched_invocations: u64,
     pub worker_affinity_routed_invocations: u64,
@@ -64,9 +64,9 @@ pub(super) struct RuntimeGlobalCountersSnapshot {
     pub bundle_module_load_nanos_total: u64,
     pub bundle_evaluations: u64,
     pub bundle_evaluation_nanos_total: u64,
-    pub isolate_pool_hits: u64,
-    pub isolate_pool_misses: u64,
-    pub isolate_pool_replacements: u64,
+    pub runtime_pool_hits: u64,
+    pub runtime_pool_misses: u64,
+    pub runtime_pool_replacements: u64,
     pub started_invocations: u64,
     pub completed_invocations: u64,
     pub queue_wait_nanos_total: u64,
@@ -82,7 +82,7 @@ pub(super) struct RuntimeGlobalCountersSnapshot {
     pub precanceled_host_ops: u64,
     pub in_flight_canceled_host_ops: u64,
     pub nested_local_dispatches: u64,
-    pub fallback_cross_isolate_dispatches: u64,
+    pub fallback_cross_runtime_dispatches: u64,
     pub warm_pool_hits: u64,
     pub warm_pool_misses: u64,
     pub warm_pool_retirements: u64,
@@ -100,8 +100,8 @@ impl RuntimeGlobalCounters {
             .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn increment_active_isolates(&self) {
-        self.active_isolates
+    pub(super) fn increment_active_runtime_instances(&self) {
+        self.active_runtime_instances
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
@@ -175,23 +175,23 @@ impl RuntimeGlobalCounters {
             .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn record_isolate_pool_hit(&self) {
-        self.isolate_pool_hits
+    pub(super) fn record_runtime_pool_hit(&self) {
+        self.runtime_pool_hits
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn record_isolate_pool_miss(&self) {
-        self.isolate_pool_misses
+    pub(super) fn record_runtime_pool_miss(&self) {
+        self.runtime_pool_misses
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn record_isolate_pool_replacement(&self) {
-        self.isolate_pool_replacements
+    pub(super) fn record_runtime_pool_replacement(&self) {
+        self.runtime_pool_replacements
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn decrement_active_isolates(&self) {
-        self.active_isolates
+    pub(super) fn decrement_active_runtime_instances(&self) {
+        self.active_runtime_instances
             .fetch_sub(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
@@ -269,8 +269,8 @@ impl RuntimeGlobalCounters {
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn record_fallback_cross_isolate_dispatch(&self) {
-        self.fallback_cross_isolate_dispatches
+    pub(super) fn record_fallback_cross_runtime_dispatch(&self) {
+        self.fallback_cross_runtime_dispatches
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
@@ -296,7 +296,9 @@ impl RuntimeGlobalCounters {
 
     pub(super) fn snapshot(&self) -> RuntimeGlobalCountersSnapshot {
         RuntimeGlobalCountersSnapshot {
-            active_isolates: self.active_isolates.load(DIAGNOSTIC_COUNTER_ORDERING),
+            active_runtime_instances: self
+                .active_runtime_instances
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
             queued_invocations: self.queued_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
             worker_dispatched_invocations: self
                 .worker_dispatched_invocations
@@ -334,10 +336,10 @@ impl RuntimeGlobalCounters {
             bundle_evaluation_nanos_total: self
                 .bundle_evaluation_nanos_total
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
-            isolate_pool_hits: self.isolate_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
-            isolate_pool_misses: self.isolate_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
-            isolate_pool_replacements: self
-                .isolate_pool_replacements
+            runtime_pool_hits: self.runtime_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
+            runtime_pool_misses: self.runtime_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
+            runtime_pool_replacements: self
+                .runtime_pool_replacements
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             started_invocations: self.started_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
             completed_invocations: self.completed_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
@@ -368,8 +370,8 @@ impl RuntimeGlobalCounters {
             nested_local_dispatches: self
                 .nested_local_dispatches
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fallback_cross_isolate_dispatches: self
-                .fallback_cross_isolate_dispatches
+            fallback_cross_runtime_dispatches: self
+                .fallback_cross_runtime_dispatches
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             warm_pool_hits: self.warm_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
             warm_pool_misses: self.warm_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),

@@ -1,4 +1,5 @@
 use super::*;
+use crate::backends::v8::V8WorkerRuntimePool;
 
 fn locker_test_policy() -> Arc<RuntimePolicy> {
     cooperative_startup_snapshot_runtime_test_policy()
@@ -34,8 +35,8 @@ fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     let bundle = RuntimeBundle::new(&bundle_path);
     let runtime_owner =
         NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), locker_test_policy());
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
-    let mut runtime = isolate_pool
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let mut runtime = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle, true)
         .expect("locker runtime should build from snapshot")
         .runtime;
@@ -66,8 +67,8 @@ fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     assert!(!runtime.is_v8_lock_held());
 
     let metrics = runtime_owner.policy.metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 0);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 0);
 }
 
 #[test]
@@ -86,15 +87,15 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess(
     let bundle = RuntimeBundle::new(&bundle_path);
     let runtime_owner =
         NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), locker_test_policy());
-    let mut isolate_pool = RuntimeWorkerIsolatePool::new();
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
 
-    let mut rt1 = isolate_pool
+    let mut rt1 = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle, true)
         .expect("first locker runtime should build")
         .runtime;
     assert!(rt1.release_v8_lock());
 
-    let mut rt2 = isolate_pool
+    let mut rt2 = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle, true)
         .expect("second locker runtime should build")
         .runtime;
@@ -159,6 +160,6 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess(
     assert!(!rt2.is_v8_lock_held());
 
     let metrics = runtime_owner.policy.metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
 }

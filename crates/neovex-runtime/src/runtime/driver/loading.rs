@@ -1,12 +1,12 @@
 use std::time::Instant;
 
-use deno_core::JsRuntime;
-
 use crate::RuntimeInvocationContext;
+use crate::backends::v8::V8RuntimeConstructionMode;
+use crate::backends::v8::embedder::{JsRuntime, PollEventLoopOptions};
 use crate::error::Result;
 
 use super::super::helpers::{deserialize_json_value, runtime_js_error};
-use super::super::{InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeConstructionMode};
+use super::super::{InvocationRequest, NeovexRuntime, RuntimeBundle};
 use super::tracing::{
     trace_snapshot_seeded_runtime_error, trace_snapshot_seeded_runtime_error_with_optional_bundle,
     trace_snapshot_seeded_runtime_phase, trace_snapshot_seeded_runtime_phase_with_optional_bundle,
@@ -22,7 +22,7 @@ impl NeovexRuntime {
         self.load_bundle_with_trace(
             runtime,
             bundle,
-            RuntimeConstructionMode::Unsnapshotted,
+            V8RuntimeConstructionMode::Unsnapshotted,
             None,
             None,
         )
@@ -33,7 +33,7 @@ impl NeovexRuntime {
         &self,
         runtime: &mut JsRuntime,
         bundle: &RuntimeBundle,
-        construction_mode: RuntimeConstructionMode,
+        construction_mode: V8RuntimeConstructionMode,
         context: Option<&RuntimeInvocationContext>,
         request: Option<&InvocationRequest>,
     ) -> Result<()> {
@@ -59,7 +59,7 @@ impl NeovexRuntime {
         &self,
         runtime: &mut JsRuntime,
         bundle: &RuntimeBundle,
-        construction_mode: RuntimeConstructionMode,
+        construction_mode: V8RuntimeConstructionMode,
         context: Option<&RuntimeInvocationContext>,
         request: Option<&InvocationRequest>,
     ) -> Result<()> {
@@ -215,7 +215,7 @@ impl NeovexRuntime {
         &self,
         runtime: &mut JsRuntime,
         bundle: &RuntimeBundle,
-        construction_mode: RuntimeConstructionMode,
+        construction_mode: V8RuntimeConstructionMode,
         context: Option<&RuntimeInvocationContext>,
         request: Option<&InvocationRequest>,
     ) -> Result<()> {
@@ -261,7 +261,7 @@ impl NeovexRuntime {
             runtime,
             request,
             None,
-            RuntimeConstructionMode::Unsnapshotted,
+            V8RuntimeConstructionMode::Unsnapshotted,
             None,
         )
         .await
@@ -272,7 +272,7 @@ impl NeovexRuntime {
         runtime: &mut JsRuntime,
         request: &InvocationRequest,
         bundle: Option<&RuntimeBundle>,
-        construction_mode: RuntimeConstructionMode,
+        construction_mode: V8RuntimeConstructionMode,
         context: Option<&RuntimeInvocationContext>,
     ) -> Result<serde_json::Value> {
         let request_json = serde_json::to_string(request)?;
@@ -320,7 +320,7 @@ impl NeovexRuntime {
             "invoke_loaded_bundle:with_event_loop_promise:start",
         );
         let value = runtime
-            .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
+            .with_event_loop_promise(resolve, PollEventLoopOptions::default())
             .await
             .map_err(|error| {
                 trace_snapshot_seeded_runtime_error_with_optional_bundle(

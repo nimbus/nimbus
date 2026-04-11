@@ -274,7 +274,7 @@ fn process_queued_mutation_batch(
 
     let applied_head = match runtime.store.apply_durable_records_batch(&records) {
         Ok(()) => {
-            if matches!(&runtime.store, TenantPersistence::SqliteReplica(_)) {
+            if matches!(&runtime.store, TenantPersistence::LibsqlReplica(_)) {
                 records
                     .last()
                     .expect("non-empty durable batch should have a last record")

@@ -28,7 +28,7 @@ pub(crate) const FAIRNESS_WEBSOCKET_REJECTION_CASE: DeterministicTestCase =
 
 fn fairness_runtime_registry() -> ConvexRegistry {
     let mut limits = bounded_fairness_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     convex_registry_with_routes_and_bundle(
         json!([
             {
@@ -121,7 +121,7 @@ async fn cleanup_fairness_blockers(
     drop(queued);
     drop(blocker);
     let _ = wait_for_runtime_metrics(registry, "tenant fairness cleanup", |metrics| {
-        metrics.active_isolates == 0 && metrics.canceled_invocations >= 2
+        metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2
     })
     .await;
 }
@@ -156,7 +156,9 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         &registry,
         FAIRNESS_HTTP_REJECTION_CASE,
         "blocking fairness runtime query to start",
-        |metrics| metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1,
+        |metrics| {
+            metrics.active_runtime_instances == 1 && metrics.worker_dispatched_invocations == 1
+        },
     )
     .await;
 
@@ -171,7 +173,7 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         FAIRNESS_HTTP_REJECTION_CASE,
         "queued fairness runtime query to be observed by the runtime queue",
         |metrics| {
-            metrics.active_isolates == 1
+            metrics.active_runtime_instances == 1
                 && metrics
                     .recent_request_correlations
                     .iter()
@@ -246,7 +248,9 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         &registry,
         FAIRNESS_WEBSOCKET_REJECTION_CASE,
         "blocking fairness websocket query to start",
-        |metrics| metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1,
+        |metrics| {
+            metrics.active_runtime_instances == 1 && metrics.worker_dispatched_invocations == 1
+        },
     )
     .await;
 
@@ -261,7 +265,7 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         FAIRNESS_WEBSOCKET_REJECTION_CASE,
         "queued fairness websocket query to be observed by the runtime queue",
         |metrics| {
-            metrics.active_isolates == 1
+            metrics.active_runtime_instances == 1
                 && metrics
                     .recent_request_correlations
                     .iter()

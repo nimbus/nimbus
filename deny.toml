@@ -11,6 +11,11 @@ unmaintained = "workspace"
 unsound = "all"
 # Lint level for crates that have been yanked
 yanked = "deny"
+# `RUSTSEC-2026-0097` requires `rand`'s `log` + `thread_rng` features plus a
+# custom `log` logger path. The remaining transitive `rand 0.8.5` lane in this
+# workspace does not enable `log`, and Neovex uses `tracing_subscriber` rather
+# than a custom `log::Log` implementation.
+ignore = ["RUSTSEC-2026-0097"]
 
 [licenses]
 version = 2

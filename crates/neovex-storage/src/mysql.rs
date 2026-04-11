@@ -1,8 +1,8 @@
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::{Arc, RwLock};
 
 use mysql_async::prelude::Queryable;
 use mysql_async::{
@@ -86,6 +86,7 @@ pub struct MySqlTenantStore {
     provider: MySqlProvider,
     tenant_id: TenantId,
     database_name: String,
+    schema_cache: Arc<RwLock<Option<Schema>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,8 +108,10 @@ pub struct MySqlTenantStorage {
 pub struct MySqlWriteTransaction {
     provider: MySqlProvider,
     database_name: String,
+    schema_cache: Arc<RwLock<Option<Schema>>>,
     conn: Option<Conn>,
     commit_writes: Vec<WriteOp>,
+    schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
 
@@ -418,6 +421,7 @@ impl MySqlTenantStore {
             provider,
             tenant_id: registration.tenant_id,
             database_name: registration.database_name,
+            schema_cache: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -427,6 +431,10 @@ impl MySqlTenantStore {
 
     pub fn database_name(&self) -> &str {
         &self.database_name
+    }
+
+    pub fn invalidate_schema_cache(&self) {
+        invalidate_schema_cache_handle(&self.schema_cache);
     }
 
     pub fn metadata_database(&self) -> &str {
@@ -486,12 +494,17 @@ impl MySqlTenantStore {
     }
 
     pub fn load_schema(&self) -> Result<Schema> {
+        if let Some(schema) = cached_schema(&self.schema_cache) {
+            return Ok(schema);
+        }
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
-        self.block_on(async move {
+        let schema = self.block_on(async move {
             let mut conn = provider.conn().await?;
             load_schema_from_session(&mut conn, &database_name).await
-        })
+        })?;
+        publish_schema_cache(&self.schema_cache, &schema);
+        Ok(schema)
     }
 
     pub fn latest_sequence(&self) -> Result<SequenceNumber> {
@@ -685,15 +698,10 @@ impl MySqlTenantStore {
     }
 
     fn load_table_schema(&self, table: &TableName) -> Result<TableSchema> {
-        let provider = self.provider.clone();
-        let database_name = self.database_name.clone();
-        let table = table.clone();
-        self.block_on(async move {
-            let mut conn = provider.conn().await?;
-            load_table_schema_from_session(&mut conn, &database_name, &table)
-                .await?
-                .ok_or(Error::SchemaNotFound(table))
-        })
+        self.load_schema()?
+            .get_table(table)
+            .cloned()
+            .ok_or(Error::SchemaNotFound(table.clone()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1448,8 +1456,10 @@ impl MySqlWriteTransaction {
         let mut transaction = Self {
             provider,
             database_name,
+            schema_cache: store.schema_cache.clone(),
             conn: Some(conn),
             commit_writes: Vec::new(),
+            schema_cache_changed: false,
             check_cancel: Box::new(check_cancel),
         };
         if let Err(error) = (|| -> Result<()> {
@@ -1473,6 +1483,7 @@ impl MySqlWriteTransaction {
         }
         self.upsert_table_schema(table_schema)?;
         self.create_table_indexes(table_schema)?;
+        self.schema_cache_changed = true;
         Ok(())
     }
 
@@ -1481,7 +1492,9 @@ impl MySqlWriteTransaction {
         if let Some(previous) = self.load_table_schema(table)? {
             self.drop_table_indexes(&previous)?;
         }
-        self.delete_table_schema_entry(table)
+        self.delete_table_schema_entry(table)?;
+        self.schema_cache_changed = true;
+        Ok(())
     }
 
     pub fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool> {
@@ -1969,6 +1982,9 @@ impl MySqlWriteTransaction {
             .fault_injector
             .check(FaultPoint::StorageCommitBeforeVisibility)?;
         self.batch_execute("COMMIT")?;
+        if self.schema_cache_changed {
+            invalidate_schema_cache_handle(&self.schema_cache);
+        }
         self.provider
             .fault_injector
             .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
@@ -2532,6 +2548,22 @@ fn validate_identifier_input(value: &str, label: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn cached_schema(schema_cache: &RwLock<Option<Schema>>) -> Option<Schema> {
+    schema_cache.read().ok().and_then(|guard| guard.clone())
+}
+
+fn publish_schema_cache(schema_cache: &RwLock<Option<Schema>>, schema: &Schema) {
+    if let Ok(mut guard) = schema_cache.write() {
+        *guard = Some(schema.clone());
+    }
+}
+
+fn invalidate_schema_cache_handle(schema_cache: &RwLock<Option<Schema>>) {
+    if let Ok(mut guard) = schema_cache.write() {
+        *guard = None;
+    }
 }
 
 fn qualified_table(database_name: &str, table_name: &str) -> String {

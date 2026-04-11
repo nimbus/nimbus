@@ -124,7 +124,7 @@ export {};
         .await
         .expect("runtime metrics response should parse");
     assert_eq!(
-        metrics_body["metrics"]["fallback_cross_isolate_dispatches"],
+        metrics_body["metrics"]["fallback_cross_runtime_dispatches"],
         json!(1)
     );
     assert_eq!(
@@ -132,7 +132,7 @@ export {};
         json!(2)
     );
     let metrics = registry.runtime_metrics_snapshot();
-    assert_eq!(metrics.fallback_cross_isolate_dispatches, 1);
+    assert_eq!(metrics.fallback_cross_runtime_dispatches, 1);
     assert_eq!(metrics.worker_dispatched_invocations, 2);
 }
 

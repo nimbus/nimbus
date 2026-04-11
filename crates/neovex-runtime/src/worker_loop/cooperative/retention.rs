@@ -1,5 +1,5 @@
+use crate::backends::v8::ReusableV8Runtime;
 use crate::limits::RuntimePoolKind;
-use crate::runtime::ReusableRuntime;
 
 use super::CooperativeWorkerLoop;
 
@@ -9,7 +9,7 @@ impl CooperativeWorkerLoop {
         runtime_owner: &crate::runtime::NeovexRuntime,
         bundle: &crate::runtime::RuntimeBundle,
         context: &crate::RuntimeInvocationContext,
-        mut runtime: ReusableRuntime,
+        mut runtime: ReusableV8Runtime,
     ) {
         match self.policy.limits().runtime_pool_kind {
             RuntimePoolKind::WarmPool => {
@@ -18,7 +18,7 @@ impl CooperativeWorkerLoop {
                     return;
                 }
                 runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
-                self.isolate_pool.return_runtime_for_invocation(
+                self.v8_runtime_pool.return_runtime_for_invocation(
                     runtime_owner,
                     bundle,
                     Some(context),
@@ -26,16 +26,13 @@ impl CooperativeWorkerLoop {
                 );
             }
             RuntimePoolKind::StartupSnapshotCache => {
-                self.deferred_runtime_drops.push(runtime.runtime);
+                self.deferred_v8_runtime_drops.defer(runtime.runtime);
             }
         }
     }
 
-    pub(super) fn drain_deferred_runtime_drops_if_idle(&mut self) {
-        if !self.scheduler.is_idle() || self.deferred_runtime_drops.is_empty() {
-            return;
-        }
-
-        self.deferred_runtime_drops.clear();
+    pub(super) fn drain_deferred_v8_runtime_drops_if_idle(&mut self) {
+        self.deferred_v8_runtime_drops
+            .drain_if_idle(self.scheduler.is_idle());
     }
 }

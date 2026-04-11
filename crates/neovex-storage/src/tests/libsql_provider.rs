@@ -19,12 +19,15 @@ use testcontainers_modules::testcontainers::{
 use super::{Duration, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, tempdir, timeout};
 use crate::async_storage::TenantReadStorage;
 use crate::libsql::libsql_transport_connector;
-use crate::{ResolvedScheduleOp, ResolvedWrite};
+use crate::{
+    LibsqlReplicaBarrierPath, LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath,
+    ResolvedScheduleOp, ResolvedWrite,
+};
 
-const SQLITE_URL_ENV: &str = "NEOVEX_SQLITE_URL";
-const SQLITE_AUTH_TOKEN_ENV: &str = "NEOVEX_SQLITE_AUTH_TOKEN";
-const SQLITE_ADMIN_URL_ENV: &str = "NEOVEX_SQLITE_ADMIN_URL";
-const SQLITE_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_SQLITE_ADMIN_AUTH_HEADER";
+const LIBSQL_URL_ENV: &str = "NEOVEX_LIBSQL_URL";
+const LIBSQL_AUTH_TOKEN_ENV: &str = "NEOVEX_LIBSQL_AUTH_TOKEN";
+const LIBSQL_ADMIN_URL_ENV: &str = "NEOVEX_LIBSQL_ADMIN_URL";
+const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
@@ -316,12 +319,44 @@ async fn libsql_direct_writes_refresh_derivative_cache_and_round_trip_journal_pr
         .await
         .expect("background refresh should catch the derivative cache up without a read-triggered refresh");
 
+        let freshness = opened
+            .store
+            .replica_freshness_stats()
+            .expect("freshness stats should load after background refresh");
+        assert_eq!(freshness.required_sequence, SequenceNumber(3));
+        assert_eq!(freshness.local_applied_sequence, SequenceNumber(3));
+        assert_eq!(
+            freshness.last_refresh_cause,
+            LibsqlReplicaRefreshCause::CommitBarrier
+        );
+        assert_eq!(
+            freshness.last_refresh_path,
+            LibsqlReplicaRefreshPath::IncrementalCatchUp
+        );
+        assert!(
+            freshness.incremental_refresh_count >= 1,
+            "incremental refresh count should record the commit-barrier catch-up"
+        );
+        assert_eq!(freshness.refresh_error_count, 0);
+
         assert!(
             opened
                 .store
                 .get(&document.table, &document.id)
                 .expect("deleted lookup should succeed")
                 .is_none()
+        );
+        let after_read = opened
+            .store
+            .replica_freshness_stats()
+            .expect("freshness stats should load after a current-cache read");
+        assert_eq!(
+            after_read.last_barrier_path,
+            LibsqlReplicaBarrierPath::AlreadyCurrentCache
+        );
+        assert!(
+            after_read.barrier_current_count >= 1,
+            "a current-cache read should increment the already-current barrier counter"
         );
 
         let commits = opened
@@ -345,6 +380,42 @@ async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
+        let table_schema = TableSchema {
+            table: TableName::new("tasks").expect("table name should build"),
+            fields: vec![FieldSchema {
+                name: "title".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            }],
+            indexes: Vec::new(),
+            access_policy: None,
+        };
+        opened
+            .store
+            .replace_table_schema(&table_schema)
+            .expect("schema write should succeed");
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let freshness = opened
+                    .store
+                    .replica_freshness_stats()
+                    .expect("freshness stats should load while schema refresh runs");
+                if freshness.full_snapshot_refresh_count >= 1 {
+                    assert_eq!(
+                        freshness.last_refresh_cause,
+                        LibsqlReplicaRefreshCause::SchemaWrite
+                    );
+                    assert_eq!(
+                        freshness.last_refresh_path,
+                        LibsqlReplicaRefreshPath::FullSnapshotRebuild
+                    );
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("schema write should trigger a full snapshot refresh");
         let document = super::sample_document("tasks", "batched");
         let scheduled_job = scheduled_insert_job(Timestamp(5_000), "queued");
 
@@ -643,17 +714,17 @@ impl TestConnection {
 }
 
 async fn test_connection() -> Option<TestConnection> {
-    if let Ok(primary_url) = env::var(SQLITE_URL_ENV) {
-        let admin_api_url = env::var(SQLITE_ADMIN_URL_ENV).unwrap_or_else(|_| {
+    if let Ok(primary_url) = env::var(LIBSQL_URL_ENV) {
+        let admin_api_url = env::var(LIBSQL_ADMIN_URL_ENV).unwrap_or_else(|_| {
             panic!(
-                "{SQLITE_ADMIN_URL_ENV} is required when {SQLITE_URL_ENV} is set for libsql provider tests"
+                "{LIBSQL_ADMIN_URL_ENV} is required when {LIBSQL_URL_ENV} is set for libsql provider tests"
             )
         });
         return Some(TestConnection::External {
             primary_url,
-            auth_token: env::var(SQLITE_AUTH_TOKEN_ENV).ok(),
+            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
             admin_api_url,
-            admin_auth_header: env::var(SQLITE_ADMIN_AUTH_HEADER_ENV).ok(),
+            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
         });
     }
 

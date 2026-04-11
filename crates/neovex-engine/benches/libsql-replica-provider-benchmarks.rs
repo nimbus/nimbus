@@ -40,10 +40,10 @@ const BENCHMARK_QUIESCE_TIMEOUT_SECS: u64 = 10;
 const PEER_CATCH_UP_TIMEOUT_SECS: u64 = 6;
 const PEER_CATCH_UP_POLL_INTERVAL_MS: u64 = 25;
 
-const SQLITE_URL_ENV: &str = "NEOVEX_SQLITE_URL";
-const SQLITE_AUTH_TOKEN_ENV: &str = "NEOVEX_SQLITE_AUTH_TOKEN";
-const SQLITE_ADMIN_URL_ENV: &str = "NEOVEX_SQLITE_ADMIN_URL";
-const SQLITE_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_SQLITE_ADMIN_AUTH_HEADER";
+const LIBSQL_URL_ENV: &str = "NEOVEX_LIBSQL_URL";
+const LIBSQL_AUTH_TOKEN_ENV: &str = "NEOVEX_LIBSQL_AUTH_TOKEN";
+const LIBSQL_ADMIN_URL_ENV: &str = "NEOVEX_LIBSQL_ADMIN_URL";
+const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_LIBSQL_ADMIN_AUTH_HEADER";
 
 static BENCH_COUNTER: AtomicU64 = AtomicU64::new(1);
 static REPLICA_CLEANUP_QUEUE: OnceLock<StdMutex<Vec<LibsqlReplicaProviderConfig>>> =
@@ -79,10 +79,10 @@ impl BenchmarkConfig {
     fn from_args() -> BenchResult<Self> {
         let mut markdown_output = None;
         let mut workload_filter = None;
-        let mut primary_url = env::var(SQLITE_URL_ENV).ok();
-        let mut auth_token = env::var(SQLITE_AUTH_TOKEN_ENV).ok();
-        let mut admin_api_url = env::var(SQLITE_ADMIN_URL_ENV).ok();
-        let mut admin_auth_header = env::var(SQLITE_ADMIN_AUTH_HEADER_ENV).ok();
+        let mut primary_url = env::var(LIBSQL_URL_ENV).ok();
+        let mut auth_token = env::var(LIBSQL_AUTH_TOKEN_ENV).ok();
+        let mut admin_api_url = env::var(LIBSQL_ADMIN_URL_ENV).ok();
+        let mut admin_auth_header = env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok();
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -98,27 +98,27 @@ impl BenchmarkConfig {
                     };
                     workload_filter = Some(WorkloadKind::parse(workload.as_str())?);
                 }
-                "--sqlite-url" => {
+                "--libsql-url" => {
                     let Some(url) = args.next() else {
-                        return Err("expected a URL after --sqlite-url".into());
+                        return Err("expected a URL after --libsql-url".into());
                     };
                     primary_url = Some(url);
                 }
-                "--sqlite-auth-token" => {
+                "--libsql-auth-token" => {
                     let Some(token) = args.next() else {
-                        return Err("expected a token after --sqlite-auth-token".into());
+                        return Err("expected a token after --libsql-auth-token".into());
                     };
                     auth_token = Some(token);
                 }
-                "--sqlite-admin-url" => {
+                "--libsql-admin-url" => {
                     let Some(url) = args.next() else {
-                        return Err("expected a URL after --sqlite-admin-url".into());
+                        return Err("expected a URL after --libsql-admin-url".into());
                     };
                     admin_api_url = Some(url);
                 }
-                "--sqlite-admin-auth-header" => {
+                "--libsql-admin-auth-header" => {
                     let Some(header) = args.next() else {
-                        return Err("expected a header after --sqlite-admin-auth-header".into());
+                        return Err("expected a header after --libsql-admin-auth-header".into());
                     };
                     admin_auth_header = Some(header);
                 }
@@ -132,13 +132,13 @@ impl BenchmarkConfig {
 
         let Some(primary_url) = primary_url else {
             return Err(format!(
-                "set {SQLITE_URL_ENV} or pass --sqlite-url for the benchmark target"
+                "set {LIBSQL_URL_ENV} or pass --libsql-url for the benchmark target"
             )
             .into());
         };
         let Some(admin_api_url) = admin_api_url else {
             return Err(format!(
-                "set {SQLITE_ADMIN_URL_ENV} or pass --sqlite-admin-url for the benchmark target"
+                "set {LIBSQL_ADMIN_URL_ENV} or pass --libsql-admin-url for the benchmark target"
             )
             .into());
         };
@@ -156,7 +156,7 @@ impl BenchmarkConfig {
 
 fn print_usage() {
     println!(
-        "Usage: cargo bench -p neovex-engine --bench sqlite-replica-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--sqlite-url <url>] [--sqlite-auth-token <token>] [--sqlite-admin-url <url>] [--sqlite-admin-auth-header <header>]"
+        "Usage: cargo bench -p neovex-engine --bench libsql-replica-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--libsql-url <url>] [--libsql-auth-token <token>] [--libsql-admin-url <url>] [--libsql-admin-auth-header <header>]"
     );
 }
 
@@ -271,15 +271,15 @@ impl BenchmarkLane {
     fn warmup_rounds(self) -> usize {
         match self {
             Self::SteadyState => read_round_override(
-                "NEOVEX_SQLITE_REPLICA_BENCH_STEADY_WARMUP_ROUNDS",
+                "NEOVEX_LIBSQL_REPLICA_BENCH_STEADY_WARMUP_ROUNDS",
                 STEADY_STATE_WARMUP_ROUNDS,
             ),
             Self::ColdStart => read_round_override(
-                "NEOVEX_SQLITE_REPLICA_BENCH_COLD_WARMUP_ROUNDS",
+                "NEOVEX_LIBSQL_REPLICA_BENCH_COLD_WARMUP_ROUNDS",
                 COLD_START_WARMUP_ROUNDS,
             ),
             Self::ReplicaOperational => read_round_override(
-                "NEOVEX_SQLITE_REPLICA_BENCH_OPERATIONAL_WARMUP_ROUNDS",
+                "NEOVEX_LIBSQL_REPLICA_BENCH_OPERATIONAL_WARMUP_ROUNDS",
                 OPERATIONAL_WARMUP_ROUNDS,
             ),
         }
@@ -288,15 +288,15 @@ impl BenchmarkLane {
     fn measure_rounds(self) -> usize {
         match self {
             Self::SteadyState => read_round_override(
-                "NEOVEX_SQLITE_REPLICA_BENCH_STEADY_MEASURE_ROUNDS",
+                "NEOVEX_LIBSQL_REPLICA_BENCH_STEADY_MEASURE_ROUNDS",
                 STEADY_STATE_MEASURE_ROUNDS,
             ),
             Self::ColdStart => read_round_override(
-                "NEOVEX_SQLITE_REPLICA_BENCH_COLD_MEASURE_ROUNDS",
+                "NEOVEX_LIBSQL_REPLICA_BENCH_COLD_MEASURE_ROUNDS",
                 COLD_START_MEASURE_ROUNDS,
             ),
             Self::ReplicaOperational => read_round_override(
-                "NEOVEX_SQLITE_REPLICA_BENCH_OPERATIONAL_MEASURE_ROUNDS",
+                "NEOVEX_LIBSQL_REPLICA_BENCH_OPERATIONAL_MEASURE_ROUNDS",
                 OPERATIONAL_MEASURE_ROUNDS,
             ),
         }
@@ -306,14 +306,14 @@ impl BenchmarkLane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MeasuredBackend {
     Sqlite,
-    SqliteReplica,
+    LibsqlReplica,
 }
 
 impl MeasuredBackend {
     fn label(self) -> &'static str {
         match self {
             Self::Sqlite => "sqlite",
-            Self::SqliteReplica => "sqlite replica",
+            Self::LibsqlReplica => "libsql replica",
         }
     }
 }
@@ -492,7 +492,7 @@ enum LiveResource {
         bench_dir: Arc<BenchDir>,
         data_dir: PathBuf,
     },
-    SqliteReplica {
+    LibsqlReplica {
         control_dir: Arc<BenchDir>,
         replica_cache_dir: Arc<BenchDir>,
         provider_config: LibsqlReplicaProviderConfig,
@@ -505,7 +505,7 @@ enum SeedResource {
         bench_dir: Arc<BenchDir>,
         data_dir: PathBuf,
     },
-    SqliteReplica {
+    LibsqlReplica {
         provider_config: LibsqlReplicaProviderConfig,
     },
 }
@@ -514,7 +514,7 @@ enum ReopenedResource {
     Sqlite {
         bench_dir: Arc<BenchDir>,
     },
-    SqliteReplica {
+    LibsqlReplica {
         control_dir: Arc<BenchDir>,
         replica_cache_dir: Arc<BenchDir>,
     },
@@ -529,7 +529,7 @@ impl BenchDir {
     fn new(label: &str) -> BenchResult<Self> {
         let counter = BENCH_COUNTER.fetch_add(1, Ordering::SeqCst);
         let path = env::temp_dir().join(format!(
-            "neovex-sqlite-replica-bench-{label}-{}-{counter}",
+            "neovex-libsql-replica-bench-{label}-{}-{counter}",
             std::process::id()
         ));
         if path.exists() {
@@ -580,7 +580,7 @@ async fn run_suite(
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
-    cleanup_registered_sqlite_replica_providers().await;
+    cleanup_registered_libsql_replica_providers().await;
     run?;
     Ok(report)
 }
@@ -602,21 +602,21 @@ async fn benchmark_crud_throughput(
         let replica_fixture = create_crud_fixture(
             "crud-steady",
             "crud",
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             environment,
         )
         .await?;
         let (sqlite_steady, replica_steady) = measure_two_backends_async(
             WorkloadKind::CrudThroughput,
             BenchmarkLane::SteadyState,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_fixture = sqlite_fixture.clone();
                 let replica_fixture = replica_fixture.clone();
                 async move {
                     let fixture = match backend {
                         MeasuredBackend::Sqlite => sqlite_fixture,
-                        MeasuredBackend::SqliteReplica => replica_fixture,
+                        MeasuredBackend::LibsqlReplica => replica_fixture,
                     };
                     let started = Instant::now();
                     exercise_crud_sample(&fixture.service, &fixture.tenant_id, CRUD_DOCUMENTS)
@@ -637,14 +637,14 @@ async fn benchmark_crud_throughput(
             .resource
             .cleanup(
                 replica_fixture.service.clone(),
-                "CRUD steady-state sqlite-replica teardown",
+                "CRUD steady-state libsql-replica teardown",
             )
             .await?;
 
         let (sqlite_cold, replica_cold) = measure_two_backends_async(
             WorkloadKind::CrudThroughput,
             BenchmarkLane::ColdStart,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| async move {
                 let fixture =
                     create_crud_fixture("crud-cold", "crud", backend, environment).await?;
@@ -696,21 +696,21 @@ async fn benchmark_point_read_latency(
         let replica_fixture = create_point_read_fixture(
             "point-read-steady",
             "point-read",
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             environment,
         )
         .await?;
         let (sqlite_steady, replica_steady) = measure_two_backends_async(
             WorkloadKind::PointReadLatency,
             BenchmarkLane::SteadyState,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_fixture = sqlite_fixture.clone();
                 let replica_fixture = replica_fixture.clone();
                 async move {
                     let fixture = match backend {
                         MeasuredBackend::Sqlite => sqlite_fixture,
-                        MeasuredBackend::SqliteReplica => replica_fixture,
+                        MeasuredBackend::LibsqlReplica => replica_fixture,
                     };
                     let started = Instant::now();
                     exercise_point_read_sample(
@@ -738,7 +738,7 @@ async fn benchmark_point_read_latency(
             .resource
             .cleanup(
                 replica_fixture.tenant.service.clone(),
-                "point-read steady-state sqlite-replica teardown",
+                "point-read steady-state libsql-replica teardown",
             )
             .await?;
 
@@ -757,24 +757,24 @@ async fn benchmark_point_read_latency(
             create_point_read_fixture(
                 "point-read-cold-seed",
                 "point-read",
-                MeasuredBackend::SqliteReplica,
+                MeasuredBackend::LibsqlReplica,
                 environment,
             )
             .await?,
-            "point-read sqlite-replica seed freeze",
+            "point-read libsql-replica seed freeze",
         )
         .await?;
         let (sqlite_cold, replica_cold) = measure_two_backends_async(
             WorkloadKind::PointReadLatency,
             BenchmarkLane::ColdStart,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_seed = sqlite_seed.clone();
                 let replica_seed = replica_seed.clone();
                 async move {
                     let seed = match backend {
                         MeasuredBackend::Sqlite => sqlite_seed,
-                        MeasuredBackend::SqliteReplica => replica_seed,
+                        MeasuredBackend::LibsqlReplica => replica_seed,
                     };
                     let (service, resource) = seed
                         .resource
@@ -872,21 +872,21 @@ async fn benchmark_query_latency(
             query_kind,
             "query-steady",
             "query",
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             environment,
         )
         .await?;
         let (sqlite_steady, replica_steady) = measure_two_backends_async(
             workload,
             BenchmarkLane::SteadyState,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_fixture = sqlite_fixture.clone();
                 let replica_fixture = replica_fixture.clone();
                 async move {
                     let fixture = match backend {
                         MeasuredBackend::Sqlite => sqlite_fixture,
-                        MeasuredBackend::SqliteReplica => replica_fixture,
+                        MeasuredBackend::LibsqlReplica => replica_fixture,
                     };
                     let started = Instant::now();
                     exercise_query_sample(
@@ -914,7 +914,7 @@ async fn benchmark_query_latency(
             .resource
             .cleanup(
                 replica_fixture.tenant.service.clone(),
-                "query steady-state sqlite-replica teardown",
+                "query steady-state libsql-replica teardown",
             )
             .await?;
 
@@ -935,24 +935,24 @@ async fn benchmark_query_latency(
                 query_kind,
                 "query-cold-seed",
                 "query",
-                MeasuredBackend::SqliteReplica,
+                MeasuredBackend::LibsqlReplica,
                 environment,
             )
             .await?,
-            "query sqlite-replica seed freeze",
+            "query libsql-replica seed freeze",
         )
         .await?;
         let (sqlite_cold, replica_cold) = measure_two_backends_async(
             workload,
             BenchmarkLane::ColdStart,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_seed = sqlite_seed.clone();
                 let replica_seed = replica_seed.clone();
                 async move {
                     let seed = match backend {
                         MeasuredBackend::Sqlite => sqlite_seed,
-                        MeasuredBackend::SqliteReplica => replica_seed,
+                        MeasuredBackend::LibsqlReplica => replica_seed,
                     };
                     let (service, resource) = seed
                         .resource
@@ -1026,21 +1026,21 @@ async fn benchmark_mixed_multi_tenant_load(
                 .await?;
         let replica_fixture = create_mixed_load_fixture(
             "mixed-load-steady",
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             environment,
         )
         .await?;
         let (sqlite_steady, replica_steady) = measure_two_backends_async(
             WorkloadKind::MixedMultiTenantLoad,
             BenchmarkLane::SteadyState,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_fixture = sqlite_fixture.clone();
                 let replica_fixture = replica_fixture.clone();
                 async move {
                     let fixture = match backend {
                         MeasuredBackend::Sqlite => sqlite_fixture,
-                        MeasuredBackend::SqliteReplica => replica_fixture,
+                        MeasuredBackend::LibsqlReplica => replica_fixture,
                     };
                     let started = Instant::now();
                     run_mixed_load_sample(
@@ -1069,7 +1069,7 @@ async fn benchmark_mixed_multi_tenant_load(
             .resource
             .cleanup(
                 replica_fixture.service.clone(),
-                "mixed-load steady-state sqlite-replica teardown",
+                "mixed-load steady-state libsql-replica teardown",
             )
             .await?;
 
@@ -1082,24 +1082,24 @@ async fn benchmark_mixed_multi_tenant_load(
         let replica_seed = freeze_mixed_load_seed(
             create_mixed_load_fixture(
                 "mixed-load-cold-seed",
-                MeasuredBackend::SqliteReplica,
+                MeasuredBackend::LibsqlReplica,
                 environment,
             )
             .await?,
-            "mixed-load sqlite-replica seed freeze",
+            "mixed-load libsql-replica seed freeze",
         )
         .await?;
         let (sqlite_cold, replica_cold) = measure_two_backends_async(
             WorkloadKind::MixedMultiTenantLoad,
             BenchmarkLane::ColdStart,
-            [MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            [MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
             |backend| {
                 let sqlite_seed = sqlite_seed.clone();
                 let replica_seed = replica_seed.clone();
                 async move {
                     let seed = match backend {
                         MeasuredBackend::Sqlite => sqlite_seed,
-                        MeasuredBackend::SqliteReplica => replica_seed,
+                        MeasuredBackend::LibsqlReplica => replica_seed,
                     };
                     let (service, resource) = seed
                         .resource
@@ -1157,7 +1157,7 @@ async fn benchmark_barrier_refresh_latency(
         let fixture = create_tenant_service(
             "barrier-refresh",
             "barrier-refresh",
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             environment,
         )
         .await?;
@@ -1199,13 +1199,13 @@ async fn benchmark_barrier_refresh_latency(
             .resource
             .cleanup(
                 fixture.service.clone(),
-                "barrier-refresh sqlite-replica teardown",
+                "barrier-refresh libsql-replica teardown",
             )
             .await?;
         report.push_measurement(
             WorkloadKind::BarrierRefreshLatency,
             BenchmarkLane::ReplicaOperational,
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             1,
             samples,
         );
@@ -1230,12 +1230,12 @@ async fn benchmark_peer_catch_up_latency(
         )
         .await?;
         fixture
-            .cleanup("peer-catch-up sqlite-replica teardown")
+            .cleanup("peer-catch-up libsql-replica teardown")
             .await?;
         report.push_measurement(
             WorkloadKind::PeerCatchUpLatency,
             BenchmarkLane::ReplicaOperational,
-            MeasuredBackend::SqliteReplica,
+            MeasuredBackend::LibsqlReplica,
             1,
             samples,
         );
@@ -1272,13 +1272,13 @@ async fn create_tenant_service(
                 tenant_id,
             })
         }
-        MeasuredBackend::SqliteReplica => {
+        MeasuredBackend::LibsqlReplica => {
             let control_dir = Arc::new(BenchDir::new(&format!("{label}-replica-control"))?);
             let replica_cache_dir = Arc::new(BenchDir::new(&format!("{label}-replica-cache"))?);
             let provider_config =
                 benchmark_libsql_provider_config(label, environment, replica_cache_dir.path());
             let service = Arc::new(
-                Service::new_with_persistence_config(sqlite_replica_service_config(
+                Service::new_with_persistence_config(libsql_replica_service_config(
                     control_dir.path(),
                     &provider_config,
                 ))
@@ -1287,7 +1287,7 @@ async fn create_tenant_service(
             let tenant_id = benchmark_tenant_id(tenant_label)?;
             service.create_tenant_async(tenant_id.clone()).await?;
             Ok(TenantFixture {
-                resource: LiveResource::SqliteReplica {
+                resource: LiveResource::LibsqlReplica {
                     control_dir,
                     replica_cache_dir,
                     provider_config,
@@ -1448,20 +1448,20 @@ async fn create_mixed_load_fixture(
                 service,
             )
         }
-        MeasuredBackend::SqliteReplica => {
+        MeasuredBackend::LibsqlReplica => {
             let control_dir = Arc::new(BenchDir::new(&format!("{label}-replica-control"))?);
             let replica_cache_dir = Arc::new(BenchDir::new(&format!("{label}-replica-cache"))?);
             let provider_config =
                 benchmark_libsql_provider_config(label, environment, replica_cache_dir.path());
             let service = Arc::new(
-                Service::new_with_persistence_config(sqlite_replica_service_config(
+                Service::new_with_persistence_config(libsql_replica_service_config(
                     control_dir.path(),
                     &provider_config,
                 ))
                 .await?,
             );
             (
-                LiveResource::SqliteReplica {
+                LiveResource::LibsqlReplica {
                     control_dir,
                     replica_cache_dir,
                     provider_config,
@@ -1539,14 +1539,14 @@ async fn create_peer_catch_up_fixture(
     };
 
     let creator_service = Arc::new(
-        Service::new_with_persistence_config(sqlite_replica_service_config(
+        Service::new_with_persistence_config(libsql_replica_service_config(
             creator_control.path(),
             &creator_provider_config,
         ))
         .await?,
     );
     let opener_service = Arc::new(
-        Service::new_with_persistence_config(sqlite_replica_service_config(
+        Service::new_with_persistence_config(libsql_replica_service_config(
             opener_control.path(),
             &opener_provider_config,
         ))
@@ -1566,13 +1566,13 @@ async fn create_peer_catch_up_fixture(
     let _ = opener_service.get_schema_async(tenant_id.clone()).await?;
 
     Ok(PeerCatchUpFixture {
-        creator_resource: LiveResource::SqliteReplica {
+        creator_resource: LiveResource::LibsqlReplica {
             control_dir: creator_control,
             replica_cache_dir: creator_cache,
             provider_config: creator_provider_config,
         },
         creator_service,
-        opener_resource: LiveResource::SqliteReplica {
+        opener_resource: LiveResource::LibsqlReplica {
             control_dir: opener_control,
             replica_cache_dir: opener_cache,
             provider_config: opener_provider_config,
@@ -1636,14 +1636,14 @@ impl LiveResource {
                 black_box(bench_dir.path());
                 black_box(data_dir.as_os_str());
             }
-            Self::SqliteReplica {
+            Self::LibsqlReplica {
                 control_dir,
                 replica_cache_dir,
                 provider_config,
             } => {
                 black_box(control_dir.path());
                 black_box(replica_cache_dir.path());
-                register_sqlite_replica_cleanup(provider_config);
+                register_libsql_replica_cleanup(provider_config);
             }
         }
         Ok(())
@@ -1658,9 +1658,9 @@ impl LiveResource {
                 bench_dir,
                 data_dir,
             },
-            Self::SqliteReplica {
+            Self::LibsqlReplica {
                 provider_config, ..
-            } => SeedResource::SqliteReplica { provider_config },
+            } => SeedResource::LibsqlReplica { provider_config },
         }
     }
 }
@@ -1688,7 +1688,7 @@ impl SeedResource {
                 );
                 Ok((service, ReopenedResource::Sqlite { bench_dir: cloned }))
             }
-            Self::SqliteReplica { provider_config } => {
+            Self::LibsqlReplica { provider_config } => {
                 let control_dir = Arc::new(BenchDir::new(&format!("{label}-replica-control"))?);
                 let replica_cache_dir = Arc::new(BenchDir::new(&format!("{label}-replica-cache"))?);
                 let mut reopened_config = provider_config.clone();
@@ -1698,7 +1698,7 @@ impl SeedResource {
                 reopened_config.admin_auth_header = environment.admin_auth_header.clone();
                 reopened_config.replica_cache_dir = replica_cache_dir.path().to_path_buf();
                 let service = Arc::new(
-                    Service::new_with_persistence_config(sqlite_replica_service_config(
+                    Service::new_with_persistence_config(libsql_replica_service_config(
                         control_dir.path(),
                         &reopened_config,
                     ))
@@ -1706,7 +1706,7 @@ impl SeedResource {
                 );
                 Ok((
                     service,
-                    ReopenedResource::SqliteReplica {
+                    ReopenedResource::LibsqlReplica {
                         control_dir,
                         replica_cache_dir,
                     },
@@ -1724,8 +1724,8 @@ impl SeedResource {
                 black_box(bench_dir.path());
                 black_box(data_dir.as_os_str());
             }
-            Self::SqliteReplica { provider_config } => {
-                register_sqlite_replica_cleanup(provider_config);
+            Self::LibsqlReplica { provider_config } => {
+                register_libsql_replica_cleanup(provider_config);
             }
         }
         Ok(())
@@ -1740,7 +1740,7 @@ impl ReopenedResource {
             Self::Sqlite { bench_dir } => {
                 drop(bench_dir);
             }
-            Self::SqliteReplica {
+            Self::LibsqlReplica {
                 control_dir,
                 replica_cache_dir,
             } => {
@@ -2131,7 +2131,7 @@ fn record_contrast_measurements(
     report.push_measurement(
         workload,
         lane,
-        MeasuredBackend::SqliteReplica,
+        MeasuredBackend::LibsqlReplica,
         operations_per_sample,
         replica,
     );
@@ -2171,12 +2171,12 @@ fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String
     markdown.push_str("Generated with:\n\n");
     markdown.push_str("```bash\n");
     markdown.push_str(
-        "NEOVEX_SQLITE_URL='http://127.0.0.1:18080' \\\nNEOVEX_SQLITE_ADMIN_URL='http://127.0.0.1:18081' \\\nmake bench-sqlite-replica-provider REPORT=docs/research/sqlite-replica-provider-benchmark-report.md\n",
+        "NEOVEX_LIBSQL_URL='http://127.0.0.1:18080' \\\nNEOVEX_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \\\nmake bench-libsql-replica-provider REPORT=docs/research/libsql-replica-provider-benchmark-report.md\n",
     );
     markdown.push_str("```\n\n");
     markdown.push_str("## Methodology\n\n");
     markdown.push_str(&format!(
-        "- steady-state lane compares embedded `sqlite` against `sqlite replica` with alternating backend order\n- cold-start lane compares fresh service open plus the first representative execution for embedded `sqlite` and `sqlite replica`\n- replica-operational lane measures the real freshness contract shipped today: same-service barrier refresh after a remote-primary write, plus peer catch-up / delegated-write visibility through the provider poll worker\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- replica-operational warmup rounds: `{}`; replica-operational measured rounds: `{}`\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n",
+        "- steady-state lane compares embedded `sqlite` against `libsql replica` with alternating backend order\n- cold-start lane compares fresh service open plus the first representative execution for embedded `sqlite` and `libsql replica`\n- replica-operational lane measures the real freshness contract shipped today: same-service barrier refresh after a remote-primary write, plus peer catch-up / delegated-write visibility through the provider poll worker\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- replica-operational warmup rounds: `{}`; replica-operational measured rounds: `{}`\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n",
         BenchmarkLane::SteadyState.warmup_rounds(),
         BenchmarkLane::SteadyState.measure_rounds(),
         BenchmarkLane::ColdStart.warmup_rounds(),
@@ -2210,18 +2210,18 @@ fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String
             let mut sqlite_wins = 0;
             let mut replica_wins = 0;
             markdown.push_str(&format!("### {} summary\n\n", lane.label()));
-            markdown.push_str("| Workload | sqlite replica vs sqlite | Winner |\n");
+            markdown.push_str("| Workload | libsql replica vs sqlite | Winner |\n");
             markdown.push_str("| --- | ---: | --- |\n");
             for workload in &contrast_workloads {
                 let sqlite = measurement_for(report, *workload, lane, MeasuredBackend::Sqlite);
                 let replica =
-                    measurement_for(report, *workload, lane, MeasuredBackend::SqliteReplica);
+                    measurement_for(report, *workload, lane, MeasuredBackend::LibsqlReplica);
                 let ratio = replica.stats().median_operations_per_second
                     / sqlite.stats().median_operations_per_second;
                 let winner = if ratio > 1.0 {
                     replica_wins += 1;
                     overall_replica_wins += 1;
-                    "sqlite replica"
+                    "libsql replica"
                 } else if ratio < 1.0 {
                     sqlite_wins += 1;
                     overall_sqlite_wins += 1;
@@ -2237,15 +2237,15 @@ fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String
                 ));
             }
             markdown.push_str(&format!(
-                "| Total lanes won | sqlite replica {}, sqlite {} | {} |\n\n",
+                "| Total lanes won | libsql replica {}, sqlite {} | {} |\n\n",
                 replica_wins,
                 sqlite_wins,
-                overall_winner_label(replica_wins, sqlite_wins, "sqlite replica", "sqlite")
+                overall_winner_label(replica_wins, sqlite_wins, "libsql replica", "sqlite")
             ));
         }
         markdown.push_str("### Overall total\n\n");
         markdown
-            .push_str("| Scope | sqlite replica lanes won | sqlite lanes won | Overall winner |\n");
+            .push_str("| Scope | libsql replica lanes won | sqlite lanes won | Overall winner |\n");
         markdown.push_str("| --- | ---: | ---: | --- |\n");
         markdown.push_str(&format!(
             "| All contrast lanes | {} | {} | {} |\n\n",
@@ -2254,7 +2254,7 @@ fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String
             overall_winner_label(
                 overall_replica_wins,
                 overall_sqlite_wins,
-                "sqlite replica",
+                "libsql replica",
                 "sqlite"
             )
         ));
@@ -2268,14 +2268,14 @@ fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String
             report,
             *workload,
             BenchmarkLane::SteadyState,
-            &[MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            &[MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
         );
         render_lane_table(
             &mut markdown,
             report,
             *workload,
             BenchmarkLane::ColdStart,
-            &[MeasuredBackend::Sqlite, MeasuredBackend::SqliteReplica],
+            &[MeasuredBackend::Sqlite, MeasuredBackend::LibsqlReplica],
         );
     }
 
@@ -2291,7 +2291,7 @@ fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String
                 report,
                 *workload,
                 BenchmarkLane::ReplicaOperational,
-                MeasuredBackend::SqliteReplica,
+                MeasuredBackend::LibsqlReplica,
             );
             let stats = measurement.stats();
             markdown.push_str(&format!(
@@ -2402,7 +2402,7 @@ fn overall_winner_label(
     }
 }
 
-fn sqlite_replica_service_config(
+fn libsql_replica_service_config(
     control_dir: &Path,
     provider_config: &LibsqlReplicaProviderConfig,
 ) -> ServicePersistenceConfig {
@@ -2416,7 +2416,7 @@ fn sqlite_replica_service_config(
                 replica_cache_dir: provider_config.replica_cache_dir.clone(),
             },
             pool: PoolConfig::default(),
-            credentials: ProviderCredentials::SqliteReplica {
+            credentials: ProviderCredentials::LibsqlReplica {
                 primary_url: provider_config.primary_url.clone(),
                 auth_token: provider_config.auth_token.clone(),
                 admin_api_url: provider_config.admin_api_url.clone(),
@@ -2465,7 +2465,7 @@ fn benchmark_tenant_id(label: &str) -> BenchResult<TenantId> {
     Ok(TenantId::new(format!("bench-{label}"))?)
 }
 
-fn register_sqlite_replica_cleanup(config: &LibsqlReplicaProviderConfig) {
+fn register_libsql_replica_cleanup(config: &LibsqlReplicaProviderConfig) {
     let queue = REPLICA_CLEANUP_QUEUE.get_or_init(|| StdMutex::new(Vec::new()));
     let mut queue = queue
         .lock()
@@ -2481,7 +2481,7 @@ fn register_sqlite_replica_cleanup(config: &LibsqlReplicaProviderConfig) {
     queue.push(config.clone());
 }
 
-async fn cleanup_sqlite_replica_provider(config: &LibsqlReplicaProviderConfig) -> BenchResult<()> {
+async fn cleanup_libsql_replica_provider(config: &LibsqlReplicaProviderConfig) -> BenchResult<()> {
     LibsqlReplicaProvider::connect(config.clone())
         .await?
         .drop_provider_namespaces_for_test()
@@ -2489,7 +2489,7 @@ async fn cleanup_sqlite_replica_provider(config: &LibsqlReplicaProviderConfig) -
     Ok(())
 }
 
-async fn cleanup_registered_sqlite_replica_providers() {
+async fn cleanup_registered_libsql_replica_providers() {
     let Some(queue) = REPLICA_CLEANUP_QUEUE.get() else {
         return;
     };
@@ -2500,7 +2500,7 @@ async fn cleanup_registered_sqlite_replica_providers() {
         guard.drain(..).collect::<Vec<_>>()
     };
     for config in drained {
-        if let Err(error) = cleanup_sqlite_replica_provider(&config).await {
+        if let Err(error) = cleanup_libsql_replica_provider(&config).await {
             eprintln!(
                 "warning: failed to drop benchmark libsql metadata namespace {}: {error}",
                 config.metadata_namespace

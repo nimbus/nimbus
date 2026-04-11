@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use neovex_core::{Result, Schema, TenantId};
+use neovex_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 
 use crate::persistence::{TenantPersistence, TenantPersistenceExecutor};
@@ -78,7 +79,7 @@ pub struct TenantOperationGuard {
 
 pub struct TenantDeletionGuard;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantEngineDiagnosticsSnapshot {
     pub mutation_admission: MutationAdmissionStats,
     pub mutation_journal: MutationJournalStats,
@@ -86,6 +87,7 @@ pub struct TenantEngineDiagnosticsSnapshot {
     pub materialized_read_surface: MaterializedReadSurfaceStats,
     pub serving_snapshot_manager: ServingSnapshotManagerStats,
     pub query_planning: QueryPlanningStats,
+    pub libsql_replica_freshness: Option<LibsqlReplicaFreshnessStats>,
 }
 
 impl Drop for TenantOperationGuard {
@@ -146,7 +148,7 @@ impl TenantRuntime {
             }
             TenantPersistence::Redb(_)
             | TenantPersistence::Sqlite(_)
-            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::LibsqlReplica(_)
             | TenantPersistence::MySql(_) => {
                 read_storage
                     .execute(|store| Ok((store.load_schema()?, store.journal_progress()?)))
@@ -194,6 +196,7 @@ impl TenantRuntime {
             materialized_read_surface: self.materialized_read_surface_stats(),
             serving_snapshot_manager: self.serving_snapshot_manager_stats(),
             query_planning: self.query_planning_stats(),
+            libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
         }
     }
 }

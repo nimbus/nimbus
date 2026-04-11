@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use neovex_core::{Cursor, DocumentId, Filter, Query, TableName, TenantId};
 use neovex_runtime::NeovexRuntimeError;
 
-use crate::runtime::read_tracking::{RuntimeIndexRangeRead, RuntimeReadSet};
+use crate::execution::read_tracking::{RuntimeIndexRangeRead, RuntimeReadSet};
 
 #[derive(Clone)]
 pub(crate) struct RuntimeHostState {

@@ -1,7 +1,8 @@
-use deno_core::JsRuntime;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::backends::v8::embedder::JsRuntime;
+use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 use crate::error::Result;
 use crate::executor::SharedInvocationPermit;
 use crate::host::HostCallCancellation;
@@ -10,15 +11,12 @@ use crate::watchdog::WatchdogTimer;
 
 use super::super::bootstrap::RuntimeCancellationState;
 use super::super::helpers::classify_runtime_error;
-use super::super::{
-    NeovexRuntime, ReusableRuntime, RuntimeConstructionMode, RuntimeInvocationExecution,
-    RuntimeInvocationTimeoutController, RuntimeWorkerIsolatePool,
-};
+use super::super::{NeovexRuntime, RuntimeInvocationExecution, RuntimeInvocationTimeoutController};
 
 pub(crate) struct RuntimeInvocationDriver {
     pub(crate) runtime: JsRuntime,
     pub(crate) warm_reuse_count: usize,
-    pub(crate) construction_mode: RuntimeConstructionMode,
+    pub(crate) construction_mode: V8RuntimeConstructionMode,
     policy: Arc<RuntimePolicy>,
     permit: SharedInvocationPermit,
     timeout_controller: Option<RuntimeInvocationTimeoutController>,
@@ -33,7 +31,7 @@ impl RuntimeInvocationDriver {
     pub(crate) async fn finalize_with_runtime(
         self,
         result: Result<serde_json::Value>,
-    ) -> (Result<serde_json::Value>, Option<ReusableRuntime>) {
+    ) -> (Result<serde_json::Value>, Option<ReusableV8Runtime>) {
         if let Some(timeout_controller) = self.timeout_controller {
             timeout_controller.disarm().await;
         }
@@ -56,10 +54,10 @@ impl RuntimeInvocationDriver {
             )
         });
         if result.is_err() && replacement_required && self.record_replacement_on_error {
-            self.policy.metrics().record_isolate_pool_replacement();
+            self.policy.metrics().record_runtime_pool_replacement();
         }
         let runtime = if result.is_ok() && !replacement_required {
-            Some(ReusableRuntime {
+            Some(ReusableV8Runtime {
                 runtime: self.runtime,
                 warm_reuse_count: self.warm_reuse_count,
                 construction_mode: self.construction_mode,
@@ -81,7 +79,7 @@ impl RuntimeInvocationDriver {
 impl NeovexRuntime {
     pub(crate) async fn invoke_bundle_unmanaged(
         &self,
-        isolate_pool: Option<&mut RuntimeWorkerIsolatePool>,
+        v8_runtime_pool: Option<&mut V8WorkerRuntimePool>,
         invocation: RuntimeInvocationExecution,
     ) -> Result<serde_json::Value> {
         let RuntimeInvocationExecution {
@@ -93,14 +91,14 @@ impl NeovexRuntime {
             permit,
         } = invocation;
         bundle.verify_integrity()?;
-        let mut isolate_pool = isolate_pool;
-        let runtime = match isolate_pool.as_deref_mut() {
+        let mut v8_runtime_pool = v8_runtime_pool;
+        let runtime = match v8_runtime_pool.as_deref_mut() {
             Some(pool) => pool.take_runtime_for_invocation(self, &bundle, Some(&context))?,
             None => {
                 let snapshot = self.bootstrap_snapshot()?;
-                ReusableRuntime::fresh(
+                ReusableV8Runtime::fresh(
                     self.create_runtime_from_snapshot(&bundle, snapshot)?,
-                    RuntimeConstructionMode::StartupSnapshot,
+                    V8RuntimeConstructionMode::StartupSnapshot,
                 )
             }
         };
@@ -109,7 +107,7 @@ impl NeovexRuntime {
             watchdog.clone(),
             external_cancellation.clone(),
             permit.clone(),
-            isolate_pool.is_some(),
+            v8_runtime_pool.is_some(),
         )?;
 
         let result = {
@@ -165,7 +163,7 @@ impl NeovexRuntime {
         };
 
         let (result, reusable_runtime) = driver.finalize_with_runtime(result).await;
-        if let (Some(pool), Some(mut runtime)) = (isolate_pool, reusable_runtime) {
+        if let (Some(pool), Some(mut runtime)) = (v8_runtime_pool, reusable_runtime) {
             if matches!(
                 self.policy.limits().runtime_pool_kind,
                 crate::limits::RuntimePoolKind::WarmPool,
@@ -185,13 +183,13 @@ impl NeovexRuntime {
 
     pub(crate) fn prepare_runtime_invocation_driver(
         &self,
-        runtime: ReusableRuntime,
+        runtime: ReusableV8Runtime,
         watchdog: WatchdogTimer,
         external_cancellation: Option<HostCallCancellation>,
         permit: SharedInvocationPermit,
         record_replacement_on_error: bool,
     ) -> Result<RuntimeInvocationDriver> {
-        let ReusableRuntime {
+        let ReusableV8Runtime {
             mut runtime,
             warm_reuse_count,
             construction_mode,

@@ -33,7 +33,7 @@ pub struct RuntimeMetrics {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeMetricsSnapshot {
-    pub active_isolates: usize,
+    pub active_runtime_instances: usize,
     pub queued_invocations: usize,
     pub worker_dispatched_invocations: u64,
     pub worker_affinity_routed_invocations: u64,
@@ -49,9 +49,9 @@ pub struct RuntimeMetricsSnapshot {
     pub bundle_module_load_nanos_total: u64,
     pub bundle_evaluations: u64,
     pub bundle_evaluation_nanos_total: u64,
-    pub isolate_pool_hits: u64,
-    pub isolate_pool_misses: u64,
-    pub isolate_pool_replacements: u64,
+    pub runtime_pool_hits: u64,
+    pub runtime_pool_misses: u64,
+    pub runtime_pool_replacements: u64,
     pub started_invocations: u64,
     pub completed_invocations: u64,
     pub queue_wait_nanos_total: u64,
@@ -67,7 +67,7 @@ pub struct RuntimeMetricsSnapshot {
     pub precanceled_host_ops: u64,
     pub in_flight_canceled_host_ops: u64,
     pub nested_local_dispatches: u64,
-    pub fallback_cross_isolate_dispatches: u64,
+    pub fallback_cross_runtime_dispatches: u64,
     pub warm_pool_hits: u64,
     pub warm_pool_misses: u64,
     pub warm_pool_retirements: u64,
@@ -86,13 +86,14 @@ impl RuntimeMetrics {
         self.global.decrement_queued_invocations();
     }
 
-    pub fn increment_active_isolates(&self) {
-        self.increment_active_isolates_for_tenant(None);
+    pub fn increment_active_runtime_instances(&self) {
+        self.increment_active_runtime_instances_for_tenant(None);
     }
 
-    pub fn increment_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
-        self.global.increment_active_isolates();
-        self.tenants.increment_active_isolates(tenant_label);
+    pub fn increment_active_runtime_instances_for_tenant(&self, tenant_label: Option<&str>) {
+        self.global.increment_active_runtime_instances();
+        self.tenants
+            .increment_active_runtime_instances(tenant_label);
     }
 
     pub fn record_invocation_started(&self) {
@@ -168,25 +169,26 @@ impl RuntimeMetrics {
         self.global.record_bundle_evaluation(duration);
     }
 
-    pub fn record_isolate_pool_hit(&self) {
-        self.global.record_isolate_pool_hit();
+    pub fn record_runtime_pool_hit(&self) {
+        self.global.record_runtime_pool_hit();
     }
 
-    pub fn record_isolate_pool_miss(&self) {
-        self.global.record_isolate_pool_miss();
+    pub fn record_runtime_pool_miss(&self) {
+        self.global.record_runtime_pool_miss();
     }
 
-    pub fn record_isolate_pool_replacement(&self) {
-        self.global.record_isolate_pool_replacement();
+    pub fn record_runtime_pool_replacement(&self) {
+        self.global.record_runtime_pool_replacement();
     }
 
-    pub fn decrement_active_isolates(&self) {
-        self.decrement_active_isolates_for_tenant(None);
+    pub fn decrement_active_runtime_instances(&self) {
+        self.decrement_active_runtime_instances_for_tenant(None);
     }
 
-    pub fn decrement_active_isolates_for_tenant(&self, tenant_label: Option<&str>) {
-        self.global.decrement_active_isolates();
-        self.tenants.decrement_active_isolates(tenant_label);
+    pub fn decrement_active_runtime_instances_for_tenant(&self, tenant_label: Option<&str>) {
+        self.global.decrement_active_runtime_instances();
+        self.tenants
+            .decrement_active_runtime_instances(tenant_label);
     }
 
     pub fn record_invocation_completed(&self) {
@@ -296,8 +298,8 @@ impl RuntimeMetrics {
         self.global.record_nested_local_dispatch();
     }
 
-    pub fn record_fallback_cross_isolate_dispatch(&self) {
-        self.global.record_fallback_cross_isolate_dispatch();
+    pub fn record_fallback_cross_runtime_dispatch(&self) {
+        self.global.record_fallback_cross_runtime_dispatch();
     }
 
     pub fn record_request_correlation(&self, context: &RuntimeInvocationContext) {
@@ -307,7 +309,7 @@ impl RuntimeMetrics {
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
         let global = self.global.snapshot();
         RuntimeMetricsSnapshot {
-            active_isolates: global.active_isolates,
+            active_runtime_instances: global.active_runtime_instances,
             queued_invocations: global.queued_invocations,
             worker_dispatched_invocations: global.worker_dispatched_invocations,
             worker_affinity_routed_invocations: global.worker_affinity_routed_invocations,
@@ -323,9 +325,9 @@ impl RuntimeMetrics {
             bundle_module_load_nanos_total: global.bundle_module_load_nanos_total,
             bundle_evaluations: global.bundle_evaluations,
             bundle_evaluation_nanos_total: global.bundle_evaluation_nanos_total,
-            isolate_pool_hits: global.isolate_pool_hits,
-            isolate_pool_misses: global.isolate_pool_misses,
-            isolate_pool_replacements: global.isolate_pool_replacements,
+            runtime_pool_hits: global.runtime_pool_hits,
+            runtime_pool_misses: global.runtime_pool_misses,
+            runtime_pool_replacements: global.runtime_pool_replacements,
             started_invocations: global.started_invocations,
             completed_invocations: global.completed_invocations,
             queue_wait_nanos_total: global.queue_wait_nanos_total,
@@ -341,7 +343,7 @@ impl RuntimeMetrics {
             precanceled_host_ops: global.precanceled_host_ops,
             in_flight_canceled_host_ops: global.in_flight_canceled_host_ops,
             nested_local_dispatches: global.nested_local_dispatches,
-            fallback_cross_isolate_dispatches: global.fallback_cross_isolate_dispatches,
+            fallback_cross_runtime_dispatches: global.fallback_cross_runtime_dispatches,
             warm_pool_hits: global.warm_pool_hits,
             warm_pool_misses: global.warm_pool_misses,
             warm_pool_retirements: global.warm_pool_retirements,
@@ -388,7 +390,7 @@ mod tests {
         let metrics = RuntimeMetrics::default();
 
         metrics.record_invocation_started_for_tenant(Some("demo"));
-        metrics.increment_active_isolates_for_tenant(Some("demo"));
+        metrics.increment_active_runtime_instances_for_tenant(Some("demo"));
         metrics.record_queue_wait_for_tenant(Some("demo"), Duration::from_micros(500));
         metrics.record_execution_for_tenant(Some("demo"), Duration::from_millis(7));
         metrics.record_queued_canceled_invocation_for_tenant(
@@ -407,7 +409,7 @@ mod tests {
             tenant_label: Some("demo".to_string()),
             server_request_id: Some("req-7".to_string()),
         });
-        metrics.decrement_active_isolates_for_tenant(Some("demo"));
+        metrics.decrement_active_runtime_instances_for_tenant(Some("demo"));
         metrics.record_invocation_completed_for_tenant(Some("demo"));
 
         let snapshot = metrics.snapshot();
@@ -417,7 +419,7 @@ mod tests {
                 .get("demo")
                 .expect("tenant metrics should be present"),
             &RuntimeTenantMetricsSnapshot {
-                active_isolates: 0,
+                active_runtime_instances: 0,
                 started_invocations: 1,
                 completed_invocations: 1,
                 rejected_invocations: 0,
@@ -456,7 +458,7 @@ mod tests {
         let metrics = RuntimeMetrics::default();
 
         metrics.record_invocation_started();
-        metrics.increment_active_isolates();
+        metrics.increment_active_runtime_instances();
         metrics.increment_queued_invocations();
         metrics.record_queue_wait(Duration::from_millis(1));
         metrics.record_execution(Duration::from_millis(2));
@@ -472,25 +474,25 @@ mod tests {
         metrics.record_bundle_module_load(Duration::from_millis(6));
         metrics.record_bundle_evaluation(Duration::from_millis(7));
         metrics.decrement_retained_runtime_pool_entries();
-        metrics.record_isolate_pool_miss();
-        metrics.record_isolate_pool_hit();
-        metrics.record_isolate_pool_replacement();
+        metrics.record_runtime_pool_miss();
+        metrics.record_runtime_pool_hit();
+        metrics.record_runtime_pool_replacement();
         metrics.record_timeout();
         metrics.record_rejected_invocation_for_tenant(None);
         metrics.record_queued_canceled_invocation();
         metrics.record_precanceled_host_op();
         metrics.record_in_flight_canceled_host_op();
         metrics.record_nested_local_dispatch();
-        metrics.record_fallback_cross_isolate_dispatch();
+        metrics.record_fallback_cross_runtime_dispatch();
         metrics.decrement_queued_invocations();
-        metrics.decrement_active_isolates();
+        metrics.decrement_active_runtime_instances();
         metrics.record_invocation_completed();
 
         let snapshot = metrics.snapshot();
         assert_eq!(
             snapshot,
             RuntimeMetricsSnapshot {
-                active_isolates: 0,
+                active_runtime_instances: 0,
                 queued_invocations: 0,
                 worker_dispatched_invocations: 1,
                 worker_affinity_routed_invocations: 1,
@@ -506,9 +508,9 @@ mod tests {
                 bundle_module_load_nanos_total: 6_000_000,
                 bundle_evaluations: 1,
                 bundle_evaluation_nanos_total: 7_000_000,
-                isolate_pool_hits: 1,
-                isolate_pool_misses: 1,
-                isolate_pool_replacements: 1,
+                runtime_pool_hits: 1,
+                runtime_pool_misses: 1,
+                runtime_pool_replacements: 1,
                 started_invocations: 1,
                 completed_invocations: 1,
                 queue_wait_nanos_total: 1_000_000,
@@ -524,7 +526,7 @@ mod tests {
                 precanceled_host_ops: 1,
                 in_flight_canceled_host_ops: 1,
                 nested_local_dispatches: 1,
-                fallback_cross_isolate_dispatches: 1,
+                fallback_cross_runtime_dispatches: 1,
                 warm_pool_hits: 0,
                 warm_pool_misses: 0,
                 warm_pool_retirements: 0,

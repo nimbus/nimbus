@@ -2,7 +2,7 @@ use neovex_core::{Filter, FilterOp};
 
 use super::super::super::read_set::RuntimeIndexRangeRead;
 
-pub(in crate::runtime::read_tracking) fn filters_from_runtime_index_read(
+pub(in crate::execution::read_tracking) fn filters_from_runtime_index_read(
     read: &RuntimeIndexRangeRead,
 ) -> Vec<Filter> {
     let mut filters = Vec::new();

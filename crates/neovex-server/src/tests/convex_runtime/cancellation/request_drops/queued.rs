@@ -17,7 +17,7 @@ const QUEUED_REQUEST_RECOVERY_CASE: DeterministicTestCase = DeterministicTestCas
 #[tokio::test]
 async fn dropped_queued_runtime_request_never_starts_mutation() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -56,7 +56,9 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &registry,
         QUEUED_REQUEST_DROP_CASE,
         "blocking runtime query to start",
-        |metrics| metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1,
+        |metrics| {
+            metrics.active_runtime_instances == 1 && metrics.worker_dispatched_invocations == 1
+        },
     )
     .await;
 
@@ -71,13 +73,13 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation to be admitted but not started",
         |metrics| {
-            metrics.active_isolates == 1
+            metrics.active_runtime_instances == 1
                 && metrics.worker_dispatched_invocations == 2
                 && metrics.started_invocations == 1
         },
     )
     .await;
-    assert_eq!(queued_snapshot.active_isolates, 1);
+    assert_eq!(queued_snapshot.active_runtime_instances, 1);
     assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
     assert_eq!(queued_snapshot.started_invocations, 1);
 
@@ -88,7 +90,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &registry,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation cancellation",
-        |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
+        |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
     assert_eq!(metrics.worker_dispatched_invocations, 2);
@@ -96,9 +98,9 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     assert_eq!(metrics.in_flight_canceled_invocations, 2);
     assert_eq!(metrics.disconnect_canceled_invocations, 2);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 0);
-    assert_eq!(metrics.isolate_pool_replacements, 1);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 0);
+    assert_eq!(metrics.runtime_pool_replacements, 1);
     let tenant_metrics = metrics
         .tenants
         .get("demo")
@@ -143,7 +145,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
 #[tokio::test]
 async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -186,7 +188,9 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
         "blocking runtime query to start",
-        |metrics| metrics.active_isolates == 1 && metrics.worker_dispatched_invocations == 1,
+        |metrics| {
+            metrics.active_runtime_instances == 1 && metrics.worker_dispatched_invocations == 1
+        },
     )
     .await;
 
@@ -201,13 +205,13 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation recovery request to be admitted but not started",
         |metrics| {
-            metrics.active_isolates == 1
+            metrics.active_runtime_instances == 1
                 && metrics.worker_dispatched_invocations == 2
                 && metrics.started_invocations == 1
         },
     )
     .await;
-    assert_eq!(queued_snapshot.active_isolates, 1);
+    assert_eq!(queued_snapshot.active_runtime_instances, 1);
     assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
     assert_eq!(queued_snapshot.started_invocations, 1);
 
@@ -218,7 +222,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation cancellation",
-        |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 2,
+        |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
     assert_eq!(canceled.worker_dispatched_invocations, 2);
@@ -239,7 +243,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         QUEUED_REQUEST_RECOVERY_CASE,
         "runtime recovery after queued request drop",
         |metrics| {
-            metrics.active_isolates == 0
+            metrics.active_runtime_instances == 0
                 && metrics.worker_dispatched_invocations == 3
                 && metrics.started_invocations == 2
                 && metrics.completed_invocations == 2
@@ -247,14 +251,14 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     )
     .await;
     assert_eq!(
-        recovered.isolate_pool_hits + recovered.isolate_pool_misses,
+        recovered.runtime_pool_hits + recovered.runtime_pool_misses,
         2,
         "two started invocations should account for two pool outcomes"
     );
     assert_eq!(recovered.queued_canceled_invocations, 0);
     assert_eq!(recovered.in_flight_canceled_invocations, 2);
     assert_eq!(recovered.disconnect_canceled_invocations, 2);
-    assert_eq!(recovered.isolate_pool_replacements, 1);
+    assert_eq!(recovered.runtime_pool_replacements, 1);
 
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
     let documents = service

@@ -17,6 +17,7 @@ use super::*;
 
 mod async_bridge;
 mod bridge;
+mod contract;
 mod db_ops;
 mod function_ops;
 mod pagination;
@@ -25,6 +26,9 @@ mod read_tracking;
 mod responses;
 
 pub(in crate::adapters::convex) use bridge::ConvexHostBridge;
+#[cfg(test)]
+pub(in crate::adapters::convex) use contract::ConvexHostCallRequest;
+pub(in crate::adapters::convex) use contract::convex_host_operation_name;
 pub(in crate::adapters::convex) use pagination::synthesize_runtime_paginate_cursor;
 pub(in crate::adapters::convex) use payloads::*;
 pub(in crate::adapters::convex) use responses::*;

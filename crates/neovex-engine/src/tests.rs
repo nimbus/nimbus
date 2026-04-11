@@ -44,13 +44,13 @@ pub(crate) use neovex_storage::{
 
 mod consistency;
 mod embedded_providers;
+mod libsql_replica_provider;
 mod materialized_serving;
 mod mutation_journal;
 mod mysql_provider;
 mod policy;
 mod postgres_provider;
 mod queries;
-mod sqlite_replica_provider;
 mod subscriptions;
 
 pub(crate) fn tasks_table() -> TableName {

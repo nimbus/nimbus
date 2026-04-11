@@ -10,7 +10,7 @@ const IN_FLIGHT_REQUEST_DROP_CASE: DeterministicTestCase = DeterministicTestCase
 #[tokio::test]
 async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:spin",
@@ -51,7 +51,9 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         &registry,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "runtime invocation to start",
-        |metrics| metrics.active_isolates >= 1 && metrics.worker_dispatched_invocations >= 1,
+        |metrics| {
+            metrics.active_runtime_instances >= 1 && metrics.worker_dispatched_invocations >= 1
+        },
     )
     .await;
 
@@ -61,7 +63,7 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         &registry,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "dropped runtime request cancellation",
-        |metrics| metrics.active_isolates == 0 && metrics.canceled_invocations >= 1,
+        |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 1,
     )
     .await;
     assert_eq!(metrics.worker_dispatched_invocations, 1);
@@ -70,9 +72,9 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     assert_eq!(metrics.in_flight_canceled_invocations, 1);
     assert_eq!(metrics.disconnect_canceled_invocations, 1);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 0);
-    assert_eq!(metrics.isolate_pool_replacements, 1);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 0);
+    assert_eq!(metrics.runtime_pool_replacements, 1);
     let tenant_metrics = metrics
         .tenants
         .get("demo")
@@ -101,12 +103,12 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         |metrics| {
             metrics.worker_dispatched_invocations == 2
                 && metrics.completed_invocations == 2
-                && metrics.isolate_pool_replacements == 1
+                && metrics.runtime_pool_replacements == 1
         },
     )
     .await;
     assert_eq!(
-        recovery_metrics.isolate_pool_hits + recovery_metrics.isolate_pool_misses,
+        recovery_metrics.runtime_pool_hits + recovery_metrics.runtime_pool_misses,
         2,
         "the canceled invocation and recovery invocation should each contribute one pool outcome"
     );

@@ -46,7 +46,7 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
     );
 
     let async_host_calls =
-        fs::read_to_string(workspace_root.join("src/runtime/host_calls/async_calls.rs"))
+        fs::read_to_string(workspace_root.join("src/execution/host_calls/async_calls.rs"))
             .expect("runtime async host call module should be readable");
     assert!(
         !async_host_calls.contains("spawn_blocking("),

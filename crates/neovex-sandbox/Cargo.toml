@@ -1,0 +1,13 @@
+[package]
+name = "neovex-sandbox"
+version = "0.1.0"
+edition = "2024"
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+neovex-core = { path = "../neovex-core" }
+serde.workspace = true
+thiserror.workspace = true
