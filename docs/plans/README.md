@@ -4,10 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/dependency-baseline-cleanup-plan.md`
-  - active control plane for restoring a clean dependency baseline after the
-    storage-layer hardening closeout; owns the `libsql` TLS/dependency-shape
-    cleanup needed for `make deny` / `make ci`
 - `docs/plans/convex-demos-compatibility-plan.md`
   - execution plan for closing the remaining Convex demo and compatibility gaps
 - `docs/plans/encryption-at-rest-plan.md`
@@ -37,10 +33,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     context only
 - `docs/plans/wasmtime-backend-plan.md`
   - canonical plan for adding a wasmtime-based WASM backend alongside the
-    existing `deno_core` V8 backend; covers backend abstraction refactor, WIT
-    interface definitions, cooperative fuel-based scheduling, module caching,
-    and bundle format extension; activation gate met (Locker fork Phase 5
-    completed 2026-04-06)
+    existing V8 backend (currently implemented via `deno_core`); covers
+    backend abstraction refactor, WIT interface definitions, cooperative
+    fuel-based scheduling, module caching, and bundle format extension;
+    activation gate met (Locker fork Phase 5 completed 2026-04-06)
 - `docs/plans/wasi-agent-capabilities-plan.md`
   - canonical plan for adding agent OS primitives (virtual filesystem, sandboxed
     process execution, HTTP client) via WASI Component Model interfaces; covers
@@ -77,11 +73,29 @@ plans unless explicitly asked to review historical work.
     de-duplication, embedded SQLite pool guardrail, Postgres/MySQL targeted
     planner reads, structured storage error kinds, replica-refresh hardening,
     and the final closeout verification baseline
+- `docs/plans/archive/dependency-baseline-cleanup-plan.md`
+  - completed dependency-baseline cleanup plan; records the remote-only
+    `libsql` dependency-shape fix, the narrow `RUSTSEC-2026-0097` evidence,
+    the direct `tokio-tungstenite` lift to `0.28`, and the final green
+    `make deny` / `make ci` baseline
+- `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
+  - completed storage follow-up plan; records the `LibsqlReplica` naming
+    cleanup, replica freshness observability surface, Postgres/MySQL schema
+    metadata caches, and the final green `make check` / `make test` /
+    `make clippy` closeout baseline
+- `docs/plans/archive/postgres-listener-reconnect-schema-recovery-plan.md`
+  - completed Postgres reconnect correctness follow-up; records the
+    authoritative schema-plus-journal catch-up on LISTEN reattach and the
+    focused regression for missed schema notifications during listener downtime
 - `docs/plans/external-sql-storage-backends-plan.md`
   - completed umbrella provider-topology design baseline; records the settled
-    `TenantPersistence` / `PersistenceProvider` seam, the control-plane and
-    runtime-config cleanup slices, and the follow-on design decisions for
-    replica-connected SQLite and MySQL
+  `TenantPersistence` / `PersistenceProvider` seam, the control-plane and
+  runtime-config cleanup slices, and the follow-on design decisions for
+  replica-connected SQLite and MySQL
+- `docs/plans/archive/runtime-sandbox-architecture-plan.md`
+  - completed execution-runtime versus sandbox-orchestration cleanup baseline;
+    records the settled `neovex-runtime` versus `neovex-sandbox` naming and
+    seam decisions that deferred runtime and sandbox plans build on
 
 ## How To Use This Folder
 
@@ -92,9 +106,12 @@ plans unless explicitly asked to review historical work.
   of reviving a completed archived one.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
-- For dependency-baseline cleanup after the storage hardening closeout, start
-  with `dependency-baseline-cleanup-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
+- The execution-runtime versus sandbox-orchestration cleanup plan is complete
+  and archived at `archive/runtime-sandbox-architecture-plan.md`. Use it to
+  understand the landed `neovex-runtime` versus `neovex-sandbox` split, then
+  promote or author a new active plan before doing further cleanup work in
+  that area.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.
@@ -122,10 +139,22 @@ plans unless explicitly asked to review historical work.
 - The storage hardening follow-up plan is complete and archived at
   `archive/storage-layer-hardening-plan.md`; use it only for historical review
   of the verified post-migration cleanup and refresh-hardening pass.
+- The dependency-baseline cleanup plan is complete and archived at
+  `archive/dependency-baseline-cleanup-plan.md`; use it only for historical
+  review of the `libsql` dependency-shape cleanup and deny/CI closeout.
+- The storage-provider contracts and observability follow-up plan is complete
+  and archived at
+  `archive/storage-provider-contracts-and-observability-plan.md`; use it only
+  for historical review of the verified storage naming, observability, and
+  schema-cache cleanup pass. Promote a new active plan before resuming further
+  storage-provider follow-up work.
 - Do not revive the archived SQLite migration plan to own future non-local
   provider implementation details, pooling, replication, or coordination
   concerns; any new work there should start from a newly active plan rather
   than from an archived or completed historical record.
+- The Postgres listener reconnect schema-recovery follow-up is complete and
+  archived at `archive/postgres-listener-reconnect-schema-recovery-plan.md`;
+  use it only for historical review of the missed-schema recovery fix.
 - For future agent OS capabilities via WASI Component Model, start with
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes

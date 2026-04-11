@@ -47,8 +47,8 @@ impl Service {
         if let Some(provider) = self.postgres_provider() {
             return Some(ProviderBackgroundTask::Postgres(provider));
         }
-        if let Some(provider) = self.sqlite_replica_provider() {
-            return Some(ProviderBackgroundTask::SqliteReplica(provider));
+        if let Some(provider) = self.libsql_replica_provider() {
+            return Some(ProviderBackgroundTask::LibsqlReplica(provider));
         }
         self.mysql_provider().map(ProviderBackgroundTask::MySql)
     }
@@ -74,7 +74,7 @@ impl Service {
                 }
             };
             if let Err(error) = self
-                .catch_up_postgres_provider_after_listener_attach(first_attach)
+                .catch_up_postgres_provider_after_listener_attach()
                 .await
             {
                 warn!(
@@ -170,6 +170,7 @@ impl Service {
         let _operation = runtime.enter_operation(tenant_id)?;
 
         if refresh_schema {
+            runtime.store.invalidate_schema_cache();
             self.refresh_loaded_schema_from_store_async(&runtime)
                 .await?;
         }
@@ -188,7 +189,7 @@ impl Service {
                 }
                 TenantPersistence::Redb(_)
                 | TenantPersistence::Sqlite(_)
-                | TenantPersistence::SqliteReplica(_)
+                | TenantPersistence::LibsqlReplica(_)
                 | TenantPersistence::MySql(_) => {
                     runtime
                         .read_storage
@@ -215,10 +216,7 @@ impl Service {
 
         Ok(())
     }
-    async fn catch_up_postgres_provider_after_listener_attach(
-        self: &Arc<Self>,
-        refresh_schema: bool,
-    ) -> Result<()> {
+    async fn catch_up_postgres_provider_after_listener_attach(self: &Arc<Self>) -> Result<()> {
         let loaded = self
             .tenants
             .read()
@@ -230,13 +228,12 @@ impl Service {
         for (tenant_id, runtime) in loaded {
             // PostgreSQL's LISTEN contract requires an authoritative state
             // inspection after the listener commit before the process can rely
-            // on subsequent notifications. On the first attach we refresh
-            // both schema and journal-backed state to cover the startup race
-            // between loading a tenant and the hint worker becoming live. On
-            // later reconnects we only sweep journal-backed state here:
-            // schema hints remain live-edge notifications, and reconnect
-            // recovery should stay focused on the durable mutation contract.
-            self.catch_up_loaded_provider_tenant_async(runtime, &tenant_id, refresh_schema, true)
+            // on subsequent notifications. That authoritative catch-up must
+            // cover both schema and journal-backed state on every attach:
+            // startup can race the first listener becoming live, and later
+            // reconnects can miss schema notifications just as easily as
+            // journal notifications while the LISTEN connection is down.
+            self.catch_up_loaded_provider_tenant_async(runtime, &tenant_id, true, true)
                 .await?;
         }
 
@@ -266,13 +263,13 @@ impl Service {
         }
     }
 
-    async fn run_sqlite_replica_provider_poll_worker(
+    async fn run_libsql_replica_provider_poll_worker(
         self: Arc<Self>,
         _provider: Arc<LibsqlReplicaProvider>,
         shutdown: CancellationToken,
     ) {
         #[cfg(any(test, debug_assertions))]
-        Service::assert_running_on_background_task("sqlite_replica_provider_poll");
+        Service::assert_running_on_background_task("libsql_replica_provider_poll");
 
         self.provider_hint_listener_ready
             .store(true, Ordering::Release);
@@ -304,6 +301,9 @@ impl Service {
             .collect::<Vec<_>>();
 
         for (tenant_id, runtime) in &loaded {
+            if matches!(&runtime.store, TenantPersistence::MySql(_)) {
+                runtime.store.invalidate_schema_cache();
+            }
             let (store_schema, store_progress) = runtime
                 .read_storage
                 .execute(|store| Ok((store.load_schema()?, store.journal_progress()?)))
@@ -346,7 +346,7 @@ impl Service {
 
 enum ProviderBackgroundTask {
     Postgres(Arc<PostgresProvider>),
-    SqliteReplica(Arc<LibsqlReplicaProvider>),
+    LibsqlReplica(Arc<LibsqlReplicaProvider>),
     MySql(Arc<MySqlProvider>),
 }
 
@@ -354,7 +354,7 @@ impl ProviderBackgroundTask {
     fn task_name(&self) -> &'static str {
         match self {
             Self::Postgres(_) => "postgres_provider_hints",
-            Self::SqliteReplica(_) => "sqlite_replica_provider_poll",
+            Self::LibsqlReplica(_) => "libsql_replica_provider_poll",
             Self::MySql(_) => "mysql_provider_poll",
         }
     }
@@ -366,9 +366,9 @@ impl ProviderBackgroundTask {
                     .run_postgres_provider_hint_worker(provider, shutdown)
                     .await;
             }
-            Self::SqliteReplica(provider) => {
+            Self::LibsqlReplica(provider) => {
                 service
-                    .run_sqlite_replica_provider_poll_worker(provider, shutdown)
+                    .run_libsql_replica_provider_poll_worker(provider, shutdown)
                     .await;
             }
             Self::MySql(provider) => {
