@@ -182,6 +182,10 @@ with correct config.json for libcrun.
   - `annotations["krun.neovex.tsi.port_map"]` = auto-generated from ExposedPorts
 - Inject neovex-init binary into rootfs at `/sbin/neovex-init`
   (embedded via `include_bytes!` from build output)
+- Set `KRUN_INIT=/sbin/neovex-init` in the OCI config.json `process.env`.
+  libkrun's built-in init checks this env var (`init/init.c:1209`) and
+  uses it as the exec target instead of the default `/bin/sh`. This is
+  how neovex-init becomes PID 1 inside the VM.
 
 Support three input types:
 - **Registry ref** (`postgres:16`): `oci-client` pull
@@ -473,23 +477,40 @@ impl VmHandle {
   VM services from JavaScript
 - TCP connection pooling to TSI-mapped service ports
 
-**The key abstraction:**
+**Scope clarification:** `ctx.services.<name>` provides a **generic TCP
+connection** to the VM service, NOT protocol-specific clients. neovex does not
+implement the PostgreSQL wire protocol, Redis protocol, etc. Instead:
+
 ```javascript
-// In a V8 function:
-const result = await ctx.services.db.query("SELECT * FROM users");
-// This connects to localhost:15432 (TSI-mapped port) under the hood
+// Option A: Raw TCP via TSI (V8 connects to localhost:mapped_port)
+const conn = await ctx.services.db.connect();  // TCP to TSI-mapped port
+await conn.write(pgWireProtocolBytes);          // app-level protocol
+const response = await conn.read();
+
+// Option B: HTTP proxy (for HTTP services)
+const result = await ctx.services.api.fetch("/users");  // HTTP GET
+
+// Option C: Use a JS driver library (most practical)
+// The developer imports a postgres JS driver in their V8 function:
+import { Client } from "pg";
+const client = new Client({ host: "localhost", port: ctx.services.db.port });
 ```
+
+The primary mechanism is **port exposure** — neovex tells the V8 function
+which host port maps to which guest service, and the JS driver library
+handles the wire protocol. neovex's role is lifecycle + port mapping,
+not protocol translation.
 
 **Implementation reference:**
 - neovex's existing `HostBridge` trait and server bridge implementation
   (`crates/neovex-server/src/adapters/convex/host_bridge/`)
 
 **Acceptance criteria:**
-- V8 function calls `ctx.services.db.query("SELECT 1")`, gets result from
-  postgres VM
+- V8 function can TCP connect to a TSI-mapped port and exchange data with
+  the guest service
+- `ctx.services.db.port` returns the host-side TSI port number
 - VMs start when the service is first referenced and stop on tenant teardown
 - VM crash is detected and reported (not silent)
-- Connection pooling to TSI ports for performance
 
 ### Phase M5: Developer Experience
 
@@ -554,7 +575,19 @@ const result = await ctx.services.db.query("SELECT * FROM users");
 | `tar` | 0.4.x | Extract layer tarballs |
 | `sha2` | 0.10 | Content-addressable layer cache |
 | `nix` | 0.29 | (neovex-init) mount, signal, user/group |
-| `vsock` | 0.5.4 | (neovex-init) vsock listener for shutdown |
+| `libc` | 0.2 | (neovex-init) raw AF_VSOCK socket calls (vsock crate not needed — guest uses raw libc) |
+
+**vsock host↔guest connection model (libkrun-specific):**
+
+In libkrun, `krun_add_vsock_port2(ctx, port, "/path/to/host.sock", listen=true)`
+creates a mapping: when the guest listens on vsock port N, libkrun creates a
+Unix domain socket at `/path/to/host.sock` on the host. The neovex parent
+connects to this UDS to talk to the guest.
+
+- **Guest side (neovex-init):** Uses `AF_VSOCK` socket, binds to
+  `VMADDR_CID_ANY:10000`. Standard vsock listener using raw `libc` calls.
+- **Host side (neovex):** Connects to the UDS path that was configured in
+  the OCI annotation. Uses `tokio::net::UnixStream`.
 
 ---
 

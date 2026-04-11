@@ -153,30 +153,50 @@ impl KrunfwBindings {
 
 **File:** `src/libkrun/build.rs` (new or modified)
 
+**Important:** libkrunfw releases publish only `.so` files (e.g.,
+`libkrunfw-x86_64.tgz` containing `lib64/libkrunfw.so.5.3.0`), NOT raw
+kernel binaries. The kernel bytes are embedded inside the `.so` as a C char
+array, accessible only via `krunfw_get_kernel()`.
+
+**Two approaches to get the raw kernel:**
+
+**Approach A (recommended): Build libkrunfw from source in CI**
+```bash
+# In CI (not build.rs — too slow for developer builds):
+git clone --depth 1 https://github.com/containers/libkrunfw
+cd libkrunfw
+make vmlinux  # produces the raw kernel binary before .so packaging
+cp vmlinux ${NEOVEX_KERNEL_DIR}/vmlinux
+# Also extract qboot.rom and initrd if needed for TEE variants
+```
+Cache the built kernel artifact in CI. build.rs uses it via `include_bytes!`.
+
+**Approach B: Extract kernel from the .so at build time**
 ```rust
-// Download pre-built kernel artifacts from libkrunfw GitHub releases
 fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let version = "5.3.0"; // libkrunfw version
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    // Download the .so from releases
+    let tgz_url = "https://github.com/containers/libkrunfw/releases/\
+                    download/v5.3.0/libkrunfw-x86_64.tgz";
+    download_and_extract(tgz_url, &out_dir);
+    // Load the .so and call krunfw_get_kernel() to get the raw bytes
+    let lib = libloading::Library::new(format!("{out_dir}/lib64/libkrunfw.so"))?;
+    let get_kernel: Symbol<unsafe extern "C" fn(...)> = lib.get(b"krunfw_get_kernel")?;
+    // Extract and write to file for include_bytes!
+}
+```
+This is complex and fragile. Approach A is preferred.
 
-    let base = format!(
-        "https://github.com/containers/libkrunfw/releases/download/v{version}"
-    );
-
-    // Download kernel (architecture-specific)
-    download_file(
-        &format!("{base}/vmlinux-{target_arch}"),
-        &format!("{out_dir}/vmlinux"),
-    );
-
-    // Download qboot (x86_64 only)
-    if target_arch == "x86_64" {
-        download_file(
-            &format!("{base}/qboot.rom"),
-            &format!("{out_dir}/qboot.rom"),
-        );
+**build.rs (assuming CI has placed kernel at a known path):**
+```rust
+fn main() {
+    let kernel_path = std::env::var("NEOVEX_KERNEL_PATH")
+        .unwrap_or_else(|_| "build/vmlinux".into());
+    if !std::path::Path::new(&kernel_path).exists() {
+        panic!("Kernel not found at {}. Build libkrunfw first or set \
+                NEOVEX_KERNEL_PATH", kernel_path);
     }
+    // The actual include_bytes! is in lib.rs, not build.rs
 }
 ```
 
@@ -247,13 +267,15 @@ extern int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus,
 extern int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 extern int32_t krun_set_workdir(uint32_t ctx_id, const char *workdir);
 extern int32_t krun_set_env(uint32_t ctx_id, const char *env);
-extern int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus,
-                                   uint32_t ram_mib);
 extern int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
 extern int32_t krun_set_kernel(uint32_t ctx_id, const char *path);
 extern int32_t krun_start_enter(uint32_t ctx_id);
+// vsock: maps a guest vsock port to a host Unix socket path
 extern int32_t krun_add_vsock_port(uint32_t ctx_id, uint32_t port,
-                                    uint32_t type);
+                                    const char *c_filepath);
+// vsock2: same but with listen flag (host initiates connection)
+extern int32_t krun_add_vsock_port2(uint32_t ctx_id, uint32_t port,
+                                     const char *c_filepath, bool listen);
 extern int32_t krun_set_port_map(uint32_t ctx_id, const char *port_map);
 ```
 
@@ -273,24 +295,30 @@ static int libkrun_load(void **cookie, ...) {
 }
 ```
 
-**Change 3: Add vsock port configuration (~20 lines)**
+**Change 3: Add vsock port configuration (~25 lines)**
+
+**Important:** `krun_add_vsock_port(ctx_id, port, filepath)` maps a guest
+vsock port to a **host-side Unix socket path**. The host neovex process
+connects to the guest by connecting to this UDS path. This is how the host
+sends shutdown commands and health checks to the guest init.
 
 ```c
 // Add after krun_set_vm_config() call in libkrun_exec():
 
-// Read vsock ports from OCI annotation
+// Read vsock port mappings from OCI annotation
+// Format: "10000:/run/neovex/vm-abc/vsock-10000.sock"
+// Multiple ports: "10000:/path/a.sock,10001:/path/b.sock"
 const char *vsock_annotation = find_annotation(def, "krun.neovex.vsock.ports");
 if (vsock_annotation) {
-    // Format: "10000:stream,10001:dgram"
     char *ports = strdup(vsock_annotation);
     char *saveptr;
     char *token = strtok_r(ports, ",", &saveptr);
     while (token) {
         uint32_t port;
-        char type_str[16];
-        if (sscanf(token, "%u:%15s", &port, type_str) == 2) {
-            uint32_t type = (strcmp(type_str, "dgram") == 0) ? 1 : 0;
-            krun_add_vsock_port(ctx_id, port, type);
+        char filepath[PATH_MAX];
+        if (sscanf(token, "%u:%s", &port, filepath) == 2) {
+            // listen=true: guest listens, host connects to this UDS
+            krun_add_vsock_port2(ctx_id, port, filepath, true);
         }
         token = strtok_r(NULL, ",", &saveptr);
     }
@@ -339,91 +367,67 @@ nm libcrun.a | grep dlopen                  # should NOT exist (removed)
 
 ### build.rs
 
+**Important build notes:**
+- crun uses autotools (`configure.ac` + `Makefile.am`). Nearly every `.c`
+  file includes `<config.h>` which is generated by `./configure`. You
+  **cannot** compile crun source files directly with the `cc` crate — you
+  must use its native autotools build system.
+- neovex-init is a separate workspace member. It **cannot** be built inside
+  another crate's build.rs (circular dependency). It must be built as a
+  separate `cargo build` step (in CI or via a `make` target) and its output
+  binary placed where build.rs can `include_bytes!` it.
+
 ```rust
-// neovex build.rs — compiles C dependencies and generates FFI bindings
+// crates/neovex-vmm/build.rs
 
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // ── Step 1: Build static C libraries ───────────────────────────
-    // These are small, stable C libraries. Build from vendored source
-    // or link against system-provided static libraries.
+    // ── Step 1: Build libcrun.a via autotools ──────────────────────
+    // crun REQUIRES autotools (./configure generates config.h with
+    // HAVE_* defines that every source file depends on).
+    // Cannot use the cc crate for this.
 
-    // libyajl (~5 source files, ~2000 lines of C)
-    // Source: https://github.com/lloyd/yajl
-    cc::Build::new()
-        .files(&[
-            "vendor/yajl/src/yajl.c",
-            "vendor/yajl/src/yajl_alloc.c",
-            "vendor/yajl/src/yajl_buf.c",
-            "vendor/yajl/src/yajl_encode.c",
-            "vendor/yajl/src/yajl_gen.c",
-            "vendor/yajl/src/yajl_lex.c",
-            "vendor/yajl/src/yajl_parser.c",
-            "vendor/yajl/src/yajl_tree.c",
-            "vendor/yajl/src/yajl_version.c",
-        ])
-        .include("vendor/yajl/src")
-        .include(&out_dir.join("yajl")) // for generated yajl_version.h
-        .compile("yajl");
+    let crun_dir = PathBuf::from("vendor/crun");
 
-    // libcap — link system static library
-    // On Debian: apt install libcap-dev (provides libcap.a)
-    println!("cargo:rustc-link-lib=static=cap");
+    // Run autogen + configure + make (only if libcrun.a doesn't exist)
+    let libcrun_a = crun_dir.join(".libs/libcrun.a");
+    if !libcrun_a.exists() {
+        // autogen.sh generates the configure script
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg("cd vendor/crun && ./autogen.sh && \
+                  ./configure --disable-shared --enable-static \
+                  CFLAGS='-DHAVE_LIBKRUN=1 -DLIBKRUN_STATIC=1' && \
+                  make -j$(nproc) libcrun.la")
+            .status()
+            .expect("Failed to build libcrun. Ensure autotools is installed: \
+                     apt install autoconf automake libtool");
+        assert!(status.success(), "libcrun build failed");
+    }
 
-    // libseccomp — link system static library
-    // On Debian: apt install libseccomp-dev (provides libseccomp.a)
+    // Link the static library
+    println!("cargo:rustc-link-search=native={}", crun_dir.join(".libs").display());
+    println!("cargo:rustc-link-lib=static=crun");
+
+    // Link crun's dependencies (system static libraries)
     println!("cargo:rustc-link-lib=static=seccomp");
+    println!("cargo:rustc-link-lib=static=cap");
+    println!("cargo:rustc-link-lib=static=yajl");
 
-    // ── Step 2: Build forked libcrun as static library ─────────────
-    // Source: agentstation/crun (git submodule)
-
-    let crun_sources = [
-        "vendor/crun/src/libcrun/container.c",
-        "vendor/crun/src/libcrun/cgroup.c",
-        "vendor/crun/src/libcrun/cgroup-utils.c",
-        "vendor/crun/src/libcrun/cgroup-systemd.c",
-        "vendor/crun/src/libcrun/cgroup-resources.c",
-        "vendor/crun/src/libcrun/chroot_realpath.c",
-        "vendor/crun/src/libcrun/cloned_binary.c",
-        "vendor/crun/src/libcrun/ebpf.c",
-        "vendor/crun/src/libcrun/error.c",
-        "vendor/crun/src/libcrun/intelrdt.c",
-        "vendor/crun/src/libcrun/io_priority.c",
-        "vendor/crun/src/libcrun/linux.c",
-        "vendor/crun/src/libcrun/mount_flags.c",
-        "vendor/crun/src/libcrun/scheduler.c",
-        "vendor/crun/src/libcrun/seccomp.c",
-        "vendor/crun/src/libcrun/status.c",
-        "vendor/crun/src/libcrun/terminal.c",
-        "vendor/crun/src/libcrun/utils.c",
-        "vendor/crun/src/libcrun/handlers/handler-utils.c",
-        "vendor/crun/src/libcrun/handlers/krun.c", // our patched handler
-    ];
-
-    cc::Build::new()
-        .files(&crun_sources)
-        .include("vendor/crun/src")
-        .include("vendor/crun/src/libcrun")
-        .define("HAVE_LIBKRUN", "1")
-        .define("LIBKRUN_STATIC", "1") // our flag for static linkage
-        .warnings(false) // suppress upstream warnings
-        .compile("crun");
-
-    // ── Step 3: Generate Rust FFI bindings for libcrun ──────────────
+    // ── Step 2: Generate Rust FFI bindings for libcrun ──────────────
     let bindings = bindgen::Builder::default()
         .header("vendor/crun/src/libcrun/container.h")
+        .header("vendor/crun/src/libcrun/custom-handler.h")
         .allowlist_function("libcrun_container_run")
-        .allowlist_function("libcrun_container_create")
-        .allowlist_function("libcrun_container_start")
-        .allowlist_function("libcrun_container_delete")
-        .allowlist_function("libcrun_container_kill")
-        .allowlist_function("libcrun_container_state")
         .allowlist_function("libcrun_container_load_from_file")
-        .allowlist_function("libcrun_context_new")
+        .allowlist_function("libcrun_configure_handler")
+        .allowlist_type("libcrun_context_s")
+        .allowlist_type("libcrun_error_t")
         .generate()
         .expect("Failed to generate libcrun bindings");
 
@@ -431,17 +435,28 @@ fn main() {
         .write_to_file(out_dir.join("libcrun_bindings.rs"))
         .expect("Failed to write libcrun bindings");
 
-    // ── Step 4: Build neovex-init (musl static binary) ─────────────
-    // This is compiled as a separate cargo target and embedded
-    let init_binary = build_neovex_init(&out_dir);
-    // The init binary is embedded via include_bytes! in neovex-vmm crate
+    // ── Step 3: Embed neovex-init binary ───────────────────────────
+    // neovex-init is built SEPARATELY (not in this build.rs) via:
+    //   cargo build --release --target x86_64-unknown-linux-musl -p neovex-init
+    // The binary is placed at a known path by CI or the Makefile.
+    // build.rs just verifies it exists.
+    let init_path = PathBuf::from(
+        env::var("NEOVEX_INIT_BINARY")
+            .unwrap_or_else(|_| "target/x86_64-unknown-linux-musl/release/neovex-init".into())
+    );
+    if !init_path.exists() {
+        panic!(
+            "neovex-init binary not found at {}. Build it first:\n\
+             cargo build --release --target x86_64-unknown-linux-musl -p neovex-init",
+            init_path.display()
+        );
+    }
 
-    // ── Step 5: Link everything ────────────────────────────────────
-    println!("cargo:rustc-link-lib=static=crun");
-    println!("cargo:rustc-link-lib=static=seccomp");
-    println!("cargo:rustc-link-lib=static=cap");
-    println!("cargo:rustc-link-lib=static=yajl");
-    // libkrun is linked via Cargo (Rust crate dependency)
+    // ── Step 4: libkrun is linked via Cargo ────────────────────────
+    // The forked libkrun crate is a Cargo dependency (via [patch.crates-io]).
+    // It is linked automatically by cargo. No build.rs step needed.
+
+    println!("cargo:rerun-if-changed=vendor/crun");
 }
 ```
 
@@ -459,15 +474,23 @@ libkrun = { git = "https://github.com/agentstation/libkrun", tag = "v1.17.4-neov
 ```toml
 # crates/neovex-vmm/Cargo.toml
 [dependencies]
-libkrun = "1.17"  # resolved via [patch.crates-io] to our fork
+# libkrun publishes as crate name "krun" (see [lib] name = "krun")
+# but the package name is "libkrun". Resolved via [patch.crates-io].
+libkrun = "1.17"
 oci-spec = "0.9"
 oci-client = "0.16"
 # ... (see microvm-runtime-plan.md for full list)
 
 [build-dependencies]
-cc = "1"
 bindgen = "0.70"
+# NOTE: cc crate is NOT used for crun (autotools required).
+# build.rs calls make directly.
 ```
+
+**Crate naming note:** libkrun's `Cargo.toml` has `name = "libkrun"` (package)
+and `[lib] name = "krun"` (crate). In Rust code you `use krun::*`, but in
+`Cargo.toml` you depend on `libkrun`. The `[patch.crates-io]` entry should
+reference the package name `libkrun`.
 
 ### Vendor directory structure
 
@@ -550,8 +573,8 @@ pub fn run() -> ! {
     let id_c = CString::new(container_id.as_str()).unwrap();
 
     unsafe {
-        let err: *mut libcrun_error_t = std::ptr::null_mut();
-        let context = libcrun_context_new(&mut err as *mut _);
+        let mut err: *mut libcrun_error_t = std::ptr::null_mut();
+        let context = libcrun_context_new(&mut err);
         if context.is_null() {
             eprintln!("libcrun_context_new failed");
             std::process::exit(1);
@@ -561,22 +584,33 @@ pub fn run() -> ! {
         (*context).id = id_c.as_ptr() as *mut c_char;
         (*context).bundle = bundle_c.as_ptr() as *mut c_char;
 
+        // CRITICAL: Select the krun handler explicitly.
+        // Without this, libcrun uses standard container execution (execv).
+        // The handler can be set via:
+        //   1. context->handler = "krun"  (programmatic)
+        //   2. OCI annotation "run.oci.handler" = "krun" (in config.json)
+        // We use both for safety.
+        let handler_name = CString::new("krun").unwrap();
+        (*context).handler = handler_name.as_ptr() as *mut c_char;
+
         // Load OCI config from bundle
         let container = libcrun_container_load_from_file(
             bundle_c.as_ptr(),
-            &mut err as *mut _,
+            &mut err,
         );
         if container.is_null() {
             eprintln!("Failed to load OCI config from bundle");
             std::process::exit(1);
         }
 
-        // Run the container (libcrun handles namespace/cgroup/seccomp/krun)
+        // Run: libcrun handles namespace/cgroup/seccomp, then krun handler
+        // calls libkrun API (including vsock ports from annotations) and
+        // enters krun_start_enter() which blocks forever.
         let ret = libcrun_container_run(
             context,
             container,
             0, // flags
-            &mut err as *mut _,
+            &mut err,
         );
         if ret < 0 {
             eprintln!("libcrun_container_run failed: {}", ret);
