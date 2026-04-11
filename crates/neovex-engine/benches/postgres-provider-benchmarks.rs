@@ -154,7 +154,7 @@ impl BenchmarkConfig {
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p neovex-engine --release --example postgres_provider_benchmarks -- [--markdown <path>] [--workload <slug>] [--postgres-url <connection-string>] [--rtt-ms <delay>]"
+        "Usage: cargo bench -p neovex-engine --bench postgres-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--postgres-url <connection-string>] [--rtt-ms <delay>]"
     );
 }
 

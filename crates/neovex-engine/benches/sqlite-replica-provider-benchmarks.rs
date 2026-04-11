@@ -156,7 +156,7 @@ impl BenchmarkConfig {
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p neovex-engine --release --example sqlite_replica_provider_benchmarks -- [--markdown <path>] [--workload <slug>] [--sqlite-url <url>] [--sqlite-auth-token <token>] [--sqlite-admin-url <url>] [--sqlite-admin-auth-header <header>]"
+        "Usage: cargo bench -p neovex-engine --bench sqlite-replica-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--sqlite-url <url>] [--sqlite-auth-token <token>] [--sqlite-admin-url <url>] [--sqlite-admin-auth-header <header>]"
     );
 }
 
