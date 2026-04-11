@@ -8,7 +8,7 @@
     "test": "node ./src/selftest.mjs"
   },
   "dependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "0.28.0"
   },
   "exports": {
     ".": "./src/main.mjs",

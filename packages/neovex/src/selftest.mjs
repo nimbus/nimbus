@@ -54,7 +54,6 @@ async function typecheckNeovexAuthExtension() {
           allowImportingTsExtensions: true,
           jsx: "react-jsx",
           lib: ["ES2022", "DOM"],
-          baseUrl: ".",
           paths: {
             "neovex/server": [serverEntry],
             "neovex/browser": [browserEntry],
