@@ -2,6 +2,7 @@ mod background_executor;
 mod diagnostics;
 mod execution_units;
 mod mutations;
+mod provider_hints;
 mod queries;
 mod scheduler;
 mod schema;
@@ -15,15 +16,23 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicBool;
 
 use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
-    Clock, FaultInjector, NoopFaultInjector, RedbStorageEngine, RedbUsageStorage, SystemClock,
-    TenantStore, UsageStore,
+    Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
+    EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
+    MySqlProvider, MySqlProviderConfig, NoopFaultInjector, PostgresProvider,
+    PostgresProviderConfig, SqliteTenantStore, SystemClock, TenantStore,
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinHandle;
 
+use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
+use crate::persistence_config::{
+    ControlPlaneConfig, PersistenceDialect, PersistenceTopology, ProviderCredentials,
+    ServicePersistenceConfig, TenantRoutingConfig,
+};
 use crate::tenant::TenantRuntime;
 use background_executor::BackgroundExecutor;
 
@@ -43,12 +52,14 @@ pub struct Service {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
     tenant_load_gate: AsyncMutex<()>,
-    storage_engine: Arc<RedbStorageEngine>,
-    usage_store: Arc<UsageStore>,
-    usage_storage: Arc<RedbUsageStorage>,
+    embedded_provider_kind: Option<EmbeddedProviderKind>,
+    persistence_provider: PersistenceProvider,
+    control_plane_provider: ControlPlaneProvider,
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
+    provider_hint_worker_started: AtomicBool,
+    provider_hint_listener_ready: AtomicBool,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
 }
@@ -60,7 +71,31 @@ tokio::task_local! {
 impl Service {
     /// Creates a new service for the provided data directory.
     pub fn new(data_dir: impl Into<PathBuf>) -> Result<Self> {
-        Self::new_with_simulation(data_dir, Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+        Self::new_with_embedded_provider(data_dir, EmbeddedProviderKind::default())
+    }
+
+    /// Creates a new service for the provided data directory using an explicit
+    /// embedded persistence provider.
+    pub fn new_with_embedded_provider(
+        data_dir: impl Into<PathBuf>,
+        embedded_provider_kind: EmbeddedProviderKind,
+    ) -> Result<Self> {
+        Self::new_with_simulation_and_embedded_provider(
+            data_dir,
+            Arc::new(SystemClock),
+            Arc::new(NoopFaultInjector),
+            embedded_provider_kind,
+        )
+    }
+
+    /// Creates a new service from typed persistence configuration.
+    pub async fn new_with_persistence_config(config: ServicePersistenceConfig) -> Result<Self> {
+        Self::new_with_simulation_and_persistence_config(
+            config,
+            Arc::new(SystemClock),
+            Arc::new(NoopFaultInjector),
+        )
+        .await
     }
 
     /// Creates a new service with deterministic simulation seams for time and storage faults.
@@ -69,28 +104,353 @@ impl Service {
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        let data_dir = data_dir.into();
-        std::fs::create_dir_all(&data_dir).map_err(|error| Error::Internal(error.to_string()))?;
-        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 1);
-        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let storage_engine = Arc::new(RedbStorageEngine::new(
-            data_dir.clone(),
-            clock.clone(),
-            storage_fault_injector.clone(),
-            storage_executor.handle(),
-        )?);
-        let usage_store = storage_engine.usage_store();
-        let usage_storage = storage_engine.usage_storage();
-        Ok(Self {
+        Self::new_with_simulation_and_embedded_provider(
             data_dir,
+            clock,
+            storage_fault_injector,
+            EmbeddedProviderKind::default(),
+        )
+    }
+
+    /// Creates a new service with deterministic simulation seams and an
+    /// explicit embedded persistence provider.
+    pub fn new_with_simulation_and_embedded_provider(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        embedded_provider_kind: EmbeddedProviderKind,
+    ) -> Result<Self> {
+        let data_dir = data_dir.into();
+        Self::new_with_simulation_and_embedded_config(
+            data_dir.clone(),
+            data_dir,
+            clock,
+            storage_fault_injector,
+            embedded_provider_kind,
+        )
+    }
+
+    /// Creates a new service with deterministic simulation seams and typed
+    /// persistence configuration.
+    pub async fn new_with_simulation_and_persistence_config(
+        config: ServicePersistenceConfig,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        match (
+            &config.tenant_provider.dialect,
+            &config.tenant_provider.topology,
+            &config.tenant_provider.routing,
+            &config.control_plane,
+        ) {
+            (
+                PersistenceDialect::Redb,
+                PersistenceTopology::EmbeddedStandalone,
+                TenantRoutingConfig::DirectoryPerTenant { data_dir },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => Self::new_with_simulation_and_embedded_config(
+                data_dir.clone(),
+                control_data_dir.clone(),
+                clock,
+                storage_fault_injector,
+                EmbeddedProviderKind::Redb,
+            ),
+            (
+                PersistenceDialect::Sqlite,
+                PersistenceTopology::EmbeddedStandalone,
+                TenantRoutingConfig::DirectoryPerTenant { data_dir },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => Self::new_with_simulation_and_embedded_config(
+                data_dir.clone(),
+                control_data_dir.clone(),
+                clock,
+                storage_fault_injector,
+                EmbeddedProviderKind::Sqlite,
+            ),
+            (
+                PersistenceDialect::Postgres,
+                PersistenceTopology::ExternalPrimary,
+                TenantRoutingConfig::SchemaPerTenant {
+                    metadata_schema,
+                    tenant_schema_prefix,
+                },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => {
+                let ProviderCredentials::ConnectionString(connection_string) =
+                    &config.tenant_provider.credentials
+                else {
+                    return Err(Error::InvalidInput(
+                        "Postgres tenant persistence requires a connection string".to_string(),
+                    ));
+                };
+                Self::new_with_simulation_and_postgres_config(
+                    control_data_dir.clone(),
+                    PostgresProviderConfig {
+                        connection_string: connection_string.clone(),
+                        metadata_schema: metadata_schema.clone(),
+                        tenant_schema_prefix: tenant_schema_prefix.clone(),
+                        min_connections: config.tenant_provider.pool.min_connections,
+                        max_connections: config.tenant_provider.pool.max_connections,
+                    },
+                    clock,
+                    storage_fault_injector,
+                )
+                .await
+            }
+            (
+                PersistenceDialect::Sqlite,
+                PersistenceTopology::ExternalPrimaryWithReplicas,
+                TenantRoutingConfig::NamespacePerTenant {
+                    metadata_namespace,
+                    tenant_namespace_prefix,
+                    replica_cache_dir,
+                },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => {
+                let ProviderCredentials::SqliteReplica {
+                    primary_url,
+                    auth_token,
+                    admin_api_url,
+                    admin_auth_header,
+                } = &config.tenant_provider.credentials
+                else {
+                    return Err(Error::InvalidInput(
+                        "Replica-connected SQLite tenant persistence requires a primary URL, optional primary auth token, and admin API configuration".to_string(),
+                    ));
+                };
+                Self::new_with_simulation_and_sqlite_replica_config(
+                    control_data_dir.clone(),
+                    LibsqlReplicaProviderConfig {
+                        primary_url: primary_url.clone(),
+                        auth_token: auth_token.clone(),
+                        admin_api_url: admin_api_url.clone(),
+                        admin_auth_header: admin_auth_header.clone(),
+                        metadata_namespace: metadata_namespace.clone(),
+                        tenant_namespace_prefix: tenant_namespace_prefix.clone(),
+                        replica_cache_dir: replica_cache_dir.clone(),
+                    },
+                    clock,
+                    storage_fault_injector,
+                )
+                .await
+            }
+            (
+                PersistenceDialect::MySql,
+                PersistenceTopology::ExternalPrimary,
+                TenantRoutingConfig::DatabasePerTenant {
+                    metadata_database,
+                    tenant_database_prefix,
+                },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => {
+                let ProviderCredentials::ConnectionString(connection_string) =
+                    &config.tenant_provider.credentials
+                else {
+                    return Err(Error::InvalidInput(
+                        "MySQL tenant persistence requires a connection string".to_string(),
+                    ));
+                };
+                Self::new_with_simulation_and_mysql_config(
+                    control_data_dir.clone(),
+                    MySqlProviderConfig {
+                        connection_string: connection_string.clone(),
+                        metadata_database: metadata_database.clone(),
+                        tenant_database_prefix: tenant_database_prefix.clone(),
+                        min_connections: config.tenant_provider.pool.min_connections,
+                        max_connections: config.tenant_provider.pool.max_connections,
+                    },
+                    clock,
+                    storage_fault_injector,
+                )
+                .await
+            }
+            _ => Err(Error::InvalidInput(
+                "unsupported persistence config combination".to_string(),
+            )),
+        }
+    }
+
+    fn new_with_simulation_and_embedded_config(
+        tenant_data_dir: PathBuf,
+        control_data_dir: PathBuf,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        embedded_provider_kind: EmbeddedProviderKind,
+    ) -> Result<Self> {
+        std::fs::create_dir_all(&tenant_data_dir)
+            .map_err(|error| Error::Internal(error.to_string()))?;
+        if control_data_dir != tenant_data_dir {
+            std::fs::create_dir_all(&control_data_dir)
+                .map_err(|error| Error::Internal(error.to_string()))?;
+        }
+        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
+        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
+        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
+            EmbeddedRedbControlPlaneProvider::new(control_data_dir, storage_executor.handle())?,
+        ));
+        let persistence_provider = match embedded_provider_kind {
+            EmbeddedProviderKind::Redb => {
+                PersistenceProvider::Redb(Arc::new(EmbeddedRedbProvider::new(
+                    tenant_data_dir.clone(),
+                    clock.clone(),
+                    storage_fault_injector.clone(),
+                    storage_executor.handle(),
+                )?))
+            }
+            EmbeddedProviderKind::Sqlite => {
+                PersistenceProvider::Sqlite(Arc::new(EmbeddedSqliteProvider::new(
+                    tenant_data_dir.clone(),
+                    clock.clone(),
+                    storage_fault_injector.clone(),
+                    storage_executor.handle(),
+                )?))
+            }
+        };
+        Ok(Self {
+            data_dir: tenant_data_dir,
             tenants: RwLock::new(HashMap::new()),
             tenant_load_gate: AsyncMutex::new(()),
-            storage_engine,
-            usage_store,
-            usage_storage,
+            embedded_provider_kind: Some(embedded_provider_kind),
+            persistence_provider,
+            control_plane_provider,
             clock,
             storage_fault_injector,
             scheduler_wakeup: Notify::new(),
+            provider_hint_worker_started: AtomicBool::new(false),
+            provider_hint_listener_ready: AtomicBool::new(false),
+            engine_executor,
+            storage_executor,
+        })
+    }
+
+    async fn new_with_simulation_and_postgres_config(
+        control_data_dir: PathBuf,
+        provider_config: PostgresProviderConfig,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        std::fs::create_dir_all(&control_data_dir)
+            .map_err(|error| Error::Internal(error.to_string()))?;
+        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
+        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
+        let control_plane_provider =
+            ControlPlaneProvider::EmbeddedRedb(Arc::new(EmbeddedRedbControlPlaneProvider::new(
+                control_data_dir.clone(),
+                storage_executor.handle(),
+            )?));
+        let postgres_provider = Arc::new(
+            PostgresProvider::connect_with_simulation(
+                provider_config,
+                storage_executor.handle(),
+                clock.clone(),
+                storage_fault_injector.clone(),
+            )
+            .await?,
+        );
+        Ok(Self {
+            data_dir: control_data_dir,
+            tenants: RwLock::new(HashMap::new()),
+            tenant_load_gate: AsyncMutex::new(()),
+            embedded_provider_kind: None,
+            persistence_provider: PersistenceProvider::Postgres(postgres_provider),
+            control_plane_provider,
+            clock,
+            storage_fault_injector,
+            scheduler_wakeup: Notify::new(),
+            provider_hint_worker_started: AtomicBool::new(false),
+            provider_hint_listener_ready: AtomicBool::new(false),
+            engine_executor,
+            storage_executor,
+        })
+    }
+
+    async fn new_with_simulation_and_sqlite_replica_config(
+        control_data_dir: PathBuf,
+        provider_config: LibsqlReplicaProviderConfig,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        std::fs::create_dir_all(&control_data_dir)
+            .map_err(|error| Error::Internal(error.to_string()))?;
+        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
+        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
+        let control_plane_provider =
+            ControlPlaneProvider::EmbeddedRedb(Arc::new(EmbeddedRedbControlPlaneProvider::new(
+                control_data_dir.clone(),
+                storage_executor.handle(),
+            )?));
+        let sqlite_replica_provider = Arc::new(
+            LibsqlReplicaProvider::connect_with_simulation(
+                provider_config,
+                storage_executor.handle(),
+                clock.clone(),
+                storage_fault_injector.clone(),
+            )
+            .await?,
+        );
+        Ok(Self {
+            data_dir: control_data_dir,
+            tenants: RwLock::new(HashMap::new()),
+            tenant_load_gate: AsyncMutex::new(()),
+            embedded_provider_kind: None,
+            persistence_provider: PersistenceProvider::SqliteReplica(sqlite_replica_provider),
+            control_plane_provider,
+            clock,
+            storage_fault_injector,
+            scheduler_wakeup: Notify::new(),
+            provider_hint_worker_started: AtomicBool::new(false),
+            provider_hint_listener_ready: AtomicBool::new(false),
+            engine_executor,
+            storage_executor,
+        })
+    }
+
+    async fn new_with_simulation_and_mysql_config(
+        control_data_dir: PathBuf,
+        provider_config: MySqlProviderConfig,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        std::fs::create_dir_all(&control_data_dir)
+            .map_err(|error| Error::Internal(error.to_string()))?;
+        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
+        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
+        let control_plane_provider =
+            ControlPlaneProvider::EmbeddedRedb(Arc::new(EmbeddedRedbControlPlaneProvider::new(
+                control_data_dir.clone(),
+                storage_executor.handle(),
+            )?));
+        let mysql_provider = Arc::new(
+            MySqlProvider::connect_with_simulation(
+                provider_config,
+                storage_executor.handle(),
+                clock.clone(),
+                storage_fault_injector.clone(),
+            )
+            .await?,
+        );
+        Ok(Self {
+            data_dir: control_data_dir,
+            tenants: RwLock::new(HashMap::new()),
+            tenant_load_gate: AsyncMutex::new(()),
+            embedded_provider_kind: None,
+            persistence_provider: PersistenceProvider::MySql(mysql_provider),
+            control_plane_provider,
+            clock,
+            storage_fault_injector,
+            scheduler_wakeup: Notify::new(),
+            provider_hint_worker_started: AtomicBool::new(false),
+            provider_hint_listener_ready: AtomicBool::new(false),
             engine_executor,
             storage_executor,
         })
@@ -102,6 +462,41 @@ impl Service {
 
     pub(crate) fn scheduler_notifier(&self) -> &Notify {
         &self.scheduler_wakeup
+    }
+
+    pub(crate) fn provider_background_ready(&self) -> bool {
+        self.provider_hint_listener_ready
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn postgres_provider(&self) -> Option<Arc<PostgresProvider>> {
+        match &self.persistence_provider {
+            PersistenceProvider::Postgres(provider) => Some(provider.clone()),
+            PersistenceProvider::Redb(_)
+            | PersistenceProvider::Sqlite(_)
+            | PersistenceProvider::SqliteReplica(_)
+            | PersistenceProvider::MySql(_) => None,
+        }
+    }
+
+    pub(crate) fn sqlite_replica_provider(&self) -> Option<Arc<LibsqlReplicaProvider>> {
+        match &self.persistence_provider {
+            PersistenceProvider::SqliteReplica(provider) => Some(provider.clone()),
+            PersistenceProvider::Redb(_)
+            | PersistenceProvider::Sqlite(_)
+            | PersistenceProvider::Postgres(_)
+            | PersistenceProvider::MySql(_) => None,
+        }
+    }
+
+    pub(crate) fn mysql_provider(&self) -> Option<Arc<MySqlProvider>> {
+        match &self.persistence_provider {
+            PersistenceProvider::MySql(provider) => Some(provider.clone()),
+            PersistenceProvider::Redb(_)
+            | PersistenceProvider::Sqlite(_)
+            | PersistenceProvider::SqliteReplica(_)
+            | PersistenceProvider::Postgres(_) => None,
+        }
     }
 
     pub(crate) fn spawn_background<F>(&self, name: &'static str, future: F) -> JoinHandle<()>
@@ -132,12 +527,21 @@ impl Service {
         self.clock.now()
     }
 
-    pub(crate) fn open_tenant_store(&self, path: &Path) -> Result<TenantStore> {
-        TenantStore::open_with_simulation(
-            path,
-            self.clock.clone(),
-            self.storage_fault_injector.clone(),
-        )
+    pub(crate) fn open_tenant_store(&self, path: &Path) -> Result<TenantPersistence> {
+        match self.require_embedded_provider_kind()? {
+            EmbeddedProviderKind::Redb => TenantStore::open_with_simulation(
+                path,
+                self.clock.clone(),
+                self.storage_fault_injector.clone(),
+            )
+            .map(|store| TenantPersistence::Redb(Arc::new(store))),
+            EmbeddedProviderKind::Sqlite => SqliteTenantStore::open_with_simulation(
+                path,
+                self.clock.clone(),
+                self.storage_fault_injector.clone(),
+            )
+            .map(|store| TenantPersistence::Sqlite(Arc::new(store))),
+        }
     }
 
     pub(crate) fn lock_tenant_load_gate_blocking(&self) -> tokio::sync::MutexGuard<'_, ()> {
@@ -151,14 +555,23 @@ impl Service {
 
     pub(crate) fn build_loaded_tenant_runtime(
         &self,
-        store: TenantStore,
+        store: TenantPersistence,
     ) -> Result<Arc<TenantRuntime>> {
-        let store = Arc::new(store);
-        let read_storage = self.storage_engine.read_storage_for_store(store.clone());
+        let read_storage = self
+            .persistence_provider
+            .read_storage_for_store(store.clone())?;
         let runtime = Arc::new(TenantRuntime::from_parts(store.clone(), read_storage)?);
         let progress = store.recover_durable_journal()?;
         runtime.sync_mutation_journal_progress(progress);
         Ok(runtime)
+    }
+
+    pub(crate) fn require_embedded_provider_kind(&self) -> Result<EmbeddedProviderKind> {
+        self.embedded_provider_kind.ok_or_else(|| {
+            Error::InvalidInput(
+                "embedded-only blocking tenant lifecycle helpers are unavailable for non-embedded persistence providers; use the async service surfaces".to_string(),
+            )
+        })
     }
 }
 

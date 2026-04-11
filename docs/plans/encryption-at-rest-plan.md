@@ -133,7 +133,9 @@ This plan is successful only when all of the following are true:
 4. Key encryption key (KEK) rotation is supported without data rewrite.
 5. Data encryption key (DEK) rotation is supported via full database rewrite
    for the rare case of DEK compromise.
-6. Encryption is opt-in and configurable through the CLI and programmatic API.
+6. Encryption is opt-in and configurable through typed runtime config loaded
+   from idiomatic CLI/env/config inputs, with programmatic API support and no
+   reliance on ad hoc feature-specific env vars as the long-term contract.
 7. Performance overhead is measured and documented (target: <15% on write
    path, <10% on read path).
 8. The encrypted path is covered by the existing test suite running through
@@ -156,6 +158,10 @@ This plan is successful only when all of the following are true:
   — do not implement cryptographic primitives.
 - Do not use deterministic or offset-derived nonces. Every page encryption
   must use a fresh random nonce (see Design Decisions for rationale).
+- Runtime-facing encryption config should follow the same rule as broader
+  provider work: CLI flags, environment variables, and config files lower into
+  typed config, while any test-only or benchmark-only env vars remain harness
+  inputs rather than the product contract.
 
 ### Status model
 
@@ -182,7 +188,7 @@ This plan is successful only when all of the following are true:
 | EAR1 | todo | Implement `EncryptedBackend` behind redb `StorageBackend` trait | none |
 | EAR2 | todo | Add key-provider trait with envelope encryption and file-based provider | none |
 | EAR3 | todo | Integrate encrypted backend into `TenantStore` and `UsageStore` | EAR1, EAR2 |
-| EAR4 | todo | Add CLI and configuration surface | EAR3 |
+| EAR4 | todo | Add typed runtime CLI/env/config surface for encryption and key-provider selection | EAR3 |
 | EAR5 | todo | Add migration path for unencrypted-to-encrypted databases | EAR3 |
 | EAR6 | todo | Add key rotation support (KEK rotation + DEK rotation) | EAR3 |
 | EAR7 | todo | Performance measurement and documentation | EAR3 |
@@ -197,6 +203,9 @@ This plan is successful only when all of the following are true:
   into the storage layer using the key provider.
 - `EAR4`, `EAR5`, `EAR6`, and `EAR7` all depend on `EAR3`.
 - `EAR4`, `EAR5`, `EAR6`, and `EAR7` are independent of each other.
+- `EAR4` should define the operator-facing config contract first so later
+  migration, rotation, and performance work can reuse one consistent runtime
+  surface.
 - `EAR8` is deferred until the core encryption layer is stable and the
   configuration surface from `EAR4` defines how providers are selected.
 
@@ -559,7 +568,7 @@ end-to-end.
    - if the file exists: reads the header, decrypts the DEK with the KEK,
      and opens with the DEK
 2. Add an `open_encrypted(path, kek)` constructor to `UsageStore`.
-3. Update `RedbStorageEngine` to accept an optional `Arc<dyn KeyProvider>`
+3. Update `EmbeddedRedbProvider` to accept an optional `Arc<dyn KeyProvider>`
    and use it when opening or creating tenant stores.
 4. Add a `create_in_memory_encrypted_with_simulation(...)` constructor for
    tests that exercises the encryption path without disk I/O.
@@ -584,7 +593,7 @@ end-to-end.
 
 ---
 
-### EAR4. Add CLI and configuration surface
+### EAR4. Add typed runtime CLI / env / config surface
 
 **Priority:** high
 **Expected impact:** operators can enable encryption through the existing
@@ -592,19 +601,24 @@ CLI and configuration model.
 
 #### Implementation plan
 
-1. Add CLI flags:
-   - `--encryption-key-dir <path>` — enables file-based key provider
-   - `--encryption-master-key-file <path>` — enables derived key provider
-   - the two are mutually exclusive
-2. When either flag is present, construct the appropriate `KeyProvider` and
-   pass it to `RedbStorageEngine`.
-3. Add `GET /debug/encryption/status` endpoint exposing:
+1. Define one typed runtime encryption config that can be populated from CLI
+   flags, environment variables, and config files.
+2. Add CLI flags and matching config-file/env inputs for the first provider
+   choices:
+   - `--encryption-key-dir <path>` / matching config key / matching env input
+     — enables file-based key provider
+   - `--encryption-master-key-file <path>` / matching config key / matching
+     env input — enables derived key provider
+   - the two are mutually exclusive at the typed-config validation layer
+3. Lower that typed runtime config into the concrete `KeyProvider` and pass it
+   to `EmbeddedRedbProvider`.
+4. Add `GET /debug/encryption/status` endpoint exposing:
    - whether encryption is enabled
    - which provider type is active
    - cipher in use per tenant
    - per-tenant encryption status (encrypted vs. plaintext)
    - **do not expose key material in the status endpoint**
-4. Document the configuration in the CLI reference.
+5. Document the CLI/env/config contract in the CLI reference.
 
 #### Files likely to change
 
@@ -615,8 +629,11 @@ CLI and configuration model.
 
 #### Acceptance criteria
 
-- encryption is disabled by default (no flags = plaintext)
-- providing a key dir or master key file enables encryption for new tenants
+- encryption is disabled by default (no config = plaintext)
+- providing a valid key dir or master key source through the typed
+  CLI/env/config surface enables encryption for new tenants
+- conflicting or incomplete runtime config fails validation before the service
+  starts
 - the debug endpoint reports accurate encryption status without leaking keys
 - invalid configuration (both flags, missing files) produces clear errors
 

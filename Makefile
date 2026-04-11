@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-sqlite-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -46,6 +46,22 @@ test-js:
 
 # Full lint suite
 lint: fmt-check clippy
+
+# Benchmark retained embedded providers on the storage migration workloads
+bench-embedded-providers:
+	cargo run -p neovex-engine --release --example embedded_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),)
+
+# Benchmark the Postgres provider against embedded SQLite plus injected RTT sensitivity
+bench-postgres-provider:
+	cargo run -p neovex-engine --release --example postgres_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
+
+# Benchmark the MySQL provider against embedded SQLite plus injected RTT sensitivity
+bench-mysql-provider:
+	cargo run -p neovex-engine --release --example mysql_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
+
+# Benchmark the replica-connected SQLite provider against embedded SQLite plus replica-specific catch-up drills
+bench-sqlite-replica-provider:
+	cargo run -p neovex-engine --release --example sqlite_replica_provider_benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
 
 # Dependency audit (licenses + vulnerabilities)
 deny:

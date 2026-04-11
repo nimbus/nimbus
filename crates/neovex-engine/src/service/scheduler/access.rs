@@ -1,10 +1,9 @@
 use std::{future::Future, sync::Arc};
 
 use neovex_core::{Result, TenantId};
-use neovex_storage::{
-    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, TenantWriteTransaction,
-};
+use neovex_storage::TenantWriteOutcome;
 
+use crate::persistence::{TenantPersistence, TenantPersistenceWriteOps};
 use crate::{Service, tenant::TenantRuntime};
 
 pub(super) fn with_scheduler_runtime<T, F>(
@@ -27,7 +26,7 @@ pub(super) async fn read_scheduler_store<T, F>(
 ) -> Result<T>
 where
     T: Send + 'static,
-    F: FnOnce(Arc<TenantStore>) -> Result<T> + Send + 'static,
+    F: FnOnce(TenantPersistence) -> Result<T> + Send + 'static,
 {
     let runtime = service.get_existing_tenant_async(&tenant_id).await?;
     read_loaded_tenant_store(runtime, tenant_id, task).await
@@ -40,7 +39,7 @@ pub(super) async fn read_loaded_tenant_store<T, F>(
 ) -> Result<T>
 where
     T: Send + 'static,
-    F: FnOnce(Arc<TenantStore>) -> Result<T> + Send + 'static,
+    F: FnOnce(TenantPersistence) -> Result<T> + Send + 'static,
 {
     let tenant_id_for_task = tenant_id.clone();
     let runtime_for_task = runtime.clone();
@@ -60,7 +59,7 @@ pub(super) async fn write_scheduler_transaction<T, F>(
 ) -> Result<T>
 where
     T: Send + 'static,
-    F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
 {
     let runtime = service.get_existing_tenant_async(&tenant_id).await?;
     write_loaded_tenant_transaction(runtime, tenant_id, task).await
@@ -73,7 +72,7 @@ pub(super) async fn write_loaded_tenant_transaction<T, F>(
 ) -> Result<T>
 where
     T: Send + 'static,
-    F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
 {
     let tenant_id_for_task = tenant_id.clone();
     let runtime_for_task = runtime.clone();
@@ -98,7 +97,7 @@ where
     T: Send + 'static,
     Fut: Future<Output = ()> + Send,
     Check: Fn() -> Result<()> + Send + 'static,
-    F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
 {
     let runtime = service.get_existing_tenant_async(&tenant_id).await?;
     write_loaded_tenant_transaction_cancellable(runtime, tenant_id, cancel_wait, check_cancel, task)
@@ -116,7 +115,7 @@ where
     T: Send + 'static,
     Fut: Future<Output = ()> + Send,
     Check: Fn() -> Result<()> + Send + 'static,
-    F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
 {
     let tenant_id_for_task = tenant_id.clone();
     let runtime_for_task = runtime.clone();

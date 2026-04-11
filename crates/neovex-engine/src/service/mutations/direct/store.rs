@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use neovex_core::{CommitEntry, Document, Result};
-use neovex_storage::TenantStore;
 
+use crate::persistence::TenantPersistence;
 use crate::{Service, tenant::TenantRuntime};
 
 impl Service {
@@ -12,15 +12,16 @@ impl Service {
         mutate: F,
     ) -> Result<CommitEntry>
     where
-        F: FnOnce(&TenantStore) -> Result<CommitEntry>,
+        F: FnOnce(&TenantPersistence) -> Result<CommitEntry>,
     {
         let commit = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            mutate(&runtime.store)?
+            let commit = mutate(&runtime.store)?;
+            runtime.mark_durable_head(commit.sequence);
+            runtime.mark_applied_head(commit.sequence);
+            commit
         };
-        runtime.mark_durable_head(commit.sequence);
         runtime.invalidate_document_cache_for_commit(&commit);
-        runtime.mark_applied_head(commit.sequence);
         self.process_commit(runtime, &commit);
         Ok(commit)
     }
@@ -31,18 +32,21 @@ impl Service {
         mutate: F,
     ) -> Result<bool>
     where
-        F: FnOnce(&TenantStore) -> Result<Option<CommitEntry>>,
+        F: FnOnce(&TenantPersistence) -> Result<Option<CommitEntry>>,
     {
         let commit = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            mutate(&runtime.store)?
+            let commit = mutate(&runtime.store)?;
+            if let Some(commit) = &commit {
+                runtime.mark_durable_head(commit.sequence);
+                runtime.mark_applied_head(commit.sequence);
+            }
+            commit
         };
         let Some(commit) = commit else {
             return Ok(false);
         };
-        runtime.mark_durable_head(commit.sequence);
         runtime.invalidate_document_cache_for_commit(&commit);
-        runtime.mark_applied_head(commit.sequence);
         self.process_commit(runtime, &commit);
         Ok(true)
     }
@@ -53,15 +57,16 @@ impl Service {
         mutate: F,
     ) -> Result<CommitEntry>
     where
-        F: FnOnce(&TenantStore) -> Result<(CommitEntry, Document)>,
+        F: FnOnce(&TenantPersistence) -> Result<(CommitEntry, Document)>,
     {
         let (commit, _deleted_document) = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            mutate(&runtime.store)?
+            let (commit, deleted_document) = mutate(&runtime.store)?;
+            runtime.mark_durable_head(commit.sequence);
+            runtime.mark_applied_head(commit.sequence);
+            (commit, deleted_document)
         };
-        runtime.mark_durable_head(commit.sequence);
         runtime.invalidate_document_cache_for_commit(&commit);
-        runtime.mark_applied_head(commit.sequence);
         self.process_commit(runtime, &commit);
         Ok(commit)
     }
@@ -72,18 +77,21 @@ impl Service {
         mutate: F,
     ) -> Result<bool>
     where
-        F: FnOnce(&TenantStore) -> Result<Option<(CommitEntry, Document)>>,
+        F: FnOnce(&TenantPersistence) -> Result<Option<(CommitEntry, Document)>>,
     {
         let commit = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            mutate(&runtime.store)?
+            let commit = mutate(&runtime.store)?;
+            if let Some((commit, _deleted_document)) = &commit {
+                runtime.mark_durable_head(commit.sequence);
+                runtime.mark_applied_head(commit.sequence);
+            }
+            commit
         };
         let Some((commit, _deleted_document)) = commit else {
             return Ok(false);
         };
-        runtime.mark_durable_head(commit.sequence);
         runtime.invalidate_document_cache_for_commit(&commit);
-        runtime.mark_applied_head(commit.sequence);
         self.process_commit(runtime, &commit);
         Ok(true)
     }

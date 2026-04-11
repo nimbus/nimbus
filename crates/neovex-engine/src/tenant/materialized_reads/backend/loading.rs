@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use neovex_core::{Result, SequenceNumber, TableName};
-use neovex_storage::TenantStore;
 
 use super::publication::apply_write_to_materialized_documents;
 use super::state::estimate_document_bytes;
 use super::{MaterializedServingBackend, ServingSnapshot, ServingSnapshotManager};
+use crate::persistence::TenantPersistence;
 use crate::tenant::materialized_reads::warm_load::{
     MaterializedWarmLoadDecision, MaterializedWarmLoadPermit,
 };
@@ -42,7 +42,7 @@ impl MaterializedServingBackend {
     pub(crate) fn load_serving_snapshot_cancellable(
         &self,
         snapshots: &ServingSnapshotManager,
-        store: &TenantStore,
+        store: &TenantPersistence,
         table: &TableName,
         required_sequence: SequenceNumber,
         check_cancel: &mut dyn FnMut() -> Result<()>,

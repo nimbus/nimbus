@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use neovex_core::{Document, Error, Page, PaginatedQuery, Result};
-use neovex_storage::TenantStore;
+use neovex_storage::QueryReadStore;
 
 use super::cursor::{
     compare_document_to_cursor, cursor_sort_values_for_document, decode_cursor, encode_cursor,
@@ -9,17 +9,23 @@ use super::cursor::{
 use super::filtering::{filter_documents_cancellable, matches_filters};
 use super::ordering::sort_documents;
 
-/// Evaluates a paginated query.
-pub fn evaluate_paginated(store: &TenantStore, paginated: &PaginatedQuery) -> Result<Page> {
+/// Evaluates a paginated query against a query-capable read surface.
+pub fn evaluate_paginated<S>(store: &S, paginated: &PaginatedQuery) -> Result<Page>
+where
+    S: QueryReadStore + ?Sized,
+{
     evaluate_paginated_cancellable(store, paginated, &mut || Ok(()))
 }
 
 /// Evaluates a paginated query while checking for cancellation between rows.
-pub fn evaluate_paginated_cancellable(
-    store: &TenantStore,
+pub fn evaluate_paginated_cancellable<S>(
+    store: &S,
     paginated: &PaginatedQuery,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Page> {
+) -> Result<Page>
+where
+    S: QueryReadStore + ?Sized,
+{
     evaluate_paginated_cancellable_with_predicate(store, paginated, check_cancel, &mut |_| Ok(true))
 }
 
@@ -45,13 +51,14 @@ pub fn evaluate_paginated_with_docs_cancellable(
     )
 }
 
-pub(crate) fn evaluate_paginated_cancellable_with_predicate<F>(
-    store: &TenantStore,
+pub(crate) fn evaluate_paginated_cancellable_with_predicate<S, F>(
+    store: &S,
     paginated: &PaginatedQuery,
     check_cancel: &mut dyn FnMut() -> Result<()>,
     include_document: &mut F,
 ) -> Result<Page>
 where
+    S: QueryReadStore + ?Sized,
     F: FnMut(&Document) -> Result<bool>,
 {
     let filtered = store.scan_table_matching_with_filters_cancellable(

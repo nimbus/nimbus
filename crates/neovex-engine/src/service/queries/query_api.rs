@@ -13,9 +13,9 @@ use super::materialized::{
 };
 use super::planner::{QueryPlan, query_plan_metric_kind};
 use super::prepared::{
-    evaluate_with_index_async_prepared, paginate_documents_for_store_prepared_cancellable,
+    evaluate_with_index_async_prepared, paginate_documents_for_read_surface_prepared_cancellable,
     paginate_with_index_async_prepared, prepare_paginated_execution, prepare_query_execution,
-    query_documents_for_store_prepared_cancellable,
+    query_documents_for_read_surface_prepared_cancellable,
 };
 use crate::service::Service;
 use crate::tenant::QueryPlanMetricOperation;
@@ -190,8 +190,8 @@ impl Service {
             }
             Some(prepared) => {
                 let plan_kind = query_plan_metric_kind(&prepared.plan);
-                let documents = query_documents_for_store_prepared_cancellable(
-                    runtime.store.as_ref(),
+                let documents = query_documents_for_read_surface_prepared_cancellable(
+                    &runtime.store,
                     &prepared,
                     principal,
                     check_cancel,
@@ -378,8 +378,8 @@ impl Service {
             }
             Some(prepared) => {
                 let plan_kind = query_plan_metric_kind(&prepared.plan);
-                let page = paginate_documents_for_store_prepared_cancellable(
-                    runtime.store.as_ref(),
+                let page = paginate_documents_for_read_surface_prepared_cancellable(
+                    &runtime.store,
                     &prepared,
                     principal,
                     check_cancel,

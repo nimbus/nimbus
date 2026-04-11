@@ -10,7 +10,6 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use neovex_core::{CommitEntry, Result, SequenceNumber, TableName};
-use neovex_storage::TenantStore;
 
 use self::backend::MaterializedServingBackend;
 #[cfg(test)]
@@ -20,6 +19,7 @@ use self::snapshot::ServingSnapshotManager;
 #[cfg(test)]
 pub(crate) use self::stats::MaterializedTablePublicationStats;
 pub use self::stats::{MaterializedReadSurfaceStats, ServingSnapshotManagerStats};
+use crate::persistence::TenantPersistence;
 
 pub(super) const DEFAULT_MATERIALIZED_SURFACE_TABLE_CAPACITY: usize = 8;
 pub(super) const DEFAULT_MATERIALIZED_SURFACE_BYTE_CAPACITY: usize = 16 * 1024 * 1024;
@@ -68,7 +68,7 @@ impl TenantMaterializedReadSurface {
 
     pub(super) fn load_serving_snapshot_cancellable(
         &self,
-        store: &TenantStore,
+        store: &TenantPersistence,
         table: &TableName,
         required_sequence: SequenceNumber,
         check_cancel: &mut dyn FnMut() -> Result<()>,

@@ -33,8 +33,23 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active or deferred execution plan
-- For active SQLite storage migration work, go from `docs/plans/README.md` to
-  `docs/plans/pluggable-storage-backend-plan.md`.
+- The SQLite storage migration plan is complete and archived at
+  `docs/plans/archive/pluggable-storage-backend-plan.md`; use it only for
+  historical review, not as live progress state.
+- The Postgres-first provider implementation plan is complete and archived at
+  `docs/plans/archive/postgres-storage-provider-plan.md`; use it only for
+  historical review, not as live progress state.
+- The umbrella external-provider plan at
+  `docs/plans/external-sql-storage-backends-plan.md` is complete historical
+  design context. For future provider-topology implementation work, use
+  `docs/plans/README.md` to promote or author a new active plan from that
+  baseline rather than treating it as live progress state.
+- The MySQL provider implementation plan is complete and archived at
+  `docs/plans/archive/mysql-storage-provider-plan.md`; use it only for
+  historical review, not as live progress state.
+- The replica-connected SQLite provider plan is complete and archived at
+  `docs/plans/archive/sqlite-replica-provider-plan.md`; use it only for
+  historical review, not as live progress state.
 - For cleanup or refactor work, go from `docs/plans/README.md` to the owning
   active plan instead of assuming an archived cleanup pass is still live.
 - For future admission-control work, go from `docs/plans/README.md` to
@@ -45,12 +60,23 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- For the active SQLite storage migration workstream, use
-  `docs/plans/pluggable-storage-backend-plan.md` as the durable control plane.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly
   asks for historical review or follow-up on a completed workstream.
 - If archived work needs a new execution pass, create or promote a new active
   plan instead of treating the archived plan as live progress state.
+- The SQLite storage migration plan in
+  `docs/plans/archive/pluggable-storage-backend-plan.md` is historical context
+  only. The Postgres-first provider implementation plan in
+  `docs/plans/archive/postgres-storage-provider-plan.md` is also historical
+  context only. The MySQL provider implementation plan in
+  `docs/plans/archive/mysql-storage-provider-plan.md` is also historical
+  context only. The umbrella external-provider plan in
+  `docs/plans/external-sql-storage-backends-plan.md` is also historical design
+  context only. The replica-connected SQLite provider plan in
+  `docs/plans/archive/sqlite-replica-provider-plan.md` is also historical
+  context only. If later provider-topology work starts beyond those completed
+  records, promote or author a new active plan instead of reopening archived
+  progress state.
 - For future layered admission work, use
   `docs/plans/layered-admission-control-plan.md`.
 - For any active control plan, reread the plan's invariants section
@@ -134,10 +160,12 @@ invocation exits quickly instead of starting another overlapping run. Use
 direct `cargo test ...` or `cargo clippy ...` when you intentionally want a
 focused crate-level or test-level command.
 
-For focused ad hoc cargo commands that may be run in parallel, or when
-recovering from a hung cargo run that left the shared artifact directory locked,
-prefer `bash scripts/cargo-isolated.sh -- ...` so the command gets a unique
-`CARGO_TARGET_DIR` under `/tmp` instead of blocking later focused runs.
+For focused ad hoc cargo commands, prefer serialized runs against the repo's
+shared `target/` so later commands reuse the same artifacts. If Cargo
+contention or a stale lock shows up, heal by waiting for the active Cargo
+process to finish, or by stopping the genuinely stale/hung process and rerunning
+on the shared target. Do not treat alternate artifact directories as the
+default recovery path.
 
 Run `cargo fmt --all --check` and `make clippy` before opening a PR. CI enforces
 those checks plus `make deny`.

@@ -106,6 +106,8 @@ impl BlockingWriteExecutor {
 }
 
 impl TenantWriteStorage for RedbTenantStorage {
+    type WriteTransaction = TenantWriteTransaction;
+
     async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
     where
         T: Send + 'static,

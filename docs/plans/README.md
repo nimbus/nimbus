@@ -7,11 +7,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/convex-demos-compatibility-plan.md`
   - execution plan for closing the remaining Convex demo and compatibility gaps
 - `docs/plans/encryption-at-rest-plan.md`
-  - canonical execution plan for per-tenant encryption at rest via redb
-    `StorageBackend` trait
-- `docs/plans/pluggable-storage-backend-plan.md`
-  - active SQLite storage migration control plan for replacing redb, proving
-    parity, benchmarking against redb, and then removing redb
+  - canonical execution plan for per-tenant encryption at rest via the
+    retained redb embedded provider
 
 ## Deferred design and experiment plans
 
@@ -27,9 +24,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - canonical plan for distributing neovex across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew (macOS),
     binary tarballs, container images, cloud VM images (AWS AMI, GCP)
-- `docs/plans/external-sql-storage-backends-plan.md`
-  - deferred follow-on plan for Postgres and MySQL internal storage backends
-    after the SQLite migration is stable
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
@@ -52,8 +46,33 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Archived completed plans
 
-Completed plans live in `docs/plans/archive/`. Do not resume them unless
-explicitly asked to review historical work.
+Completed plans usually live in `docs/plans/archive/`. The historical umbrella
+external-provider design plan remains at its original path because completed
+storage migration records already cite it directly. Do not resume completed
+plans unless explicitly asked to review historical work.
+
+- `docs/plans/archive/pluggable-storage-backend-plan.md`
+  - completed SQLite storage migration control plan; records the cutover to
+    SQLite as the default embedded provider, the retained redb provider, and
+    the benchmark/provider-seam history that future work may need as context
+- `docs/plans/archive/postgres-storage-provider-plan.md`
+  - completed Postgres-first tenant persistence provider plan; records the
+    first non-local provider implementation, benchmark gate, operational
+    drills, and the decision to keep Postgres as an opt-in external mode
+- `docs/plans/archive/mysql-storage-provider-plan.md`
+  - completed MySQL tenant persistence provider plan; records the
+    `mysql_async`-based provider implementation, benchmark/RTT gate, reconnect
+    drill fixes, and the decision to keep MySQL as an opt-in external mode
+- `docs/plans/archive/sqlite-replica-provider-plan.md`
+  - completed replica-connected SQLite provider plan; records the `libsql`
+    remote-primary plus provider-owned replica-cache implementation, the
+    freshness-drill benchmark gate, and the decision to keep the benchmark
+    harness env/CLI-driven on explicit `sqld` endpoints
+- `docs/plans/external-sql-storage-backends-plan.md`
+  - completed umbrella provider-topology design baseline; records the settled
+    `TenantPersistence` / `PersistenceProvider` seam, the control-plane and
+    runtime-config cleanup slices, and the follow-on design decisions for
+    replica-connected SQLite and MySQL
 
 ## How To Use This Folder
 
@@ -65,8 +84,9 @@ explicitly asked to review historical work.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
-- For active SQLite internal storage migration work, start with
-  `pluggable-storage-backend-plan.md`.
+- The SQLite storage migration plan is complete and archived at
+  `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
+  unless you were explicitly asked for historical review.
 - If no active cleanup, refactor, or verification hardening control plane is
   listed above, author or promote a new active plan before resuming generic
   work.
@@ -74,8 +94,24 @@ explicitly asked to review historical work.
   blocked), see `raw-v8-warm-backend-plan.md`.
 - For future wasmtime WASM backend work, start with
   `wasmtime-backend-plan.md`.
-- For future Postgres/MySQL internal storage work, start with
-  `external-sql-storage-backends-plan.md`.
+- The Postgres-first provider implementation plan is complete and archived at
+  `archive/postgres-storage-provider-plan.md`; use it only for historical
+  review of the first non-local provider implementation.
+- The MySQL provider implementation plan is complete and archived at
+  `archive/mysql-storage-provider-plan.md`; use it only for historical review
+  of the second opt-in external provider implementation.
+- The umbrella external-provider plan at
+  `external-sql-storage-backends-plan.md` is complete historical design
+  context. For future replica-connected SQLite, MySQL, or other
+  provider-topology implementation work, promote or author a new active plan
+  using it as the architectural baseline.
+- The replica-connected SQLite provider implementation plan is complete and
+  archived at `archive/sqlite-replica-provider-plan.md`; use it only for
+  historical review of the first `libsql`-first replica provider slice.
+- Do not revive the archived SQLite migration plan to own future non-local
+  provider implementation details, pooling, replication, or coordination
+  concerns; any new work there should start from a newly active plan rather
+  than from an archived or completed historical record.
 - For future agent OS capabilities via WASI Component Model, start with
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes

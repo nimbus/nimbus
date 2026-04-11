@@ -2,8 +2,10 @@
 
 Neovex is a single-binary reactive document database. Clients subscribe to
 queries over WebSocket and receive automatic pushes when data changes. Each
-tenant gets an isolated embedded database — scaling is by distributing tenants
-across nodes, not by sharding within a database.
+tenant gets an isolated persistence namespace: embedded deployments use local
+per-tenant databases, while external providers preserve the same isolation
+through provider-owned schemas or databases. Scaling is by distributing tenants
+across nodes, not by sharding within one logical tenant database.
 
 This document describes the stable architecture. It is intentionally kept at
 the level of crates, key types, and data flows — not individual functions.
@@ -21,7 +23,7 @@ flowchart TD
         T2["Server · axum, WebSocket"]
         T3["Runtime · deno_core, V8"]
         T4["Engine"]
-        T5["Storage · redb, MessagePack"]
+        T5["Storage · SQLite / redb, JSON / blobs"]
 
         T2 --- T3 & T4
         T3 & T4 --- T5
@@ -71,7 +73,7 @@ flowchart TD
         Engine & Storage --> Core
     end
 
-    Disk[("redb · tenant databases")]
+    Disk[("Embedded tenant persistence")]
 
     Client <-->|HTTP / WS| Server
     Storage <-->|read / write| Disk
@@ -117,11 +119,16 @@ connects the two independent subsystems below it:
 
 The server has two request paths. **Native** requests (Neovex HTTP/WS API) go
 directly to async engine methods; read and write paths now await an explicit
-async storage boundary that owns the redb blocking work. Durable writes cross
+async storage boundary that owns backend blocking work. Durable writes cross
 that boundary through `TenantWriteTransaction`, which defines an explicit
-pre-commit versus post-commit split: cancellation may abort before redb commit,
-but once the durable commit point is crossed the engine returns a committed
-result even if the transport disconnects before observing it. **Convex**
+pre-commit versus post-commit split: cancellation may abort before durable
+commit, but once the durable commit point is crossed the engine returns a
+committed result even if the transport disconnects before observing it. Tenant
+persistence now lowers through `ServicePersistenceConfig`: SQLite is the
+default embedded provider, redb is retained as another embedded provider, and
+Postgres, MySQL, plus replica-connected SQLite are opt-in external provider
+families. The cross-tenant usage or control path lowers through a separate
+control-plane provider seam and remains embedded redb-backed today. **Convex**
 requests go to the runtime, which executes a V8 handler; async host operations
 inside that handler now await the engine and storage futures directly instead
 of bouncing through a Tokio `spawn_blocking(...)` adapter layer.
@@ -164,7 +171,10 @@ file links (links go stale; symbol search does not).
   revision fingerprinting; `access.rs` owns table access-policy structures,
   predicate evaluation, and read-filter compilation.
 - `types.rs` — `TenantId`, `TableName`, `DocumentId`, `SequenceNumber`, `Timestamp`. All validated on construction (alphanumeric + `_` + `-`, max 128 chars).
-- `document.rs` — `Document` struct. Serializes to MessagePack for storage, JSON for wire. System fields `_id` and `_creationTime` added during JSON serialization.
+- `document.rs` — `Document` struct. Serializes to JSON for wire, while
+  backend-specific persistence codecs live below the engine (`MessagePack` in
+  legacy redb paths, JSON-at-rest in SQLite). System fields `_id` and
+  `_creationTime` are added during JSON serialization.
 - `mutation.rs` — `Mutation` enum (`Insert`/`Update`/`Delete`),
   `DurableMutationRecord`, `CommitEntry`, `WriteOp`. The durable journal
   records every mutation; `CommitEntry` is the applied compatibility view used
@@ -174,14 +184,19 @@ file links (links go stale; symbol search does not).
 - `scheduled.rs` — `ScheduledJob`, `CronJob`, `CronSchedule`, `ScheduledJobResult`. Interval-based cron.
 - `error.rs` — `Error` enum with variants mapped to HTTP status codes in the server layer.
 
-**`neovex-storage`** — Persistence layer. One `TenantStore` per tenant redb file, plus a global `UsageStore` for cross-tenant metering.
+**`neovex-storage`** — Persistence layer. Tenant persistence now runs behind
+the durable provider seam, with SQLite as the default embedded provider, redb
+retained as another embedded provider, and the global usage store lowered
+through a separate embedded redb control-plane provider for cross-tenant
+metering.
 
 - `async_storage/` — internal async storage boundary composition root.
   `traits.rs` owns the async storage contracts and `TenantWriteOutcome`,
-  `read.rs` owns blocking read execution plus the redb-backed tenant and usage
+  `read.rs` owns blocking read execution plus backend-specific tenant and usage
   read adapters, `write.rs` owns blocking write execution and the tenant write
-  adapter, `engine.rs` owns `RedbStorageEngine` plus tenant open/create/delete
-  management, and `helpers.rs` owns shared blocking-task error mapping. The
+  adapter, `engine.rs` owns `EmbeddedProviderKind` plus the retained embedded
+  tenant providers, `control.rs` owns the explicit embedded redb control-plane
+  provider, and `helpers.rs` owns shared blocking-task error mapping. The
   boundary still preserves the same cancellable pre-commit versus
   committed-write semantics.
 - `store.rs` — `TenantStore` wrapping a redb `Database`: the storage
@@ -231,7 +246,11 @@ file links (links go stale; symbol search does not).
 
 **`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
-- `service/mod.rs` — `Service` struct: tenant registry plus the async storage boundary (`RedbStorageEngine`, tenant storage handles, usage storage handle), simulation seams, scheduler wakeups, and a process-wide background Tokio runtime handle used for long-lived engine workers. Lazy-loads tenants from disk on first access.
+- `service/mod.rs` — `Service` struct: tenant registry plus the async storage
+  boundary, the embedded provider selector, the still-local redb usage/control
+  storage handle, simulation seams, scheduler wakeups, and a process-wide
+  background Tokio runtime handle used for long-lived engine workers.
+  Lazy-loads tenants from disk on first access.
 - `service/mutations.rs` — Composition root for the write path. Public
   `apply_mutation` behavior still flows through the same single durable contract
   while the implementation is split across
@@ -271,12 +290,13 @@ file links (links go stale; symbol search does not).
   private capability tree stays in `authorization.rs`, `planner/`,
   `prepared.rs`, `materialized.rs`, and `snapshot.rs`. The planner root now
   composes `exact.rs` (exact-prefix planning), `range.rs` (range-bound
-  derivation and range-plan selection), `scoring.rs` (candidate scoring and
-  order support), and `loading.rs` (plan-backed index loading over stores,
-  snapshots, and in-memory document slices). Read planning still merges
-  declarative authorization predicates before selecting an index Eq scan, range
-  scan, or table scan, and async read paths still route the same prepared
-  planner/evaluator logic through the storage-owned async executor.
+  derivation and range-plan selection), and `scoring.rs` (candidate scoring and
+  order support). Physical document loading now flows through the narrow
+  storage-owned `QueryReadStore` seam rather than a redb-specific loading
+  adapter. Read planning still merges declarative authorization predicates
+  before selecting a semantic index-equality, range, or table-scan path, and
+  async read paths still route the same prepared planner/evaluator logic
+  through the storage-owned async executor.
 - `service/subscriptions.rs` — `subscribe`/`unsubscribe` plus subscription
   lifecycle ownership. Initial evaluation and activation handoff now live under
   `service/subscriptions/bootstrap.rs`, which owns materialized-surface reuse,
@@ -324,8 +344,9 @@ file links (links go stale; symbol search does not).
   `tenant/subscription_delivery/queue.rs` (queue state, bounded enqueue, and
   drain batching), `worker.rs` (dedicated worker lifecycle and shutdown),
   `stats.rs` (delivery metrics and stats snapshots), and `pause.rs`
-  (test-only pause control). `TenantRuntime` still holds `Arc<TenantStore>`,
-  async storage handles, `SubscriptionRegistry`, `RwLock<Schema>`, a
+  (test-only pause control). `TenantRuntime` still holds tenant-scoped
+  persistence handles, async storage handles, `SubscriptionRegistry`,
+  `RwLock<Schema>`, a
   tenant-local close-then-drain lifecycle primitive, a bounded
   subscription-delivery worker queue, and per-tenant durable versus applied
   mutation-journal progress. Operation entry still uses RAII guards to keep
@@ -467,7 +488,7 @@ similar durable background work are Service responsibilities.
 | Mutation journal worker | `Service` + `TenantRuntime` | service-owned async task | drains the outer mutation admission gate, applies CoDel shedding before journal ownership transfer, durably appends and applies queued mutations in order, and resolves mutation futures |
 | Subscription delivery worker | `TenantRuntime` | tenant-owned dedicated OS thread with `Condvar` queue | bounded subscription reevaluation and delivery preparation, including small-batch queue draining and overlap-aware work merging before reevaluation |
 | Runtime executor | Convex adapter | oversubscribed OS worker pool; each worker owns one current-thread Tokio runtime and one worker loop; JS permits remain separately bounded | V8 invocation execution, permit suspend/resume during async host I/O, and per-tenant active/in-flight/queued runtime admission |
-| Storage async boundary | `Service` + `RedbTenantStorage` / `RedbUsageStorage` | storage-owned `BackgroundExecutor` handle plus read/write semaphores | bounded redb reads, writes, and usage operations on the service-owned storage executor |
+| Storage async boundary | `Service` + backend-specific tenant or usage adapters | storage-owned `BackgroundExecutor` handle plus read/write semaphores | bounded tenant reads, writes, journal work, and usage operations on the service-owned storage executor; the tenant path is migration-selectable today while the usage path remains redb-backed |
 | Session child tasks | WebSocket session / runtime subscription | `OwnedTaskSet` over Tokio `JoinSet` | sender, forwarder, bridge, and bootstrap tasks owned by the parent session |
 | Invocation watchdogs | `RuntimeExecutor` | shared `WatchdogTimer` thread plus per-invocation registrations | timeout and external-cancellation termination of a V8 isolate without per-invocation watchdog thread churn |
 
@@ -544,7 +565,15 @@ worker-local beneath that seam.
 
 **`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-server`, and `neovex-storage` so downstream consumers depend on a single crate.
 
-**`neovex-bin`** — CLI entry point. Parses `--port`, `--data-dir`, `--convex-app-dir`, `--license-file`, and runtime limit flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`, `--runtime-timeout-secs`, `--runtime-max-isolates`, `--runtime-worker-threads`, `--runtime-max-nested-calls`). Loads tenants with scheduled work, spawns the scheduler, optionally loads the Convex registry and license state, starts the server, handles graceful shutdown.
+**`neovex-bin`** — CLI entry point. Lowers runtime CLI, env, and JSON config
+into typed `ServicePersistenceConfig`, then parses `--port`,
+local data-directory and control-plane overrides, provider-specific settings
+such as `--postgres-url`, `--convex-app-dir`, `--license-file`, and runtime
+limit flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
+`--runtime-timeout-secs`, `--runtime-max-isolates`,
+`--runtime-worker-threads`, `--runtime-max-nested-calls`). Loads tenants with
+scheduled work, spawns the scheduler, optionally loads the Convex registry and
+license state, starts the server, and handles graceful shutdown.
 
 **`packages/codegen`** — Node.js code generation tool. Reads Convex source files (`convex/*.ts`) and a `convex/schema.ts`, emits `.neovex/convex/functions.json` (named-function manifest), `.neovex/convex/bundle.mjs` (runtime ESM entrypoint), `.neovex/convex/bundle.sha256` (integrity hash), and generated `convex/_generated/` TypeScript (api, server, dataModel, scheduled_functions).
 
@@ -556,6 +585,315 @@ integration tests. `http_api_fixture/` is now a route-family composition root:
 helpers, `tenants.rs` owns tenant lifecycle helpers, `schedule.rs` owns native
 scheduling and cron helpers, `schema.rs` owns schema helpers, `documents.rs`
 owns document and journal helpers, and `queries.rs` owns native query helpers.
+
+---
+
+## Persistence Seams
+
+Neovex should keep two different seams explicit instead of collapsing them into
+one generic "backend" abstraction.
+
+### Durable engine-facing behavior seam
+
+The durable seam is the tenant-scoped persistence contract that the engine
+depends on. This is the seam that should survive the SQLite migration and later
+support retained embedded providers plus future non-local provider families.
+
+Use `TenantPersistence` as the umbrella name for that seam. It may be one trait
+or a composed family of semantically named capabilities, but the capability
+names should stay behavior-oriented:
+
+- `TenantQueryRead`
+- `TenantMutationPersistence`
+- `TenantJournalPersistence`
+- `TenantSchedulerPersistence`
+- `TenantSnapshotPersistence`
+- `TenantSchemaPersistence`
+
+The current `QueryReadStore` in
+`crates/neovex-storage/src/query_read.rs` is already a good example of the
+intended direction: narrow, planner-driven, and derived from live call sites
+rather than from a greenfield CRUD sketch.
+
+This seam belongs between `TenantRuntime` and backend-native persistence. The
+engine should keep ownership of:
+
+- auth, validation, and policy merge behavior
+- mutation admission and batching
+- execution-unit dependency and OCC semantics
+- `CommitEntry` and durable or applied head semantics
+- subscription fan-out and materialized-read publication semantics
+- journal bootstrap, replay, and snapshot product behavior
+- tenant routing and request-level coalescing
+
+Backends should keep ownership of:
+
+- transactions, WAL or MVCC, and physical recovery primitives
+- SQL or key-value storage layout
+- indexes, ordering, range scans, and physical query execution
+- prepared statements, pooling, and backend-local caching
+- backend-native concurrency behavior
+
+### Separate construction/config seam
+
+Construction and configuration are a different concern and should not be fused
+with the durable behavior seam.
+
+Use `PersistenceProvider` as the long-term name for the typed
+construction/config seam. It should own backend selection, typed config, tenant
+routing, pools, and lifecycle entrypoints for embedded or external backends.
+
+At the service boundary, model persistence inputs as:
+
+- `ServicePersistenceConfig` for the whole service
+- `TenantProviderConfig` for tenant-scoped persistence
+- `ControlPlaneConfig` for cross-tenant control and usage state
+
+`ServicePersistenceConfig` should keep tenant persistence and cross-tenant
+control-path configuration separate so a provider change for tenant data does
+not silently move global metering or future control-plane state with it.
+
+The live implementation now reflects that split directly: `Service` lowers
+tenant persistence through `PersistenceProvider` and lowers the cross-tenant
+usage/control path through a separate control-plane provider role instead of
+piggybacking usage-store construction on a tenant provider.
+
+Use names like:
+
+- `EmbeddedRedbProvider`
+- `EmbeddedSqliteProvider`
+- `SqliteReplicaProvider`
+- `PostgresProvider`
+- `MySqlProvider`
+
+Do not treat path-shaped tenant construction as the durable cross-backend API.
+That shape is acceptable only for the migration window.
+
+Provider config should distinguish storage dialect from deployment topology.
+`sqlite` alone is not enough, because local-file SQLite and replica-connected
+SQLite have different latency, consistency, and operational models. The same
+principle applies to future retained embedded providers: their coordination or
+replication mode should be provider/topology config, not a change to
+`TenantPersistence`.
+
+Use separate validated axes such as:
+
+- `PersistenceDialect` with values like `Redb`, `Sqlite`, `Postgres`, and
+  `MySql`
+- `PersistenceTopology` with values like `EmbeddedStandalone`,
+  `ExternalPrimary`, `ExternalPrimaryWithReplicas`, and
+  `CoordinatedEmbedded`
+
+Then layer provider-owned `TenantRoutingConfig`, `PoolConfig`, and credential
+configuration on top of those axes.
+
+Current embedded constructors such as `Service::new(data_dir)` and
+`Service::new_with_embedded_provider(data_dir, EmbeddedProviderKind)` are
+still useful convenience wrappers, but they should eventually lower into the
+typed config model above instead of becoming the universal construction API.
+
+Operator-facing startup config should follow the same rule. CLI flags,
+environment variables, and config files should lower into one typed
+`ServicePersistenceConfig` model. Resource identity and execution intent
+should stay separate, so a canonical Postgres connection value such as
+`NEOVEX_POSTGRES_URL` can be reused across runtime, test, and benchmark
+surfaces while the invoking command or profile chooses the intent.
+
+### Naming rules
+
+- Use `persistence` for stable engine-facing contracts that must work for both
+  embedded and networked databases.
+- Use `provider` for typed backend construction/config and tenant routing.
+- Use `backend` only for temporary migration switches or for naming concrete
+  implementation families.
+- Use `store` only for backend-local physical adapters such as
+  `SqliteTenantStore`.
+
+That means migration-only names such as `StorageBackendKind`,
+`BackendStorageEngine`, `BackendTenantStore`, and `BackendTenantReadStorage`
+should not reappear as the durable public architecture vocabulary; they belong
+in the historical migration record, while the live code and docs use
+`TenantPersistence` / `PersistenceProvider` terminology instead.
+
+### Embedded vs external cost model
+
+Embedded backends such as SQLite or redb mainly pay local CPU, memory, disk,
+and lock costs. External backends such as Postgres or MySQL also pay network
+round trips, pool checkout, TLS, remote planning, and server-side concurrency
+costs.
+
+That makes the Neovex-owned pre-storage layer even more important for external
+SQL, but only for the right kind of work:
+
+- do more semantic shaping above the seam
+- do less chatty storage interaction across the seam
+- keep physical filtering, ordering, and set execution inside the backend
+
+The architectural consequence is that the stable seam should stay coarse and
+semantic. It should expose operations like execution-unit apply, journal
+append/stream/bootstrap, scheduler claim/complete, and query-read behavior
+derived from the planner. It should not degenerate into tiny CRUD or
+scan-shaped primitives that force many remote round trips.
+
+For future external providers, refine the current umbrella
+`TenantPersistence` composition root toward explicit capability families:
+
+- `TenantQueryRead`
+- `TenantMutationPersistence`
+- `TenantJournalPersistence`
+- `TenantSchedulerPersistence`
+- `TenantSnapshotPersistence`
+- `TenantSchemaPersistence`
+
+Those capability seams should remain semantic. They must not be replaced by:
+
+- filesystem-path construction as the universal provider API
+- hook- or trigger-driven reactivity as the canonical engine contract
+- row-at-a-time remote iterator contracts that make the engine emulate a query
+  planner
+- chatty document CRUD verbs that turn one logical operation into many network
+  round trips
+
+External providers may still optimize aggressively below that seam by bundling
+round trips, using server-side planning, or choosing backend-native
+notification and recovery mechanisms, as long as the Neovex-owned semantics
+above the seam stay unchanged.
+
+### Postgres-first provider shape
+
+The first concrete non-local mode should be `PostgresProvider`.
+
+Its intended shape is:
+
+- one provider-owned Postgres database for the Neovex service
+- one small provider metadata schema for tenant registry and routing metadata
+- one Postgres schema per Neovex tenant
+- the same logical per-tenant tables Neovex already uses in SQLite
+- fully qualified tenant-schema SQL instead of mutable session `search_path`
+
+The journal model should remain Neovex-owned:
+
+- `commit_log` stores serialized `DurableMutationRecord` blobs
+- Postgres sequence or identity allocation owns physical sequence numbering
+- provider-owned serialization preserves per-tenant ordered append and apply
+- durable-head and applied-head stay explicit metadata, not inferred from
+  notification delivery
+
+Notifications such as `LISTEN` / `NOTIFY` may be used as wake hints, but not
+as the authoritative reactive contract. Lost notifications must recover from
+head metadata plus journal replay. The cross-tenant usage/control path remains
+local redb in this first Postgres slice.
+
+The readiness gate for this mode must measure more than local throughput. At a
+minimum, it needs steady-state, cold-start, and latency-injected RTT lanes;
+CRUD, indexed query, journal, subscription, mixed-load, and tenant-lifecycle
+workloads; and operational drills for reconnect, listener loss, restart, pool
+pressure, and tenant cleanup.
+
+### Replica-connected SQLite provider shape
+
+Future `SqliteReplicaProvider` work must not mean "open a SQLite file across
+the network." SQLite's own network and WAL guidance make raw network-mounted
+database files an unacceptable provider shape.
+
+The admissible future shape is a concrete client/server or embedded-replica
+provider family with:
+
+- one authoritative primary that owns writes, schema changes, scheduler
+  mutations, journal append, and head metadata
+- read replicas or embedded replicas that may serve read-only queries only
+  behind a provider-owned durable or applied sequence barrier
+- provider-owned refresh/catch-up whenever replica progress cannot be proven
+  sufficient for the requested semantic boundary; any future direct
+  primary-read fallback would still belong behind that same provider boundary
+
+If we activate this path, the best first-fit Rust connector family is
+`libsql`, not a local-only SQLite driver stretched into a replication story.
+`libsql` already exposes remote and local replica builders, synced databases,
+delegated remote writes, `read_your_writes`, and `sync_until`, which is much
+closer to the provider semantics Neovex needs. Plain `rusqlite` or
+`sqlx::Sqlite` remain good local SQLite tools, but they do not solve the
+replica-topology problem on their own.
+
+The first concrete activation should be narrower than "any libsql mode." It
+should pair a remote-primary `libsql` connection for writes and strong reads
+with provider-owned replica cache files per tenant for read-serving only.
+Today the safest first sync model is a Neovex-owned snapshot or catch-up
+refresher over the remote `libsql` SQL connection, producing provider-owned
+local SQLite cache files directly. The main Neovex process must not assume it
+can host `new_remote_replica(...)` directly until that runtime path is proven
+stable in the live harness. That means:
+
+- keep the public typed config on `dialect = Sqlite` plus a replica topology,
+  not on a new filesystem-shaped provider seam
+- use a provider metadata namespace plus one tenant namespace per tenant on
+  the remote primary
+- keep local replica files provider-owned under an explicit cache root rather
+  than accepting arbitrary SQLite files as the topology contract
+- keep the sync owner for those replica files explicit: the first activation
+  may refresh them via deterministic remote snapshot or catch-up work, and any
+  future `libsql` embedded-replica client still belongs behind the same
+  provider-owned boundary until the in-process runtime path is proven safe
+- keep journal append, scheduler mutation paths, bootstrap/export, and other
+  mutation-adjacent reads on the primary or behind an explicit provider-owned
+  barrier refresh / catch-up path
+- let only planner-driven read-only query lanes serve from the embedded
+  replica, and only after provider-owned sequence-barrier proof or explicit
+  `sync_until` catch-up
+
+The current implementation state follows that split explicitly: the engine now
+lazy-loads replica-backed tenants through the normal `TenantPersistence` seam,
+routes writes, scheduler mutations, and durable journal apply or recovery to
+the remote primary, and serves planner-driven reads from the provider-owned
+local SQLite cache after explicit cache refresh or poll-driven catch-up. The
+embedded cache remains derivative rather than authoritative, while the provider
+poll worker keeps loaded and unloaded tenants aligned with remote schema,
+journal, and scheduled-work state.
+
+The first slice should explicitly defer `libsql` synced/offline-write database
+shapes. Neovex does not need disconnected local writes for this activation,
+and bringing them in early would expand the roadmap into conflict resolution,
+multi-writer policy, and promotion semantics that do not belong in the first
+replica-connected SQLite pass.
+
+Failover, promotion, and replica catch-up policy belong in provider and
+topology config, not in `TenantPersistence`. Any actual implementation should
+start from a new dedicated active plan for one named provider family rather
+than from a generic "remote SQLite" promise.
+
+### MySQL provider shape
+
+The first MySQL mode should preserve the same Neovex semantics as the
+Postgres-first path while using MySQL-native physical mechanics.
+
+Its intended shape is:
+
+- one provider-owned MySQL deployment for the Neovex service
+- one small provider metadata database for tenant registry and routing
+- one tenant database per Neovex tenant, using fully qualified
+  `tenant_db.table_name` SQL
+- InnoDB MVCC transactions for consistent reads, execution-unit OCC, and
+  durable journal append behavior
+- tenant-local `AUTO_INCREMENT` commit-log sequencing plus explicit durable and
+  applied head metadata
+- generated-column-backed JSON indexing instead of assuming Postgres-style
+  expression indexes or SQLite JSON-expression indexes
+
+If we activate this path, the best first-fit Rust connector stack is
+`mysql_async` directly. It is Tokio-native, already ships with a pooled async
+connection model and explicit transaction APIs, and fits Neovex's need for
+dynamic fully qualified SQL, locking reads, and provider-owned statement
+control. `sqlx` and `diesel-async` remain valid options in the abstract, but
+they are not the best first fit for a provider that will rely on dynamic
+tenant-database SQL rather than on macro-checked literal queries or an ORM
+query builder.
+
+Queue-like scheduler claim paths may use `FOR UPDATE SKIP LOCKED`, but if a
+replicated MySQL deployment is used, that path should be treated as
+row-based-replication territory rather than relying on statement-based
+replication behavior. Recovery and catch-up should assume durable-progress
+polling or provider-owned wake hints, not a Postgres-style in-database pub/sub
+primitive.
 
 ---
 
@@ -712,24 +1050,59 @@ sequenceDiagram
 
 ---
 
-## Storage Engine
+## Persistence Engine
 
-Each tenant's redb file contains 10 key-value tables:
+The live tenant-data path is in transition from a redb-only implementation to a
+SQLite-first provider model. During the migration window:
+
+- tenant persistence can be backed by redb or SQLite behind a temporary
+  selector
+- the engine-visible behavior contract stays the same across both
+- the intended end state is SQLite as the default embedded backend with redb
+  retained as a supported embedded provider
+- the cross-tenant usage or control database remains redb-backed for now
+
+### SQLite tenant layout (target embedded backend)
+
+Each SQLite tenant database keeps documents as JSON at rest, durable journal
+rows as serialized `DurableMutationRecord` blobs, and scheduler or metadata
+state in relational tables:
+
+| Table | Columns | Purpose |
+|-------|---------|---------|
+| `documents` | `table_name`, `id`, `data_json`, `creation_time` | Primary document store with JSON-at-rest payloads |
+| `schemas` | `table_name`, `schema_json` | Per-table schema definitions |
+| `scheduled_jobs` | `id`, `data_json` | Pending scheduled mutations |
+| `running_scheduled_jobs` | `id`, `data_json` | In-flight jobs for crash recovery |
+| `scheduled_job_results` | `job_id`, `data_json` | Execution outcomes |
+| `scheduled_job_executions` | `execution_id` | Dedup guard for scheduled execution ids |
+| `cron_jobs` | `name`, `data_json` | Recurring job definitions |
+| `commit_log` | `sequence`, `record_blob` | Append-only durable mutation journal |
+| `metadata` | `key`, `value_blob` | Applied head and related per-tenant metadata |
+
+SQLite expression indexes are derived from table schema definitions and own the
+physical indexed-read path.
+
+### redb tenant layout (retained embedded provider)
+
+The legacy redb tenant file contains key-value tables for documents, indexes,
+schemas, the durable journal, scheduler state, and metadata:
 
 | Table | Key | Value | Purpose |
 |-------|-----|-------|---------|
 | `DOCUMENTS` | `table\0doc_id` | msgpack(Document) | Primary document store |
 | `INDEXES` | `table\0idx\0encoded_val+doc_id` | empty | Secondary index entries |
 | `SCHEMAS` | `table_name` | msgpack(TableSchema) | Per-table schema definitions |
-| `COMMIT_LOG` | `sequence (u64)` | msgpack(DurableMutationRecord) | Append-only durable mutation journal. `CommitEntry` reads are a compatibility projection over the logical journal format. |
-| `METADATA` | `"next_sequence"` / `"applied_sequence"` | `u64` | Tracks the next durable sequence to allocate and the latest applied read-visible sequence. |
+| `COMMIT_LOG` | `sequence (u64)` | msgpack(DurableMutationRecord) | Append-only durable mutation journal |
+| `METADATA` | `"next_sequence"` / `"applied_sequence"` | `u64` | Durable-sequence and applied-head tracking |
 | `SCHEDULED_JOBS` | `run_at(8B)+job_id(16B)` | msgpack(ScheduledJob) | Pending scheduled mutations |
 | `RUNNING_SCHEDULED_JOBS` | `job_id(16B)` | msgpack(ScheduledJob) | In-flight jobs (crash recovery) |
 | `SCHEDULED_JOB_RESULTS` | `job_id(16B)` | msgpack(Result) | Execution outcomes |
 | `SCHEDULED_JOB_EXECUTIONS` | `job_id(16B)` | empty | Dedup guard for crash-replayed jobs |
 | `CRON_JOBS` | `cron_name` | msgpack(CronJob) | Recurring job definitions |
 
-The global `neovex-control.db` contains 3 tables for MAU tracking:
+The global `neovex-control.db` remains redb-backed and local today and
+contains 3 tables for MAU tracking:
 
 | Table | Key | Value | Purpose |
 |-------|-----|-------|---------|
@@ -737,43 +1110,41 @@ The global `neovex-control.db` contains 3 tables for MAU tracking:
 | `monthly_active_counts` | `month_start_unix_ms (u64)` | msgpack(count) | Monthly counters |
 | `monthly_active_last_recorded` | `month_start_unix_ms (u64)` | msgpack(timestamp) | Last-seen timestamps |
 
-### Index Value Encoding
-
-Index keys must sort correctly as raw bytes. Values are encoded with a type
-prefix to ensure cross-type ordering (`null < bool < number < string`):
-
-| Type | Tag | Encoding |
-|------|-----|----------|
-| null | `0x00` | Single byte |
-| bool | `0x01` | `+0x00` (false) or `+0x01` (true) |
-| number | `0x02` | IEEE 754 bits with sign flip for byte ordering |
-| string | `0x03` | UTF-8 with null escaping (`0x00`->`0x00 0xFF`), terminated `0x00 0x00` |
+The first Postgres-first non-local activation is intentionally tenant-scoped,
+so this cross-tenant usage/control database stays local and redb-backed for
+that first slice.
 
 ### Query Planning
 
-The evaluator selects the fastest path automatically:
+The engine planner chooses the semantic path, then hands physical execution to
+the backend-specific read layer:
 
-1. **Eq filter on indexed field** — `index_scan_eq`, strips satisfied filter from residual query
-2. **Range filters on indexed field** — `index_scan_range`, compiles multiple filters into tightest bounds
-3. **Fallback** — full table scan via `scan_table`
+1. **Eq filter on indexed field** — exact-index path with residual filters
+2. **Range filters on indexed field** — range-index path with residual filters
+3. **Fallback** — full table scan
 
-All paths apply residual filters, sort, and limit in memory after the scan.
+SQLite executes the physical read path through parameterized SQL plus
+expression indexes. redb executes the physical read path through encoded
+secondary-index key scans. Residual semantics, auth, and final query meaning
+stay in Neovex.
 
 ---
 
 ## Design Decisions
 
-**Why redb?** Pure Rust, zero FFI, copy-on-write B-trees give free MVCC
-snapshots, ACID transactions, and a single-file database per tenant.
-Alternatives considered: SQLite (FFI boundary), RocksDB (FFI + complexity),
-sled (unmaintained). redb is the simplest correct choice for an embedded
-single-writer database. Neovex treats those redb snapshots as the storage
-primitive, then layers engine-level serializable OCC on top so read and write
-sets can also drive reactive invalidation.
+**Why SQLite as the default embedded backend?** SQLite gives Neovex
+transactions, WAL durability, physical query execution, JSON-at-rest
+documents, and expression indexes without forcing the engine to keep
+redb-specific physical scan or key-encoding machinery. The benchmarks in
+`docs/research/sqlite-storage-benchmark-report.md` show that once the read path
+leans into SQLite-native execution, SQLite is the stronger long-term embedded
+backend for the current service shape. redb can still remain as a supported
+embedded provider as long as the engine-facing seam is no longer redb-shaped.
 
-**Why a durable journal instead of a traditional storage WAL?** redb already
-provides crash-safe atomic commit, so Neovex does not need a page-level WAL to
-make today's writes safe. The next architectural step is a richer logical
+**Why a durable journal instead of a traditional storage WAL?** The underlying
+embedded backend already provides crash-safe atomic commit, so Neovex does not
+need a page-level WAL to make today's writes safe. The next architectural step
+is a richer logical
 ordered history that can drive replay, dependency-aware invalidation, CDC,
 streaming, and future replicas. If Neovex later adds a custom write-optimized
 materializer such as an LSM-style layer, it should consume that same logical
@@ -784,9 +1155,8 @@ contract can serve the write path, recovery, and downstream consumers.
 
 **Architectural decision: Neovex owns the durable journal.** For this project,
 the durable journal is a Neovex-defined logical ordered-history layer built
-inside the current redb-based architecture. Agents should not reinterpret Phase
-6 as permission to adopt a different storage engine or a generic external log as
-the primary design.
+above backend internals. Agents should not reinterpret the storage migration as
+permission to adopt a generic external log as the primary design.
 
 This is the right decision for Neovex because:
 
@@ -1163,7 +1533,9 @@ internals never require changes to the runtime, and vice versa.
 **Why a separate usage database?** MAU tracking is global (not per-tenant),
 so it lives in a dedicated `neovex-control.db` redb file managed by
 `UsageStore`. This avoids coupling usage metering to any single tenant's
-lifecycle.
+lifecycle. It is also why the first Postgres-first non-local activation stays
+tenant-scoped: the cross-tenant usage/control path remains local and
+redb-backed until a later provider-topology slice gives it an explicit design.
 
 ---
 

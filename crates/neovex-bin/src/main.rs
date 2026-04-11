@@ -1,23 +1,135 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use neovex::{
-    ConvexRegistry, LicenseState, RuntimeLimits, Service, run_scheduler,
-    serve_with_convex_and_license, serve_with_license,
+    ConvexRegistry, EmbeddedProviderKind, Error, LicenseState, RuntimeLimits, Service,
+    ServicePersistenceConfig, run_scheduler, serve_with_convex_and_license, serve_with_license,
 };
+use serde::Deserialize;
+
+const DEFAULT_DATA_DIR: &str = "./data";
+const CONFIG_FILE_ENV: &str = "NEOVEX_CONFIG";
+const DATA_DIR_ENV: &str = "NEOVEX_DATA_DIR";
+const CONTROL_DATA_DIR_ENV: &str = "NEOVEX_CONTROL_DATA_DIR";
+const TENANT_PROVIDER_ENV: &str = "NEOVEX_TENANT_PROVIDER";
+const SQLITE_URL_ENV: &str = "NEOVEX_SQLITE_URL";
+const SQLITE_AUTH_TOKEN_ENV: &str = "NEOVEX_SQLITE_AUTH_TOKEN";
+const SQLITE_ADMIN_URL_ENV: &str = "NEOVEX_SQLITE_ADMIN_URL";
+const SQLITE_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_SQLITE_ADMIN_AUTH_HEADER";
+const SQLITE_METADATA_NAMESPACE_ENV: &str = "NEOVEX_SQLITE_METADATA_NAMESPACE";
+const SQLITE_TENANT_NAMESPACE_PREFIX_ENV: &str = "NEOVEX_SQLITE_TENANT_NAMESPACE_PREFIX";
+const SQLITE_REPLICA_CACHE_DIR_ENV: &str = "NEOVEX_SQLITE_REPLICA_CACHE_DIR";
+const POSTGRES_URL_ENV: &str = "NEOVEX_POSTGRES_URL";
+const POSTGRES_METADATA_SCHEMA_ENV: &str = "NEOVEX_POSTGRES_METADATA_SCHEMA";
+const POSTGRES_TENANT_SCHEMA_PREFIX_ENV: &str = "NEOVEX_POSTGRES_TENANT_SCHEMA_PREFIX";
+const POSTGRES_MIN_CONNECTIONS_ENV: &str = "NEOVEX_POSTGRES_MIN_CONNECTIONS";
+const POSTGRES_MAX_CONNECTIONS_ENV: &str = "NEOVEX_POSTGRES_MAX_CONNECTIONS";
+const MYSQL_URL_ENV: &str = "NEOVEX_MYSQL_URL";
+const MYSQL_METADATA_DATABASE_ENV: &str = "NEOVEX_MYSQL_METADATA_DATABASE";
+const MYSQL_TENANT_DATABASE_PREFIX_ENV: &str = "NEOVEX_MYSQL_TENANT_DATABASE_PREFIX";
+const MYSQL_MIN_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MIN_CONNECTIONS";
+const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 
 #[derive(Debug, Parser)]
 #[command(name = "neovex", about = "Reactive document database")]
 struct Cli {
+    /// Optional JSON config file. CLI flags override env and file values.
+    #[arg(long)]
+    config: Option<PathBuf>,
+
     /// Port to listen on.
     #[arg(long, default_value_t = 8080)]
     port: u16,
 
-    /// Data directory used for tenant databases.
-    #[arg(long, default_value = "./data")]
-    data_dir: PathBuf,
+    /// Local data directory used for embedded tenant databases and, by default,
+    /// the local redb control plane.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+
+    /// Optional override for the local redb control-plane directory.
+    #[arg(long)]
+    control_data_dir: Option<PathBuf>,
+
+    /// Tenant persistence provider mode.
+    #[arg(long, value_enum)]
+    tenant_provider: Option<CliTenantProvider>,
+
+    /// Canonical libsql primary URL for tenant persistence when
+    /// `--tenant-provider=sqlite-replica`.
+    #[arg(long)]
+    sqlite_url: Option<String>,
+
+    /// Optional auth token for the libsql primary when
+    /// `--tenant-provider=sqlite-replica`.
+    #[arg(long)]
+    sqlite_auth_token: Option<String>,
+
+    /// Admin API URL used to provision libsql namespaces when
+    /// `--tenant-provider=sqlite-replica`.
+    #[arg(long)]
+    sqlite_admin_url: Option<String>,
+
+    /// Optional `Authorization` header value for the libsql admin API when
+    /// `--tenant-provider=sqlite-replica`.
+    #[arg(long)]
+    sqlite_admin_auth_header: Option<String>,
+
+    /// Provider metadata namespace for replica-connected SQLite tenant routing.
+    #[arg(long)]
+    sqlite_metadata_namespace: Option<String>,
+
+    /// Prefix used when deriving per-tenant libsql namespaces.
+    #[arg(long)]
+    sqlite_tenant_namespace_prefix: Option<String>,
+
+    /// Provider-owned local cache root for embedded replica files when
+    /// `--tenant-provider=sqlite-replica`.
+    #[arg(long)]
+    sqlite_replica_cache_dir: Option<PathBuf>,
+
+    /// Canonical Postgres resource URL for tenant persistence when
+    /// `--tenant-provider=postgres`.
+    #[arg(long)]
+    postgres_url: Option<String>,
+
+    /// Provider metadata schema for Postgres tenant routing.
+    #[arg(long)]
+    postgres_metadata_schema: Option<String>,
+
+    /// Prefix used when deriving per-tenant Postgres schema names.
+    #[arg(long)]
+    postgres_tenant_schema_prefix: Option<String>,
+
+    /// Minimum Postgres pool size.
+    #[arg(long)]
+    postgres_min_connections: Option<usize>,
+
+    /// Maximum Postgres pool size.
+    #[arg(long)]
+    postgres_max_connections: Option<usize>,
+
+    /// Canonical MySQL resource URL for tenant persistence when
+    /// `--tenant-provider=mysql`.
+    #[arg(long)]
+    mysql_url: Option<String>,
+
+    /// Provider metadata database for MySQL tenant routing.
+    #[arg(long)]
+    mysql_metadata_database: Option<String>,
+
+    /// Prefix used when deriving per-tenant MySQL database names.
+    #[arg(long)]
+    mysql_tenant_database_prefix: Option<String>,
+
+    /// Minimum MySQL pool size.
+    #[arg(long)]
+    mysql_min_connections: Option<usize>,
+
+    /// Maximum MySQL pool size.
+    #[arg(long)]
+    mysql_max_connections: Option<usize>,
 
     /// Optional app directory with a generated .neovex/convex/functions.json manifest.
     #[arg(long)]
@@ -52,6 +164,114 @@ struct Cli {
     runtime_max_nested_calls: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum CliTenantProvider {
+    Sqlite,
+    SqliteReplica,
+    Redb,
+    Postgres,
+    Mysql,
+}
+
+impl CliTenantProvider {
+    fn parse_name(value: &str) -> neovex::Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "sqlite" => Ok(Self::Sqlite),
+            "sqlite-replica" | "sqlite_replica" => Ok(Self::SqliteReplica),
+            "redb" => Ok(Self::Redb),
+            "postgres" => Ok(Self::Postgres),
+            "mysql" => Ok(Self::Mysql),
+            other => Err(Error::InvalidInput(format!(
+                "unsupported tenant provider '{other}'; expected sqlite, sqlite-replica, redb, postgres, or mysql"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RuntimeConfigFile {
+    persistence: PersistenceFileConfig,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PersistenceFileConfig {
+    data_dir: Option<PathBuf>,
+    control_data_dir: Option<PathBuf>,
+    tenant_provider: Option<CliTenantProvider>,
+    sqlite_url: Option<String>,
+    sqlite_auth_token: Option<String>,
+    sqlite_admin_url: Option<String>,
+    sqlite_admin_auth_header: Option<String>,
+    sqlite_metadata_namespace: Option<String>,
+    sqlite_tenant_namespace_prefix: Option<String>,
+    sqlite_replica_cache_dir: Option<PathBuf>,
+    postgres_url: Option<String>,
+    postgres_metadata_schema: Option<String>,
+    postgres_tenant_schema_prefix: Option<String>,
+    postgres_min_connections: Option<usize>,
+    postgres_max_connections: Option<usize>,
+    mysql_url: Option<String>,
+    mysql_metadata_database: Option<String>,
+    mysql_tenant_database_prefix: Option<String>,
+    mysql_min_connections: Option<usize>,
+    mysql_max_connections: Option<usize>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct PersistenceEnv {
+    data_dir: Option<PathBuf>,
+    control_data_dir: Option<PathBuf>,
+    tenant_provider: Option<CliTenantProvider>,
+    sqlite_url: Option<String>,
+    sqlite_auth_token: Option<String>,
+    sqlite_admin_url: Option<String>,
+    sqlite_admin_auth_header: Option<String>,
+    sqlite_metadata_namespace: Option<String>,
+    sqlite_tenant_namespace_prefix: Option<String>,
+    sqlite_replica_cache_dir: Option<PathBuf>,
+    postgres_url: Option<String>,
+    postgres_metadata_schema: Option<String>,
+    postgres_tenant_schema_prefix: Option<String>,
+    postgres_min_connections: Option<usize>,
+    postgres_max_connections: Option<usize>,
+    mysql_url: Option<String>,
+    mysql_metadata_database: Option<String>,
+    mysql_tenant_database_prefix: Option<String>,
+    mysql_min_connections: Option<usize>,
+    mysql_max_connections: Option<usize>,
+}
+
+impl PersistenceEnv {
+    fn load() -> neovex::Result<Self> {
+        Ok(Self {
+            data_dir: std::env::var_os(DATA_DIR_ENV).map(PathBuf::from),
+            control_data_dir: std::env::var_os(CONTROL_DATA_DIR_ENV).map(PathBuf::from),
+            tenant_provider: optional_env_tenant_provider(TENANT_PROVIDER_ENV)?,
+            sqlite_url: std::env::var(SQLITE_URL_ENV).ok(),
+            sqlite_auth_token: std::env::var(SQLITE_AUTH_TOKEN_ENV).ok(),
+            sqlite_admin_url: std::env::var(SQLITE_ADMIN_URL_ENV).ok(),
+            sqlite_admin_auth_header: std::env::var(SQLITE_ADMIN_AUTH_HEADER_ENV).ok(),
+            sqlite_metadata_namespace: std::env::var(SQLITE_METADATA_NAMESPACE_ENV).ok(),
+            sqlite_tenant_namespace_prefix: std::env::var(SQLITE_TENANT_NAMESPACE_PREFIX_ENV).ok(),
+            sqlite_replica_cache_dir: std::env::var_os(SQLITE_REPLICA_CACHE_DIR_ENV)
+                .map(PathBuf::from),
+            postgres_url: std::env::var(POSTGRES_URL_ENV).ok(),
+            postgres_metadata_schema: std::env::var(POSTGRES_METADATA_SCHEMA_ENV).ok(),
+            postgres_tenant_schema_prefix: std::env::var(POSTGRES_TENANT_SCHEMA_PREFIX_ENV).ok(),
+            postgres_min_connections: optional_env_usize(POSTGRES_MIN_CONNECTIONS_ENV)?,
+            postgres_max_connections: optional_env_usize(POSTGRES_MAX_CONNECTIONS_ENV)?,
+            mysql_url: std::env::var(MYSQL_URL_ENV).ok(),
+            mysql_metadata_database: std::env::var(MYSQL_METADATA_DATABASE_ENV).ok(),
+            mysql_tenant_database_prefix: std::env::var(MYSQL_TENANT_DATABASE_PREFIX_ENV).ok(),
+            mysql_min_connections: optional_env_usize(MYSQL_MIN_CONNECTIONS_ENV)?,
+            mysql_max_connections: optional_env_usize(MYSQL_MAX_CONNECTIONS_ENV)?,
+        })
+    }
+}
+
 fn default_runtime_heap_mb() -> usize {
     RuntimeLimits::default().max_heap_mb
 }
@@ -80,9 +300,10 @@ fn default_runtime_max_nested_calls() -> usize {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-    let service = Arc::new(Service::new(cli.data_dir)?);
+    let service_config = service_persistence_config_from_cli(&cli)?;
+    let service = Arc::new(Service::new_with_persistence_config(service_config).await?);
     let shutdown_service = service.clone();
-    service.load_tenants_with_scheduled_work()?;
+    service.recover_scheduled_work_on_startup_async().await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler_service = service.clone();
     let scheduler_handle = tokio::spawn(async move {
@@ -131,4 +352,711 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     shutdown_service.quiesce().await;
     server_result?;
     Ok(())
+}
+
+fn service_persistence_config_from_cli(cli: &Cli) -> neovex::Result<ServicePersistenceConfig> {
+    let config_path = cli
+        .config
+        .clone()
+        .or_else(|| std::env::var_os(CONFIG_FILE_ENV).map(PathBuf::from));
+    let file_config = load_runtime_config_file(config_path.as_deref())?;
+    let env = PersistenceEnv::load()?;
+    service_persistence_config_from_sources(cli, &file_config.persistence, &env)
+}
+
+fn service_persistence_config_from_sources(
+    cli: &Cli,
+    file: &PersistenceFileConfig,
+    env: &PersistenceEnv,
+) -> neovex::Result<ServicePersistenceConfig> {
+    let data_dir = cli
+        .data_dir
+        .clone()
+        .or_else(|| env.data_dir.clone())
+        .or_else(|| file.data_dir.clone())
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+    let control_data_dir = cli
+        .control_data_dir
+        .clone()
+        .or_else(|| env.control_data_dir.clone())
+        .or_else(|| file.control_data_dir.clone())
+        .unwrap_or_else(|| data_dir.clone());
+    let tenant_provider = cli
+        .tenant_provider
+        .or(env.tenant_provider)
+        .or(file.tenant_provider)
+        .unwrap_or(CliTenantProvider::Sqlite);
+    let sqlite_url = cli
+        .sqlite_url
+        .clone()
+        .or_else(|| env.sqlite_url.clone())
+        .or_else(|| file.sqlite_url.clone());
+    let sqlite_auth_token = cli
+        .sqlite_auth_token
+        .clone()
+        .or_else(|| env.sqlite_auth_token.clone())
+        .or_else(|| file.sqlite_auth_token.clone());
+    let sqlite_admin_url = cli
+        .sqlite_admin_url
+        .clone()
+        .or_else(|| env.sqlite_admin_url.clone())
+        .or_else(|| file.sqlite_admin_url.clone());
+    let sqlite_admin_auth_header = cli
+        .sqlite_admin_auth_header
+        .clone()
+        .or_else(|| env.sqlite_admin_auth_header.clone())
+        .or_else(|| file.sqlite_admin_auth_header.clone());
+    let sqlite_metadata_namespace = cli
+        .sqlite_metadata_namespace
+        .clone()
+        .or_else(|| env.sqlite_metadata_namespace.clone())
+        .or_else(|| file.sqlite_metadata_namespace.clone());
+    let sqlite_tenant_namespace_prefix = cli
+        .sqlite_tenant_namespace_prefix
+        .clone()
+        .or_else(|| env.sqlite_tenant_namespace_prefix.clone())
+        .or_else(|| file.sqlite_tenant_namespace_prefix.clone());
+    let sqlite_replica_cache_dir = cli
+        .sqlite_replica_cache_dir
+        .clone()
+        .or_else(|| env.sqlite_replica_cache_dir.clone())
+        .or_else(|| file.sqlite_replica_cache_dir.clone());
+    let postgres_url = cli
+        .postgres_url
+        .clone()
+        .or_else(|| env.postgres_url.clone())
+        .or_else(|| file.postgres_url.clone());
+    let postgres_metadata_schema = cli
+        .postgres_metadata_schema
+        .clone()
+        .or_else(|| env.postgres_metadata_schema.clone())
+        .or_else(|| file.postgres_metadata_schema.clone());
+    let postgres_tenant_schema_prefix = cli
+        .postgres_tenant_schema_prefix
+        .clone()
+        .or_else(|| env.postgres_tenant_schema_prefix.clone())
+        .or_else(|| file.postgres_tenant_schema_prefix.clone());
+    let postgres_min_connections = cli
+        .postgres_min_connections
+        .or(env.postgres_min_connections)
+        .or(file.postgres_min_connections);
+    let postgres_max_connections = cli
+        .postgres_max_connections
+        .or(env.postgres_max_connections)
+        .or(file.postgres_max_connections);
+    let mysql_url = cli
+        .mysql_url
+        .clone()
+        .or_else(|| env.mysql_url.clone())
+        .or_else(|| file.mysql_url.clone());
+    let mysql_metadata_database = cli
+        .mysql_metadata_database
+        .clone()
+        .or_else(|| env.mysql_metadata_database.clone())
+        .or_else(|| file.mysql_metadata_database.clone());
+    let mysql_tenant_database_prefix = cli
+        .mysql_tenant_database_prefix
+        .clone()
+        .or_else(|| env.mysql_tenant_database_prefix.clone())
+        .or_else(|| file.mysql_tenant_database_prefix.clone());
+    let mysql_min_connections = cli
+        .mysql_min_connections
+        .or(env.mysql_min_connections)
+        .or(file.mysql_min_connections);
+    let mysql_max_connections = cli
+        .mysql_max_connections
+        .or(env.mysql_max_connections)
+        .or(file.mysql_max_connections);
+
+    let sqlite_replica_overrides_present = sqlite_url.is_some()
+        || sqlite_auth_token.is_some()
+        || sqlite_admin_url.is_some()
+        || sqlite_admin_auth_header.is_some()
+        || sqlite_metadata_namespace.is_some()
+        || sqlite_tenant_namespace_prefix.is_some()
+        || sqlite_replica_cache_dir.is_some();
+    let postgres_overrides_present = postgres_url.is_some()
+        || postgres_metadata_schema.is_some()
+        || postgres_tenant_schema_prefix.is_some()
+        || postgres_min_connections.is_some()
+        || postgres_max_connections.is_some();
+    let mysql_overrides_present = mysql_url.is_some()
+        || mysql_metadata_database.is_some()
+        || mysql_tenant_database_prefix.is_some()
+        || mysql_min_connections.is_some()
+        || mysql_max_connections.is_some();
+
+    match tenant_provider {
+        CliTenantProvider::Sqlite => {
+            if postgres_overrides_present
+                || mysql_overrides_present
+                || sqlite_replica_overrides_present
+            {
+                return Err(Error::InvalidInput(
+                    "External provider config requires --tenant-provider=sqlite-replica, --tenant-provider=postgres, or --tenant-provider=mysql (or the equivalent env/config setting)"
+                        .to_string(),
+                ));
+            }
+            Ok(ServicePersistenceConfig {
+                tenant_provider: neovex::TenantProviderConfig::embedded(
+                    data_dir,
+                    EmbeddedProviderKind::Sqlite,
+                ),
+                control_plane: neovex::ControlPlaneConfig::embedded_redb(control_data_dir),
+            })
+        }
+        CliTenantProvider::Redb => {
+            if postgres_overrides_present
+                || mysql_overrides_present
+                || sqlite_replica_overrides_present
+            {
+                return Err(Error::InvalidInput(
+                    "External provider config requires --tenant-provider=sqlite-replica, --tenant-provider=postgres, or --tenant-provider=mysql (or the equivalent env/config setting)"
+                        .to_string(),
+                ));
+            }
+            Ok(ServicePersistenceConfig {
+                tenant_provider: neovex::TenantProviderConfig::embedded(
+                    data_dir,
+                    EmbeddedProviderKind::Redb,
+                ),
+                control_plane: neovex::ControlPlaneConfig::embedded_redb(control_data_dir),
+            })
+        }
+        CliTenantProvider::SqliteReplica => {
+            if postgres_overrides_present {
+                return Err(Error::InvalidInput(
+                    "Postgres config requires --tenant-provider=postgres or the equivalent env/config setting"
+                        .to_string(),
+                ));
+            }
+            if mysql_overrides_present {
+                return Err(Error::InvalidInput(
+                    "MySQL config requires --tenant-provider=mysql or the equivalent env/config setting"
+                        .to_string(),
+                ));
+            }
+            let sqlite_url = sqlite_url.ok_or_else(|| {
+                Error::InvalidInput(
+                    "--sqlite-url, NEOVEX_SQLITE_URL, or persistence.sqlite_url is required when the tenant provider is sqlite-replica"
+                        .to_string(),
+                )
+            })?;
+            let sqlite_replica_cache_dir = sqlite_replica_cache_dir.ok_or_else(|| {
+                Error::InvalidInput(
+                    "--sqlite-replica-cache-dir, NEOVEX_SQLITE_REPLICA_CACHE_DIR, or persistence.sqlite_replica_cache_dir is required when the tenant provider is sqlite-replica"
+                        .to_string(),
+                )
+            })?;
+            let sqlite_admin_url = sqlite_admin_url.ok_or_else(|| {
+                Error::InvalidInput(
+                    "--sqlite-admin-url, NEOVEX_SQLITE_ADMIN_URL, or persistence.sqlite_admin_url is required when the tenant provider is sqlite-replica"
+                        .to_string(),
+                )
+            })?;
+            let mut config = ServicePersistenceConfig::sqlite_replica(
+                control_data_dir,
+                sqlite_url,
+                sqlite_auth_token,
+                sqlite_admin_url,
+                sqlite_admin_auth_header,
+                sqlite_replica_cache_dir,
+            );
+            if let neovex::TenantRoutingConfig::NamespacePerTenant {
+                metadata_namespace,
+                tenant_namespace_prefix,
+                ..
+            } = &mut config.tenant_provider.routing
+            {
+                if let Some(value) = sqlite_metadata_namespace {
+                    *metadata_namespace = value;
+                }
+                if let Some(value) = sqlite_tenant_namespace_prefix {
+                    *tenant_namespace_prefix = value;
+                }
+            }
+            Ok(config)
+        }
+        CliTenantProvider::Postgres => {
+            if mysql_overrides_present {
+                return Err(Error::InvalidInput(
+                    "MySQL config requires --tenant-provider=mysql or the equivalent env/config setting"
+                        .to_string(),
+                ));
+            }
+            if sqlite_replica_overrides_present {
+                return Err(Error::InvalidInput(
+                    "Replica-connected SQLite config requires --tenant-provider=sqlite-replica or the equivalent env/config setting"
+                        .to_string(),
+                ));
+            }
+            let postgres_url = postgres_url.ok_or_else(|| {
+                Error::InvalidInput(
+                    "--postgres-url, NEOVEX_POSTGRES_URL, or persistence.postgres_url is required when the tenant provider is postgres"
+                        .to_string(),
+                )
+            })?;
+            let mut config = ServicePersistenceConfig::postgres(control_data_dir, postgres_url);
+            if let neovex::TenantRoutingConfig::SchemaPerTenant {
+                metadata_schema,
+                tenant_schema_prefix,
+            } = &mut config.tenant_provider.routing
+            {
+                if let Some(value) = postgres_metadata_schema {
+                    *metadata_schema = value;
+                }
+                if let Some(value) = postgres_tenant_schema_prefix {
+                    *tenant_schema_prefix = value;
+                }
+            }
+            config.tenant_provider.pool.min_connections = postgres_min_connections;
+            config.tenant_provider.pool.max_connections = postgres_max_connections;
+            Ok(config)
+        }
+        CliTenantProvider::Mysql => {
+            if postgres_overrides_present {
+                return Err(Error::InvalidInput(
+                    "Postgres config requires --tenant-provider=postgres or the equivalent env/config setting"
+                        .to_string(),
+                ));
+            }
+            if sqlite_replica_overrides_present {
+                return Err(Error::InvalidInput(
+                    "Replica-connected SQLite config requires --tenant-provider=sqlite-replica or the equivalent env/config setting"
+                        .to_string(),
+                ));
+            }
+            let mysql_url = mysql_url.ok_or_else(|| {
+                Error::InvalidInput(
+                    "--mysql-url, NEOVEX_MYSQL_URL, or persistence.mysql_url is required when the tenant provider is mysql"
+                        .to_string(),
+                )
+            })?;
+            let mut config = ServicePersistenceConfig::mysql(control_data_dir, mysql_url);
+            if let neovex::TenantRoutingConfig::DatabasePerTenant {
+                metadata_database,
+                tenant_database_prefix,
+            } = &mut config.tenant_provider.routing
+            {
+                if let Some(value) = mysql_metadata_database {
+                    *metadata_database = value;
+                }
+                if let Some(value) = mysql_tenant_database_prefix {
+                    *tenant_database_prefix = value;
+                }
+            }
+            config.tenant_provider.pool.min_connections = mysql_min_connections;
+            config.tenant_provider.pool.max_connections = mysql_max_connections;
+            Ok(config)
+        }
+    }
+}
+
+fn load_runtime_config_file(path: Option<&Path>) -> neovex::Result<RuntimeConfigFile> {
+    let Some(path) = path else {
+        return Ok(RuntimeConfigFile::default());
+    };
+    let bytes = std::fs::read(path).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to read config file {}: {error}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to parse config file {} as JSON: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn optional_env_tenant_provider(key: &str) -> neovex::Result<Option<CliTenantProvider>> {
+    std::env::var(key)
+        .ok()
+        .map(|value| CliTenantProvider::parse_name(&value))
+        .transpose()
+}
+
+fn optional_env_usize(key: &str) -> neovex::Result<Option<usize>> {
+    std::env::var(key)
+        .ok()
+        .map(|value| {
+            value.parse::<usize>().map_err(|error| {
+                Error::InvalidInput(format!(
+                    "failed to parse {key} as an unsigned integer: {error}"
+                ))
+            })
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_CONFIG_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn write_test_config(contents: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "neovex-bin-config-{}-{}.json",
+            std::process::id(),
+            TEST_CONFIG_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, contents).expect("test config file should write");
+        path
+    }
+
+    #[test]
+    fn cli_defaults_to_embedded_sqlite() {
+        let cli = Cli::parse_from(["neovex"]);
+        let config = service_persistence_config_from_sources(
+            &cli,
+            &PersistenceFileConfig::default(),
+            &PersistenceEnv::default(),
+        )
+        .expect("default sqlite config should build");
+        assert_eq!(
+            config,
+            ServicePersistenceConfig::embedded("./data", EmbeddedProviderKind::Sqlite)
+        );
+    }
+
+    #[test]
+    fn cli_builds_postgres_typed_config_with_overrides() {
+        let cli = Cli::parse_from([
+            "neovex",
+            "--tenant-provider",
+            "postgres",
+            "--control-data-dir",
+            "./control",
+            "--data-dir",
+            "./ignored-for-postgres",
+            "--postgres-url",
+            "host=/tmp user=jack dbname=postgres",
+            "--postgres-metadata-schema",
+            "provider_meta",
+            "--postgres-tenant-schema-prefix",
+            "tenant_pg_",
+            "--postgres-min-connections",
+            "2",
+            "--postgres-max-connections",
+            "8",
+        ]);
+        let config = service_persistence_config_from_sources(
+            &cli,
+            &PersistenceFileConfig::default(),
+            &PersistenceEnv::default(),
+        )
+        .expect("postgres config should build");
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control")
+        );
+        assert_eq!(
+            config.tenant_provider.dialect,
+            neovex::PersistenceDialect::Postgres
+        );
+        assert_eq!(
+            config.tenant_provider.topology,
+            neovex::PersistenceTopology::ExternalPrimary
+        );
+        assert_eq!(
+            config.tenant_provider.credentials,
+            neovex::ProviderCredentials::ConnectionString(
+                "host=/tmp user=jack dbname=postgres".to_string()
+            )
+        );
+        assert_eq!(config.tenant_provider.pool.min_connections, Some(2));
+        assert_eq!(config.tenant_provider.pool.max_connections, Some(8));
+        assert_eq!(
+            config.tenant_provider.routing,
+            neovex::TenantRoutingConfig::SchemaPerTenant {
+                metadata_schema: "provider_meta".to_string(),
+                tenant_schema_prefix: "tenant_pg_".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn env_builds_postgres_typed_config_with_generic_resource_name() {
+        let cli = Cli::parse_from(["neovex"]);
+        let env = PersistenceEnv {
+            tenant_provider: Some(CliTenantProvider::Postgres),
+            control_data_dir: Some(PathBuf::from("./control-from-env")),
+            postgres_url: Some("host=/tmp user=jack dbname=postgres".to_string()),
+            postgres_min_connections: Some(3),
+            postgres_max_connections: Some(9),
+            ..PersistenceEnv::default()
+        };
+
+        let config =
+            service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
+                .expect("env-backed postgres config should build");
+
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control-from-env")
+        );
+        assert_eq!(
+            config.tenant_provider.credentials,
+            neovex::ProviderCredentials::ConnectionString(
+                "host=/tmp user=jack dbname=postgres".to_string()
+            )
+        );
+        assert_eq!(config.tenant_provider.pool.min_connections, Some(3));
+        assert_eq!(config.tenant_provider.pool.max_connections, Some(9));
+    }
+
+    #[test]
+    fn cli_builds_sqlite_replica_typed_config_with_overrides() {
+        let cli = Cli::parse_from([
+            "neovex",
+            "--tenant-provider",
+            "sqlite-replica",
+            "--control-data-dir",
+            "./control",
+            "--sqlite-url",
+            "libsql://127.0.0.1:8080",
+            "--sqlite-auth-token",
+            "replica-secret",
+            "--sqlite-admin-url",
+            "http://127.0.0.1:8081",
+            "--sqlite-admin-auth-header",
+            "Bearer replica-admin",
+            "--sqlite-metadata-namespace",
+            "provider_meta",
+            "--sqlite-tenant-namespace-prefix",
+            "tenant_sqlite_",
+            "--sqlite-replica-cache-dir",
+            "./replica-cache",
+        ]);
+        let config = service_persistence_config_from_sources(
+            &cli,
+            &PersistenceFileConfig::default(),
+            &PersistenceEnv::default(),
+        )
+        .expect("sqlite replica config should build");
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control")
+        );
+        assert_eq!(
+            config.tenant_provider.dialect,
+            neovex::PersistenceDialect::Sqlite
+        );
+        assert_eq!(
+            config.tenant_provider.topology,
+            neovex::PersistenceTopology::ExternalPrimaryWithReplicas
+        );
+        assert_eq!(
+            config.tenant_provider.credentials,
+            neovex::ProviderCredentials::SqliteReplica {
+                primary_url: "libsql://127.0.0.1:8080".to_string(),
+                auth_token: Some("replica-secret".to_string()),
+                admin_api_url: "http://127.0.0.1:8081".to_string(),
+                admin_auth_header: Some("Bearer replica-admin".to_string()),
+            }
+        );
+        assert_eq!(
+            config.tenant_provider.routing,
+            neovex::TenantRoutingConfig::NamespacePerTenant {
+                metadata_namespace: "provider_meta".to_string(),
+                tenant_namespace_prefix: "tenant_sqlite_".to_string(),
+                replica_cache_dir: PathBuf::from("./replica-cache"),
+            }
+        );
+    }
+
+    #[test]
+    fn env_builds_sqlite_replica_typed_config_with_generic_resource_name() {
+        let cli = Cli::parse_from(["neovex"]);
+        let env = PersistenceEnv {
+            tenant_provider: Some(CliTenantProvider::SqliteReplica),
+            control_data_dir: Some(PathBuf::from("./control-from-env")),
+            sqlite_url: Some("libsql://127.0.0.1:8080".to_string()),
+            sqlite_admin_url: Some("http://127.0.0.1:8081".to_string()),
+            sqlite_replica_cache_dir: Some(PathBuf::from("./replica-cache-from-env")),
+            ..PersistenceEnv::default()
+        };
+
+        let config =
+            service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
+                .expect("env-backed sqlite replica config should build");
+
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control-from-env")
+        );
+        assert_eq!(
+            config.tenant_provider.credentials,
+            neovex::ProviderCredentials::SqliteReplica {
+                primary_url: "libsql://127.0.0.1:8080".to_string(),
+                auth_token: None,
+                admin_api_url: "http://127.0.0.1:8081".to_string(),
+                admin_auth_header: None,
+            }
+        );
+        assert_eq!(
+            config.tenant_provider.routing,
+            neovex::TenantRoutingConfig::NamespacePerTenant {
+                metadata_namespace: "neovex_provider".to_string(),
+                tenant_namespace_prefix: "tenant_".to_string(),
+                replica_cache_dir: PathBuf::from("./replica-cache-from-env"),
+            }
+        );
+    }
+
+    #[test]
+    fn cli_builds_mysql_typed_config_with_overrides() {
+        let cli = Cli::parse_from([
+            "neovex",
+            "--tenant-provider",
+            "mysql",
+            "--control-data-dir",
+            "./control",
+            "--data-dir",
+            "./ignored-for-mysql",
+            "--mysql-url",
+            "mysql://root:password@127.0.0.1:3306/neovex",
+            "--mysql-metadata-database",
+            "provider_meta",
+            "--mysql-tenant-database-prefix",
+            "tenant_mysql_",
+            "--mysql-min-connections",
+            "2",
+            "--mysql-max-connections",
+            "8",
+        ]);
+        let config = service_persistence_config_from_sources(
+            &cli,
+            &PersistenceFileConfig::default(),
+            &PersistenceEnv::default(),
+        )
+        .expect("mysql config should build");
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control")
+        );
+        assert_eq!(
+            config.tenant_provider.dialect,
+            neovex::PersistenceDialect::MySql
+        );
+        assert_eq!(
+            config.tenant_provider.topology,
+            neovex::PersistenceTopology::ExternalPrimary
+        );
+        assert_eq!(
+            config.tenant_provider.credentials,
+            neovex::ProviderCredentials::ConnectionString(
+                "mysql://root:password@127.0.0.1:3306/neovex".to_string()
+            )
+        );
+        assert_eq!(config.tenant_provider.pool.min_connections, Some(2));
+        assert_eq!(config.tenant_provider.pool.max_connections, Some(8));
+        assert_eq!(
+            config.tenant_provider.routing,
+            neovex::TenantRoutingConfig::DatabasePerTenant {
+                metadata_database: "provider_meta".to_string(),
+                tenant_database_prefix: "tenant_mysql_".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn env_builds_mysql_typed_config_with_generic_resource_name() {
+        let cli = Cli::parse_from(["neovex"]);
+        let env = PersistenceEnv {
+            tenant_provider: Some(CliTenantProvider::Mysql),
+            control_data_dir: Some(PathBuf::from("./control-from-env")),
+            mysql_url: Some("mysql://root:password@127.0.0.1:3306/neovex".to_string()),
+            mysql_min_connections: Some(3),
+            mysql_max_connections: Some(9),
+            ..PersistenceEnv::default()
+        };
+
+        let config =
+            service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
+                .expect("env-backed mysql config should build");
+
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control-from-env")
+        );
+        assert_eq!(
+            config.tenant_provider.credentials,
+            neovex::ProviderCredentials::ConnectionString(
+                "mysql://root:password@127.0.0.1:3306/neovex".to_string()
+            )
+        );
+        assert_eq!(config.tenant_provider.pool.min_connections, Some(3));
+        assert_eq!(config.tenant_provider.pool.max_connections, Some(9));
+    }
+
+    #[test]
+    fn config_file_builds_split_embedded_sqlite_config() {
+        let path = write_test_config(
+            r#"{
+  "persistence": {
+    "tenant_provider": "sqlite",
+    "data_dir": "./tenant-data",
+    "control_data_dir": "./control-data"
+  }
+}"#,
+        );
+        let cli = Cli::parse_from(["neovex", "--config", path.to_str().unwrap()]);
+        let file_config =
+            load_runtime_config_file(Some(path.as_path())).expect("config file should load");
+
+        let config = service_persistence_config_from_sources(
+            &cli,
+            &file_config.persistence,
+            &PersistenceEnv::default(),
+        )
+        .expect("config-backed sqlite config should build");
+
+        assert_eq!(
+            config.tenant_provider,
+            neovex::TenantProviderConfig::embedded("./tenant-data", EmbeddedProviderKind::Sqlite)
+        );
+        assert_eq!(
+            config.control_plane,
+            neovex::ControlPlaneConfig::embedded_redb("./control-data")
+        );
+    }
+
+    #[test]
+    fn cli_overrides_config_file_postgres_pool_settings() {
+        let path = write_test_config(
+            r#"{
+  "persistence": {
+    "tenant_provider": "postgres",
+    "control_data_dir": "./control",
+    "postgres_url": "host=/tmp user=jack dbname=postgres",
+    "postgres_min_connections": 2,
+    "postgres_max_connections": 4
+  }
+}"#,
+        );
+        let cli = Cli::parse_from([
+            "neovex",
+            "--config",
+            path.to_str().unwrap(),
+            "--postgres-max-connections",
+            "8",
+        ]);
+        let file_config =
+            load_runtime_config_file(Some(path.as_path())).expect("config file should load");
+
+        let config = service_persistence_config_from_sources(
+            &cli,
+            &file_config.persistence,
+            &PersistenceEnv::default(),
+        )
+        .expect("config + cli postgres config should build");
+
+        assert_eq!(config.tenant_provider.pool.min_connections, Some(2));
+        assert_eq!(config.tenant_provider.pool.max_connections, Some(8));
+    }
 }

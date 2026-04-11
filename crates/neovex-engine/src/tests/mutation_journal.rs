@@ -1276,7 +1276,7 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
 
 #[tokio::test]
 async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility() {
-    let (service, tenant_id, faults, document_id) =
+    let (_data_dir, service, tenant_id, faults, document_id) =
         create_service_with_durable_unapplied_task(44_000, "async-get-cancel").await;
     let probe = BlockingCancellationProbe::new();
 
@@ -1326,7 +1326,7 @@ async fn get_document_async_cancellable_returns_cancelled_while_waiting_for_appl
 #[tokio::test]
 async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility()
 {
-    let (service, tenant_id, faults, _) =
+    let (_data_dir, service, tenant_id, faults, _) =
         create_service_with_durable_unapplied_task(44_500, "async-query-cancel").await;
     let probe = BlockingCancellationProbe::new();
 
@@ -1375,7 +1375,7 @@ async fn query_documents_async_cancellable_returns_cancelled_while_waiting_for_a
 #[tokio::test]
 async fn paginate_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility()
  {
-    let (service, tenant_id, faults, _) =
+    let (_data_dir, service, tenant_id, faults, _) =
         create_service_with_durable_unapplied_task(44_750, "async-page-cancel").await;
     let probe = BlockingCancellationProbe::new();
 

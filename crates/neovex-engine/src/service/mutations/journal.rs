@@ -13,6 +13,7 @@ use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::Service;
+use crate::persistence::TenantPersistence;
 use crate::tenant::{
     QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
 };
@@ -98,14 +99,22 @@ impl Service {
                 Ok(Err(error)) => {
                     runtime.record_mutation_worker_failure();
                     warn!(error = %error, "mutation journal batch failed");
-                    if let Ok(progress) = runtime.store.recover_durable_journal() {
+                    if let Ok(progress) = runtime
+                        .read_storage
+                        .execute(|store| store.recover_durable_journal())
+                        .await
+                    {
                         runtime.sync_mutation_journal_progress(progress);
                     }
                 }
                 Err(error) => {
                     runtime.record_mutation_worker_failure();
                     warn!(error = %error, "mutation journal worker panicked");
-                    if let Ok(progress) = runtime.store.recover_durable_journal() {
+                    if let Ok(progress) = runtime
+                        .read_storage
+                        .execute(|store| store.recover_durable_journal())
+                        .await
+                    {
                         runtime.sync_mutation_journal_progress(progress);
                     }
                 }
@@ -236,13 +245,13 @@ fn process_queued_mutation_batch(
     }
 
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
-        let message = format!("durable journal append failed: {error}");
+        let mapped_error = map_durable_journal_append_error(&error);
         for active_request in active {
             let _ = active_request
                 .response
-                .send(Err(Error::Internal(message.clone())));
+                .send(Err(map_durable_journal_append_error(&error)));
         }
-        return Err(Error::Internal(message));
+        return Err(mapped_error);
     }
 
     if let Some(last_record) = records.last() {
@@ -264,7 +273,16 @@ fn process_queued_mutation_batch(
         .check_fault(neovex_storage::FaultPoint::JournalDurableAppendBeforeApply)?;
 
     let applied_head = match runtime.store.apply_durable_records_batch(&records) {
-        Ok(()) => runtime.store.applied_sequence()?,
+        Ok(()) => {
+            if matches!(&runtime.store, TenantPersistence::SqliteReplica(_)) {
+                records
+                    .last()
+                    .expect("non-empty durable batch should have a last record")
+                    .sequence
+            } else {
+                runtime.store.applied_sequence()?
+            }
+        }
         Err(_) => {
             let progress = runtime.store.recover_durable_journal()?;
             progress.applied_head
@@ -463,6 +481,13 @@ fn plan_queued_mutation_request(
                 }],
             })
         }
+    }
+}
+
+fn map_durable_journal_append_error(error: &Error) -> Error {
+    match error {
+        Error::InvalidInput(message) => Error::InvalidInput(message.clone()),
+        _ => Error::Internal(format!("durable journal append failed: {error}")),
     }
 }
 

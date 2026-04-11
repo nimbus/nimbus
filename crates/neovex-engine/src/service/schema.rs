@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use neovex_core::{Error, Result, Schema, TableName, TableSchema, TenantId};
-use neovex_storage::TenantWriteStorage;
+use neovex_core::{Error, Result, Schema, TableName, TableSchema, TenantId, policy_revision_id};
+
+use crate::persistence::TenantPersistence;
+use crate::tenant::TenantRuntime;
 
 use super::Service;
 
@@ -21,14 +24,11 @@ impl Service {
         let next_policy_revision = table_schema.access_policy_revision()?;
 
         runtime.store.replace_table_schema(&table_schema)?;
-        let mut schema = runtime
-            .schema
-            .write()
-            .expect("schema lock should not be poisoned");
+        let mut schema = runtime.schema();
         Arc::make_mut(&mut schema)
             .tables
             .insert(table.clone(), table_schema);
-        drop(schema);
+        runtime.schema.store(schema);
 
         if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
             runtime.clear_document_cache();
@@ -67,14 +67,11 @@ impl Service {
                 transaction.replace_table_schema(&table_schema_for_task)
             })
             .await?;
-        let mut schema = runtime
-            .schema
-            .write()
-            .expect("schema lock should not be poisoned");
+        let mut schema = runtime.schema();
         Arc::make_mut(&mut schema)
             .tables
             .insert(table.clone(), table_schema);
-        drop(schema);
+        runtime.schema.store(schema);
 
         if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
             runtime.clear_document_cache();
@@ -137,12 +134,9 @@ impl Service {
             .map(TableSchema::access_policy_revision)
             .transpose()?;
         runtime.store.delete_table_schema(table)?;
-        let mut schema = runtime
-            .schema
-            .write()
-            .expect("schema lock should not be poisoned");
+        let mut schema = runtime.schema();
         Arc::make_mut(&mut schema).tables.remove(table);
-        drop(schema);
+        runtime.schema.store(schema);
         let removed_policy_revision = neovex_core::policy_revision_id(None)?;
         if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
             runtime.clear_document_cache();
@@ -177,12 +171,9 @@ impl Service {
                 transaction.delete_table_schema(&table_for_task)
             })
             .await?;
-        let mut schema = runtime
-            .schema
-            .write()
-            .expect("schema lock should not be poisoned");
+        let mut schema = runtime.schema();
         Arc::make_mut(&mut schema).tables.remove(&table);
-        drop(schema);
+        runtime.schema.store(schema);
         let removed_policy_revision = neovex_core::policy_revision_id(None)?;
         if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
             runtime.clear_document_cache();
@@ -193,5 +184,67 @@ impl Service {
             );
         }
         Ok(())
+    }
+    pub(super) async fn refresh_loaded_schema_from_store_async(
+        &self,
+        runtime: &Arc<TenantRuntime>,
+    ) -> Result<()> {
+        let next_schema = match &runtime.store {
+            TenantPersistence::Postgres(store) => store.load_schema_async().await?,
+            TenantPersistence::Redb(_)
+            | TenantPersistence::Sqlite(_)
+            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::MySql(_) => {
+                runtime
+                    .read_storage
+                    .execute(|store| store.load_schema())
+                    .await?
+            }
+        };
+        apply_loaded_schema_snapshot(runtime, next_schema)
+    }
+}
+
+fn apply_loaded_schema_snapshot(runtime: &Arc<TenantRuntime>, next_schema: Schema) -> Result<()> {
+    let previous_schema = runtime.schema();
+    if previous_schema.as_ref() == &next_schema {
+        return Ok(());
+    }
+
+    let mut changed_policy_tables = Vec::new();
+    let table_names = previous_schema
+        .tables
+        .keys()
+        .chain(next_schema.tables.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for table in table_names {
+        let previous_revision = effective_policy_revision(previous_schema.get_table(&table))?;
+        let next_revision = effective_policy_revision(next_schema.get_table(&table))?;
+        if previous_revision != next_revision {
+            changed_policy_tables.push((table, next_revision));
+        }
+    }
+
+    runtime.schema.store(Arc::new(next_schema));
+
+    if !changed_policy_tables.is_empty() {
+        runtime.clear_document_cache();
+        for (table, revision) in changed_policy_tables {
+            runtime.subscriptions.terminate_policy_revision_mismatches(
+                &table,
+                &revision,
+                "authorization policy changed; resubscribe",
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn effective_policy_revision(table_schema: Option<&TableSchema>) -> Result<String> {
+    match table_schema {
+        Some(table_schema) => table_schema.access_policy_revision(),
+        None => policy_revision_id(None),
     }
 }

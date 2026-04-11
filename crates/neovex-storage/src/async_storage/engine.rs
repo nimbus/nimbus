@@ -4,28 +4,51 @@ use std::sync::Arc;
 use neovex_core::{Error, Result, TenantId};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::{Clock, FaultInjector, TenantStore, UsageStore};
+use crate::{Clock, FaultInjector, TenantStore};
 
 use super::helpers::map_join_error;
-use super::read::{RedbTenantStorage, RedbUsageStorage, default_tenant_read_parallelism};
-use super::traits::StorageEngine;
+use super::read::{RedbTenantStorage, default_tenant_read_parallelism};
+use super::traits::EmbeddedPersistenceProvider;
 
-pub struct OpenedRedbTenant {
+/// Selects the retained embedded persistence provider from the composition root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmbeddedProviderKind {
+    #[default]
+    Sqlite,
+    Redb,
+}
+
+impl EmbeddedProviderKind {
+    pub const fn tenant_file_extension(self) -> &'static str {
+        match self {
+            Self::Redb => "redb",
+            Self::Sqlite => "sqlite3",
+        }
+    }
+
+    pub const fn control_database_filename(self) -> &'static str {
+        match self {
+            Self::Redb => "neovex-control.db",
+            Self::Sqlite => "neovex-control.sqlite3",
+        }
+    }
+}
+
+pub struct OpenedEmbeddedRedbTenant {
     pub store: Arc<TenantStore>,
     pub read_storage: Arc<RedbTenantStorage>,
 }
 
 #[derive(Clone)]
-pub struct RedbStorageEngine {
+pub struct EmbeddedRedbProvider {
     data_dir: PathBuf,
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
-    usage_storage: Arc<RedbUsageStorage>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
 }
 
-impl RedbStorageEngine {
+impl EmbeddedRedbProvider {
     pub fn new(
         data_dir: impl Into<PathBuf>,
         clock: Arc<dyn Clock>,
@@ -33,23 +56,13 @@ impl RedbStorageEngine {
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
         let data_dir = data_dir.into();
-        let usage_store = Arc::new(UsageStore::open(data_dir.join("neovex-control.db"))?);
         Ok(Self {
             data_dir,
             clock,
             fault_injector,
-            usage_storage: Arc::new(RedbUsageStorage::new(usage_store, storage_handle.clone())),
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
         })
-    }
-
-    pub fn usage_store(&self) -> Arc<UsageStore> {
-        self.usage_storage.store()
-    }
-
-    pub fn usage_storage(&self) -> Arc<RedbUsageStorage> {
-        self.usage_storage.clone()
     }
 
     pub fn read_storage_for_store(&self, store: Arc<TenantStore>) -> Arc<RedbTenantStorage> {
@@ -60,7 +73,7 @@ impl RedbStorageEngine {
         ))
     }
 
-    pub async fn create_tenant(&self, tenant_id: &TenantId) -> Result<OpenedRedbTenant> {
+    pub async fn create_tenant(&self, tenant_id: &TenantId) -> Result<OpenedEmbeddedRedbTenant> {
         let path = self.tenant_path(tenant_id);
         if tokio::fs::try_exists(&path)
             .await
@@ -77,7 +90,7 @@ impl RedbStorageEngine {
     pub async fn open_existing_tenant(
         &self,
         tenant_id: &TenantId,
-    ) -> Result<Option<OpenedRedbTenant>> {
+    ) -> Result<Option<OpenedEmbeddedRedbTenant>> {
         let path = self.tenant_path(tenant_id);
         if !tokio::fs::try_exists(&path)
             .await
@@ -102,10 +115,14 @@ impl RedbStorageEngine {
     }
 
     fn tenant_path(&self, tenant_id: &TenantId) -> PathBuf {
-        self.data_dir.join(format!("{}.redb", tenant_id.as_str()))
+        self.data_dir.join(format!(
+            "{}.{}",
+            tenant_id.as_str(),
+            EmbeddedProviderKind::Redb.tenant_file_extension()
+        ))
     }
 
-    async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedRedbTenant> {
+    async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedEmbeddedRedbTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
         let store = self
@@ -116,16 +133,15 @@ impl RedbStorageEngine {
 
         let store = Arc::new(store);
         let read_storage = self.read_storage_for_store(store.clone());
-        Ok(OpenedRedbTenant {
+        Ok(OpenedEmbeddedRedbTenant {
             store,
             read_storage,
         })
     }
 }
 
-impl StorageEngine for RedbStorageEngine {
+impl EmbeddedPersistenceProvider for EmbeddedRedbProvider {
     type TenantRead = RedbTenantStorage;
-    type Usage = RedbUsageStorage;
 
     async fn list_tenants(&self) -> Result<Vec<TenantId>> {
         let data_dir = self.data_dir.clone();
@@ -137,10 +153,9 @@ impl StorageEngine for RedbStorageEngine {
                 for entry in entries {
                     let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
                     let path = entry.path();
-                    if path
-                        .extension()
-                        .is_some_and(|extension| extension == "redb")
-                        && let Some(stem) = path.file_stem()
+                    if path.extension().is_some_and(|extension| {
+                        extension == EmbeddedProviderKind::Redb.tenant_file_extension()
+                    }) && let Some(stem) = path.file_stem()
                     {
                         tenants.push(TenantId::new(stem.to_string_lossy().to_string())?);
                     }

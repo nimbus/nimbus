@@ -154,6 +154,8 @@ impl RedbTenantStorage {
 }
 
 impl TenantReadStorage for RedbTenantStorage {
+    type Store = TenantStore;
+
     async fn execute<T, F>(&self, task: F) -> Result<T>
     where
         T: Send + 'static,
@@ -198,6 +200,8 @@ impl RedbUsageStorage {
 }
 
 impl UsageStorage for RedbUsageStorage {
+    type Store = UsageStore;
+
     async fn execute<T, F>(&self, task: F) -> Result<T>
     where
         T: Send + 'static,

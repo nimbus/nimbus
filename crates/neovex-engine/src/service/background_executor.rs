@@ -46,6 +46,10 @@ impl BackgroundExecutor {
         self.handle.clone()
     }
 
+    pub(crate) fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+
     pub(crate) fn spawn<F>(&self, future: F) -> Result<JoinHandle<F::Output>>
     where
         F: Future + Send + 'static,

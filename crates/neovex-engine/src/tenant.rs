@@ -1,11 +1,12 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 #[cfg(test)]
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
 use neovex_core::{Result, Schema, TenantId};
-use neovex_storage::{RedbTenantStorage, TenantStore};
 use serde::Serialize;
 
+use crate::persistence::{TenantPersistence, TenantPersistenceExecutor};
 use crate::subscriptions::SubscriptionRegistry;
 
 mod document_cache;
@@ -56,10 +57,10 @@ pub use self::subscription_delivery::SubscriptionDeliveryStats;
 
 /// Runtime state for a loaded tenant.
 pub struct TenantRuntime {
-    pub store: Arc<TenantStore>,
-    pub read_storage: Arc<RedbTenantStorage>,
+    pub store: TenantPersistence,
+    pub read_storage: TenantPersistenceExecutor,
     pub subscriptions: SubscriptionRegistry,
-    pub schema: RwLock<Arc<Schema>>,
+    pub schema: ArcSwap<Schema>,
     document_cache: TenantDocumentCache,
     materialized_reads: TenantMaterializedReadSurface,
     query_planning: QueryPlanningMetrics,
@@ -94,18 +95,17 @@ impl Drop for TenantOperationGuard {
 }
 
 impl TenantRuntime {
-    /// Creates a tenant runtime from a store.
-    pub fn from_parts(
-        store: Arc<TenantStore>,
-        read_storage: Arc<RedbTenantStorage>,
-    ) -> Result<Self> {
-        let schema = store.load_schema()?;
-        let progress = store.journal_progress()?;
-        Ok(Self {
+    fn from_initialized_parts(
+        store: TenantPersistence,
+        read_storage: TenantPersistenceExecutor,
+        schema: Schema,
+        progress: neovex_storage::JournalProgress,
+    ) -> Self {
+        Self {
             store,
             read_storage,
             subscriptions: SubscriptionRegistry::new(),
-            schema: RwLock::new(Arc::new(schema)),
+            schema: ArcSwap::new(Arc::new(schema)),
             document_cache: TenantDocumentCache::new(),
             materialized_reads: TenantMaterializedReadSurface::new(),
             query_planning: QueryPlanningMetrics::new(),
@@ -115,15 +115,55 @@ impl TenantRuntime {
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
-        })
+        }
+    }
+
+    /// Creates a tenant runtime from a store.
+    pub fn from_parts(
+        store: TenantPersistence,
+        read_storage: TenantPersistenceExecutor,
+    ) -> Result<Self> {
+        let schema = store.load_schema()?;
+        let progress = store.journal_progress()?;
+        Ok(Self::from_initialized_parts(
+            store,
+            read_storage,
+            schema,
+            progress,
+        ))
+    }
+
+    /// Creates a tenant runtime asynchronously from a store.
+    pub async fn from_parts_async(
+        store: TenantPersistence,
+        read_storage: TenantPersistenceExecutor,
+    ) -> Result<Self> {
+        let (schema, progress) = match &store {
+            TenantPersistence::Postgres(store) => {
+                let schema = store.load_schema_async().await?;
+                let progress = store.journal_progress_async().await?;
+                (schema, progress)
+            }
+            TenantPersistence::Redb(_)
+            | TenantPersistence::Sqlite(_)
+            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::MySql(_) => {
+                read_storage
+                    .execute(|store| Ok((store.load_schema()?, store.journal_progress()?)))
+                    .await?
+            }
+        };
+        Ok(Self::from_initialized_parts(
+            store,
+            read_storage,
+            schema,
+            progress,
+        ))
     }
 
     /// Returns the current schema snapshot.
     pub fn schema(&self) -> Arc<Schema> {
-        self.schema
-            .read()
-            .expect("schema lock should not be poisoned")
-            .clone()
+        self.schema.load_full()
     }
 
     /// Enters a tenant operation, preventing deletion while the operation is active.

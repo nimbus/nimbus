@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use neovex_core::{DurableMutationRecord, Result, SequenceNumber, TenantId};
-use neovex_storage::{DurableJournalBootstrap, DurableJournalPage, TenantReadStorage, TenantStore};
+use neovex_storage::{DurableJournalBootstrap, DurableJournalPage};
 
+use crate::persistence::TenantPersistence;
 use crate::service::Service;
 
 impl Service {
@@ -13,7 +14,7 @@ impl Service {
     ) -> Result<T>
     where
         T: Send + 'static,
-        F: FnOnce(Arc<TenantStore>) -> Result<T> + Send + 'static,
+        F: FnOnce(TenantPersistence) -> Result<T> + Send + 'static,
     {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let tenant_id_for_task = tenant_id.clone();

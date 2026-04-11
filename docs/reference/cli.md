@@ -25,6 +25,50 @@ If `--license-file` is not provided, Neovex next checks
 `NEOVEX_LICENSE_FILE`, then `./.neovex/license.json`, and otherwise falls back
 to the built-in community license.
 
+## Persistence Flags
+
+The tenant persistence mode is selected with `--tenant-provider`:
+
+- `sqlite`
+  embedded SQLite with one tenant file per tenant
+- `redb`
+  retained embedded redb provider
+- `sqlite-replica`
+  future replica-connected SQLite provider family; today the typed config is
+  wired and validated, but service construction still fails clearly until the
+  provider implementation lands
+- `postgres`
+  Postgres-backed external tenant persistence
+- `mysql`
+  MySQL-backed external tenant persistence
+
+Provider-specific flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--control-data-dir` | optional override for the local redb control-plane directory |
+| `--sqlite-url` | canonical libsql primary URL for `--tenant-provider=sqlite-replica` |
+| `--sqlite-auth-token` | optional auth token for the libsql primary |
+| `--sqlite-admin-url` | required libsql admin/provisioning API URL for namespace lifecycle when `--tenant-provider=sqlite-replica` |
+| `--sqlite-admin-auth-header` | optional `Authorization` header value for the libsql admin API |
+| `--sqlite-metadata-namespace` | provider metadata namespace for replica-connected SQLite routing |
+| `--sqlite-tenant-namespace-prefix` | prefix used when deriving per-tenant libsql namespaces |
+| `--sqlite-replica-cache-dir` | provider-owned local cache root for embedded replica files |
+| `--postgres-url` | canonical Postgres resource URL |
+| `--postgres-metadata-schema` | provider metadata schema for Postgres routing |
+| `--postgres-tenant-schema-prefix` | prefix used when deriving per-tenant Postgres schemas |
+| `--postgres-min-connections` | optional minimum Postgres pool size |
+| `--postgres-max-connections` | optional maximum Postgres pool size |
+| `--mysql-url` | canonical MySQL resource URL |
+| `--mysql-metadata-database` | provider metadata database for MySQL routing |
+| `--mysql-tenant-database-prefix` | prefix used when deriving per-tenant MySQL databases |
+| `--mysql-min-connections` | optional minimum MySQL pool size |
+| `--mysql-max-connections` | optional maximum MySQL pool size |
+
+The same values can also be supplied through the corresponding `NEOVEX_*`
+environment variables or the JSON config file referenced by `--config` or
+`NEOVEX_CONFIG`.
+
 ## Runtime Flags
 
 | Flag | Default | Meaning |

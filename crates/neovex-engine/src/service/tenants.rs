@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use neovex_storage::StorageEngine;
-
 use neovex_core::{Error, Result, TenantId};
 
+use crate::persistence::TenantPersistence;
 use crate::tenant::TenantRuntime;
 
 use super::Service;
@@ -12,6 +11,7 @@ use super::Service;
 impl Service {
     /// Creates a tenant explicitly.
     pub fn create_tenant(&self, tenant_id: TenantId) -> Result<()> {
+        self.require_embedded_provider_kind()?;
         let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let path = self.tenant_path(&tenant_id);
         let mut tenants = self
@@ -31,6 +31,7 @@ impl Service {
 
     /// Creates a tenant explicitly asynchronously.
     pub async fn create_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
+        self.ensure_provider_background_tasks_started();
         let _tenant_load_guard = self.tenant_load_gate.lock().await;
         if self
             .tenants
@@ -43,11 +44,13 @@ impl Service {
             )));
         }
 
-        let opened = self.storage_engine.create_tenant(&tenant_id).await?;
-        let runtime = Arc::new(TenantRuntime::from_parts(
-            opened.store,
-            opened.read_storage,
-        )?);
+        let opened = self.persistence_provider.create_tenant(&tenant_id).await?;
+        let runtime =
+            Arc::new(TenantRuntime::from_parts_async(opened.persistence, opened.executor).await?);
+        if !self.provider_background_ready() {
+            self.catch_up_loaded_provider_tenant_async(runtime.clone(), &tenant_id, true, true)
+                .await?;
+        }
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")
@@ -57,16 +60,16 @@ impl Service {
 
     /// Lists all tenant ids on disk.
     pub fn list_tenants(&self) -> Result<Vec<TenantId>> {
+        let embedded_provider_kind = self.require_embedded_provider_kind()?;
         let mut tenants = Vec::new();
         let entries = std::fs::read_dir(&self.data_dir)
             .map_err(|error| Error::Internal(error.to_string()))?;
         for entry in entries {
             let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
             let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "redb")
-                && let Some(stem) = path.file_stem()
+            if path.extension().is_some_and(|extension| {
+                extension == embedded_provider_kind.tenant_file_extension()
+            }) && let Some(stem) = path.file_stem()
             {
                 tenants.push(TenantId::new(stem.to_string_lossy().to_string())?);
             }
@@ -77,11 +80,13 @@ impl Service {
 
     /// Lists all tenant ids on disk asynchronously.
     pub async fn list_tenants_async(self: &Arc<Self>) -> Result<Vec<TenantId>> {
-        self.storage_engine.list_tenants().await
+        self.ensure_provider_background_tasks_started();
+        self.persistence_provider.list_tenants().await
     }
 
     /// Deletes a tenant database and evicts it from memory.
     pub fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
+        let _embedded_provider_kind = self.require_embedded_provider_kind()?;
         let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let path = self.tenant_path(tenant_id);
         if !path.exists() {
@@ -106,6 +111,7 @@ impl Service {
 
     /// Deletes a tenant database and evicts it from memory asynchronously.
     pub async fn delete_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
+        self.ensure_provider_background_tasks_started();
         let _tenant_load_guard = self.tenant_load_gate.lock().await;
         let runtime = {
             self.tenants
@@ -113,7 +119,7 @@ impl Service {
                 .expect("tenant registry lock should not be poisoned")
                 .remove(&tenant_id)
         };
-        if runtime.is_none() && !self.storage_engine.tenant_exists(&tenant_id).await? {
+        if runtime.is_none() && !self.persistence_provider.tenant_exists(&tenant_id).await? {
             return Err(Error::TenantNotFound(tenant_id));
         }
         if let Some(runtime) = runtime {
@@ -123,7 +129,7 @@ impl Service {
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));
         }
-        self.storage_engine.delete_tenant(&tenant_id).await?;
+        self.persistence_provider.delete_tenant(&tenant_id).await?;
         Ok(())
     }
 
@@ -175,6 +181,7 @@ impl Service {
         self: &Arc<Self>,
         tenant_id: &TenantId,
     ) -> Result<Arc<TenantRuntime>> {
+        self.ensure_provider_background_tasks_started();
         if let Some(runtime) = self
             .tenants
             .read()
@@ -196,15 +203,34 @@ impl Service {
             return Ok(runtime);
         }
 
-        let Some(opened) = self.storage_engine.open_existing_tenant(tenant_id).await? else {
+        let Some(opened) = self
+            .persistence_provider
+            .open_existing_tenant(tenant_id)
+            .await?
+        else {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         };
-        let runtime = Arc::new(TenantRuntime::from_parts(
-            opened.store.clone(),
-            opened.read_storage,
-        )?);
-        let progress = opened.store.recover_durable_journal()?;
+        let opened_executor = opened.executor.clone();
+        let runtime = Arc::new(
+            TenantRuntime::from_parts_async(opened.persistence.clone(), opened_executor).await?,
+        );
+        let progress = match &opened.persistence {
+            TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
+            TenantPersistence::Redb(_)
+            | TenantPersistence::Sqlite(_)
+            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::MySql(_) => {
+                opened
+                    .executor
+                    .execute(|store| store.recover_durable_journal())
+                    .await?
+            }
+        };
         runtime.sync_mutation_journal_progress(progress);
+        if !self.provider_background_ready() {
+            self.catch_up_loaded_provider_tenant_async(runtime.clone(), tenant_id, true, true)
+                .await?;
+        }
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")
@@ -213,6 +239,13 @@ impl Service {
     }
 
     pub(super) fn tenant_path(&self, tenant_id: &TenantId) -> PathBuf {
-        self.data_dir.join(format!("{}.redb", tenant_id.as_str()))
+        let embedded_provider_kind = self
+            .require_embedded_provider_kind()
+            .expect("tenant path should only be used for embedded providers");
+        self.data_dir.join(format!(
+            "{}.{}",
+            tenant_id.as_str(),
+            embedded_provider_kind.tenant_file_extension()
+        ))
     }
 }
