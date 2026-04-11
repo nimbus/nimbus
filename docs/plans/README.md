@@ -16,15 +16,17 @@ This directory prefers a small-number-of-plans model with clear ownership.
 ## Deferred design and experiment plans
 
 - `docs/plans/vmm-infrastructure-plan.md`
-  - canonical plan for building the VMM infrastructure: fork libkrun (embed
-    kernel), fork crun (static linkage + vsock), neovex build system
-    integration (static C deps, bindgen FFI), and `--internal-vmm` re-exec
-    entry point; produces the single-binary VMM foundation
+  - canonical plan for VMM infrastructure: fork crun (+10 lines for TSI port
+    mapping), system dependencies (conmon, buildah, libkrun, libkrunfw,
+    catatonit, passt), conmon process model; follows Podman's architecture
 - `docs/plans/microvm-runtime-plan.md`
-  - canonical plan for the microVM runtime built on vmm-infrastructure: OCI
-    image management, custom guest init (neovex-init), lifecycle probes
-    (startup/readiness/liveness), graceful shutdown, restart policy, engine
-    integration (ctx.services.*), and developer experience
+  - canonical plan for the microVM runtime: buildah integration (replaces
+    custom OCI code), OCI bundle generation, lifecycle probes, engine
+    integration (ctx.services.*), developer experience
+- `docs/plans/distribution-plan.md`
+  - canonical plan for distributing neovex across all channels: install
+    script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew (macOS),
+    binary tarballs, container images, cloud VM images (AWS AMI, GCP)
 - `docs/plans/external-sql-storage-backends-plan.md`
   - deferred follow-on plan for Postgres and MySQL internal storage backends
     after the SQLite migration is stable

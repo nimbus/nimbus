@@ -1,11 +1,10 @@
 # Plan: MicroVM Runtime — OCI Image Execution in Hardware-Isolated VMs
 
-Canonical design and execution plan for adding a microVM-based runtime to
-neovex that runs OCI/Docker images in hardware-isolated microVMs, enabling
-V8 isolates to interact with containerized services via TSI networking.
+Canonical plan for adding a microVM-based runtime to neovex that runs
+OCI/Docker images in hardware-isolated microVMs, enabling V8 isolates to
+interact with containerized services via TSI networking.
 
-This plan builds on the VMM infrastructure delivered by
-`vmm-infrastructure-plan.md`.
+Builds on `vmm-infrastructure-plan.md` (crun fork, conmon, system deps).
 
 ---
 
@@ -13,371 +12,243 @@ This plan builds on the VMM infrastructure delivered by
 
 - **Status:** `deferred`
 - **Primary owner:** this plan
-- **Activation gate:** promote when `vmm-infrastructure-plan.md` Phase V4 is
-  complete (neovex can boot a VM via `--internal-vmm`)
-- **Hard dependency:** `docs/plans/vmm-infrastructure-plan.md` — provides
-  libcrun/libkrun static linkage, kernel embedding, and `--internal-vmm`
-  entry point
+- **Activation gate:** promote when `vmm-infrastructure-plan.md` Phase V3 is
+  complete (neovex can programmatically boot and manage VMs)
+- **Related plans:**
+  - `vmm-infrastructure-plan.md` — VMM foundation (crun fork, conmon, deps)
+  - `distribution-plan.md` — packaging for all channels
 
 ## Control Plan Rules
 
 Source of truth:
 1. the current git worktree
 2. this plan's `Phase Status Ledger` and `Execution Log`
-3. `ARCHITECTURE.md` for the landed runtime architecture
-4. `docs/plans/vmm-infrastructure-plan.md` for the VMM foundation
-5. `docs/research/vm-lifecycle-probes.md` for probe model design
-6. `docs/research/libkrun-evaluation.md` for libkrun API reference
-
-### Status model
-
-- `todo` / `in_progress` / `blocked` / `done` / `deferred`
+3. `ARCHITECTURE.md`
+4. `docs/research/vm-lifecycle-probes.md`
+5. `docs/research/libkrun-evaluation.md`
 
 ---
 
 ## Problem Statement
 
-Neovex embeds V8 for JavaScript functions and plans Wasmtime for WASM. A third
-runtime is needed: run **arbitrary Docker images as long-running services
-inside hardware-isolated microVMs**, allowing V8 isolates to interact with
-those services.
-
-**User-facing model:**
+Developers provide Dockerfiles, registry refs, or local images. neovex runs
+them as long-running services in hardware-isolated microVMs. V8 isolates
+interact with those services via TCP (through TSI).
 
 ```
-Developer provides:              Neovex does:
-  Dockerfile                 →   builds image (podman/docker build)
-  registry ref (postgres:16) →   pulls image (oci-client crate)
-  local image                →   imports (podman/docker save)
+Developer provides:              neovex does:
+  Dockerfile                 →   buildah bud (build)
+  registry ref (postgres:16) →   buildah from (pull)
+  local image                →   buildah from (import)
                                       ↓
-                                 unpacks OCI layers to rootfs directory
-                                 injects neovex-init into rootfs
-                                 generates OCI bundle (config.json + rootfs)
-                                 spawns --internal-vmm child (re-exec)
+                                 buildah mount → merged rootfs
+                                 generate OCI bundle (config.json)
+                                 conmon → crun → krun → VM
                                       ↓
-                             libcrun sets up namespaces + cgroups + seccomp
-                             libkrun boots VM with virtiofs rootfs
-                             TSI maps guest ports to host
-                                      ↓
-                             V8 isolates talk to services via TCP (TSI)
-                             neovex manages lifecycle via vsock
+                             V8 isolates connect via TSI (TCP)
+                             conmon manages lifecycle (logs, signals)
 ```
-
-**Example:** Developer writes a Dockerfile with PostgreSQL. neovex boots it in
-a microVM. V8 isolate calls `ctx.services.db.query("SELECT 1")` which connects
-to postgres via TSI-mapped TCP port.
 
 ---
 
 ## OCI Image Config Compliance
 
-neovex handles all OCI image config fields that affect workload execution.
-This is distinct from OCI Runtime Spec compliance (handled by libcrun in
-`vmm-infrastructure-plan.md`).
+All Dockerfile instructions that affect runtime behavior are handled.
 
-### Fields from OCI Image Config
+| Dockerfile | OCI Field | Handled by |
+|-----------|-----------|-----------|
+| `CMD` | `Cmd` | OCI config.json `process.args` |
+| `ENTRYPOINT` | `Entrypoint` | OCI config.json `process.args` |
+| `ENV` | `Env` | OCI config.json `process.env` + `krun_set_env()` |
+| `WORKDIR` | `WorkingDir` | OCI config.json `process.cwd` |
+| `USER` | `User` | OCI config.json `process.user` (crun handles setuid) |
+| `EXPOSE` | `ExposedPorts` | Annotation `krun.neovex.tsi.port_map` → TSI |
+| `VOLUME` | `Volumes` | virtiofs additional mounts (Phase M3) |
+| `STOPSIGNAL` | `StopSignal` | conmon sends this signal (not always SIGTERM) |
+| `HEALTHCHECK` | `Healthcheck` | Default probe config if no explicit probe set |
+| `LABEL` | `Labels` | Service metadata |
 
-| Dockerfile | OCI Field | How neovex handles it | Where |
-|-----------|-----------|----------------------|-------|
-| `CMD` | `Cmd` | Written to `.krun_config.json`, read by guest init | Phase M1 |
-| `ENTRYPOINT` | `Entrypoint` | Written to `.krun_config.json` | Phase M1 |
-| `ENV` | `Env` | Written to `.krun_config.json` + passed to `krun_set_env()` | Phase M1 |
-| `WORKDIR` | `WorkingDir` | Written to `.krun_config.json` + `krun_set_workdir()` | Phase M1 |
-| `USER` | `User` | Written to `.krun_config.json`, guest init calls setuid/setgid | Phase M1, M2 |
-| `EXPOSE` | `ExposedPorts` | Auto-generates TSI port mappings via OCI annotation | Phase M1 |
-| `VOLUME` | `Volumes` | Maps to virtiofs additional mounts (`krun_add_virtiofs()`) | Phase M3 |
-| `STOPSIGNAL` | `StopSignal` | Passed to neovex-init, used instead of default SIGTERM | Phase M2 |
-| `HEALTHCHECK` | `Healthcheck` | Used as default probe config when no explicit probe set | Phase M3 |
-| `LABEL` | `Labels` | Stored as service metadata, queryable | Phase M5 |
-
-**Implementation reference:** crun's OCI config handling in
-`containers/crun/src/libcrun/handlers/krun.c` (see `libkrun_configure_container`).
-The `.krun_config.json` format is documented by examining
-`containers/libkrun/init/init.c:730-850` (the `config_parse_file` function).
-
-### `.krun_config.json` format (read by libkrun's init and neovex-init)
-
-```json
-{
-  "Entrypoint": ["/docker-entrypoint.sh"],
-  "Cmd": ["postgres"],
-  "Env": [
-    "POSTGRES_PASSWORD=secret",
-    "PGDATA=/var/lib/postgresql/data"
-  ],
-  "WorkingDir": "/",
-  "User": "postgres",
-  "StopSignal": "SIGTERM",
-  "ExposedPorts": {"5432/tcp": {}}
-}
-```
+**StopSignal handling:** conmon reads the configured stop signal from the
+OCI config and sends it instead of SIGTERM. If the image specifies
+`STOPSIGNAL SIGQUIT` (nginx), conmon sends SIGQUIT. This works without any
+custom init because conmon handles it on the host side.
 
 ---
 
 ## Architecture
 
-### Workspace changes
+### New crate
 
 ```
 crates/
-  neovex-vmm/              # NEW: VM management (host side)
+  neovex-vmm/                 # NEW: VM management
     src/
-      lib.rs               # VmServiceManager, public API
-      oci.rs               # OCI image pull, build, unpack, layer cache
-      bundle.rs            # OCI bundle generation (config.json + rootfs)
-      vm.rs                # VmHandle — spawn, monitor, shutdown
-      lifecycle.rs         # Probe engine — startup, readiness, liveness
-      shutdown.rs          # Graceful shutdown via vsock
-      port_manager.rs      # TSI port auto-assignment
-      config.rs            # Service config types
+      lib.rs                  # VmServiceManager, public API
+      buildah.rs              # Shell out to buildah (pull, build, mount, inspect)
+      bundle.rs               # OCI bundle generation (config.json + annotations)
+      conmon.rs               # Spawn/monitor conmon, read logs/exit/attach
+      vm.rs                   # VmHandle — lifecycle wrapper
+      lifecycle.rs            # Probe engine (startup, readiness, liveness)
+      port_manager.rs         # TSI port auto-assignment
+      config.rs               # Service config types (TOML)
     Cargo.toml
-
-  neovex-init/             # NEW: Guest init (PID 1 inside VM)
-    src/
-      main.rs              # Mount, configure, exec, signal forward, vsock
-    Cargo.toml             # musl static binary target
 ```
 
 ### Crate dependency rules
 
-- **`neovex-vmm` depends on `neovex-core` only** — types and config, no
-  engine dependency. The server wires it to the engine via dependency
-  inversion (same pattern as neovex-runtime).
-- **`neovex-init` has zero workspace dependencies** — standalone static
-  binary compiled for `x86_64-unknown-linux-musl`. Injected into guest rootfs.
-- **V8 ↔ VM routing goes through the engine** — V8 calls
-  `ctx.services.<name>`, the server's bridge impl routes through
-  VmServiceManager to the VM via TSI TCP.
+- **`neovex-vmm` depends on `neovex-core` only** — types and config
+- **No OCI image crates needed** — buildah handles everything
+- **No C dependencies** — crun/conmon/buildah are system binaries
+- Server wires neovex-vmm to the engine via dependency inversion
+
+### What neovex-vmm does NOT implement (handled by system deps)
+
+| Capability | Handled by |
+|-----------|-----------|
+| OCI image pull, auth, mirrors | buildah + containers-common |
+| Image layer storage, dedup, overlay | containers-storage (via buildah) |
+| Container process monitoring, logs | conmon |
+| Namespace/cgroup/seccomp isolation | crun (libcrun) |
+| VMM (KVM, virtio devices, TSI) | libkrun |
+| Guest kernel | libkrunfw |
+| PID 1 init (signals, zombies) | catatonit/tini |
+| Rootless networking | passt |
+| Rootless overlay | fuse-overlayfs |
+
+### Cargo.toml (minimal — no OCI crates!)
+
+```toml
+[dependencies]
+# Existing workspace deps
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+# New deps
+anyhow = "1"
+tempfile = "3"
+```
+
+No `oci-client`. No `oci-spec`. No `flate2`. No `tar`. No `sha2`. buildah
+handles all of that. neovex-vmm is a thin orchestration layer that shells
+out to system tools.
 
 ---
 
 ## Phase Plan
 
-### Phase M1: OCI Image Management
+### Phase M1: buildah Integration
 
-**Goal:** Pull, build, unpack, and cache OCI images. Generate OCI bundles
-with correct config.json for libcrun.
-
-**Scope:**
-
-`crates/neovex-vmm/src/oci.rs`:
-- Pull from registry via `oci-client` crate (v0.16.1)
-- Flatten layers with OCI whiteout handling (`.wh.*` deletions, `.wh..wh..opq`)
-- Unpack to content-addressable cache directory
-- Layer deduplication by digest (shared across images)
-
-`crates/neovex-vmm/src/bundle.rs`:
-- Parse OCI image config via `oci-spec` crate (v0.9.0)
-- Extract ALL fields: Entrypoint, Cmd, Env, WorkingDir, User, ExposedPorts,
-  Volumes, StopSignal, Healthcheck
-- Generate `.krun_config.json` (written into rootfs)
-- Generate OCI `config.json` (runtime spec, for libcrun):
-  - `process.args` = Entrypoint + Cmd
-  - `process.env` = Env
-  - `process.cwd` = WorkingDir
-  - `process.user` = User (parsed to UID/GID)
-  - `linux.resources.memory.limit` = from service config
-  - `linux.resources.cpu` = from service config
-  - `annotations["krun.neovex.vsock.ports"]` = "10000:stream"
-  - `annotations["krun.neovex.tsi.port_map"]` = auto-generated from ExposedPorts
-- Inject neovex-init binary into rootfs at `/sbin/neovex-init`
-  (embedded via `include_bytes!` from build output)
-- Set `KRUN_INIT=/sbin/neovex-init` in the OCI config.json `process.env`.
-  libkrun's built-in init checks this env var (`init/init.c:1209`) and
-  uses it as the exec target instead of the default `/bin/sh`. This is
-  how neovex-init becomes PID 1 inside the VM.
-
-Support three input types:
-- **Registry ref** (`postgres:16`): `oci-client` pull
-- **Dockerfile path**: shell out to `podman build` or `docker build`,
-  export with `podman save --format oci-archive`, unpack
-- **Local image**: `podman save --format oci-archive <image>` → unpack
-
-**Rust crate dependencies (verified on crates.io 2026-04-09):**
-
-| Crate | Version | Downloads | Purpose |
-|-------|---------|-----------|---------|
-| `oci-client` | 0.16.1 | 2.9M | Pull OCI images from registries |
-| `oci-spec` | 0.9.0 | 12.3M | Parse OCI image/runtime configs |
-| `flate2` | 1.x | — | Decompress gzipped layers |
-| `tar` | 0.4.x | — | Extract layer tarballs |
-| `tempfile` | 3.x | — | Temp directories for unpacking |
-| `sha2` | 0.10 | — | Content-addressable layer cache |
-
-**Implementation references:**
-- OCI image layer application (whiteout handling):
-  `docs/research/firecracker-implementation-sketches.md` (oci.rs sketch)
-- crun's `.krun_config.json` generation:
-  `containers/crun/src/libcrun/handlers/krun.c` (`libkrun_configure_container`)
-- OCI runtime config.json spec:
-  https://github.com/opencontainers/runtime-spec/blob/main/config.md
-- libkrun's init config parser:
-  `containers/libkrun/init/init.c:730-850` (`config_parse_file`)
-
-**Acceptance criteria:**
-- Can pull `docker.io/library/alpine:latest` and unpack to a directory
-- Can pull `docker.io/library/postgres:16` and generate correct
-  `.krun_config.json` with User=postgres, ExposedPorts=5432
-- Can build a Dockerfile and unpack the result
-- Layer cache avoids re-downloading unchanged layers
-- OCI `config.json` is valid per the runtime spec
-- neovex-init is present at `/sbin/neovex-init` in the rootfs
-
-### Phase M2: Custom Guest Init (neovex-init)
-
-**Goal:** Build a custom guest init binary that supports graceful shutdown
-via vsock, tini-style signal forwarding, and correct OCI User handling.
-
-**Why needed:** libkrun's built-in `init.c` does NOT handle vsock shutdown
-signals, does NOT forward SIGTERM to the workload, and uses `SIGTERM`
-regardless of the image's `STOPSIGNAL`. Without neovex-init, the only way to
-stop a VM is SIGKILL (instant death, potential data loss for databases).
+**Goal:** neovex can pull, build, and mount OCI images via buildah.
 
 **Scope:**
 
-`crates/neovex-init/src/main.rs` (~200 lines Rust):
-
+`crates/neovex-vmm/src/buildah.rs`:
 ```rust
-// Compiled as x86_64-unknown-linux-musl static binary (~2MB)
-fn main() {
-    mount_filesystems();
-    let config = read_krun_config("/.krun_config.json");
+/// Pull an image from a registry
+pub async fn pull(image_ref: &str) -> Result<String> {
+    // buildah from --name neovex-{ulid} docker://{image_ref}
+    // Returns: container name
+}
 
-    // Start vsock shutdown listener (background thread)
-    let shutdown_rx = start_vsock_listener(SHUTDOWN_PORT);
+/// Build from a Dockerfile
+pub async fn build(dockerfile: &Path, context: &Path) -> Result<String> {
+    // buildah bud -t neovex-{ulid} -f {dockerfile} {context}
+    // buildah from --name neovex-{ulid} localhost/neovex-{ulid}
+    // Returns: container name
+}
 
-    // Set user/group from OCI config (before exec)
-    if let Some(user) = &config.user {
-        set_user_group(user);  // setuid/setgid
-    }
+/// Mount a container's rootfs
+pub async fn mount(container: &str) -> Result<PathBuf> {
+    // buildah mount {container}
+    // Returns: /var/lib/containers/storage/overlay/.../merged
+}
 
-    // Fork and exec workload (tini pattern)
-    let child_pid = fork_exec(&config);
+/// Inspect image config (Entrypoint, Cmd, Env, User, ExposedPorts, etc.)
+pub async fn inspect(container: &str) -> Result<OciImageConfig> {
+    // buildah inspect --format json {container}
+    // Parse: Entrypoint, Cmd, Env, WorkingDir, User, ExposedPorts,
+    //        Volumes, StopSignal, Healthcheck, Labels
+}
 
-    // Main loop: reap zombies + wait for shutdown signal
-    reap_and_wait_loop(child_pid, shutdown_rx, &config.stop_signal);
+/// Clean up
+pub async fn cleanup(container: &str) -> Result<()> {
+    // buildah umount {container}
+    // buildah rm {container}
 }
 ```
 
-Key responsibilities:
-1. **Mount filesystems:** `/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`,
-   `/tmp`, `/run` (same as libkrun's `init.c:mount_filesystems()`)
-2. **Read `.krun_config.json`:** Parse Entrypoint, Cmd, Env, WorkingDir,
-   User, StopSignal
-3. **vsock shutdown listener:** Listen on port 10000 for SHUTDOWN message
-   with grace period
-4. **Set user/group:** Parse `User` field (format: `name`, `uid`, `uid:gid`,
-   `name:group`), resolve via `/etc/passwd` if name, call `setgid`+`setuid`
-5. **Fork and exec workload:** `setsid()` → `fork()` → child execs
-   workload in its own session/process group
-6. **Signal forwarding:** Register handlers for SIGTERM, SIGINT, SIGQUIT,
-   SIGHUP, SIGUSR1, SIGUSR2. Forward to workload process group via
-   `kill(-child_pid, sig)`. Respect `StopSignal` from OCI config.
-7. **Zombie reaping:** `waitpid(-1, WNOHANG)` in main loop
-8. **Exit code propagation:** `ioctl(fd, KRUN_EXIT_CODE_IOCTL, code)` on
-   virtiofs root, then `exit(0)`
+**Acceptance criteria:**
+- Can pull `postgres:16` via buildah, mount it, read its config
+- Can build a Dockerfile via buildah
+- buildah inspect returns all 10 OCI image config fields correctly
+- Cleanup removes containers and unmounts
 
-**vsock shutdown protocol:**
+### Phase M2: OCI Bundle Generation
 
+**Goal:** Generate valid OCI runtime bundles for crun with krun handler.
+
+**Scope:**
+
+`crates/neovex-vmm/src/bundle.rs`:
+- Generate OCI `config.json` per the runtime spec
+- Set `process.args` from image Entrypoint + Cmd
+- Set `process.env` from image Env + service-level overrides
+- Set `process.user` from image User
+- Set `linux.resources` from service config (memory, CPU)
+- Add annotation `run.oci.handler = "krun"` (selects krun handler in crun)
+- Add annotation `krun.neovex.tsi.port_map` from ExposedPorts
+  (auto-assigned host ports via PortManager)
+- Set `root.path` to the buildah-mounted rootfs path
+- Handle `StopSignal` → OCI process.signal field (conmon reads this)
+
+`crates/neovex-vmm/src/port_manager.rs`:
+```rust
+pub struct PortManager {
+    range: RangeInclusive<u16>,   // default: 15000..=16000
+    assigned: HashMap<String, Vec<(u16, u16)>>,
+}
 ```
-Host sends to guest vsock port 10000:
-  { "action": "shutdown", "signal": "SIGTERM", "grace_period_secs": 30 }
-
-Guest init:
-  1. Send configured StopSignal to workload process group
-  2. Wait grace_period_secs
-  3. If still alive: SIGKILL to process group
-  4. Report exit code via KRUN_EXIT_CODE_IOCTL
-  5. exit(0)
-```
-
-**Build:**
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl -p neovex-init
-# Result: target/x86_64-unknown-linux-musl/release/neovex-init (~2MB)
-```
-
-**Cargo.toml:**
-```toml
-[package]
-name = "neovex-init"
-edition = "2021"
-
-[dependencies]
-nix = { version = "0.29", features = ["mount", "signal", "process",
-        "hostname", "user", "fs"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-libc = "0.2"
-
-[profile.release]
-opt-level = "z"
-lto = true
-strip = true
-panic = "abort"
-```
-
-**Implementation references:**
-- [`krallin/tini/src/tini.c`](https://github.com/krallin/tini/blob/master/src/tini.c) —
-  Signal forwarding, zombie reaping (~300 lines C)
-- [`Yelp/dumb-init/dumb-init.c`](https://github.com/Yelp/dumb-init/blob/master/dumb-init.c) —
-  Session leader, process group signals (~200 lines C)
-- [`containers/libkrun/init/init.c`](https://github.com/containers/libkrun/blob/main/init/init.c) —
-  Mount setup, .krun_config.json parsing, exit code ioctl
-- [`kata-containers/.../rpc.rs`](https://github.com/kata-containers/kata-containers/blob/main/src/agent/src/rpc.rs) —
-  vsock shutdown protocol (ttrpc), SignalProcess RPC
-- `docs/research/vm-lifecycle-probes.md` — neovex-init design section
+Auto-assigns unique host ports per VM. Two postgres VMs on guest port 5432
+get different host ports (e.g., 15000 and 15001).
 
 **Acceptance criteria:**
-- Static musl binary, zero runtime deps, ~2MB
-- Boots in a libkrun VM, mounts filesystems, execs workload
-- Respects `User` field (runs workload as non-root when specified)
-- Respects `StopSignal` (sends SIGQUIT for nginx, SIGTERM default)
-- SHUTDOWN over vsock → stop signal to workload → grace period → SIGKILL →
-  exit code propagated to host
-- Zombie processes reaped (verify: no defunct processes after child exits)
-- Host receives correct exit code via `child.wait()`
+- Generated config.json passes `crun spec --validate`
+- `run.oci.handler` annotation selects krun handler
+- TSI port mapping annotation is correctly formatted
+- Multiple VMs get unique host port assignments
 
 ### Phase M3: Lifecycle Management
 
-**Goal:** Full lifecycle management with health probes, graceful shutdown,
-restart policy, and TSI port management.
+**Goal:** Health probes, shutdown, restart policy.
 
 **Scope:**
 
-`crates/neovex-vmm/src/lifecycle.rs` — Probe engine:
+`crates/neovex-vmm/src/lifecycle.rs`:
 
 ```rust
-/// Probe model inspired by Kubernetes (three-probe) with Docker/Fly.io
-/// configurability. See docs/research/vm-lifecycle-probes.md for the
-/// cross-platform comparison that informed this design.
-
-/// VM lifecycle states
 pub enum VmState {
-    Spawning,      // --internal-vmm child spawned, waiting for READY
-    Starting,      // READY received, waiting for startup probe
-    Ready,         // Startup + readiness probes passing
-    NotReady,      // Was Ready, readiness probes failing
-    ShuttingDown,  // Graceful shutdown in progress
-    Exited(i32),   // Process exited with code
-    Crashed(i32),  // Process killed by signal
+    Starting,       // conmon spawned, VM booting
+    Ready,          // health probe passing
+    NotReady,       // health probe failing
+    ShuttingDown,   // stop signal sent, waiting
+    Exited(i32),    // clean exit
+    Crashed(i32),   // killed by signal
 }
 
-/// Per-service probe configuration
 pub struct ProbeConfig {
     pub check: HealthCheck,
-    pub startup_grace: Duration,       // default: 10s
-    pub interval: Duration,            // default: 10s
-    pub timeout: Duration,             // default: 5s
-    pub failure_threshold: u32,        // default: 3
-    pub success_threshold: u32,        // default: 1
-    pub shutdown_grace: Duration,      // default: 30s
+    pub startup_grace: Duration,    // default: 10s
+    pub interval: Duration,         // default: 10s
+    pub timeout: Duration,          // default: 5s
+    pub failure_threshold: u32,     // default: 3
+    pub success_threshold: u32,     // default: 1
 }
 
 pub enum HealthCheck {
-    Tcp { port: u16 },
-    Http { port: u16, path: String },
+    Tcp { port: u16 },              // TCP connect to TSI-mapped port
+    Http { port: u16, path: String }, // HTTP GET, expect 2xx
 }
 
 pub enum RestartPolicy {
@@ -387,169 +258,114 @@ pub enum RestartPolicy {
 }
 
 pub struct BackoffConfig {
-    pub initial: Duration,             // default: 1s
-    pub max: Duration,                 // default: 60s
-    pub multiplier: f64,               // default: 2.0
-    pub reset_after: Duration,         // default: 300s
+    pub initial: Duration,          // 1s
+    pub max: Duration,              // 60s
+    pub multiplier: f64,            // 2.0
+    pub reset_after: Duration,      // 300s
 }
 ```
 
 State machine:
 ```
-Spawning → [READY on stdout] → Starting → [startup probe passes] → Ready
-Ready ↔ NotReady [readiness probe fails/passes]
-Ready/NotReady → [liveness fails N times] → restart (per policy)
-Any → [shutdown requested] → ShuttingDown → [exited or killed] → Exited/Crashed
+Starting → [health probe passes] → Ready
+Ready ↔ NotReady [probe fails/passes, threshold-based]
+Ready/NotReady → [probe fails N times] → restart (per policy)
+Any → [shutdown] → ShuttingDown → Exited/Crashed
 ```
 
-`crates/neovex-vmm/src/shutdown.rs` — Graceful shutdown:
-
-```rust
-/// Graceful shutdown sequence:
-/// 1. Connect to guest vsock port 10000
-/// 2. Send SHUTDOWN message with grace_period and stop_signal
-/// 3. Wait for child.wait() with timeout = grace_period + 5s buffer
-/// 4. If timeout: SIGKILL the --internal-vmm child process
-pub async fn graceful_shutdown(handle: &VmHandle, grace: Duration) -> ExitStatus
+Shutdown (same as Podman):
 ```
-
-`crates/neovex-vmm/src/port_manager.rs` — TSI port auto-assignment:
-
-```rust
-/// Manages unique host port assignments for TSI port mapping.
-/// Each VM gets unique host ports to avoid conflicts when multiple
-/// VMs expose the same guest port (e.g., two postgres instances on 5432).
-pub struct PortManager {
-    range: RangeInclusive<u16>,  // default: 15000..=16000
-    assigned: HashMap<String, Vec<(u16, u16)>>,  // vm_id → [(guest, host)]
-}
-```
-
-`crates/neovex-vmm/src/vm.rs` — VmHandle (updated):
-
-```rust
-pub struct VmHandle {
-    child: tokio::process::Child,
-    id: String,
-    ports: Vec<(u16, u16)>,      // (guest_port, host_port) TSI mappings
-    state: Arc<RwLock<VmState>>,
-    probe_config: ProbeConfig,
-}
-
-impl VmHandle {
-    pub async fn start(bundle: &OciBundle, config: &ServiceConfig) -> Result<Self>;
-    pub async fn wait(&mut self) -> Result<ExitStatus>;
-    pub async fn shutdown(&mut self, grace: Duration) -> Result<ExitStatus>;
-    pub async fn kill(&mut self) -> Result<()>;
-    pub async fn health(&self) -> VmHealth;
-    pub async fn wait_for_service(&self, timeout: Duration) -> Result<()>;
-    pub fn state(&self) -> VmState;
-    pub fn tsi_port(&self, guest_port: u16) -> Option<u16>;
-}
+neovex requests stop
+  → conmon sends StopSignal to crun/VMM process
+  → wait shutdown_grace (default 30s)
+  → conmon sends SIGKILL
+  → VM dies, conmon writes exit file
+  → neovex reads exit status
 ```
 
 **Implementation references:**
-- [`kubernetes/kubernetes/pkg/kubelet/prober/worker.go`](https://github.com/kubernetes/kubernetes/tree/master/pkg/kubelet/prober) —
-  Probe state machine, threshold transitions
-- [`moby/moby/daemon/health.go`](https://github.com/moby/moby/blob/master/daemon/health.go) —
-  Docker health check state machine (starting/healthy/unhealthy)
-- `docs/research/vm-lifecycle-probes.md` — Full probe model design
+- K8s prober: [`pkg/kubelet/prober/worker.go`](https://github.com/kubernetes/kubernetes/tree/master/pkg/kubelet/prober)
+- Docker health: [`daemon/health.go`](https://github.com/moby/moby/blob/master/daemon/health.go)
+- `docs/research/vm-lifecycle-probes.md`
 
 **Acceptance criteria:**
-- Boot `postgres:16` in a microVM, wait_for_service detects when ready
-- `handle.shutdown(30s)` → postgres gets SIGTERM → clean exit → correct code
-- Health check detects postgres is responsive (TCP connect to TSI port)
-- Health check detects if postgres hangs (timeout → liveness failure)
-- Restart policy: VM restarts on crash with exponential backoff
-- Multiple VMs with port 5432 get unique host port assignments
-- State machine transitions match the documented diagram
+- Health probe detects when postgres:16 is ready (TCP connect to TSI port)
+- Health probe detects hang (timeout → liveness failure)
+- Shutdown: conmon sends StopSignal, waits, SIGKILL
+- Restart: VM restarts on crash with exponential backoff
+- State transitions match the documented state machine
 
 ### Phase M4: Engine Integration
 
-**Goal:** Wire VM services into neovex's engine so V8 isolates can use them.
+**Goal:** V8 isolates can access VM services.
 
 **Scope:**
-- `VmServiceManager` in `neovex-vmm/src/lib.rs`: manages VM pool, service
-  registry, lifecycle
-- Integration with `neovex-server`: service configuration via API, VM
-  lifecycle tied to tenant lifecycle
-- V8 `HostBridge` extension: `ctx.services.<name>` surface for accessing
-  VM services from JavaScript
-- TCP connection pooling to TSI-mapped service ports
-
-**Scope clarification:** `ctx.services.<name>` provides a **generic TCP
-connection** to the VM service, NOT protocol-specific clients. neovex does not
-implement the PostgreSQL wire protocol, Redis protocol, etc. Instead:
+- `VmServiceManager` in `neovex-vmm/src/lib.rs`: service registry, VM pool
+- V8 `HostBridge` extension: `ctx.services.<name>.port` returns TSI port
+- V8 connects to services via standard TCP (through TSI)
+- neovex does NOT implement protocol-specific clients — V8 uses JS driver
+  libraries (pg, ioredis, fetch)
 
 ```javascript
-// Option A: Raw TCP via TSI (V8 connects to localhost:mapped_port)
-const conn = await ctx.services.db.connect();  // TCP to TSI-mapped port
-await conn.write(pgWireProtocolBytes);          // app-level protocol
-const response = await conn.read();
-
-// Option B: HTTP proxy (for HTTP services)
-const result = await ctx.services.api.fetch("/users");  // HTTP GET
-
-// Option C: Use a JS driver library (most practical)
-// The developer imports a postgres JS driver in their V8 function:
+// V8 function:
 import { Client } from "pg";
-const client = new Client({ host: "localhost", port: ctx.services.db.port });
+const client = new Client({
+  host: "127.0.0.1",
+  port: ctx.services.db.port,  // TSI-mapped host port
+});
+await client.connect();
+const result = await client.query("SELECT 1");
 ```
 
-The primary mechanism is **port exposure** — neovex tells the V8 function
-which host port maps to which guest service, and the JS driver library
-handles the wire protocol. neovex's role is lifecycle + port mapping,
-not protocol translation.
-
-**Implementation reference:**
-- neovex's existing `HostBridge` trait and server bridge implementation
-  (`crates/neovex-server/src/adapters/convex/host_bridge/`)
+**Future (v2):** Add a TCP proxy in neovex for tenant isolation, audit
+logging, rate limiting. Same TSI transport, neovex in the data path.
 
 **Acceptance criteria:**
-- V8 function can TCP connect to a TSI-mapped port and exchange data with
-  the guest service
-- `ctx.services.db.port` returns the host-side TSI port number
-- VMs start when the service is first referenced and stop on tenant teardown
-- VM crash is detected and reported (not silent)
+- V8 function connects to postgres VM via TSI port, runs query
+- `ctx.services.db.port` returns the correct TSI-mapped host port
+- VMs start on first reference, stop on tenant teardown
+- VM crash is reported (not silent)
 
 ### Phase M5: Developer Experience
 
-**Goal:** Clean configuration surface for defining VM-backed services.
+**Goal:** Configuration, CLI, error messages.
 
 **Scope:**
-- Configuration format for specifying services:
-  ```toml
-  [services.db]
-  image = "postgres:16"           # registry ref
-  # OR: dockerfile = "./db/Dockerfile"  # build from Dockerfile
-  memory = "256m"
-  cpus = 1
-  env = { POSTGRES_PASSWORD = "secret" }
+```toml
+# neovex.toml
+[services.db]
+image = "postgres:16"
+# OR: dockerfile = "./db/Dockerfile"
+memory = "256m"
+cpus = 1
+env = { POSTGRES_PASSWORD = "secret" }
 
-  [services.db.health]
-  check = "tcp"
-  port = 5432
-  interval = "10s"
-  startup_grace = "15s"
+[services.db.health]
+check = "tcp"
+port = 5432
+interval = "10s"
+startup_grace = "15s"
 
-  [services.db.restart]
-  policy = "on-failure"
-  max_restarts = 5
-  ```
-- CLI commands: `neovex service list`, `neovex service logs <name>`,
-  `neovex service restart <name>`
-- Error messages for common failures:
-  - `/dev/kvm` not available
-  - Image pull failures
-  - Build failures
-  - VM crash with exit code
-  - Port conflicts
+[services.db.restart]
+policy = "on-failure"
+max_restarts = 5
+```
+
+CLI commands:
+- `neovex service list` — show running VMs with state and ports
+- `neovex service logs <name>` — tail conmon log files
+- `neovex service restart <name>` — stop + start
+
+Error messages for:
+- `/dev/kvm` not available
+- buildah/crun/conmon not installed
+- Image pull failures (auth, network)
+- VM crash with exit code
 
 **Acceptance criteria:**
-- Developer defines a service in neovex config referencing a Dockerfile
-- `neovex service list` shows running VMs with state and port mappings
-- Clear error when `/dev/kvm` is missing
-- Documentation for all config fields
+- Service config in neovex.toml works
+- CLI commands produce useful output
+- Clear error when deps are missing
 
 ---
 
@@ -557,103 +373,47 @@ not protocol translation.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| M1: OCI Image Management | `todo` | V4 from vmm-infrastructure-plan | |
-| M2: Custom Guest Init | `todo` | M1 (injects init into rootfs) | ~200 lines Rust, musl static |
-| M3: Lifecycle Management | `todo` | M1, M2 | Probes, shutdown, restart, ports |
-| M4: Engine Integration | `todo` | M1, M2, M3 | HostBridge extension |
-| M5: Developer Experience | `todo` | M4 | Config format, CLI, errors |
-
----
-
-## Key Dependencies (verified on crates.io 2026-04-09)
-
-| Crate | Version | Purpose |
-|-------|---------|---------|
-| `oci-client` | 0.16.1 | Pull OCI images from registries |
-| `oci-spec` | 0.9.0 | Parse OCI image/runtime configs |
-| `flate2` | 1.x | Decompress gzipped layers |
-| `tar` | 0.4.x | Extract layer tarballs |
-| `sha2` | 0.10 | Content-addressable layer cache |
-| `nix` | 0.29 | (neovex-init) mount, signal, user/group |
-| `libc` | 0.2 | (neovex-init) raw AF_VSOCK socket calls (vsock crate not needed — guest uses raw libc) |
-
-**vsock host↔guest connection model (libkrun-specific):**
-
-In libkrun, `krun_add_vsock_port2(ctx, port, "/path/to/host.sock", listen=true)`
-creates a mapping: when the guest listens on vsock port N, libkrun creates a
-Unix domain socket at `/path/to/host.sock` on the host. The neovex parent
-connects to this UDS to talk to the guest.
-
-- **Guest side (neovex-init):** Uses `AF_VSOCK` socket, binds to
-  `VMADDR_CID_ANY:10000`. Standard vsock listener using raw `libc` calls.
-- **Host side (neovex):** Connects to the UDS path that was configured in
-  the OCI annotation. Uses `tokio::net::UnixStream`.
+| M1: buildah integration | `todo` | V3 from vmm-infrastructure-plan | |
+| M2: OCI bundle generation | `todo` | M1 | |
+| M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
+| M4: Engine integration | `todo` | M3 | HostBridge, V8 access |
+| M5: Developer experience | `todo` | M4 | Config, CLI, errors |
 
 ---
 
 ## Open Questions
 
-1. **Multi-VM port conflicts:** Auto-assign from pool (15000-16000)?
-   User-specified? Both? Currently planned as auto-assign with override.
-
-2. **Image layer caching strategy:** Content-addressable by digest (shared
-   across images) is the plan. Need to decide on cache eviction policy.
-
-3. **VM restart policy defaults:** `OnFailure` with max 5 restarts and
-   exponential backoff (1s → 60s) is the current plan. Need user feedback.
-
-4. **Volume persistence:** How should `VOLUME` paths be persisted across
-   VM restarts? Host directory bind via virtiofs?
+1. **buildah mount persistence:** Does `buildah mount` survive neovex restart?
+   Need to verify. If not, neovex must remount on startup.
+2. **Volume persistence:** How to persist `VOLUME` paths across VM restarts.
+   virtiofs additional mounts to host directories?
+3. **conmon log rotation:** Does conmon rotate logs, or does neovex need to
+   manage log file size?
+4. **TSI port range:** Default 15000-16000 (1000 ports). Sufficient?
 
 ---
 
 ## Verification Contract
 
-### Per-phase verification
-
-Each phase must demonstrate:
-1. Feature works end-to-end (manual test + automated test)
-2. Error cases handled (missing deps, build failures, VM crashes)
-3. No regressions in existing `make ci`
-
-### End-to-end verification (after M4)
+### End-to-end (after M4)
 
 ```bash
-# 1. Write a Dockerfile
-cat > /tmp/test/Dockerfile << 'EOF'
-FROM postgres:16
-ENV POSTGRES_PASSWORD=testpass
-EXPOSE 5432
-EOF
-
-# 2. Configure as neovex service
-# (in neovex.toml)
+# neovex.toml
 [services.db]
-dockerfile = "/tmp/test/Dockerfile"
-memory = "256m"
+image = "postgres:16"
+env = { POSTGRES_PASSWORD = "secret" }
 
-# 3. Start neovex
+# Start neovex
 neovex serve
 
-# 4. V8 function connects to postgres
-# ctx.services.db.query("SELECT 1")  →  returns [{?column?: 1}]
+# V8 function queries postgres:
+# const client = new Client({ port: ctx.services.db.port })
+# await client.query("SELECT 1") → [{?column?: 1}]
 
-# 5. Stop neovex
-# Verify: no orphan VMM processes, no leaked ports
-ps aux | grep internal-vmm  # should be empty
-ss -tlnp | grep 15432       # should be empty
+# Stop neovex
+# Verify: conmon + VM processes cleaned up
+# Verify: no orphan processes, no leaked ports
 ```
-
----
-
-## Research References
-
-| Document | Contents |
-|----------|----------|
-| `docs/research/libkrun-evaluation.md` | libkrun API, crun integration, consumer patterns |
-| `docs/research/firecracker-container-runtime.md` | Approach comparison, Firecracker as alternative |
-| `docs/research/firecracker-implementation-sketches.md` | OCI pipeline code sketches, vsock protocol |
-| `docs/research/vm-lifecycle-probes.md` | K8s/Docker/Fly.io probe models, graceful shutdown |
 
 ---
 

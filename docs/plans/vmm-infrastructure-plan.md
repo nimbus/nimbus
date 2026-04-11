@@ -1,10 +1,8 @@
-# Plan: VMM Infrastructure — Static Single-Binary MicroVM Support
+# Plan: VMM Infrastructure — crun Fork + System Dependencies
 
-Canonical design and execution plan for building the VMM infrastructure that
-enables neovex to run OCI/Docker images in hardware-isolated microVMs as a
-single statically-linked binary. Covers forking libkrun and crun, static
-build system integration, kernel embedding, FFI bindings, and the
-`--internal-vmm` re-exec entry point.
+Canonical plan for the VMM infrastructure that enables neovex to run OCI/Docker
+images in hardware-isolated microVMs. Follows the Podman distribution model:
+neovex is a single binary with system package dependencies.
 
 This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 
@@ -15,18 +13,18 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 - **Status:** `deferred`
 - **Primary owner:** this plan
 - **Activation gate:** promote when microVM runtime work begins
-- **Relationship:** This plan produces the VMM layer. `microvm-runtime-plan.md`
-  builds the OCI management, lifecycle probes, engine integration, and DX on
-  top of it.
+- **Related plans:**
+  - `microvm-runtime-plan.md` — builds OCI management, lifecycle, engine
+    integration on top of this plan's VMM layer
+  - `distribution-plan.md` — packages neovex + dependencies for each channel
 
 ## Control Plan Rules
 
 Source of truth:
-1. the current git worktrees (neovex, agentstation/libkrun, agentstation/crun)
+1. the current git worktrees (neovex, agentstation/crun)
 2. this plan's `Phase Status Ledger` and `Execution Log`
 3. `docs/research/libkrun-evaluation.md`
-4. `docs/research/firecracker-container-runtime.md`
-5. `docs/research/vm-lifecycle-probes.md`
+4. `docs/research/vm-lifecycle-probes.md`
 
 ### Status model
 
@@ -34,733 +32,287 @@ Source of truth:
 
 ---
 
-## Architecture
+## Architecture: The Podman Model
 
-### Single binary, re-exec pattern
+neovex follows the same process model and dependency pattern as Podman.
+neovex is a single binary. The VMM stack is system packages.
 
-```
-neovex binary (~100MB, single file)
-  ├── neovex Rust code (server, engine, V8 bridge)
-  ├── V8 engine (C++, statically linked — existing)
-  ├── libcrun.a (C, statically linked via FFI — new)
-  │     ├── libseccomp.a (C, static)
-  │     ├── libcap.a (C, static)
-  │     └── libyajl.a (C, static)
-  ├── libkrun (Rust crate, statically linked via Cargo — new)
-  │     └── kernel + qboot + initrd (include_bytes! ~20MB)
-  └── neovex-init (include_bytes! ~2MB, injected into rootfs at runtime)
-```
-
-Two execution modes:
+### Process model
 
 ```
-neovex serve               →  database server (tokio + V8 + engine)
-neovex --internal-vmm      →  OCI runtime + VMM (re-exec'd child, _exit safe)
+neovex serve
+  │
+  └── conmon (per VM, long-lived, survives neovex restart)
+        │
+        ├── stdout/stderr → log files (persistent)
+        ├── exit status → exit file
+        ├── attach socket for interactive access
+        │
+        └── agentstation-crun run --bundle path id
+              │
+              ├── namespaces (PID, mount, user)
+              ├── cgroups (memory, CPU limits)
+              ├── seccomp (syscall filtering)
+              │
+              └── krun handler (with TSI port mapping patch)
+                    ├── krun_set_root() — virtiofs rootfs
+                    ├── krun_set_port_map() — TSI port mapping
+                    └── krun_start_enter() → _exit()
+                          └── Guest VM
+                                ├── catatonit/tini (PID 1)
+                                └── workload (postgres, etc.)
 ```
 
-When neovex needs a VM:
-```rust
-let child = Command::new(std::env::current_exe()?)
-    .arg("--internal-vmm")
-    .arg("--bundle").arg(&bundle_path)
-    .arg("--id").arg(&container_id)
-    .spawn()?;
+### Dependency comparison with Podman
+
+```
+Podman:                             neovex:
+  conmon               ✓             conmon
+  crun | runc          ✓             agentstation-crun (forked, +10 lines)
+  containers-common    ✓             containers-common
+  netavark             ✗ (TSI)       —
+  catatonit|tini       ✓             catatonit | tini | dumb-init
+  buildah              ✓             buildah
+  passt                ✓             passt
+  uidmap               ✓             uidmap
+  fuse-overlayfs       ✓             fuse-overlayfs
+  libkrun              ✓             libkrun
+  libkrunfw            ✓             libkrunfw
 ```
 
-The child process calls libcrun → libkrun → `krun_start_enter()` →
-`_exit()`. Only the child dies. Zero resource leaks.
+neovex drops only netavark (TSI replaces container networking) and adds
+libkrun/libkrunfw (not needed by Podman's default runc mode).
 
-### Why re-exec?
+### Why no vsock
 
-`krun_start_enter()` calls `libc::_exit()` on VM shutdown
-(`src/vmm/src/lib.rs:370` in libkrun). This kills the entire process. The
-re-exec pattern isolates this in a child process. This is the same pattern
-crun/Podman uses (crun is fork'd by conmon, `_exit()` kills only the fork'd
-child).
+vsock was evaluated and deferred. Reasons:
 
-### Why static linking?
+1. **Guest apps don't speak AF_VSOCK.** postgres, redis, nginx use TCP. vsock
+   requires a bridge process inside the VM — more complexity, not less.
+2. **TSI handles service traffic.** V8 connects to guest services via
+   TCP through TSI-mapped ports. Standard, works with every application.
+3. **No performance benefit for DB/API workloads.** Transport overhead
+   (microseconds) is negligible vs query latency (milliseconds).
+4. **Security proxying doesn't need vsock.** A TCP proxy in neovex (v2)
+   provides tenant isolation, audit logging, and rate limiting over TSI.
+5. **Graceful shutdown via conmon.** SIGTERM → grace → SIGKILL, same as
+   Podman. No custom guest agent needed.
 
-Single binary deployment is a core product value. neovex already statically
-links V8 (~50MB of C++). Adding libcrun (~500KB) + libkrun (~2MB) + kernel
-(~20MB) is proportional. No system packages, no LD_LIBRARY_PATH, no
-extraction. Just `neovex` + `/dev/kvm`.
+**Future:** vsock may be added for dedicated control channels (exec, live
+debugging, filesystem access) as part of `wasi-agent-capabilities-plan.md`.
+If added, neovex-init and vsock support in crun would be revisited then.
 
----
+### Communication model
 
-## Forks Required
-
-### Fork 1: `agentstation/libkrun`
-
-**Upstream:** `containers/libkrun` (v1.17.4, Apache 2.0)
-**Purpose:** Embed guest kernel (eliminate dlopen of libkrunfw)
-**Patch size:** ~30 lines changed in one file
-
-#### What to change
-
-**File:** `src/libkrun/src/lib.rs`
-
-The upstream code dynamically loads libkrunfw.so via the `libloading` crate:
-
-```rust
-// UPSTREAM (src/libkrun/src/lib.rs:90-112)
-static KRUNFW: LazyLock<Option<libloading::Library>> =
-    LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
-
-pub struct KrunfwBindings {
-    get_kernel: libloading::Symbol<
-        'static,
-        unsafe extern "C" fn(*mut u64, *mut u64, *mut size_t) -> *mut c_char,
-    >,
-    // ...
-}
-
-impl KrunfwBindings {
-    fn load_bindings() -> Result<KrunfwBindings, libloading::Error> {
-        let krunfw = match KRUNFW.as_ref() {
-            Some(krunfw) => krunfw,
-            None => return Err(libloading::Error::DlOpenUnknown),
-        };
-        // ...
-    }
-}
 ```
+v1 (this plan):
+  V8 → TCP localhost:mapped_port → TSI → guest service
+  Shutdown: conmon → SIGTERM → grace → SIGKILL (same as Podman)
+  Health: TCP connect to TSI-mapped port
 
-**Replace with embedded kernel bytes:**
-
-```rust
-// FORK: Embed kernel artifacts from libkrunfw build
-static KERNEL_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vmlinux"));
-
-#[cfg(feature = "tee")]
-static INITRD_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/initrd"));
-
-#[cfg(feature = "tee")]
-static QBOOT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/qboot.rom"));
-
-pub struct KrunfwBindings;
-
-impl KrunfwBindings {
-    fn load_bindings() -> Result<KrunfwBindings, &'static str> {
-        Ok(KrunfwBindings)
-    }
-
-    pub fn get_kernel(&self) -> (*const u8, u64) {
-        (KERNEL_BYTES.as_ptr(), KERNEL_BYTES.len() as u64)
-    }
-    // ...
-}
-```
-
-**File:** `src/libkrun/build.rs` (new or modified)
-
-**Important:** libkrunfw releases publish only `.so` files (e.g.,
-`libkrunfw-x86_64.tgz` containing `lib64/libkrunfw.so.5.3.0`), NOT raw
-kernel binaries. The kernel bytes are embedded inside the `.so` as a C char
-array, accessible only via `krunfw_get_kernel()`.
-
-**Two approaches to get the raw kernel:**
-
-**Approach A (recommended): Build libkrunfw from source in CI**
-```bash
-# In CI (not build.rs — too slow for developer builds):
-git clone --depth 1 https://github.com/containers/libkrunfw
-cd libkrunfw
-make vmlinux  # produces the raw kernel binary before .so packaging
-cp vmlinux ${NEOVEX_KERNEL_DIR}/vmlinux
-# Also extract qboot.rom and initrd if needed for TEE variants
-```
-Cache the built kernel artifact in CI. build.rs uses it via `include_bytes!`.
-
-**Approach B: Extract kernel from the .so at build time**
-```rust
-fn main() {
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    // Download the .so from releases
-    let tgz_url = "https://github.com/containers/libkrunfw/releases/\
-                    download/v5.3.0/libkrunfw-x86_64.tgz";
-    download_and_extract(tgz_url, &out_dir);
-    // Load the .so and call krunfw_get_kernel() to get the raw bytes
-    let lib = libloading::Library::new(format!("{out_dir}/lib64/libkrunfw.so"))?;
-    let get_kernel: Symbol<unsafe extern "C" fn(...)> = lib.get(b"krunfw_get_kernel")?;
-    // Extract and write to file for include_bytes!
-}
-```
-This is complex and fragile. Approach A is preferred.
-
-**build.rs (assuming CI has placed kernel at a known path):**
-```rust
-fn main() {
-    let kernel_path = std::env::var("NEOVEX_KERNEL_PATH")
-        .unwrap_or_else(|_| "build/vmlinux".into());
-    if !std::path::Path::new(&kernel_path).exists() {
-        panic!("Kernel not found at {}. Build libkrunfw first or set \
-                NEOVEX_KERNEL_PATH", kernel_path);
-    }
-    // The actual include_bytes! is in lib.rs, not build.rs
-}
-```
-
-**Also remove:** `libloading` from `Cargo.toml` dependencies (no longer needed).
-
-#### Reference files in upstream
-
-| File | Purpose | Lines to examine |
-|------|---------|-----------------|
-| `src/libkrun/src/lib.rs:88-150` | KrunfwBindings, dlopen logic | Replace with include_bytes |
-| `src/libkrun/src/lib.rs:2149-2175` | `load_kernel()` function that calls krunfw | Adapt to use embedded bytes |
-| `src/libkrun/Cargo.toml:25` | `libloading = "0.8"` | Remove |
-| `src/libkrun/Cargo.toml:47-49` | `[lib]` section, crate-type | Ensure `"lib"` is present (already is since PR #588) |
-
-#### Build verification
-
-```bash
-cd agentstation/libkrun
-# Should build without libkrunfw.so on the system
-cargo build --release -p libkrun
-# Verify no libkrunfw dependency
-ldd target/release/libkrun.so  # should NOT show libkrunfw
+v2 (future, microvm-runtime-plan Phase M4+):
+  V8 → neovex proxy (policy, audit, rate limit) → TCP → TSI → guest
+  Same transport, neovex is now in the data path for observability
 ```
 
 ---
 
-### Fork 2: `agentstation/crun`
+## Fork: `agentstation/crun`
 
-**Upstream:** `containers/crun` (latest release, GPL-2.0 with LGPL-2.1 for libcrun)
-**Purpose:** Static linkage to libkrun (eliminate dlopen) + vsock/TSI support
-**Patch size:** ~100 lines changed in one file
+### What and why
 
-#### Important: License
+The upstream crun krun handler does NOT call `krun_set_port_map()`. Without
+TSI port mapping, V8 isolates cannot connect to guest services. This is the
+only change needed.
 
-crun is **GPL-2.0**. libcrun (the library portion) is **LGPL-2.1**. Neovex
-links against libcrun.a (the library), which is LGPL-2.1. Under LGPL-2.1,
-static linking is permitted if neovex provides a mechanism for users to
-relink with a modified libcrun (e.g., providing object files or using
-dynamic linking). **Review with legal counsel before finalizing.**
-
-Alternatively, neovex can dynamically link libcrun.so (extracting it at
-runtime), which has no LGPL relinking requirement. This conflicts with the
-single-binary goal but avoids license issues.
-
-**If the LGPL is problematic:** Reimplement crun's OCI runtime setup in Rust
-(~200 lines using `oci-spec`, `nix`, `seccompiler` crates) and skip the crun
-fork entirely. This is the fallback path described at the end of this plan.
-
-#### What to change
-
+**Upstream:** `containers/crun` (latest release)
+**License:** GPL-2.0 (binary), LGPL-2.1 (libcrun library)
+**Patch size:** ~10 lines in one file
 **File:** `src/libcrun/handlers/krun.c`
 
-**Change 1: Replace dlopen/dlsym with direct static declarations (~80 lines removed, ~30 added)**
-
-```c
-// UPSTREAM: ~80 lines of dlopen + dlsym
-// handler->private_data = dlopen("libkrun.so.1", RTLD_NOW);
-// krun_set_vm_config = dlsym(handle, "krun_set_vm_config");
-// ... 20 more dlsym calls ...
-
-// FORK: Direct declarations (symbols resolved at link time from libkrun.a)
-// These are the extern "C" functions exported by libkrun's Rust code
-extern int32_t krun_create_ctx(void);
-extern int32_t krun_free_ctx(uint32_t ctx_id);
-extern int32_t krun_set_log_level(uint32_t level);
-extern int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus,
-                                   uint32_t ram_mib);
-extern int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
-extern int32_t krun_set_workdir(uint32_t ctx_id, const char *workdir);
-extern int32_t krun_set_env(uint32_t ctx_id, const char *env);
-extern int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
-extern int32_t krun_set_kernel(uint32_t ctx_id, const char *path);
-extern int32_t krun_start_enter(uint32_t ctx_id);
-// vsock: maps a guest vsock port to a host Unix socket path
-extern int32_t krun_add_vsock_port(uint32_t ctx_id, uint32_t port,
-                                    const char *c_filepath);
-// vsock2: same but with listen flag (host initiates connection)
-extern int32_t krun_add_vsock_port2(uint32_t ctx_id, uint32_t port,
-                                     const char *c_filepath, bool listen);
-extern int32_t krun_set_port_map(uint32_t ctx_id, const char *port_map);
-```
-
-**Change 2: Remove dlopen loading in `libkrun_load()`**
-
-```c
-// UPSTREAM:
-static int libkrun_load(void **cookie, ...) {
-    *cookie = dlopen("libkrun.so.1", RTLD_NOW);
-    // ...
-}
-
-// FORK:
-static int libkrun_load(void **cookie, ...) {
-    *cookie = (void *)1; // no-op, symbols are statically linked
-    return 0;
-}
-```
-
-**Change 3: Add vsock port configuration (~25 lines)**
-
-**Important:** `krun_add_vsock_port(ctx_id, port, filepath)` maps a guest
-vsock port to a **host-side Unix socket path**. The host neovex process
-connects to the guest by connecting to this UDS path. This is how the host
-sends shutdown commands and health checks to the guest init.
+### The patch
 
 ```c
 // Add after krun_set_vm_config() call in libkrun_exec():
 
-// Read vsock port mappings from OCI annotation
-// Format: "10000:/run/neovex/vm-abc/vsock-10000.sock"
-// Multiple ports: "10000:/path/a.sock,10001:/path/b.sock"
-const char *vsock_annotation = find_annotation(def, "krun.neovex.vsock.ports");
-if (vsock_annotation) {
-    char *ports = strdup(vsock_annotation);
-    char *saveptr;
-    char *token = strtok_r(ports, ",", &saveptr);
-    while (token) {
-        uint32_t port;
-        char filepath[PATH_MAX];
-        if (sscanf(token, "%u:%s", &port, filepath) == 2) {
-            // listen=true: guest listens, host connects to this UDS
-            krun_add_vsock_port2(ctx_id, port, filepath, true);
-        }
-        token = strtok_r(NULL, ",", &saveptr);
-    }
-    free(ports);
-}
-```
-
-**Change 4: Add TSI port mapping from ExposedPorts (~15 lines)**
-
-```c
 // Read TSI port map from OCI annotation
-const char *tsi_annotation = find_annotation(def, "krun.neovex.tsi.port_map");
-if (tsi_annotation) {
-    // Format: "5432:15432,6379:16379" (guest:host)
-    krun_set_port_map(ctx_id, tsi_annotation);
+// Format: "5432:15432,6379:16379" (guest:host)
+const char *port_map = find_annotation(def, "krun.neovex.tsi.port_map");
+if (port_map) {
+    krun_set_port_map(ctx_id, port_map);
 }
 ```
 
-#### Reference files in upstream
+That's it. ~10 lines of C.
 
-| File | Purpose | Lines to examine |
-|------|---------|-----------------|
-| `src/libcrun/handlers/krun.c` | Entire krun handler | All — this is the only file to patch |
-| `src/libcrun/container.h` | libcrun public API | Reference for FFI bindings |
-| `src/libcrun/container.c:1850-1900` | `libcrun_container_run()` implementation | Understand the lifecycle |
-| `src/libcrun/linux.c:4000+` | Namespace/cgroup/seccomp setup | Understanding (don't modify) |
-| `configure.ac:85-120` | Library detection (libseccomp, libcap, libyajl) | Build system reference |
-| `Makefile.am` | Build targets for libcrun.a | May need modification for static build |
+### Upstream strategy
 
-#### Build verification
+TSI port mapping via OCI annotations is a generally useful feature — not
+neovex-specific. Submit a PR to `containers/crun` proposing it. If accepted,
+the fork becomes unnecessary.
+
+**PR title:** "krun: add TSI port mapping via OCI annotation"
+**Rationale:** Currently krun_set_port_map() is never called. Users who want
+TSI port forwarding (exposing guest services to the host) have no mechanism
+to configure it through the OCI spec.
+
+### Build and distribution
+
+The forked crun is built the standard way (autotools) and packaged as
+`agentstation-crun` (deb/rpm). See `distribution-plan.md` for details.
 
 ```bash
+# Build
 cd agentstation/crun
 ./autogen.sh
-./configure --enable-static --disable-shared \
-    --with-libkrun=static  # new flag from our fork
-make libcrun.a
-# Verify symbols
-nm libcrun.a | grep libcrun_container_run  # should exist
-nm libcrun.a | grep dlopen                  # should NOT exist (removed)
+./configure
+make
+# Result: crun binary with krun handler + TSI port mapping
 ```
 
 ---
 
-## Neovex Build System Integration
+## System Dependencies
 
-### build.rs
+### Required
 
-**Important build notes:**
-- crun uses autotools (`configure.ac` + `Makefile.am`). Nearly every `.c`
-  file includes `<config.h>` which is generated by `./configure`. You
-  **cannot** compile crun source files directly with the `cc` crate — you
-  must use its native autotools build system.
-- neovex-init is a separate workspace member. It **cannot** be built inside
-  another crate's build.rs (circular dependency). It must be built as a
-  separate `cargo build` step (in CI or via a `make` target) and its output
-  binary placed where build.rs can `include_bytes!` it.
+| Package | What | Available on Debian 13 | Available on Fedora 40+ |
+|---------|------|----------------------|------------------------|
+| `agentstation-crun` | Forked crun with TSI | We package it | We package it |
+| `libkrun` | VMM library | **Not in repos** — we package it | `dnf install libkrun` ✓ |
+| `libkrunfw` | Guest kernel | **Not in repos** — we package it | `dnf install libkrunfw` ✓ |
+| `conmon` | Process monitor | `apt install conmon` ✓ | `dnf install conmon` ✓ |
+| `buildah` | Image build/pull/mount | `apt install buildah` ✓ | `dnf install buildah` ✓ |
+| `containers-common` | Registry auth/config | Comes with buildah ✓ | Comes with buildah ✓ |
 
-```rust
-// crates/neovex-vmm/build.rs
+### Recommended
 
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
+| Package | What | Why |
+|---------|------|-----|
+| `catatonit` \| `tini` \| `dumb-init` | Guest PID 1 init | Signal forwarding, zombie reaping |
+| `passt` | Rootless networking | Non-root neovex operation |
+| `uidmap` | User namespace mapping | Non-root neovex operation |
+| `fuse-overlayfs` | Rootless overlay storage | Layer dedup for buildah |
 
-fn main() {
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+### Runtime requirements
 
-    // ── Step 1: Build libcrun.a via autotools ──────────────────────
-    // crun REQUIRES autotools (./configure generates config.h with
-    // HAVE_* defines that every source file depends on).
-    // Cannot use the cc crate for this.
-
-    let crun_dir = PathBuf::from("vendor/crun");
-
-    // Run autogen + configure + make (only if libcrun.a doesn't exist)
-    let libcrun_a = crun_dir.join(".libs/libcrun.a");
-    if !libcrun_a.exists() {
-        // autogen.sh generates the configure script
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg("cd vendor/crun && ./autogen.sh && \
-                  ./configure --disable-shared --enable-static \
-                  CFLAGS='-DHAVE_LIBKRUN=1 -DLIBKRUN_STATIC=1' && \
-                  make -j$(nproc) libcrun.la")
-            .status()
-            .expect("Failed to build libcrun. Ensure autotools is installed: \
-                     apt install autoconf automake libtool");
-        assert!(status.success(), "libcrun build failed");
-    }
-
-    // Link the static library
-    println!("cargo:rustc-link-search=native={}", crun_dir.join(".libs").display());
-    println!("cargo:rustc-link-lib=static=crun");
-
-    // Link crun's dependencies (system static libraries)
-    println!("cargo:rustc-link-lib=static=seccomp");
-    println!("cargo:rustc-link-lib=static=cap");
-    println!("cargo:rustc-link-lib=static=yajl");
-
-    // ── Step 2: Generate Rust FFI bindings for libcrun ──────────────
-    let bindings = bindgen::Builder::default()
-        .header("vendor/crun/src/libcrun/container.h")
-        .header("vendor/crun/src/libcrun/custom-handler.h")
-        .allowlist_function("libcrun_container_run")
-        .allowlist_function("libcrun_container_load_from_file")
-        .allowlist_function("libcrun_configure_handler")
-        .allowlist_type("libcrun_context_s")
-        .allowlist_type("libcrun_error_t")
-        .generate()
-        .expect("Failed to generate libcrun bindings");
-
-    bindings
-        .write_to_file(out_dir.join("libcrun_bindings.rs"))
-        .expect("Failed to write libcrun bindings");
-
-    // ── Step 3: Embed neovex-init binary ───────────────────────────
-    // neovex-init is built SEPARATELY (not in this build.rs) via:
-    //   cargo build --release --target x86_64-unknown-linux-musl -p neovex-init
-    // The binary is placed at a known path by CI or the Makefile.
-    // build.rs just verifies it exists.
-    let init_path = PathBuf::from(
-        env::var("NEOVEX_INIT_BINARY")
-            .unwrap_or_else(|_| "target/x86_64-unknown-linux-musl/release/neovex-init".into())
-    );
-    if !init_path.exists() {
-        panic!(
-            "neovex-init binary not found at {}. Build it first:\n\
-             cargo build --release --target x86_64-unknown-linux-musl -p neovex-init",
-            init_path.display()
-        );
-    }
-
-    // ── Step 4: libkrun is linked via Cargo ────────────────────────
-    // The forked libkrun crate is a Cargo dependency (via [patch.crates-io]).
-    // It is linked automatically by cargo. No build.rs step needed.
-
-    println!("cargo:rerun-if-changed=vendor/crun");
-}
-```
-
-### Cargo.toml additions
-
-```toml
-# neovex workspace Cargo.toml — add to [patch.crates-io]
-[patch.crates-io]
-deno_core = { git = "https://github.com/agentstation/deno_core", tag = "0.395.0-locker.2" }
-v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.0.0-locker.2" }
-# NEW: forked libkrun with embedded kernel
-libkrun = { git = "https://github.com/agentstation/libkrun", tag = "v1.17.4-neovex.1" }
-```
-
-```toml
-# crates/neovex-vmm/Cargo.toml
-[dependencies]
-# libkrun publishes as crate name "krun" (see [lib] name = "krun")
-# but the package name is "libkrun". Resolved via [patch.crates-io].
-libkrun = "1.17"
-oci-spec = "0.9"
-oci-client = "0.16"
-# ... (see microvm-runtime-plan.md for full list)
-
-[build-dependencies]
-bindgen = "0.70"
-# NOTE: cc crate is NOT used for crun (autotools required).
-# build.rs calls make directly.
-```
-
-**Crate naming note:** libkrun's `Cargo.toml` has `name = "libkrun"` (package)
-and `[lib] name = "krun"` (crate). In Rust code you `use krun::*`, but in
-`Cargo.toml` you depend on `libkrun`. The `[patch.crates-io]` entry should
-reference the package name `libkrun`.
-
-### Vendor directory structure
-
-```
-neovex/
-  vendor/
-    crun/           # git submodule → agentstation/crun
-    yajl/           # git submodule → lloyd/yajl (or vendored source)
-```
-
-libcap and libseccomp are linked from system-provided static libraries
-(`libcap-dev`, `libseccomp-dev` packages on Debian). These are stable, small,
-and available on every Linux distribution. They are **build-time deps only** —
-the resulting neovex binary has no runtime dependency on them.
+| Requirement | How to enable |
+|------------|---------------|
+| `/dev/kvm` | Enable VT-x in BIOS (bare metal) or nested virt (cloud VM) |
+| KVM group membership | `sudo usermod -aG kvm $USER` |
 
 ---
 
-## neovex `--internal-vmm` Entry Point
+## How neovex uses buildah (instead of custom OCI code)
 
-### main.rs integration
+buildah replaces the entire OCI image management layer that was previously
+planned as custom Rust code (oci-client, layer flattening, whiteout handling,
+layer caching, overlay assembly).
 
-```rust
-// crates/neovex-bin/src/main.rs
-// Add before any tokio/V8 initialization:
+### Image pull
 
-fn main() {
-    // Check for VMM mode FIRST — before creating tokio runtime or V8
-    if std::env::args().any(|a| a == "--internal-vmm") {
-        neovex_vmm::vmm_mode::run();
-        // unreachable — krun_start_enter calls _exit()
-    }
-
-    // Normal neovex server startup
-    // ...
-}
+```bash
+# neovex shells out to buildah to pull and mount an image:
+buildah from --name neovex-postgres docker://postgres:16
+ROOTFS=$(buildah mount neovex-postgres)
+# $ROOTFS is now the merged rootfs directory (all layers applied)
+# Pass to crun: krun_set_root($ROOTFS) via virtiofs
 ```
 
-### vmm_mode implementation
+### Dockerfile build
 
-```rust
-// crates/neovex-vmm/src/vmm_mode.rs
-
-use std::ffi::CString;
-use std::os::raw::c_char;
-
-// Generated by bindgen in build.rs
-include!(concat!(env!("OUT_DIR"), "/libcrun_bindings.rs"));
-
-/// Entry point for `neovex --internal-vmm --bundle <path> --id <id>`
-///
-/// This function is called in a re-exec'd child process. It calls libcrun
-/// to set up OCI runtime isolation (namespaces, cgroups, seccomp), then
-/// libcrun's krun handler calls libkrun to boot the VM.
-///
-/// krun_start_enter() blocks forever. When the VM exits, it calls _exit().
-/// This kills only this child process. The parent neovex server is unaffected.
-///
-/// # Safety
-/// This function never returns. It calls _exit() via krun_start_enter().
-pub fn run() -> ! {
-    // Ensure this child dies if parent dies
-    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL); }
-
-    // Parse arguments
-    let args: Vec<String> = std::env::args().collect();
-    let bundle_path = args.iter()
-        .position(|a| a == "--bundle")
-        .and_then(|i| args.get(i + 1))
-        .expect("--bundle <path> required");
-    let container_id = args.iter()
-        .position(|a| a == "--id")
-        .and_then(|i| args.get(i + 1))
-        .expect("--id <name> required");
-
-    // Signal parent: VMM child process started
-    println!("READY");
-
-    // Call libcrun to run the OCI container in a krun VM
-    let bundle_c = CString::new(bundle_path.as_str()).unwrap();
-    let id_c = CString::new(container_id.as_str()).unwrap();
-
-    unsafe {
-        let mut err: *mut libcrun_error_t = std::ptr::null_mut();
-        let context = libcrun_context_new(&mut err);
-        if context.is_null() {
-            eprintln!("libcrun_context_new failed");
-            std::process::exit(1);
-        }
-
-        // Configure context
-        (*context).id = id_c.as_ptr() as *mut c_char;
-        (*context).bundle = bundle_c.as_ptr() as *mut c_char;
-
-        // CRITICAL: Select the krun handler explicitly.
-        // Without this, libcrun uses standard container execution (execv).
-        // The handler can be set via:
-        //   1. context->handler = "krun"  (programmatic)
-        //   2. OCI annotation "run.oci.handler" = "krun" (in config.json)
-        // We use both for safety.
-        let handler_name = CString::new("krun").unwrap();
-        (*context).handler = handler_name.as_ptr() as *mut c_char;
-
-        // Load OCI config from bundle
-        let container = libcrun_container_load_from_file(
-            bundle_c.as_ptr(),
-            &mut err,
-        );
-        if container.is_null() {
-            eprintln!("Failed to load OCI config from bundle");
-            std::process::exit(1);
-        }
-
-        // Run: libcrun handles namespace/cgroup/seccomp, then krun handler
-        // calls libkrun API (including vsock ports from annotations) and
-        // enters krun_start_enter() which blocks forever.
-        let ret = libcrun_container_run(
-            context,
-            container,
-            0, // flags
-            &mut err,
-        );
-        if ret < 0 {
-            eprintln!("libcrun_container_run failed: {}", ret);
-            std::process::exit(1);
-        }
-    }
-
-    // krun_start_enter calls _exit(), so we should never reach here
-    unreachable!("krun_start_enter should have called _exit()");
-}
+```bash
+buildah bud -t neovex-myapp -f ./Dockerfile .
+buildah from --name neovex-myapp localhost/neovex-myapp
+ROOTFS=$(buildah mount neovex-myapp)
 ```
+
+### Cleanup
+
+```bash
+buildah umount neovex-postgres
+buildah rm neovex-postgres
+```
+
+### What this eliminates from neovex's Rust code
+
+| Previously planned (custom Rust) | Now handled by buildah |
+|----------------------------------|----------------------|
+| `oci-client` crate for registry pull | `buildah from docker://...` |
+| Layer flattening with whiteout handling | `containers-storage` (via buildah) |
+| Content-addressable layer cache | `containers-storage` |
+| Layer deduplication across images | `containers-storage` + overlayfs |
+| Registry authentication | `containers-common` (registries.conf) |
+| `.krun_config.json` generation | Still in neovex (reads OCI image config via `buildah inspect`) |
+| OCI bundle `config.json` generation | Still in neovex |
 
 ---
 
 ## Phase Plan
 
-### Phase V1: Fork libkrun — Embed Kernel
+### Phase V1: Fork crun
 
-**Goal:** Create `agentstation/libkrun` that embeds the guest kernel and
-does not depend on libkrunfw.so.
-
-**Scope:**
-1. Fork `containers/libkrun` at tag v1.17.4
-2. Replace `libloading` dlopen of libkrunfw with `include_bytes!` kernel
-3. Add `build.rs` that downloads kernel artifacts from libkrunfw releases
-4. Remove `libloading` dependency from Cargo.toml
-5. Tag as `v1.17.4-neovex.1`
-
-**Key files to modify:**
-- `src/libkrun/src/lib.rs` (lines 88-150: KrunfwBindings)
-- `src/libkrun/src/lib.rs` (lines 2149-2175: load_kernel)
-- `src/libkrun/Cargo.toml` (remove libloading)
-- `src/libkrun/build.rs` (new: download kernel artifacts)
-
-**Implementation reference:**
-- libkrunfw's `Makefile` shows how kernel is compiled and packaged
-- libkrunfw releases at `https://github.com/containers/libkrunfw/releases`
-  publish binary artifacts per architecture
-
-**Acceptance criteria:**
-- `cargo build -p libkrun` succeeds without libkrunfw.so on system
-- `cargo test -p libkrun` passes (if any tests exist)
-- Binary includes embedded kernel (check with `strings target/release/libkrun.a | grep "Linux version"`)
-
-### Phase V2: Fork crun — Static Linkage + vsock
-
-**Goal:** Create `agentstation/crun` with static libkrun linkage and
-vsock/TSI support in the krun handler.
+**Goal:** Create `agentstation/crun` with TSI port mapping in the krun handler.
 
 **Scope:**
 1. Fork `containers/crun` at latest release
-2. Replace dlopen/dlsym in `handlers/krun.c` with direct extern declarations
-3. Add `krun_add_vsock_port()` calls driven by OCI annotation
-4. Add `krun_set_port_map()` calls for TSI port mapping
-5. Verify libcrun.a builds with static libkrun linkage
-6. **Review LGPL-2.1 license implications** for static linking
-
-**Key files to modify:**
-- `src/libcrun/handlers/krun.c` (the only file)
-
-**Implementation references:**
-- Upstream krun handler: `containers/crun/src/libcrun/handlers/krun.c`
-- libkrun public API: `containers/libkrun/include/libkrun.h`
-- OCI annotation spec: annotations are arbitrary key-value strings in
-  `config.json` under `annotations`
+2. Add `krun_set_port_map()` call driven by OCI annotation (~10 lines)
+3. Build and test on Debian 13 and Fedora
+4. Submit upstream PR to `containers/crun`
 
 **Acceptance criteria:**
-- `make libcrun.a` succeeds
-- `nm libcrun.a | grep krun_start_enter` shows the symbol (from libkrun)
-- `nm libcrun.a | grep dlopen` shows NO matches (dlopen removed)
-- A test program can call `libcrun_container_run()` with a krun-configured
-  OCI bundle and boot a VM with vsock ports
+- `crun run` with a krun-configured OCI bundle boots a VM with TSI port mapping
+- Guest service (e.g., `nc -l -p 8080`) is accessible from host via mapped port
+- Upstream PR submitted
 
-### Phase V3: neovex Build System Integration
+### Phase V2: System Integration
 
-**Goal:** Integrate forked crun and libkrun into neovex's cargo build.
+**Goal:** Verify neovex can spawn conmon → crun → VM using system packages.
 
 **Scope:**
-1. Add `agentstation/crun` as git submodule under `vendor/crun`
-2. Add libyajl source under `vendor/yajl` (or as git submodule)
-3. Write `build.rs` that compiles libcrun.a, generates bindgen FFI bindings
-4. Add `agentstation/libkrun` as Cargo dependency via `[patch.crates-io]`
-5. Ensure `cargo build` compiles everything in one pass
-6. Document build prerequisites: `libcap-dev`, `libseccomp-dev` (Debian)
+1. Install dependencies: conmon, buildah, libkrun, libkrunfw, catatonit
+2. Write a test script that manually creates an OCI bundle, spawns conmon
+   → crun, boots a VM, connects via TSI
+3. Verify: log files, exit status, process tree, port mapping
+4. Document the manual flow for implementation agents
 
-**Build prerequisites (system packages):**
-```bash
-# Debian/Ubuntu
-sudo apt install libcap-dev libseccomp-dev
-
-# Fedora
-sudo dnf install libcap-devel libseccomp-devel
-```
-
-**Implementation references:**
-- neovex's existing build: `Cargo.toml`, `[patch.crates-io]` section
-- The `cc` crate: https://docs.rs/cc/latest/cc/
-- The `bindgen` crate: https://docs.rs/bindgen/latest/bindgen/
-- libyajl source: https://github.com/lloyd/yajl (~2000 lines of C)
+**Implementation reference:**
+- Podman's container creation flow:
+  `containers/podman/pkg/specgen/` → `containers/podman/libpod/`
+- conmon invocation:
+  `containers/podman/libpod/oci_conmon_common_linux.go`
+- crun invocation by conmon:
+  `containers/conmon/src/runtime_args.c`
 
 **Acceptance criteria:**
-- `cargo build -p neovex-bin` succeeds on a clean Debian 13 system
-  (with libcap-dev and libseccomp-dev installed)
-- The resulting binary has no runtime dependency on libkrun.so,
-  libkrunfw.so, or libyajl.so (verify with `ldd`)
-- Binary size is documented
-- Build time is documented
+- Manual end-to-end: boot alpine in a krun VM via conmon → crun, connect
+  via TSI, stop via conmon signal, verify logs and exit status
+- Process tree matches expected model (neovex → conmon → crun is not running
+  after VM boots — crun exits, conmon monitors the VM process)
 
-### Phase V4: `--internal-vmm` Entry Point
+**Note:** In the crun+krun model, crun does NOT exit after starting the VM.
+`krun_start_enter()` blocks, so the crun process IS the VMM. conmon monitors
+the crun process (which is the VMM). When the VM exits, `_exit()` kills the
+crun process, conmon detects it and writes the exit file.
 
-**Goal:** Add the re-exec VMM mode to neovex.
+### Phase V3: neovex Wrapper
+
+**Goal:** neovex can spawn and manage VMs programmatically.
 
 **Scope:**
-1. `crates/neovex-vmm/src/vmm_mode.rs`: Parse args, call libcrun FFI
-2. `crates/neovex-bin/src/main.rs`: Check for `--internal-vmm` before
-   tokio/V8 initialization
-3. `crates/neovex-vmm/src/vm.rs`: `VmHandle` that spawns child via
-   `Command::new(current_exe()).arg("--internal-vmm")`
-4. Child process signals `READY` on stdout before entering krun
-5. `PR_SET_PDEATHSIG(SIGKILL)` for cleanup
-
-**Implementation references:**
-- neovex's existing `crates/neovex-bin/src/main.rs` entry point
-- neovex-runtime's test isolation: `crates/neovex-runtime/src/test_support/isolation.rs`
-  (uses `Command::new()` for process isolation — same pattern)
+1. `crates/neovex-vmm/src/conmon.rs`: Spawn conmon as subprocess, read
+   sync pipe, manage PID files, read exit files, connect to attach socket
+2. `crates/neovex-vmm/src/bundle.rs`: Generate OCI bundle for crun
+   (config.json with krun handler, TSI annotations)
+3. `crates/neovex-vmm/src/buildah.rs`: Shell out to buildah for image
+   pull/build/mount/inspect
+4. `crates/neovex-vmm/src/vm.rs`: VmHandle wrapping conmon management
 
 **Acceptance criteria:**
-- `neovex --internal-vmm --bundle /tmp/test-bundle --id test1` boots a VM
-- `neovex serve` still works normally (VMM mode doesn't interfere)
-- Parent process spawning `--internal-vmm` child:
-  - Reads READY signal
-  - Can wait for child exit
-  - Gets correct exit code from workload
-  - Child dies when parent dies (PR_SET_PDEATHSIG)
-
-### Phase V5: Upstream Contributions
-
-**Goal:** Submit patches upstream to reduce fork maintenance burden.
-
-**Scope:**
-1. PR to `containers/libkrun`: Option to use embedded kernel instead of
-   dlopen (feature flag, non-breaking)
-2. PR to `containers/crun`: vsock port configuration via OCI annotation
-   in krun handler
-3. PR to `containers/crun`: Static libkrun linkage option
-
-**Acceptance criteria:**
-- PRs submitted with tests and documentation
-- Maintainer feedback addressed
-- If accepted: update neovex to use upstream instead of forks
+- `neovex` can programmatically boot a postgres:16 VM, connect via TSI,
+  run a query, stop the VM, verify exit status
+- VM survives `neovex` process restart (conmon keeps it alive)
+- Logs are persisted to disk via conmon
 
 ---
 
@@ -768,54 +320,9 @@ sudo dnf install libcap-devel libseccomp-devel
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| V1: Fork libkrun | `todo` | libkrunfw release artifacts | |
-| V2: Fork crun | `todo` | V1 (need libkrun symbols to test static linkage) | LGPL review needed |
-| V3: Build system | `todo` | V1, V2 | libcap-dev, libseccomp-dev |
-| V4: --internal-vmm | `todo` | V3 | |
-| V5: Upstream PRs | `todo` | V1, V2 tested and stable | |
-
----
-
-## LGPL Fallback: Rust Reimplementation
-
-If LGPL-2.1 static linking is not acceptable for neovex's license, replace
-libcrun with a Rust implementation of the OCI runtime setup. This uses only
-permissively-licensed crates:
-
-```rust
-// ~200 lines total, all Apache-2.0 / MIT crates
-use oci_spec::runtime::Spec;          // OCI config.json parsing
-use nix::sched::{clone, CloneFlags};  // namespace setup
-use nix::unistd::{setuid, setgid};    // user/group
-use seccompiler::SeccompFilter;       // seccomp (from rust-vmm, Apache-2.0)
-
-fn setup_isolation(spec: &Spec) {
-    // 1. Create namespaces (~20 lines)
-    unshare(CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS | ...);
-
-    // 2. Set up cgroups (~30 lines)
-    write_cgroup_limits(&spec.linux.resources);
-
-    // 3. Apply seccomp filter (~30 lines)
-    apply_seccomp(&spec.linux.seccomp);
-
-    // 4. Drop capabilities (~10 lines)
-    drop_caps();
-
-    // 5. Configure libkrun and enter VM (~50 lines)
-    configure_and_start_vm(spec);
-}
-```
-
-**Crates (all permissive license):**
-- `oci-spec` (Apache-2.0) — OCI config parsing
-- `nix` (MIT) — namespace, mount, user/group
-- `seccompiler` (Apache-2.0) — seccomp BPF filters (from rust-vmm project)
-- `caps` (MIT/Apache-2.0) — Linux capabilities
-
-This gives the same runtime behavior as libcrun without the LGPL constraint.
-The trade-off: no formal OCI conformance test validation, must track spec
-changes manually. But the OCI runtime spec is stable and changes rarely.
+| V1: Fork crun | `todo` | none | ~10 lines of C |
+| V2: System integration | `todo` | V1, system packages installed | Manual testing |
+| V3: neovex wrapper | `todo` | V2 | Rust code in neovex-vmm crate |
 
 ---
 
@@ -823,43 +330,23 @@ changes manually. But the OCI runtime spec is stable and changes rarely.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| LGPL static linking is problematic | Medium | High | Fallback to Rust reimplementation (see above) |
-| libkrunfw doesn't publish kernel artifacts for all archs | Medium | Medium | Build from source in CI, cache artifacts |
-| build.rs compilation of C deps fails on some systems | Medium | Medium | Document prerequisites, provide Dockerfile for reproducible builds |
-| crun internal API changes between releases | Low | Medium | Pin to submodule tag, update deliberately |
-| Static linking causes symbol conflicts | Low | Medium | Test early in V3, use symbol visibility to isolate |
-| Binary size exceeds user expectations | Low | Low | V8 is already 50MB — kernel adds 20MB proportionally |
-| bindgen generates incompatible bindings | Low | Medium | Pin bindgen version, test in CI |
+| libkrun not packaged for Debian/Ubuntu | High | Medium | Package it ourselves (see distribution-plan.md) |
+| TSI port mapping PR rejected by crun upstream | Low | Low | Maintain fork (~10 lines, trivial rebase) |
+| conmon API changes between versions | Low | Low | conmon has a stable interface (used by Podman, CRI-O) |
+| buildah CLI output format changes | Medium | Medium | Pin buildah version, use --json output |
+| Rootless operation issues with KVM | Medium | Medium | Document KVM permissions, test rootless flow |
 
 ---
-
-## Research References
-
-| Document | Contents |
-|----------|----------|
-| `docs/research/libkrun-evaluation.md` | libkrun API, _exit() analysis, crun/muvm/krunkit consumer patterns |
-| `docs/research/firecracker-container-runtime.md` | Approach comparison, Firecracker alternative if libkrun doesn't work |
-| `docs/research/firecracker-implementation-sketches.md` | Code sketches for OCI pipeline, guest init, vsock |
-| `docs/research/vm-lifecycle-probes.md` | K8s/Docker/Fly.io probe models, graceful shutdown, neovex-init design |
 
 ## Source Code References
 
 | File | Repo | What to study |
 |------|------|---------------|
-| `src/libkrun/src/lib.rs` | containers/libkrun | KrunfwBindings (L88-150), krun_start_enter (L2528), Vmm::stop (L357) |
-| `src/vmm/src/lib.rs` | containers/libkrun | _exit() call (L370), exit_evt handling (L397-428) |
-| `src/vmm/src/signal_handler.rs` | containers/libkrun | Signal handlers that also call _exit() |
-| `src/libcrun/handlers/krun.c` | containers/crun | krun handler — dlopen, VM config, the function to patch |
-| `src/libcrun/container.h` | containers/crun | libcrun public API — FFI binding target |
-| `src/libcrun/container.c` | containers/crun | libcrun_container_run() implementation |
-| `src/libcrun/linux.c` | containers/crun | Namespace/cgroup/seccomp setup (reference, don't modify) |
-| `include/libkrun.h` | containers/libkrun | Complete libkrun C API (~55 functions) |
-| `init/init.c` | containers/libkrun | Built-in guest init (reference for neovex-init) |
-| `src/tini.c` | krallin/tini | PID 1 signal forwarding pattern |
-| `dumb-init.c` | Yelp/dumb-init | PID 1 signal forwarding + rewriting |
-| `src/agent/src/rpc.rs` | kata-containers/kata-containers | vsock shutdown protocol (ttrpc) |
-| `pkg/kubelet/prober/worker.go` | kubernetes/kubernetes | Probe state machine reference |
-| `daemon/health.go` | moby/moby | Docker health check state machine |
+| `src/libcrun/handlers/krun.c` | containers/crun | krun handler — the only file to patch |
+| `include/libkrun.h` | containers/libkrun | `krun_set_port_map()` signature |
+| `src/runtime_args.c` | containers/conmon | How conmon invokes crun |
+| `libpod/oci_conmon_common_linux.go` | containers/podman | How Podman invokes conmon |
+| `src/tini.c` | krallin/tini | PID 1 reference (signal forwarding) |
 
 ---
 
