@@ -1,14 +1,14 @@
 # Plan: External SQL and Future Provider Topologies
 
-This file keeps its historical filename, but it now owns the broader
-follow-on design work for replica-connected SQLite, Postgres/MySQL, and other
-non-local or coordinated provider topologies after the local embedded-provider
-seam is complete and stable.
+This archived umbrella plan captured the broader follow-on design work for
+replica-connected SQLite, Postgres/MySQL, and other non-local or coordinated
+provider topologies after the local embedded-provider seam became complete and
+stable.
 
-It is intentionally separate from the completed SQLite migration. The archived
-SQLite migration plan established the durable engine-facing seam and the
-retained embedded-provider model; this plan is where future provider-topology
-work should start when we are ready to move beyond local embedded deployments.
+It remains historical design baseline only. The archived SQLite migration plan
+established the durable engine-facing seam and the retained embedded-provider
+model; any future provider-topology work should start from a new active plan
+that uses this record as background context.
 
 Reviewed against:
 

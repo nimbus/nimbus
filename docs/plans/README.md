@@ -46,10 +46,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Archived completed plans
 
-Completed plans usually live in `docs/plans/archive/`. The historical umbrella
-external-provider design plan remains at its original path because completed
-storage migration records already cite it directly. Do not resume completed
-plans unless explicitly asked to review historical work.
+Completed plans usually live in `docs/plans/archive/`. Do not resume
+completed plans unless explicitly asked to review historical work.
 
 - `docs/plans/archive/pluggable-storage-backend-plan.md`
   - completed SQLite storage migration control plan; records the cutover to
@@ -87,11 +85,11 @@ plans unless explicitly asked to review historical work.
   - completed Postgres reconnect correctness follow-up; records the
     authoritative schema-plus-journal catch-up on LISTEN reattach and the
     focused regression for missed schema notifications during listener downtime
-- `docs/plans/external-sql-storage-backends-plan.md`
+- `docs/plans/archive/external-sql-storage-backends-plan.md`
   - completed umbrella provider-topology design baseline; records the settled
-  `TenantPersistence` / `PersistenceProvider` seam, the control-plane and
-  runtime-config cleanup slices, and the follow-on design decisions for
-  replica-connected SQLite and MySQL
+    `TenantPersistence` / `PersistenceProvider` seam, the control-plane and
+    runtime-config cleanup slices, and the follow-on design decisions for
+    replica-connected SQLite and MySQL
 - `docs/plans/archive/runtime-sandbox-architecture-plan.md`
   - completed execution-runtime versus sandbox-orchestration cleanup baseline;
     records the settled `neovex-runtime` versus `neovex-sandbox` naming and
@@ -129,8 +127,8 @@ plans unless explicitly asked to review historical work.
   `archive/mysql-storage-provider-plan.md`; use it only for historical review
   of the second opt-in external provider implementation.
 - The umbrella external-provider plan at
-  `external-sql-storage-backends-plan.md` is complete historical design
-  context. For future replica-connected SQLite, MySQL, or other
+  `archive/external-sql-storage-backends-plan.md` is complete historical
+  design context. For future replica-connected SQLite, MySQL, or other
   provider-topology implementation work, promote or author a new active plan
   using it as the architectural baseline.
 - The replica-connected SQLite provider implementation plan is complete and

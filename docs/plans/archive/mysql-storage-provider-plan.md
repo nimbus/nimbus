@@ -4,7 +4,7 @@ This plan owns the first concrete implementation of a MySQL-backed Neovex
 tenant persistence provider.
 
 It is promoted from
-`docs/plans/external-sql-storage-backends-plan.md` after the umbrella
+`docs/plans/archive/external-sql-storage-backends-plan.md` after the umbrella
 provider-topology work established the durable `TenantPersistence` /
 `PersistenceProvider` seam, the explicit control-plane split, the canonical
 runtime config lowering, and the MySQL-specific design decision.
@@ -13,7 +13,7 @@ Reviewed against:
 
 - `ARCHITECTURE.md`
 - `docs/plans/README.md`
-- `docs/plans/external-sql-storage-backends-plan.md`
+- `docs/plans/archive/external-sql-storage-backends-plan.md`
 - `docs/plans/archive/postgres-storage-provider-plan.md`
 - `crates/neovex-engine/src/persistence.rs`
 - `crates/neovex-engine/src/persistence_config.rs`
@@ -207,7 +207,7 @@ different physical design.
 
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
-| 2026-04-10 | meta | created | Promoted the first MySQL provider implementation into its own active control plane after the umbrella provider-topology plan was completed. This plan inherits the settled `TenantPersistence` / `PersistenceProvider` seam, the explicit local redb control-plane split, and the MySQL-specific design decision from the umbrella baseline. | docs review against `ARCHITECTURE.md`, `docs/plans/README.md`, `docs/plans/external-sql-storage-backends-plan.md`, and `docs/plans/archive/postgres-storage-provider-plan.md`; `git diff --check` | start `MY0` by wiring MySQL into the typed service/runtime config surface without changing the control-plane boundary |
+| 2026-04-10 | meta | created | Promoted the first MySQL provider implementation into its own active control plane after the umbrella provider-topology plan was completed. This plan inherits the settled `TenantPersistence` / `PersistenceProvider` seam, the explicit local redb control-plane split, and the MySQL-specific design decision from the umbrella baseline. | docs review against `ARCHITECTURE.md`, `docs/plans/README.md`, `docs/plans/archive/external-sql-storage-backends-plan.md`, and `docs/plans/archive/postgres-storage-provider-plan.md`; `git diff --check` | start `MY0` by wiring MySQL into the typed service/runtime config surface without changing the control-plane boundary |
 | 2026-04-10 | MY0 | done | Added `ServicePersistenceConfig::mysql`, `TenantProviderConfig::mysql`, and `TenantRoutingConfig::DatabasePerTenant`; extended the runtime CLI/env/config surface with canonical MySQL resource and routing inputs; and wired a service-level MySQL persistence branch that preserves the explicit local redb control plane while failing clearly until the provider foundation lands. | `cargo fmt --all --check`; `cargo test -p neovex-bin -- --nocapture`; `cargo check --workspace`; `git diff --check` | start `MY1` with a storage-side `mysql_async` provider foundation, deterministic tenant database naming, and container-backed lifecycle coverage |
 | 2026-04-10 | MY1 | done | Added a concrete `MySqlProvider` on `mysql_async` with a shared no-default-database pool, provider metadata bootstrap, deterministic database-per-tenant naming, registry/lifecycle operations, `OpenedMySqlTenant`, and identity/read-executor foundations; added container-backed lifecycle tests that use `NEOVEX_MYSQL_URL` as the canonical external override and otherwise start a testcontainers MySQL instance. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-storage`; `cargo test -p neovex-storage mysql_provider -- --nocapture`; `cargo check --workspace`; `git diff --check` | start `MY2` by wiring MySQL into the engine persistence seam and replacing the identity-only tenant store with planner-ready read and snapshot foundations |
 | 2026-04-10 | MY2 | done | Wired MySQL through `PersistenceProvider`, `TenantPersistence`, and the service construction path; expanded `MySqlTenantStore` into a snapshot-backed read surface with schema/doc/journal bootstrap loading and planner-facing query operations; added focused engine coverage proving async create/list/reopen/query/bootstrap behavior through `Service` against a live MySQL target while keeping writes explicitly deferred to the next slice. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p neovex-storage mysql_provider -- --nocapture`; `cargo test -p neovex-engine mysql_provider -- --nocapture`; `cargo check -p neovex-storage`; `cargo check -p neovex-engine`; `cargo check --workspace`; `git diff --check` | start `MY3` by replacing the temporary MySQL write-path stubs with real transactional schema, mutation, scheduler, journal, and generated-column index behavior |

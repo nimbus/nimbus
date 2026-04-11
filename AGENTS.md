@@ -49,10 +49,10 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/postgres-storage-provider-plan.md`; use it only for
   historical review, not as live progress state.
 - The umbrella external-provider plan at
-  `docs/plans/external-sql-storage-backends-plan.md` is complete historical
-  design context. For future provider-topology implementation work, use
-  `docs/plans/README.md` to promote or author a new active plan from that
-  baseline rather than treating it as live progress state.
+  `docs/plans/archive/external-sql-storage-backends-plan.md` is complete
+  historical design context. For future provider-topology implementation
+  work, use `docs/plans/README.md` to promote or author a new active plan
+  from that baseline rather than treating it as live progress state.
 - The MySQL provider implementation plan is complete and archived at
   `docs/plans/archive/mysql-storage-provider-plan.md`; use it only for
   historical review, not as live progress state.
@@ -90,8 +90,8 @@ Use the repo docs for architecture and behavior details:
   context only. The MySQL provider implementation plan in
   `docs/plans/archive/mysql-storage-provider-plan.md` is also historical
   context only. The umbrella external-provider plan in
-  `docs/plans/external-sql-storage-backends-plan.md` is also historical design
-  context only. The replica-connected SQLite provider plan in
+  `docs/plans/archive/external-sql-storage-backends-plan.md` is also
+  historical design context only. The replica-connected SQLite provider plan in
   `docs/plans/archive/sqlite-replica-provider-plan.md` is also historical
   context only. The storage-provider contracts and observability follow-up plan
   in `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
