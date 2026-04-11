@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use neovex_core::Error;
+use neovex_core::{Error, StorageErrorKind};
 use neovex_engine::Service;
 use neovex_runtime::{HostCallCancellation, InvocationAuth};
 use serde_json::json;
@@ -70,7 +70,15 @@ impl IntoResponse for AppError {
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
                     Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
                     Error::AlreadyExists(_) => StatusCode::CONFLICT,
-                    Error::Storage(_) | Error::Serialization(_) | Error::Internal(_) => {
+                    Error::Storage { kind, .. } => match kind {
+                        StorageErrorKind::Busy
+                        | StorageErrorKind::Transient
+                        | StorageErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                        StorageErrorKind::Corruption
+                        | StorageErrorKind::Io
+                        | StorageErrorKind::Other => StatusCode::INTERNAL_SERVER_ERROR,
+                    },
+                    Error::Serialization(_) | Error::Internal(_) => {
                         StatusCode::INTERNAL_SERVER_ERROR
                     }
                 };
@@ -99,6 +107,22 @@ impl std::fmt::Display for AppError {
 }
 
 impl std::error::Error for AppError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_storage_error_maps_to_service_unavailable() {
+        let response = AppError::from(Error::storage(
+            StorageErrorKind::Unavailable,
+            "postgres pool unavailable",
+        ))
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct RequestCancellationGuard {

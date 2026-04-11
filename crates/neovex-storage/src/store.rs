@@ -131,5 +131,5 @@ pub struct TenantWriteTransaction {
 }
 
 pub(crate) fn map_redb_error(error: impl std::fmt::Display) -> Error {
-    Error::Storage(error.to_string())
+    Error::storage(neovex_core::StorageErrorKind::Other, error.to_string())
 }

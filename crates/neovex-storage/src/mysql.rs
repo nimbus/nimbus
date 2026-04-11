@@ -5,11 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use mysql_async::prelude::Queryable;
-use mysql_async::{Conn, Opts, OptsBuilder, Pool, PoolConstraints, Row};
+use mysql_async::{
+    Conn, Opts, OptsBuilder, Params, Pool, PoolConstraints, Row, Value as MySqlValue,
+};
 use neovex_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Filter, FilterOp,
-    IndexDefinition, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, TableName,
-    TableSchema, TenantId, Timestamp, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
+    FilterOp, IndexDefinition, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber,
+    StorageErrorKind, TableName, TableSchema, TenantId, Timestamp, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -550,7 +552,14 @@ impl MySqlTenantStore {
     }
 
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
-        self.read_snapshot()?.get(table, id)
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        let id = *id;
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_document_from_session(&mut conn, &database_name, &table, &id).await
+        })
     }
 
     pub fn scan_table_matching_cancellable<F>(
@@ -562,8 +571,12 @@ impl MySqlTenantStore {
     where
         F: FnMut(&Document) -> Result<bool>,
     {
-        self.read_snapshot()?
-            .scan_table_matching_cancellable(table, check_cancel, include_document)
+        self.scan_table_matching_with_filters_cancellable(
+            table,
+            &[],
+            check_cancel,
+            include_document,
+        )
     }
 
     pub fn scan_table_matching_with_filters_cancellable<F>(
@@ -576,13 +589,8 @@ impl MySqlTenantStore {
     where
         F: FnMut(&Document) -> Result<bool>,
     {
-        self.read_snapshot()?
-            .scan_table_matching_with_filters_cancellable(
-                table,
-                filters,
-                check_cancel,
-                include_document,
-            )
+        let documents = self.load_table_documents(table)?;
+        filter_documents_with_predicate(documents, filters, check_cancel, include_document)
     }
 
     pub fn index_scan_eq_cancellable(
@@ -592,8 +600,12 @@ impl MySqlTenantStore {
         value: &Value,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        self.read_snapshot()?
-            .index_scan_eq_cancellable(table, index_name, value, check_cancel)
+        self.index_scan_prefix_cancellable(
+            table,
+            index_name,
+            std::slice::from_ref(value),
+            check_cancel,
+        )
     }
 
     pub fn index_scan_prefix_cancellable(
@@ -603,10 +615,14 @@ impl MySqlTenantStore {
         prefix_values: &[Value],
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        self.read_snapshot()?.index_scan_prefix_cancellable(
+        self.load_index_documents_cancellable(
             table,
             index_name,
             prefix_values,
+            None,
+            None,
+            true,
+            true,
             check_cancel,
         )
     }
@@ -622,9 +638,10 @@ impl MySqlTenantStore {
         end_inclusive: bool,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        self.read_snapshot()?.index_scan_range_cancellable(
+        self.load_index_documents_cancellable(
             table,
             index_name,
+            &[],
             start,
             end,
             start_inclusive,
@@ -645,17 +662,110 @@ impl MySqlTenantStore {
         end_inclusive: bool,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        self.read_snapshot()?
-            .index_scan_composite_range_cancellable(
-                table,
+        self.load_index_documents_cancellable(
+            table,
+            index_name,
+            exact_prefix,
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+            check_cancel,
+        )
+    }
+
+    fn load_table_documents(&self, table: &TableName) -> Result<Vec<Document>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_documents_from_session(&mut conn, &database_name, Some(&table)).await
+        })
+    }
+
+    fn load_table_schema(&self, table: &TableName) -> Result<TableSchema> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_table_schema_from_session(&mut conn, &database_name, &table)
+                .await?
+                .ok_or(Error::SchemaNotFound(table))
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load_index_documents_cancellable(
+        &self,
+        table: &TableName,
+        index_name: &str,
+        exact_prefix: &[Value],
+        start: Option<&Value>,
+        end: Option<&Value>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<Vec<Document>> {
+        let table_schema = self.load_table_schema(table)?;
+        let index_fields = index_fields_for_table_schema(&table_schema, index_name)?;
+        if exact_prefix.len() > index_fields.len() {
+            return Err(Error::InvalidInput(format!(
+                "index prefix length {} exceeds index '{}' field count {}",
+                exact_prefix.len(),
                 index_name,
-                exact_prefix,
-                start,
-                end,
+                index_fields.len()
+            )));
+        }
+        if (start.is_some() || end.is_some()) && exact_prefix.len() >= index_fields.len() {
+            return Err(Error::InvalidInput(format!(
+                "composite range prefix length {} leaves no range field for index '{}'",
+                exact_prefix.len(),
+                index_name
+            )));
+        }
+
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table_for_query = table.clone();
+        let table_for_filter = table.clone();
+        let table_schema_for_query = table_schema.clone();
+        let exact_prefix = exact_prefix.to_vec();
+        let exact_prefix_for_query = exact_prefix.clone();
+        let start = start.cloned();
+        let start_for_query = start.clone();
+        let end = end.cloned();
+        let end_for_query = end.clone();
+        let index_name = index_name.to_string();
+        let documents = self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_index_candidate_documents_from_session(
+                &mut conn,
+                &database_name,
+                &table_for_query,
+                &table_schema_for_query,
+                index_name.as_str(),
+                &exact_prefix_for_query,
+                start_for_query.as_ref(),
+                end_for_query.as_ref(),
                 start_inclusive,
                 end_inclusive,
-                check_cancel,
             )
+            .await
+        })?;
+
+        filter_index_documents_with_cancel(
+            documents,
+            &table_for_filter,
+            &index_fields,
+            &exact_prefix,
+            start.as_ref(),
+            end.as_ref(),
+            start_inclusive,
+            end_inclusive,
+            check_cancel,
+        )
     }
 
     pub fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
@@ -2552,7 +2662,32 @@ async fn database_exists(conn: &mut Conn, database_name: &str) -> Result<bool> {
 }
 
 fn map_mysql_error(error: mysql_async::Error) -> Error {
-    Error::Internal(error.to_string())
+    let message = error.to_string();
+    match error {
+        mysql_async::Error::Server(server) => match server.code {
+            1040 | 1041 | 1206 | 1226 => Error::ResourceExhausted(message),
+            1044 | 1045 | 1142 | 1143 | 1227 => Error::PermissionDenied(message),
+            1062 => Error::AlreadyExists(message),
+            1205 => Error::storage(StorageErrorKind::Busy, message),
+            1213 => Error::storage(StorageErrorKind::Transient, message),
+            2006 | 2013 => Error::storage(StorageErrorKind::Unavailable, message),
+            _ => Error::storage(StorageErrorKind::Other, message),
+        },
+        mysql_async::Error::Io(_) => Error::storage(StorageErrorKind::Io, message),
+        mysql_async::Error::Url(_) => Error::InvalidInput(message),
+        mysql_async::Error::Driver(driver) => match driver {
+            mysql_async::DriverError::ConnectionClosed
+            | mysql_async::DriverError::PoolDisconnected => {
+                Error::storage(StorageErrorKind::Unavailable, message)
+            }
+            mysql_async::DriverError::PacketOutOfOrder
+            | mysql_async::DriverError::UnexpectedPacket { .. } => {
+                Error::storage(StorageErrorKind::Corruption, message)
+            }
+            _ => Error::storage(StorageErrorKind::Other, message),
+        },
+        mysql_async::Error::Other(_) => Error::storage(StorageErrorKind::Other, message),
+    }
 }
 
 fn mysql_server_error_code(error: &mysql_async::Error) -> Option<u16> {
@@ -2786,6 +2921,94 @@ where
             deserialize_json::<TableSchema>(mysql_async::from_row::<(String,)>(row).0.as_str())
         })
         .transpose()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn load_index_candidate_documents_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+    table_schema: &TableSchema,
+    index_name: &str,
+    exact_prefix: &[Value],
+    start: Option<&Value>,
+    end: Option<&Value>,
+    start_inclusive: bool,
+    end_inclusive: bool,
+) -> Result<Vec<Document>>
+where
+    C: Queryable,
+{
+    let index_fields = index_fields_for_table_schema(table_schema, index_name)?;
+    let range_field = index_fields.get(exact_prefix.len());
+
+    let mut clauses = vec!["table_name = ?".to_string()];
+    let mut params = vec![MySqlValue::Bytes(table.as_str().as_bytes().to_vec())];
+
+    for (field, value) in index_fields.iter().zip(exact_prefix.iter()) {
+        clauses.push(format!(
+            "{} = ?",
+            quote_identifier(&mysql_generated_column_name(table, field))
+        ));
+        params.push(mysql_index_text_value(value)?);
+    }
+
+    if let Some(range_field) = range_field {
+        let field_type = field_type_for_table_schema(table_schema, range_field)?;
+        match field_type {
+            FieldType::String => {
+                append_mysql_range_clause(
+                    &mut clauses,
+                    &mut params,
+                    quote_identifier(&mysql_generated_column_name(table, range_field)),
+                    start.map(mysql_index_text_value).transpose()?,
+                    end.map(mysql_index_text_value).transpose()?,
+                    start_inclusive,
+                    end_inclusive,
+                );
+            }
+            FieldType::Number => {
+                append_mysql_range_clause(
+                    &mut clauses,
+                    &mut params,
+                    mysql_numeric_column_expr(table, range_field),
+                    start.map(mysql_numeric_value).transpose()?,
+                    end.map(mysql_numeric_value).transpose()?,
+                    start_inclusive,
+                    end_inclusive,
+                );
+            }
+            _ if start.is_some() || end.is_some() => {
+                return Err(Error::InvalidInput(
+                    "range scans only support string and number indexed fields".to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    let sql = format!(
+        "SELECT table_name, id, creation_time, data_json \
+         FROM {} \
+         WHERE {} \
+         ORDER BY id",
+        qualified_table(database_name, "documents"),
+        clauses.join(" AND ")
+    );
+    let rows: Vec<Row> = session
+        .exec(sql, Params::Positional(params))
+        .await
+        .map_err(map_mysql_error)?;
+    rows.into_iter()
+        .map(|row| {
+            let (table_name, id, creation_time, data_json): (String, String, u64, String) =
+                mysql_async::from_row(row);
+            let table = TableName::new(table_name)?;
+            let id = DocumentId::from_str(&id)
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            row_to_document(&table, &id, creation_time, data_json)
+        })
+        .collect()
 }
 
 async fn load_scheduled_jobs_from_session<C>(
@@ -3220,6 +3443,25 @@ fn matches_filters(document: &Document, filters: &[Filter]) -> Result<bool> {
     Ok(true)
 }
 
+fn filter_documents_with_predicate<F>(
+    documents: Vec<Document>,
+    filters: &[Filter],
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+    mut include_document: F,
+) -> Result<Vec<Document>>
+where
+    F: FnMut(&Document) -> Result<bool>,
+{
+    let mut filtered = Vec::new();
+    for document in documents {
+        check_cancel()?;
+        if matches_filters(&document, filters)? && include_document(&document)? {
+            filtered.push(document);
+        }
+    }
+    Ok(filtered)
+}
+
 fn compare_values(left: &Value, right: &Value) -> Result<std::cmp::Ordering> {
     match (left, right) {
         (Value::String(left), Value::String(right)) => Ok(left.cmp(right)),
@@ -3237,6 +3479,123 @@ fn compare_values(left: &Value, right: &Value) -> Result<std::cmp::Ordering> {
         _ => Err(Error::InvalidInput(
             "comparisons only support string and number fields in phase 1".to_string(),
         )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn filter_index_documents_with_cancel(
+    documents: Vec<Document>,
+    table: &TableName,
+    index_fields: &[String],
+    exact_prefix: &[Value],
+    start: Option<&Value>,
+    end: Option<&Value>,
+    start_inclusive: bool,
+    end_inclusive: bool,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<Vec<Document>> {
+    let range_field = index_fields.get(exact_prefix.len());
+    let mut filtered = Vec::new();
+    for document in documents {
+        check_cancel()?;
+        if &document.table != table {
+            continue;
+        }
+        if !document_matches_exact_prefix(&document, index_fields, exact_prefix) {
+            continue;
+        }
+        if let Some(range_field) = range_field
+            && !document_matches_range_bounds(
+                &document,
+                range_field,
+                start,
+                end,
+                start_inclusive,
+                end_inclusive,
+            )?
+        {
+            continue;
+        }
+        filtered.push(document);
+    }
+    Ok(filtered)
+}
+
+fn index_fields_for_table_schema(
+    table_schema: &TableSchema,
+    index_name: &str,
+) -> Result<Vec<String>> {
+    let index = table_schema
+        .indexes
+        .iter()
+        .find(|index| index.name == index_name)
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "index '{}' not found for table '{}'",
+                index_name,
+                table_schema.table.as_str()
+            ))
+        })?;
+    Ok(index.fields.clone())
+}
+
+fn field_type_for_table_schema(table_schema: &TableSchema, field_name: &str) -> Result<FieldType> {
+    table_schema
+        .fields
+        .iter()
+        .find(|field| field.name == field_name)
+        .map(|field| field.field_type)
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "field '{}' not found in schema for table '{}'",
+                field_name,
+                table_schema.table.as_str()
+            ))
+        })
+}
+
+fn mysql_index_text_value(value: &Value) -> Result<MySqlValue> {
+    match value {
+        Value::String(value) => Ok(MySqlValue::Bytes(value.as_bytes().to_vec())),
+        Value::Number(number) => Ok(MySqlValue::Bytes(number.to_string().into_bytes())),
+        _ => Err(Error::InvalidInput(
+            "index equality and prefix scans only support string and number values".to_string(),
+        )),
+    }
+}
+
+fn mysql_numeric_value(value: &Value) -> Result<MySqlValue> {
+    let number = value.as_f64().ok_or_else(|| {
+        Error::InvalidInput("numeric range bounds require number values".to_string())
+    })?;
+    Ok(MySqlValue::Double(number))
+}
+
+fn mysql_numeric_column_expr(table: &TableName, field: &str) -> String {
+    format!(
+        "CAST({} AS DOUBLE)",
+        quote_identifier(&mysql_generated_column_name(table, field))
+    )
+}
+
+fn append_mysql_range_clause(
+    clauses: &mut Vec<String>,
+    params: &mut Vec<MySqlValue>,
+    expr: String,
+    start: Option<MySqlValue>,
+    end: Option<MySqlValue>,
+    start_inclusive: bool,
+    end_inclusive: bool,
+) {
+    if let Some(start) = start {
+        let operator = if start_inclusive { ">=" } else { ">" };
+        clauses.push(format!("{expr} {operator} ?"));
+        params.push(start);
+    }
+    if let Some(end) = end {
+        let operator = if end_inclusive { "<=" } else { "<" };
+        clauses.push(format!("{expr} {operator} ?"));
+        params.push(end);
     }
 }
 

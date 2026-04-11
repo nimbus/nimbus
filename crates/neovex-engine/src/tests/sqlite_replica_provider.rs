@@ -4,12 +4,12 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hyper::client::HttpConnector;
 use libsql::{Builder, Database};
 use neovex_core::{
     DocumentId, FieldSchema, FieldType, Mutation, ScheduleRequest, ScheduledJobOutcome,
     SequenceNumber, TableSchema, TenantId, Timestamp,
 };
+use neovex_storage::libsql::libsql_transport_connector;
 use neovex_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers_modules::testcontainers::{
@@ -572,13 +572,13 @@ async fn test_connection() -> Option<TestConnection> {
 
     let image = GenericImage::new("ghcr.io/tursodatabase/libsql-server", "latest")
         .with_wait_for(WaitFor::seconds(1))
+        // The container entrypoint already appends --http-listen-addr from
+        // SQLD_HTTP_LISTEN_ADDR, so the harness only overrides the admin bind
+        // and feature flags here.
+        .with_env_var("SQLD_ADMIN_LISTEN_ADDR", "0.0.0.0:8081")
         .with_cmd(vec![
             "/bin/sqld".to_string(),
-            "--http-listen-addr".to_string(),
-            "0.0.0.0:8080".to_string(),
             "--enable-namespaces".to_string(),
-            "--admin-listen-addr".to_string(),
-            "0.0.0.0:8081".to_string(),
             "--no-welcome".to_string(),
         ]);
     let host_http_port = allocate_host_port();
@@ -602,7 +602,7 @@ async fn test_connection() -> Option<TestConnection> {
     let primary_url = format!("http://{host}:{host_http_port}");
     let admin_api_url = format!("http://{host}:{host_admin_port}");
 
-    if timeout(Duration::from_secs(20), async {
+    if timeout(Duration::from_secs(60), async {
         loop {
             let replica_cache_dir = tempdir().expect("temporary replica cache dir should create");
             let config = LibsqlReplicaProviderConfig::new(
@@ -706,27 +706,13 @@ async fn open_remote_namespace_database(
     config: &LibsqlReplicaProviderConfig,
     namespace: &str,
 ) -> neovex_core::Result<Database> {
-    let mut builder = Builder::new_remote(
+    let builder = Builder::new_remote(
         config.primary_url.clone(),
         config.auth_token.clone().unwrap_or_default(),
     )
-    .namespace(namespace.to_string());
-    if let Some(connector) = plain_http_connector(config.primary_url.as_str()) {
-        builder = builder.connector(connector);
-    }
-    builder
-        .build()
-        .await
-        .map_err(|error| neovex_core::Error::Storage(error.to_string()))
-}
-
-fn plain_http_connector(primary_url: &str) -> Option<HttpConnector> {
-    if !primary_url.starts_with("http://") {
-        return None;
-    }
-
-    let mut connector = HttpConnector::new();
-    connector.enforce_http(true);
-    connector.set_nodelay(true);
-    Some(connector)
+    .namespace(namespace.to_string())
+    .connector(libsql_transport_connector()?);
+    builder.build().await.map_err(|error| {
+        neovex_core::Error::storage(neovex_core::StorageErrorKind::Other, error.to_string())
+    })
 }

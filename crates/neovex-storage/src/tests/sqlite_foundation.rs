@@ -98,6 +98,34 @@ async fn sqlite_async_read_cancellation_still_prevents_queued_execution() {
         .expect("first sqlite read should complete");
 }
 
+#[test]
+fn sqlite_store_enforces_direct_read_connection_limit() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store =
+        SqliteTenantStore::open_with_max_read_connections(dir.path().join("tenant.sqlite3"), 1)
+            .expect("sqlite tenant store should open with explicit read limit");
+
+    let first_snapshot = store
+        .read_snapshot()
+        .expect("first direct sqlite read snapshot should acquire the only connection");
+    let error = match store.read_snapshot() {
+        Ok(_) => {
+            panic!("second direct sqlite read snapshot should exhaust the explicit pool limit")
+        }
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, Error::ResourceExhausted(message) if message.contains("sqlite read connection pool exhausted")),
+        "direct callers should get an explicit resource-exhausted error once the store-level pool limit is hit"
+    );
+
+    drop(first_snapshot);
+
+    store
+        .read_snapshot()
+        .expect("released sqlite read connection should be reusable after the snapshot drops");
+}
+
 #[tokio::test]
 async fn sqlite_async_write_schema_change_persists_after_reopen() {
     let dir = tempdir().expect("temporary directory should create");

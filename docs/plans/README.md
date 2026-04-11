@@ -4,6 +4,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/dependency-baseline-cleanup-plan.md`
+  - active control plane for restoring a clean dependency baseline after the
+    storage-layer hardening closeout; owns the `libsql` TLS/dependency-shape
+    cleanup needed for `make deny` / `make ci`
 - `docs/plans/convex-demos-compatibility-plan.md`
   - execution plan for closing the remaining Convex demo and compatibility gaps
 - `docs/plans/encryption-at-rest-plan.md`
@@ -68,6 +72,11 @@ plans unless explicitly asked to review historical work.
     remote-primary plus provider-owned replica-cache implementation, the
     freshness-drill benchmark gate, and the decision to keep the benchmark
     harness env/CLI-driven on explicit `sqld` endpoints
+- `docs/plans/archive/storage-layer-hardening-plan.md`
+  - completed storage hardening follow-up plan; records the `QueryReadStore`
+    de-duplication, embedded SQLite pool guardrail, Postgres/MySQL targeted
+    planner reads, structured storage error kinds, replica-refresh hardening,
+    and the final closeout verification baseline
 - `docs/plans/external-sql-storage-backends-plan.md`
   - completed umbrella provider-topology design baseline; records the settled
     `TenantPersistence` / `PersistenceProvider` seam, the control-plane and
@@ -83,6 +92,8 @@ plans unless explicitly asked to review historical work.
   of reviving a completed archived one.
 - For Convex demo and compatibility work, start with
   `convex-demos-compatibility-plan.md`.
+- For dependency-baseline cleanup after the storage hardening closeout, start
+  with `dependency-baseline-cleanup-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
@@ -108,6 +119,9 @@ plans unless explicitly asked to review historical work.
 - The replica-connected SQLite provider implementation plan is complete and
   archived at `archive/sqlite-replica-provider-plan.md`; use it only for
   historical review of the first `libsql`-first replica provider slice.
+- The storage hardening follow-up plan is complete and archived at
+  `archive/storage-layer-hardening-plan.md`; use it only for historical review
+  of the verified post-migration cleanup and refresh-hardening pass.
 - Do not revive the archived SQLite migration plan to own future non-local
   provider implementation details, pooling, replication, or coordination
   concerns; any new work there should start from a newly active plan rather

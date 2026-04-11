@@ -140,10 +140,16 @@ impl EmbeddedSqliteProvider {
     async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedEmbeddedSqliteTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
+        let read_parallelism = self.tenant_read_parallelism;
         let store = self
             .storage_handle
             .spawn_blocking(move || {
-                SqliteTenantStore::open_with_simulation(path, clock, fault_injector)
+                SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                    path,
+                    clock,
+                    fault_injector,
+                    read_parallelism,
+                )
             })
             .await
             .map_err(map_join_error)??;
@@ -166,11 +172,12 @@ impl SqliteTenantStorage {
         runtime_handle: TokioRuntimeHandle,
         max_concurrent_reads: usize,
     ) -> Self {
+        let read_parallelism = max_concurrent_reads.min(store.max_read_connections());
         Self {
             executor: BlockingReadExecutor::new(
                 store.clone(),
                 runtime_handle.clone(),
-                max_concurrent_reads,
+                read_parallelism,
             ),
             write_executor: SqliteBlockingWriteExecutor::new(store, runtime_handle),
         }
