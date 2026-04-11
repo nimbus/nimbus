@@ -109,7 +109,6 @@ async function typecheckConvexSurface() {
           allowImportingTsExtensions: true,
           jsx: "react-jsx",
           lib: ["ES2022", "DOM"],
-          baseUrl: ".",
           paths: {
             "convex/browser": [browserEntry],
             "convex/react": [reactEntry],
