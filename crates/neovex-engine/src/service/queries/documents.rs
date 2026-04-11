@@ -5,7 +5,6 @@ use futures::FutureExt;
 use neovex_core::{
     Document, DocumentId, Error, PrincipalContext, Query, Result, TableName, TenantId,
 };
-use neovex_storage::TenantReadStorage;
 
 use super::authorization::ReadAuthorization;
 use super::materialized::wait_for_latest_applied_visibility_blocking;

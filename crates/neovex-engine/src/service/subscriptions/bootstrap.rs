@@ -6,7 +6,6 @@ use neovex_core::{
     Document, PrincipalContext, Query, Result, SequenceNumber, TableSchema, TenantId,
     policy_revision_id,
 };
-use neovex_storage::TenantReadStorage;
 
 use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation, TenantRuntime};
 
@@ -96,7 +95,7 @@ fn evaluate_subscription_bootstrap_with_materialized_surface_cancellable_for_pri
 
     let required_sequence = runtime.applied_head();
     let snapshot = runtime.load_materialized_serving_snapshot_cancellable(
-        runtime.store.as_ref(),
+        &runtime.store,
         &query.table,
         required_sequence,
         check_cancel,
@@ -225,7 +224,7 @@ where
                 },
                 move |store, check_cancel| {
                     runtime_for_task.load_materialized_serving_snapshot_cancellable(
-                        store.as_ref(),
+                        &store,
                         &table_for_task,
                         required_sequence,
                         check_cancel,

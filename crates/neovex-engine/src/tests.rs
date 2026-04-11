@@ -16,7 +16,7 @@ pub(crate) use std::pin::Pin;
 pub(crate) use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) use std::sync::{Arc, Barrier, Condvar, Mutex};
 pub(crate) use std::task::{Context, Poll};
-pub(crate) use tempfile::tempdir;
+pub(crate) use tempfile::{TempDir, tempdir};
 pub(crate) use tokio::sync::{Notify, mpsc};
 pub(crate) use tokio::time::{Duration, timeout};
 
@@ -33,14 +33,24 @@ pub(crate) use crate::verification::{
     ConsistencyScope, collect_durable_journal_bootstrap_mismatches,
     compare_materialized_journal_snapshots,
 };
-pub(crate) use crate::{EmbeddedReplica, Service, ShadowMaterializerConfig, SubscriptionUpdate};
-pub(crate) use neovex_storage::{DurableJournalBootstrap, FaultPoint, ManualClock, TenantStore};
+pub(crate) use crate::{
+    EmbeddedReplica, Service, ServicePersistenceConfig, ShadowMaterializerConfig,
+    SubscriptionUpdate,
+};
+pub(crate) use neovex_storage::{
+    DurableJournalBootstrap, EmbeddedProviderKind, FaultPoint, ManualClock, SqliteTenantStore,
+    TenantStore,
+};
 
 mod consistency;
+mod embedded_providers;
 mod materialized_serving;
 mod mutation_journal;
+mod mysql_provider;
 mod policy;
+mod postgres_provider;
 mod queries;
+mod sqlite_replica_provider;
 mod subscriptions;
 
 pub(crate) fn tasks_table() -> TableName {
@@ -556,6 +566,7 @@ pub(crate) async fn create_service_with_durable_unapplied_task(
     timestamp_ms: u64,
     title: &str,
 ) -> (
+    TempDir,
     Arc<Service>,
     TenantId,
     Arc<BlockingFaultInjector>,
@@ -601,7 +612,7 @@ pub(crate) async fn create_service_with_durable_unapplied_task(
         .map(|write| write.doc_id)
         .expect("durable commit should include the inserted document id");
 
-    (service, tenant_id, faults, document_id)
+    (data_dir, service, tenant_id, faults, document_id)
 }
 
 #[tokio::test]

@@ -151,7 +151,7 @@ impl MutationJournalState {
     }
 
     pub(in crate::tenant) fn mark_durable_head(&self, sequence: SequenceNumber) {
-        self.durable_head.store(sequence.0, Ordering::Release);
+        self.durable_head.fetch_max(sequence.0, Ordering::AcqRel);
     }
 
     pub(in crate::tenant) fn mark_applied_head(&self, sequence: SequenceNumber) {
@@ -159,9 +159,11 @@ impl MutationJournalState {
             .applied_wait_lock
             .lock()
             .expect("mutation journal applied wait lock should not be poisoned");
-        self.applied_head.store(sequence.0, Ordering::Release);
-        self.applied_wait.notify_all();
-        self.applied_notify.notify_waiters();
+        let previous = self.applied_head.fetch_max(sequence.0, Ordering::AcqRel);
+        if sequence.0 > previous {
+            self.applied_wait.notify_all();
+            self.applied_notify.notify_waiters();
+        }
     }
 
     pub(in crate::tenant) async fn wait_for_applied_sequence_cancellable<Fut>(

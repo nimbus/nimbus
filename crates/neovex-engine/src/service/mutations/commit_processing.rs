@@ -82,7 +82,7 @@ impl Service {
         self.dispatch_or_enqueue_subscription_work(runtime, work);
     }
 
-    pub(super) fn process_applied_commit_batch(
+    pub(in crate::service) fn process_applied_commit_batch(
         &self,
         runtime: Arc<TenantRuntime>,
         applied: &[CommitEntry],

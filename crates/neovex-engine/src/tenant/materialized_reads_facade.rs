@@ -1,7 +1,7 @@
 use neovex_core::{Result, SequenceNumber, TableName};
-use neovex_storage::TenantStore;
 
 use super::*;
+use crate::persistence::TenantPersistence;
 
 impl TenantRuntime {
     #[cfg(test)]
@@ -24,7 +24,7 @@ impl TenantRuntime {
 
     pub(crate) fn load_materialized_serving_snapshot_cancellable(
         &self,
-        store: &TenantStore,
+        store: &TenantPersistence,
         table: &TableName,
         required_sequence: SequenceNumber,
         check_cancel: &mut dyn FnMut() -> Result<()>,

@@ -1,22 +1,42 @@
 use super::*;
 
 #[tokio::test]
-async fn service_reload_recovers_durable_journal_before_serving_async_reads() {
+async fn service_reload_recovers_durable_journal_before_serving_async_reads_redb() {
+    assert_service_reload_recovers_durable_journal_before_serving_async_reads(
+        EmbeddedProviderKind::Redb,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn service_reload_recovers_durable_journal_before_serving_async_reads_sqlite() {
+    assert_service_reload_recovers_durable_journal_before_serving_async_reads(
+        EmbeddedProviderKind::Sqlite,
+    )
+    .await;
+}
+
+async fn assert_service_reload_recovers_durable_journal_before_serving_async_reads(
+    backend: EmbeddedProviderKind,
+) {
     let data_dir = tempdir().expect("service tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    let service = Service::new(data_dir.path()).expect("service should create");
+    let service = Service::new_with_embedded_provider(data_dir.path(), backend)
+        .expect("service should create");
     service
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
     drop(service);
 
-    let store = TenantStore::open(data_dir.path().join("demo.redb")).expect("store should open");
     let document = neovex_core::Document::new(
         tasks_table(),
         serde_json::Map::from_iter([("title".to_string(), json!("recovered"))]),
     );
-    store
-        .append_durable_records_batch(&[neovex_core::DurableMutationRecord::new(
+    append_durable_records_for_backend(
+        data_dir.path(),
+        &tenant_id,
+        backend,
+        &[neovex_core::DurableMutationRecord::new(
             SequenceNumber(1),
             Timestamp(60_000),
             vec![neovex_core::WriteOp {
@@ -28,11 +48,13 @@ async fn service_reload_recovers_durable_journal_before_serving_async_reads() {
             }],
             None,
         )
-        .expect("durable record should build")])
-        .expect("durable journal append should succeed");
-    drop(store);
+        .expect("durable record should build")],
+    );
 
-    let reopened = Arc::new(Service::new(data_dir.path()).expect("service should reopen"));
+    let reopened = Arc::new(
+        Service::new_with_embedded_provider(data_dir.path(), backend)
+            .expect("service should reopen"),
+    );
     let documents = reopened
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
         .await
@@ -954,7 +976,22 @@ async fn verification_harness_nightly_generated_history_seed_corpus_matches_mode
 }
 
 #[tokio::test]
-async fn schema_async_write_path_rebuilds_and_removes_indexes_durably() {
+async fn schema_async_write_path_rebuilds_and_removes_indexes_durably_redb() {
+    assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(EmbeddedProviderKind::Redb)
+        .await;
+}
+
+#[tokio::test]
+async fn schema_async_write_path_rebuilds_and_removes_indexes_durably_sqlite() {
+    assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
+        EmbeddedProviderKind::Sqlite,
+    )
+    .await;
+}
+
+async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
+    backend: EmbeddedProviderKind,
+) {
     let data_dir = tempdir().expect("service tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let schema = TableSchema {
@@ -972,7 +1009,10 @@ async fn schema_async_write_path_rebuilds_and_removes_indexes_durably() {
     };
 
     {
-        let service = Arc::new(Service::new(data_dir.path()).expect("service should create"));
+        let service = Arc::new(
+            Service::new_with_embedded_provider(data_dir.path(), backend)
+                .expect("service should create"),
+        );
         service
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
@@ -994,38 +1034,103 @@ async fn schema_async_write_path_rebuilds_and_removes_indexes_durably() {
             .set_table_schema_async(tenant_id.clone(), schema.clone())
             .await
             .expect("schema should save");
+        service.quiesce().await;
     }
 
-    let store = neovex_storage::TenantStore::open(
-        data_dir.path().join(format!("{}.redb", tenant_id.as_str())),
-    )
-    .expect("tenant store should reopen");
+    {
+        let reopened_service = Arc::new(
+            Service::new_with_embedded_provider(data_dir.path(), backend)
+                .expect("service should reopen after schema write"),
+        );
+        reopened_service
+            .get_table_schema_async(tenant_id.clone(), tasks_table())
+            .await
+            .expect("persisted schema should reload through the service path");
+    }
+
     assert_eq!(
-        store
-            .index_scan_eq(&tasks_table(), "by_rank", &json!(7))
-            .expect("index scan should succeed")
-            .len(),
+        index_scan_eq_count_for_backend(data_dir.path(), &tenant_id, backend, &json!(7)),
         1
     );
-    drop(store);
 
     {
-        let service = Arc::new(Service::new(data_dir.path()).expect("service should recreate"));
+        let service = Arc::new(
+            Service::new_with_embedded_provider(data_dir.path(), backend)
+                .expect("service should recreate"),
+        );
         service
             .delete_table_schema_async(tenant_id.clone(), tasks_table())
             .await
             .expect("schema should delete");
+        service.quiesce().await;
     }
 
-    let store = neovex_storage::TenantStore::open(
-        data_dir.path().join(format!("{}.redb", tenant_id.as_str())),
-    )
-    .expect("tenant store should reopen after deletion");
     assert!(
-        store
-            .index_scan_eq(&tasks_table(), "by_rank", &json!(7))
-            .expect("index scan should succeed")
-            .is_empty(),
+        index_scan_eq_count_for_backend(data_dir.path(), &tenant_id, backend, &json!(7)) == 0,
         "async schema deletion should clear rebuilt index entries"
     );
+}
+
+fn tenant_storage_path(
+    data_dir: &std::path::Path,
+    tenant_id: &TenantId,
+    backend: EmbeddedProviderKind,
+) -> std::path::PathBuf {
+    data_dir.join(format!(
+        "{}.{}",
+        tenant_id.as_str(),
+        backend.tenant_file_extension()
+    ))
+}
+
+fn append_durable_records_for_backend(
+    data_dir: &std::path::Path,
+    tenant_id: &TenantId,
+    backend: EmbeddedProviderKind,
+    records: &[neovex_core::DurableMutationRecord],
+) {
+    let path = tenant_storage_path(data_dir, tenant_id, backend);
+    match backend {
+        EmbeddedProviderKind::Redb => {
+            let store = TenantStore::open(path).expect("tenant store should open");
+            store
+                .append_durable_records_batch(records)
+                .expect("durable journal append should succeed");
+        }
+        EmbeddedProviderKind::Sqlite => {
+            let store = SqliteTenantStore::open(path).expect("sqlite tenant store should open");
+            store
+                .append_durable_records_batch(records)
+                .expect("durable journal append should succeed");
+        }
+    }
+}
+
+fn index_scan_eq_count_for_backend(
+    data_dir: &std::path::Path,
+    tenant_id: &TenantId,
+    backend: EmbeddedProviderKind,
+    value: &serde_json::Value,
+) -> usize {
+    let path = tenant_storage_path(data_dir, tenant_id, backend);
+    match backend {
+        EmbeddedProviderKind::Redb => {
+            let store = TenantStore::open(path).expect("tenant store should reopen");
+            store
+                .index_scan_eq(&tasks_table(), "by_rank", value)
+                .expect("index scan should succeed")
+                .len()
+        }
+        EmbeddedProviderKind::Sqlite => {
+            let store = SqliteTenantStore::open(path).expect("sqlite tenant store should reopen");
+            let schema = store.load_schema().expect("sqlite schema should load");
+            if schema.get_table(&tasks_table()).is_none() {
+                return 0;
+            }
+            store
+                .index_scan_eq(&tasks_table(), "by_rank", value)
+                .expect("index scan should succeed")
+                .len()
+        }
+    }
 }

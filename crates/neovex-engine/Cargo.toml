@@ -11,18 +11,26 @@ workspace = true
 test-hooks = []
 
 [dependencies]
+arc-swap.workspace = true
 base64.workspace = true
 futures.workspace = true
 neovex-core = { path = "../neovex-core" }
 neovex-storage = { path = "../neovex-storage" }
 serde.workspace = true
 serde_json.workspace = true
+rusqlite.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+hyper.workspace = true
+libsql.workspace = true
+mysql_async.workspace = true
 neovex-testing = { path = "../neovex-testing" }
 proptest = "1"
+serial_test.workspace = true
 tempfile.workspace = true
+testcontainers-modules = { workspace = true, features = ["blocking", "mysql", "postgres"] }

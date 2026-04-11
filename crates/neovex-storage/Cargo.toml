@@ -8,14 +8,24 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+deadpool-postgres.workspace = true
+hyper.workspace = true
+libsql.workspace = true
+mysql_async.workspace = true
 neovex-core = { path = "../neovex-core" }
 redb.workspace = true
+reqwest.workspace = true
 rmp.workspace = true
 rmp-serde.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 time.workspace = true
 tokio.workspace = true
+tokio-postgres.workspace = true
 
 [dev-dependencies]
+serial_test.workspace = true
 tempfile.workspace = true
+testcontainers-modules = { workspace = true, features = ["blocking", "mysql", "postgres"] }

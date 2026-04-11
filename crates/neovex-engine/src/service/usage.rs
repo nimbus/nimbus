@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use neovex_core::Result;
-use neovex_storage::{MonthlyActiveUsersSnapshot, UsageStorage};
+use neovex_storage::MonthlyActiveUsersSnapshot;
 
 use crate::Service;
 
 impl Service {
     /// Records an authenticated identity in the global monthly active user ledger.
     pub fn record_monthly_active_user(&self, token_identifier: &str) -> Result<bool> {
-        self.usage_store
+        self.control_plane_provider
             .record_monthly_active_user(token_identifier, self.now().0)
     }
 
@@ -17,26 +17,23 @@ impl Service {
         self: &Arc<Self>,
         token_identifier: String,
     ) -> Result<bool> {
-        let now = self.now().0;
-        self.usage_storage
-            .execute(move |usage_store| {
-                usage_store.record_monthly_active_user(&token_identifier, now)
-            })
+        self.control_plane_provider
+            .record_monthly_active_user_async(token_identifier, self.now().0)
             .await
     }
 
     /// Returns the current month's global monthly active user snapshot.
     pub fn current_monthly_active_users(&self) -> Result<MonthlyActiveUsersSnapshot> {
-        self.usage_store.monthly_active_users_for(self.now().0)
+        self.control_plane_provider
+            .current_monthly_active_users(self.now().0)
     }
 
     /// Returns the current month's global monthly active user snapshot asynchronously.
     pub async fn current_monthly_active_users_async(
         self: &Arc<Self>,
     ) -> Result<MonthlyActiveUsersSnapshot> {
-        let now = self.now().0;
-        self.usage_storage
-            .execute(move |usage_store| usage_store.monthly_active_users_for(now))
+        self.control_plane_provider
+            .current_monthly_active_users_async(self.now().0)
             .await
     }
 }

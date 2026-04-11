@@ -163,7 +163,7 @@ impl Service {
                     let authorization_schema = table_schema.clone();
                     let principal = principal.clone();
                     self.run_store_mutation(runtime, move |store| {
-                        store.update_validated(&table, &id, &patch, |existing, document| {
+                        store.update_validated(&table, &id, &patch, move |existing, document| {
                             table_schema.validate(&document.fields)?;
                             enforce_mutation_authorization(
                                 Some(&authorization_schema),
@@ -185,7 +185,7 @@ impl Service {
                             &id,
                             &patch,
                             Some(execution_id.as_str()),
-                            |existing, document| {
+                            move |existing, document| {
                                 table_schema.validate(&document.fields)?;
                                 enforce_mutation_authorization(
                                     Some(&authorization_schema),
@@ -212,7 +212,7 @@ impl Service {
                                 &id,
                                 &patch,
                                 &indexes,
-                                |existing, document| {
+                                move |existing, document| {
                                     table_schema.validate(&document.fields)?;
                                     enforce_mutation_authorization(
                                         Some(&authorization_schema),
@@ -236,7 +236,7 @@ impl Service {
                                 &patch,
                                 &indexes,
                                 Some(execution_id.as_str()),
-                                |existing, document| {
+                                move |existing, document| {
                                     table_schema.validate(&document.fields)?;
                                     enforce_mutation_authorization(
                                         Some(&authorization_schema),
@@ -256,7 +256,7 @@ impl Service {
                 MutationExecutionMode::Immediate => {
                     let principal = principal.clone();
                     self.run_store_mutation(runtime, move |store| {
-                        store.update_validated(&table, &id, &patch, |existing, document| {
+                        store.update_validated(&table, &id, &patch, move |existing, document| {
                             enforce_mutation_authorization(
                                 None,
                                 AccessAction::Update,
@@ -276,7 +276,7 @@ impl Service {
                             &id,
                             &patch,
                             Some(execution_id.as_str()),
-                            |existing, document| {
+                            move |existing, document| {
                                 enforce_mutation_authorization(
                                     None,
                                     AccessAction::Update,
@@ -313,8 +313,8 @@ impl Service {
                 if indexes.is_empty() {
                     let table_schema = table_schema.clone();
                     let principal = principal.clone();
-                    self.run_store_delete_mutation(runtime, |store| {
-                        store.delete_validated_returning_document(&table, &id, |existing| {
+                    self.run_store_delete_mutation(runtime, move |store| {
+                        store.delete_validated_returning_document(&table, &id, move |existing| {
                             enforce_mutation_authorization(
                                 table_schema.as_ref(),
                                 AccessAction::Delete,
@@ -327,12 +327,12 @@ impl Service {
                 } else {
                     let table_schema = table_schema.clone();
                     let principal = principal.clone();
-                    self.run_store_delete_mutation(runtime, |store| {
+                    self.run_store_delete_mutation(runtime, move |store| {
                         store.delete_with_indexes_validated_returning_document(
                             &table,
                             &id,
                             &indexes,
-                            |existing| {
+                            move |existing| {
                                 enforce_mutation_authorization(
                                     table_schema.as_ref(),
                                     AccessAction::Delete,
@@ -350,12 +350,12 @@ impl Service {
                 let applied = if indexes.is_empty() {
                     let table_schema = table_schema.clone();
                     let principal = principal.clone();
-                    self.run_store_delete_mutation_once(runtime, |store| {
+                    self.run_store_delete_mutation_once(runtime, move |store| {
                         store.delete_validated_once(
                             &table,
                             &id,
                             Some(execution_id.as_str()),
-                            |existing| {
+                            move |existing| {
                                 enforce_mutation_authorization(
                                     table_schema.as_ref(),
                                     AccessAction::Delete,
@@ -369,13 +369,13 @@ impl Service {
                 } else {
                     let table_schema = table_schema.clone();
                     let principal = principal.clone();
-                    self.run_store_delete_mutation_once(runtime, |store| {
+                    self.run_store_delete_mutation_once(runtime, move |store| {
                         store.delete_with_indexes_validated_once(
                             &table,
                             &id,
                             &indexes,
                             Some(execution_id.as_str()),
-                            |existing| {
+                            move |existing| {
                                 enforce_mutation_authorization(
                                     table_schema.as_ref(),
                                     AccessAction::Delete,

@@ -1,6 +1,8 @@
 //! Neovex engine crate.
 
 mod evaluator;
+mod persistence;
+mod persistence_config;
 mod replica;
 pub mod scheduler;
 mod service;
@@ -12,11 +14,16 @@ pub use evaluator::{
     encode_cursor, evaluate_paginated, evaluate_paginated_with_docs, evaluate_query,
     evaluate_query_with_docs,
 };
+pub use neovex_storage::EmbeddedProviderKind;
 pub use neovex_storage::MonthlyActiveUsersSnapshot;
 pub use neovex_storage::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
     MaterializedJournalSnapshot, ShadowMaterializer, ShadowMaterializerConfig,
     ShadowMaterializerManifest,
+};
+pub use persistence_config::{
+    ControlPlaneConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,
+    ServicePersistenceConfig, TenantProviderConfig, TenantRoutingConfig,
 };
 pub use replica::EmbeddedReplica;
 pub use scheduler::run_scheduler;

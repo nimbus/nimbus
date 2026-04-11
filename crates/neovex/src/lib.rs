@@ -11,8 +11,9 @@ pub use neovex_core::{
     TenantId, Timestamp, WriteOp, WriteOpType,
 };
 pub use neovex_engine::{
-    MonthlyActiveUsersSnapshot, Service, SubscriptionUpdate, evaluate_paginated, evaluate_query,
-    run_scheduler,
+    ControlPlaneConfig, MonthlyActiveUsersSnapshot, PersistenceDialect, PersistenceTopology,
+    PoolConfig, ProviderCredentials, Service, ServicePersistenceConfig, SubscriptionUpdate,
+    TenantProviderConfig, TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
 };
 pub use neovex_runtime::{
     ConvexRuntime, ConvexRuntimeError, HostBridge, HostBridgeFuture, HostCallRequest,
@@ -27,4 +28,5 @@ pub use neovex_server::{
     build_router_with_convex_and_license, build_router_with_license, serve, serve_with_convex,
     serve_with_convex_and_license, serve_with_license,
 };
+pub use neovex_storage::EmbeddedProviderKind;
 pub use neovex_storage::TenantStore;

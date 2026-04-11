@@ -1,20 +1,26 @@
 use neovex_core::{Document, Query, Result};
-use neovex_storage::TenantStore;
+use neovex_storage::QueryReadStore;
 
 use super::filtering::{filter_documents_cancellable, matches_filters};
 use super::ordering::sort_documents;
 
-/// Evaluates a query against a tenant store.
-pub fn evaluate_query(store: &TenantStore, query: &Query) -> Result<Vec<Document>> {
+/// Evaluates a query against a query-capable read surface.
+pub fn evaluate_query<S>(store: &S, query: &Query) -> Result<Vec<Document>>
+where
+    S: QueryReadStore + ?Sized,
+{
     evaluate_query_cancellable(store, query, &mut || Ok(()))
 }
 
-/// Evaluates a query against a tenant store while checking for cancellation between rows.
-pub fn evaluate_query_cancellable(
-    store: &TenantStore,
+/// Evaluates a query against a read surface while checking for cancellation between rows.
+pub fn evaluate_query_cancellable<S>(
+    store: &S,
     query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Vec<Document>> {
+) -> Result<Vec<Document>>
+where
+    S: QueryReadStore + ?Sized,
+{
     evaluate_query_cancellable_with_predicate(store, query, check_cancel, &mut |_| Ok(true))
 }
 
@@ -34,13 +40,14 @@ pub fn evaluate_query_with_docs_cancellable(
     })
 }
 
-pub(crate) fn evaluate_query_cancellable_with_predicate<F>(
-    store: &TenantStore,
+pub(crate) fn evaluate_query_cancellable_with_predicate<S, F>(
+    store: &S,
     query: &Query,
     check_cancel: &mut dyn FnMut() -> Result<()>,
     include_document: &mut F,
 ) -> Result<Vec<Document>>
 where
+    S: QueryReadStore + ?Sized,
     F: FnMut(&Document) -> Result<bool>,
 {
     let filtered = store.scan_table_matching_with_filters_cancellable(

@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use neovex_core::{DependencySet, PrincipalContext, Result, Schema, SequenceNumber};
-use neovex_storage::TenantReadSnapshot;
 
+use crate::persistence::TenantPersistenceSnapshot;
 use crate::tenant::TenantRuntime;
 
 use super::Service;
@@ -23,7 +23,7 @@ pub struct MutationExecutionUnit {
     tenant_id: neovex_core::TenantId,
     principal: PrincipalContext,
     schema_snapshot: Arc<Schema>,
-    snapshot: TenantReadSnapshot,
+    snapshot: TenantPersistenceSnapshot,
     snapshot_sequence: SequenceNumber,
     state: Mutex<MutationExecutionUnitState>,
 }

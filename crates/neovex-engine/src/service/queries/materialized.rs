@@ -4,7 +4,6 @@ use std::sync::Arc;
 use neovex_core::{
     Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TableSchema,
 };
-use neovex_storage::TenantReadStorage;
 
 use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation, TenantRuntime};
 
@@ -13,7 +12,7 @@ use super::planner::{QueryPlan, plan_query, query_plan_metric_kind};
 use super::prepared::{
     PreparedPaginatedExecution, PreparedQueryExecution, paginate_documents_for_docs_prepared,
     prepare_query_execution, query_documents_for_docs_prepared,
-    query_documents_for_store_prepared_cancellable,
+    query_documents_for_read_surface_prepared_cancellable,
 };
 use super::snapshot::snapshot_table_documents;
 
@@ -51,8 +50,8 @@ pub(crate) fn evaluate_with_index_cancellable_for_principal(
         }
         Some(prepared) => {
             let plan_kind = query_plan_metric_kind(&prepared.plan);
-            let documents = query_documents_for_store_prepared_cancellable(
-                runtime.store.as_ref(),
+            let documents = query_documents_for_read_surface_prepared_cancellable(
+                &runtime.store,
                 &prepared,
                 principal,
                 check_cancel,
@@ -74,7 +73,7 @@ pub(super) fn evaluate_with_materialized_surface_cancellable_prepared(
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<(QueryPlanMetricKind, Vec<Document>)> {
     let snapshot = runtime.load_materialized_serving_snapshot_cancellable(
-        runtime.store.as_ref(),
+        &runtime.store,
         &query.table,
         required_sequence,
         check_cancel,
@@ -115,7 +114,7 @@ where
             .read_storage
             .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
                 runtime_for_task.load_materialized_serving_snapshot_cancellable(
-                    store.as_ref(),
+                    &store,
                     &table_for_task,
                     required_sequence,
                     check_cancel,
@@ -148,7 +147,7 @@ pub(super) fn paginate_with_materialized_surface_cancellable_prepared(
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<(QueryPlanMetricKind, Page)> {
     let snapshot = runtime.load_materialized_serving_snapshot_cancellable(
-        runtime.store.as_ref(),
+        &runtime.store,
         &query.query.table,
         required_sequence,
         check_cancel,
@@ -193,7 +192,7 @@ where
             .read_storage
             .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
                 runtime_for_task.load_materialized_serving_snapshot_cancellable(
-                    store.as_ref(),
+                    &store,
                     &table_for_task,
                     required_sequence,
                     check_cancel,

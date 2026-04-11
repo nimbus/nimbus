@@ -18,17 +18,23 @@ pub(crate) use tokio::time::{Duration, timeout};
 pub(crate) use crate::keys::{document_key, prefix_end, table_prefix};
 pub(crate) use crate::{
     DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
-    GeneratedTaskHistorySeedCase, GeneratedTaskRecord, ManualClock, RedbTenantStorage,
-    RestartBoundary, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
-    ShadowMaterializerConfig, ShadowMaterializerManifest, TenantReadStorage, TenantStore,
-    TenantWriteOutcome, TenantWriteStorage, UsageStore, VerificationHarnessMode,
-    replay_generated_task_history, selected_generated_task_history_seed_corpus,
+    GeneratedTaskHistorySeedCase, GeneratedTaskRecord, LibsqlReplicaProvider,
+    LibsqlReplicaProviderConfig, ManualClock, MySqlProvider, MySqlProviderConfig, PostgresProvider,
+    PostgresProviderConfig, RedbTenantStorage, RestartBoundary, ScriptedRestartSchedule,
+    SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest,
+    SqliteTenantStorage, SqliteTenantStore, TenantReadStorage, TenantStore, TenantWriteOutcome,
+    TenantWriteStorage, UsageStore, VerificationHarnessMode, replay_generated_task_history,
+    selected_generated_task_history_seed_corpus,
 };
 
 mod async_faults;
 mod crud_and_journal;
 mod generated_history;
+mod libsql_provider;
+mod mysql_provider;
+mod postgres_provider;
 mod recovery;
+mod sqlite_foundation;
 mod store_basics;
 mod usage_store;
 

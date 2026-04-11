@@ -4,21 +4,19 @@ use std::sync::Arc;
 use neovex_core::{
     Document, Page, PaginatedQuery, PrincipalContext, Query, Result, Schema, TableSchema,
 };
-use neovex_storage::{TenantReadSnapshot, TenantReadStorage, TenantStore};
+use neovex_storage::QueryReadStore;
 
 use crate::evaluator::{
     evaluate_paginated_cancellable_with_predicate,
     evaluate_paginated_with_docs_cancellable_and_predicate,
     evaluate_query_cancellable_with_predicate, evaluate_query_with_docs_cancellable_and_predicate,
-    matches_filters,
 };
 use crate::tenant::{QueryPlanMetricKind, TenantRuntime};
 
 use super::authorization::ReadAuthorization;
 use super::planner::{
     QueryPlan, load_query_plan_documents_cancellable, load_query_plan_documents_from_docs,
-    load_query_plan_documents_from_snapshot_cancellable, plan_paginated_query, plan_query,
-    query_plan_metric_kind,
+    plan_paginated_query, plan_query, query_plan_metric_kind,
 };
 
 #[derive(Debug, Clone)]
@@ -133,12 +131,15 @@ pub(super) fn paginate_documents_for_docs_prepared(
     }
 }
 
-pub(crate) fn query_documents_for_store_with_principal(
-    store: &TenantStore,
+pub(crate) fn query_documents_for_store_with_principal<S>(
+    store: &S,
     schema: &Schema,
     query: &Query,
     principal: &PrincipalContext,
-) -> Result<Vec<Document>> {
+) -> Result<Vec<Document>>
+where
+    S: QueryReadStore + ?Sized,
+{
     let mut check_cancel = || Ok(());
     let (_, documents) = query_documents_for_store_and_principal_cancellable(
         store,
@@ -162,12 +163,15 @@ pub(crate) fn query_documents_for_docs_with_principal(
     }
 }
 
-pub(crate) fn paginate_documents_for_store_with_principal(
-    store: &TenantStore,
+pub(crate) fn paginate_documents_for_store_with_principal<S>(
+    store: &S,
     schema: &Schema,
     query: &PaginatedQuery,
     principal: &PrincipalContext,
-) -> Result<Page> {
+) -> Result<Page>
+where
+    S: QueryReadStore + ?Sized,
+{
     let mut check_cancel = || Ok(());
     let (_, page) = paginate_documents_for_store_and_principal(
         store,
@@ -213,8 +217,8 @@ where
     let documents = runtime
         .read_storage
         .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
-            query_documents_for_store_prepared_cancellable(
-                store.as_ref(),
+            query_documents_for_read_surface_prepared_cancellable(
+                &store,
                 &prepared_for_task,
                 &principal_for_task,
                 check_cancel,
@@ -241,8 +245,8 @@ where
     let page = runtime
         .read_storage
         .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
-            paginate_documents_for_store_prepared_cancellable(
-                store.as_ref(),
+            paginate_documents_for_read_surface_prepared_cancellable(
+                &store,
                 &prepared_for_task,
                 &principal_for_task,
                 check_cancel,
@@ -252,12 +256,15 @@ where
     Ok((plan_kind, page))
 }
 
-pub(super) fn query_documents_for_store_prepared_cancellable(
-    store: &TenantStore,
+pub(super) fn query_documents_for_read_surface_prepared_cancellable<S>(
+    store: &S,
     prepared: &PreparedQueryExecution,
     principal: &PrincipalContext,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Vec<Document>> {
+) -> Result<Vec<Document>>
+where
+    S: QueryReadStore + ?Sized,
+{
     let mut include_document =
         |document: &Document| prepared.authorization.allows_document(principal, document);
     if let Some(documents) = load_query_plan_documents_cancellable(
@@ -283,52 +290,15 @@ pub(super) fn query_documents_for_store_prepared_cancellable(
     }
 }
 
-fn query_documents_for_snapshot_prepared_cancellable(
-    snapshot: &TenantReadSnapshot,
-    prepared: &PreparedQueryExecution,
-    principal: &PrincipalContext,
-    check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Vec<Document>> {
-    let mut include_document =
-        |document: &Document| prepared.authorization.allows_document(principal, document);
-    if let Some(documents) = load_query_plan_documents_from_snapshot_cancellable(
-        snapshot,
-        &prepared.planned_query,
-        &prepared.plan,
-        check_cancel,
-    )? {
-        let residual_query = prepared.plan.residual_query(&prepared.planned_query);
-        evaluate_query_with_docs_cancellable_and_predicate(
-            documents,
-            &residual_query,
-            check_cancel,
-            &mut include_document,
-        )
-    } else {
-        let filtered = snapshot.scan_table_matching_with_filters_cancellable(
-            &prepared.planned_query.table,
-            &prepared.planned_query.filters,
-            check_cancel,
-            |document| {
-                Ok(matches_filters(document, &prepared.planned_query.filters)?
-                    && include_document(document)?)
-            },
-        )?;
-        evaluate_query_with_docs_cancellable_and_predicate(
-            filtered,
-            &prepared.planned_query,
-            check_cancel,
-            &mut |_| Ok(true),
-        )
-    }
-}
-
-pub(super) fn paginate_documents_for_store_prepared_cancellable(
-    store: &TenantStore,
+pub(super) fn paginate_documents_for_read_surface_prepared_cancellable<S>(
+    store: &S,
     prepared: &PreparedPaginatedExecution,
     principal: &PrincipalContext,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<Page> {
+) -> Result<Page>
+where
+    S: QueryReadStore + ?Sized,
+{
     let mut include_document =
         |document: &Document| prepared.authorization.allows_document(principal, document);
     if let Some(index_docs) = load_query_plan_documents_cancellable(
@@ -360,18 +330,21 @@ pub(super) fn paginate_documents_for_store_prepared_cancellable(
     }
 }
 
-fn query_documents_for_store_and_principal_cancellable(
-    store: &TenantStore,
+fn query_documents_for_store_and_principal_cancellable<S>(
+    store: &S,
     query: &Query,
     table_schema: Option<&TableSchema>,
     principal: &PrincipalContext,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<(QueryPlanMetricKind, Vec<Document>)> {
+) -> Result<(QueryPlanMetricKind, Vec<Document>)>
+where
+    S: QueryReadStore + ?Sized,
+{
     match prepare_query_execution(table_schema, query, principal)? {
         None => Ok((QueryPlanMetricKind::FullScan, Vec::new())),
         Some(prepared) => Ok((
             query_plan_metric_kind(&prepared.plan),
-            query_documents_for_store_prepared_cancellable(
+            query_documents_for_read_surface_prepared_cancellable(
                 store,
                 &prepared,
                 principal,
@@ -381,18 +354,21 @@ fn query_documents_for_store_and_principal_cancellable(
     }
 }
 
-pub(crate) fn query_documents_for_snapshot_and_principal_cancellable(
-    snapshot: &TenantReadSnapshot,
+pub(crate) fn query_documents_for_snapshot_and_principal_cancellable<S>(
+    snapshot: &S,
     query: &Query,
     table_schema: Option<&TableSchema>,
     principal: &PrincipalContext,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<(QueryPlanMetricKind, Vec<Document>)> {
+) -> Result<(QueryPlanMetricKind, Vec<Document>)>
+where
+    S: QueryReadStore + ?Sized,
+{
     match prepare_query_execution(table_schema, query, principal)? {
         None => Ok((QueryPlanMetricKind::FullScan, Vec::new())),
         Some(prepared) => Ok((
             query_plan_metric_kind(&prepared.plan),
-            query_documents_for_snapshot_prepared_cancellable(
+            query_documents_for_read_surface_prepared_cancellable(
                 snapshot,
                 &prepared,
                 principal,
@@ -402,13 +378,16 @@ pub(crate) fn query_documents_for_snapshot_and_principal_cancellable(
     }
 }
 
-fn paginate_documents_for_store_and_principal(
-    store: &TenantStore,
+fn paginate_documents_for_store_and_principal<S>(
+    store: &S,
     query: &PaginatedQuery,
     table_schema: Option<&TableSchema>,
     principal: &PrincipalContext,
     check_cancel: &mut dyn FnMut() -> Result<()>,
-) -> Result<(QueryPlanMetricKind, Page)> {
+) -> Result<(QueryPlanMetricKind, Page)>
+where
+    S: QueryReadStore + ?Sized,
+{
     match prepare_paginated_execution(table_schema, query, principal)? {
         None => Ok((
             QueryPlanMetricKind::FullScan,
@@ -420,12 +399,203 @@ fn paginate_documents_for_store_and_principal(
         )),
         Some(prepared) => Ok((
             query_plan_metric_kind(&prepared.plan),
-            paginate_documents_for_store_prepared_cancellable(
+            paginate_documents_for_read_surface_prepared_cancellable(
                 store,
                 &prepared,
                 principal,
                 check_cancel,
             )?,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use neovex_core::{
+        Document, FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, OrderBy,
+        OrderDirection, TableName,
+    };
+    use neovex_storage::SqliteTenantStore;
+    use serde_json::{Map, json};
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn tasks_table() -> TableName {
+        TableName::new("tasks").expect("table should be valid")
+    }
+
+    fn tasks_schema() -> TableSchema {
+        TableSchema {
+            table: tasks_table(),
+            fields: vec![
+                FieldSchema {
+                    name: "status".to_string(),
+                    field_type: FieldType::String,
+                    required: false,
+                },
+                FieldSchema {
+                    name: "rank".to_string(),
+                    field_type: FieldType::Number,
+                    required: false,
+                },
+                FieldSchema {
+                    name: "title".to_string(),
+                    field_type: FieldType::String,
+                    required: false,
+                },
+            ],
+            indexes: vec![IndexDefinition {
+                name: "by_status_rank".to_string(),
+                fields: vec!["status".to_string(), "rank".to_string()],
+            }],
+            access_policy: None,
+        }
+    }
+
+    fn task_document(status: &str, rank: i64, title: &str) -> Document {
+        Document::new(
+            tasks_table(),
+            Map::from_iter([
+                ("status".to_string(), json!(status)),
+                ("rank".to_string(), json!(rank)),
+                ("title".to_string(), json!(title)),
+            ]),
+        )
+    }
+
+    fn seeded_sqlite_store() -> (tempfile::TempDir, SqliteTenantStore, Schema) {
+        let dir = tempdir().expect("temporary dir should create");
+        let path = dir.path().join("tenant.sqlite3");
+        let store = SqliteTenantStore::open(&path).expect("sqlite store should open");
+        store
+            .replace_table_schema(&tasks_schema())
+            .expect("schema should save");
+        for document in [
+            task_document("open", 1, "alpha"),
+            task_document("open", 2, "beta"),
+            task_document("closed", 3, "gamma"),
+            task_document("open", 4, "delta"),
+        ] {
+            store
+                .insert_document_for_testing(&document)
+                .expect("document should insert");
+        }
+        let schema = store.load_schema().expect("schema should load");
+        (dir, store, schema)
+    }
+
+    #[test]
+    fn sqlite_query_read_surface_supports_store_and_snapshot_paths() {
+        let (_dir, store, schema) = seeded_sqlite_store();
+        let query = Query {
+            table: tasks_table(),
+            filters: vec![
+                Filter {
+                    field: "status".to_string(),
+                    op: FilterOp::Eq,
+                    value: json!("open"),
+                },
+                Filter {
+                    field: "rank".to_string(),
+                    op: FilterOp::Gte,
+                    value: json!(2),
+                },
+            ],
+            order: Some(OrderBy {
+                field: "rank".to_string(),
+                direction: OrderDirection::Asc,
+            }),
+            limit: None,
+        };
+        let principal = PrincipalContext::anonymous();
+        let prepared = prepare_query_execution(schema.get_table(&query.table), &query, &principal)
+            .expect("query preparation should succeed")
+            .expect("query should remain authorized");
+        assert_eq!(
+            query_plan_metric_kind(&prepared.plan),
+            QueryPlanMetricKind::CompositeIndex
+        );
+
+        let store_documents = query_documents_for_read_surface_prepared_cancellable(
+            &store,
+            &prepared,
+            &principal,
+            &mut || Ok(()),
+        )
+        .expect("query should evaluate against sqlite store");
+        assert_eq!(
+            store_documents
+                .iter()
+                .map(|document| document.fields["rank"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!(2), json!(4)]
+        );
+
+        let snapshot = store.read_snapshot().expect("sqlite snapshot should open");
+        let (plan_kind, snapshot_documents) =
+            query_documents_for_snapshot_and_principal_cancellable(
+                &snapshot,
+                &query,
+                schema.get_table(&query.table),
+                &principal,
+                &mut || Ok(()),
+            )
+            .expect("query should evaluate against sqlite snapshot");
+        assert_eq!(plan_kind, QueryPlanMetricKind::CompositeIndex);
+        assert_eq!(
+            snapshot_documents
+                .iter()
+                .map(|document| document.fields["rank"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!(2), json!(4)]
+        );
+    }
+
+    #[test]
+    fn sqlite_paginated_query_uses_generic_read_surface() {
+        let (_dir, store, schema) = seeded_sqlite_store();
+        let principal = PrincipalContext::anonymous();
+        let paginated = PaginatedQuery {
+            query: Query {
+                table: tasks_table(),
+                filters: vec![Filter {
+                    field: "status".to_string(),
+                    op: FilterOp::Eq,
+                    value: json!("open"),
+                }],
+                order: Some(OrderBy {
+                    field: "rank".to_string(),
+                    direction: OrderDirection::Asc,
+                }),
+                limit: None,
+            },
+            page_size: 1,
+            after: None,
+        };
+
+        let first_page =
+            paginate_documents_for_store_with_principal(&store, &schema, &paginated, &principal)
+                .expect("first page should evaluate");
+        assert_eq!(first_page.data.len(), 1);
+        assert_eq!(first_page.data[0]["rank"], json!(1));
+        assert!(first_page.has_more);
+        let cursor = first_page
+            .next_cursor
+            .clone()
+            .expect("cursor should be present");
+
+        let second_page = paginate_documents_for_store_with_principal(
+            &store,
+            &schema,
+            &PaginatedQuery {
+                after: Some(cursor),
+                ..paginated
+            },
+            &principal,
+        )
+        .expect("second page should evaluate");
+        assert_eq!(second_page.data.len(), 1);
+        assert_eq!(second_page.data[0]["rank"], json!(2));
     }
 }
