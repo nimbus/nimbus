@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::host_state::RuntimeHostState;
+use crate::execution::host_state::RuntimeHostState;
 
 #[derive(Clone)]
 pub(in crate::adapters::convex) struct ConvexHostBridge {

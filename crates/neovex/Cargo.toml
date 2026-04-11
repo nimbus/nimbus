@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 neovex-runtime = { path = "../neovex-runtime" }
+neovex-sandbox = { path = "../neovex-sandbox" }
 neovex-core = { path = "../neovex-core" }
 neovex-engine = { path = "../neovex-engine" }
 neovex-server = { path = "../neovex-server" }

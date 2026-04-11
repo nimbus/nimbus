@@ -13,8 +13,12 @@ Builds on `vmm-infrastructure-plan.md` (crun fork, conmon, system deps).
 - **Status:** `deferred`
 - **Primary owner:** this plan
 - **Activation gate:** promote when `vmm-infrastructure-plan.md` Phase V3 is
-  complete (neovex can programmatically boot and manage VMs)
+  complete and `docs/plans/archive/runtime-sandbox-architecture-plan.md` `RS4`
+  has landed the canonical `neovex-sandbox` seam
 - **Related plans:**
+  - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
+    baseline that owns the canonical sandbox crate naming and the server-facing
+    seam this plan must consume
   - `vmm-infrastructure-plan.md` — VMM foundation (crun fork, conmon, deps)
   - `distribution-plan.md` — packaging for all channels
 
@@ -62,16 +66,16 @@ All Dockerfile instructions that affect runtime behavior are handled.
 | `ENV` | `Env` | OCI config.json `process.env` + `krun_set_env()` |
 | `WORKDIR` | `WorkingDir` | OCI config.json `process.cwd` |
 | `USER` | `User` | OCI config.json `process.user` (crun handles setuid) |
-| `EXPOSE` | `ExposedPorts` | Annotation `krun.neovex.tsi.port_map` → TSI |
+| `EXPOSE` | `ExposedPorts` | Annotation `krun.port_map` → TSI |
 | `VOLUME` | `Volumes` | virtiofs additional mounts (Phase M3) |
 | `STOPSIGNAL` | `StopSignal` | conmon sends this signal (not always SIGTERM) |
 | `HEALTHCHECK` | `Healthcheck` | Default probe config if no explicit probe set |
 | `LABEL` | `Labels` | Service metadata |
 
-**StopSignal handling:** conmon reads the configured stop signal from the
-OCI config and sends it instead of SIGTERM. If the image specifies
-`STOPSIGNAL SIGQUIT` (nginx), conmon sends SIGQUIT. This works without any
-custom init because conmon handles it on the host side.
+**StopSignal handling:** the sandbox backend must preserve the image-configured
+stop signal and use it for graceful shutdown instead of hard-coding SIGTERM. If
+the image specifies `STOPSIGNAL SIGQUIT` (nginx), the backend should honor
+SIGQUIT during shutdown.
 
 ---
 
@@ -79,29 +83,35 @@ custom init because conmon handles it on the host side.
 
 ### New crate
 
-```
+```text
 crates/
-  neovex-vmm/                 # NEW: VM management
+  neovex-sandbox/             # NEW: isolation/orchestration crate
     src/
-      lib.rs                  # VmServiceManager, public API
-      buildah.rs              # Shell out to buildah (pull, build, mount, inspect)
-      bundle.rs               # OCI bundle generation (config.json + annotations)
-      conmon.rs               # Spawn/monitor conmon, read logs/exit/attach
-      vm.rs                   # VmHandle — lifecycle wrapper
-      lifecycle.rs            # Probe engine (startup, readiness, liveness)
-      port_manager.rs         # TSI port auto-assignment
-      config.rs               # Service config types (TOML)
+      lib.rs                  # SandboxManager, public API
+      spec.rs                 # SandboxSpec / service-level launch config
+      instance.rs             # SandboxHandle / published endpoints
+      backends/
+        mod.rs
+        krun/
+          mod.rs
+          buildah.rs          # Shell out to buildah (pull, build, mount, inspect)
+          bundle.rs           # OCI bundle generation (config.json + annotations)
+          conmon.rs           # Spawn/monitor conmon, read logs/exit/attach
+          vm.rs               # Backend-local VM lifecycle wrapper
+          lifecycle.rs        # Probe engine (startup, readiness, liveness)
+          port_manager.rs     # TSI port auto-assignment
+          compose.rs          # Phase M5 translation layer, if landed
     Cargo.toml
 ```
 
 ### Crate dependency rules
 
-- **`neovex-vmm` depends on `neovex-core` only** — types and config
+- **`neovex-sandbox` depends on `neovex-core` only** — types and config
 - **No OCI image crates needed** — buildah handles everything
 - **No C dependencies** — crun/conmon/buildah are system binaries
-- Server wires neovex-vmm to the engine via dependency inversion
+- Server wires `neovex-sandbox` to the engine via dependency inversion
 
-### What neovex-vmm does NOT implement (handled by system deps)
+### What `neovex-sandbox`'s first `krun` backend does NOT implement
 
 | Capability | Handled by |
 |-----------|-----------|
@@ -132,7 +142,8 @@ serde_yaml = "0.9"     # parse compose.yaml (Compose Spec)
 ```
 
 No `oci-client`. No `oci-spec`. No `flate2`. No `tar`. No `sha2`. buildah
-handles image management. neovex-vmm is a thin orchestration layer that:
+handles image management. `neovex-sandbox`'s first `krun` backend is a thin
+orchestration layer that:
 - Parses `compose.yaml` (serde_yaml)
 - Shells out to buildah (image pull/build/mount)
 - Spawns conmon → crun (VM lifecycle)
@@ -148,7 +159,7 @@ handles image management. neovex-vmm is a thin orchestration layer that:
 
 **Scope:**
 
-`crates/neovex-vmm/src/buildah.rs`:
+`crates/neovex-sandbox/src/backends/krun/buildah.rs`:
 ```rust
 /// Pull an image from a registry
 pub async fn pull(image_ref: &str) -> Result<String> {
@@ -195,19 +206,20 @@ pub async fn cleanup(container: &str) -> Result<()> {
 
 **Scope:**
 
-`crates/neovex-vmm/src/bundle.rs`:
+`crates/neovex-sandbox/src/backends/krun/bundle.rs`:
 - Generate OCI `config.json` per the runtime spec
 - Set `process.args` from image Entrypoint + Cmd
 - Set `process.env` from image Env + service-level overrides
 - Set `process.user` from image User
 - Set `linux.resources` from service config (memory, CPU)
 - Add annotation `run.oci.handler = "krun"` (selects krun handler in crun)
-- Add annotation `krun.neovex.tsi.port_map` from ExposedPorts
+- Add annotation `krun.port_map` from ExposedPorts
   (auto-assigned host ports via PortManager)
 - Set `root.path` to the buildah-mounted rootfs path
-- Handle `StopSignal` → OCI process.signal field (conmon reads this)
+- Preserve the configured `StopSignal` in backend-owned launch metadata so
+  graceful shutdown uses the image-configured signal
 
-`crates/neovex-vmm/src/port_manager.rs`:
+`crates/neovex-sandbox/src/backends/krun/port_manager.rs`:
 ```rust
 pub struct PortManager {
     range: RangeInclusive<u16>,   // default: 15000..=16000
@@ -229,7 +241,7 @@ get different host ports (e.g., 15000 and 15001).
 
 **Scope:**
 
-`crates/neovex-vmm/src/lifecycle.rs`:
+`crates/neovex-sandbox/src/backends/krun/lifecycle.rs`:
 
 ```rust
 pub enum VmState {
@@ -252,6 +264,7 @@ pub struct ProbeConfig {
 
 pub enum HealthCheck {
     Tcp { port: u16 },              // TCP connect to TSI-mapped port
+    Exec { command: Vec<String> },  // Run guest-defined health command
     Http { port: u16, path: String }, // HTTP GET, expect 2xx
 }
 
@@ -304,8 +317,12 @@ neovex requests stop
 **Goal:** V8 isolates can access VM services.
 
 **Scope:**
-- `VmServiceManager` in `neovex-vmm/src/lib.rs`: service registry, VM pool
-- V8 `HostBridge` extension: `ctx.services.<name>.port` returns TSI port
+- `SandboxManager` in `neovex-sandbox/src/lib.rs`: sandbox lifecycle and
+  published-endpoint access
+- `neovex-server` owns the service registry and `ctx.services.<name>` projection
+  so the sandbox crate does not become a second server layer
+- V8 adapter wiring exposes `ctx.services.<name>.port` from the server-managed
+  service registry
 - V8 connects to services via standard TCP (through TSI)
 - neovex does NOT implement protocol-specific clients — V8 uses JS driver
   libraries (pg, ioredis, fetch)
@@ -331,6 +348,10 @@ logging, rate limiting. Same TSI transport, neovex in the data path.
 - VM crash is reported (not silent)
 
 ### Phase M5: Developer Experience
+
+This phase is a follow-on translation and UX layer. Do not start it until M1
+through M4 are complete and the recovery drills in the verification contract
+are green.
 
 **Goal:** Configuration via Docker Compose files, CLI, error messages.
 
@@ -450,7 +471,7 @@ well-defined YAML. Unknown fields are ignored (forward compatibility).
 `x-neovex` fields are parsed into a neovex-specific struct.
 
 ```toml
-# crates/neovex-vmm/Cargo.toml — add:
+# crates/neovex-sandbox/Cargo.toml — add:
 [dependencies]
 serde_yaml = "0.9"
 ```
@@ -531,8 +552,8 @@ Developers can use muscle memory.
 | M1: buildah integration | `todo` | V3 from vmm-infrastructure-plan | |
 | M2: OCI bundle generation | `todo` | M1 | |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
-| M4: Engine integration | `todo` | M3 | HostBridge, V8 access |
-| M5: Developer experience | `todo` | M4 | Config, CLI, errors |
+| M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
+| M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
 ---
 
@@ -556,6 +577,17 @@ Developers can use muscle memory.
 ---
 
 ## Verification Contract
+
+Before M5, keep verification split across four lanes:
+
+- unit tests for bundle translation, image-config parsing, port allocation, and
+  lifecycle state transitions
+- integration tests for `buildah`, `conmon`, patched `crun`, and libkrun on a
+  KVM-capable host
+- recovery drills for neovex restart, orphan detection, log persistence, and
+  port release after crash or forced stop
+- distribution probes on supported packaging targets before calling the stack
+  production-ready
 
 ### End-to-end (after M4)
 

@@ -314,7 +314,7 @@ modules from the distributed store on demand.
 
 ### How It Would Work
 
-Neovex already has `SandboxedModuleLoader` (module_loader.rs) which
+Neovex already has `RestrictedModuleLoader` (module_loader.rs) which
 restricts imports to the bundle root and uses `std::fs::read_to_string()`
 to load module source. A distributed variant would:
 
@@ -482,4 +482,4 @@ distribution — push to central store, notify consumers.
 - Current CLI: `crates/neovex-bin/src/main.rs`
 - `ConvexRegistry` struct: `crates/neovex-server/src/adapters/convex/mod.rs:55-63`
 - `RuntimeBundle` integrity: `crates/neovex-runtime/src/runtime.rs:283-299`
-- `SandboxedModuleLoader`: `crates/neovex-runtime/src/module_loader.rs`
+- `RestrictedModuleLoader`: `crates/neovex-runtime/src/module_loader.rs`

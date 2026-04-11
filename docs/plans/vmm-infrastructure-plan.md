@@ -1,4 +1,4 @@
-# Plan: VMM Infrastructure — crun Fork + System Dependencies
+# Plan: VMM Infrastructure — Patched crun + System Dependencies
 
 Canonical plan for the VMM infrastructure that enables neovex to run OCI/Docker
 images in hardware-isolated microVMs. Follows the Podman distribution model:
@@ -14,6 +14,10 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 - **Primary owner:** this plan
 - **Activation gate:** promote when microVM runtime work begins
 - **Related plans:**
+  - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
+    baseline that owns the canonical `neovex-sandbox` crate naming and the
+    server-facing sandbox seam this plan must consume for any Rust
+    implementation work
   - `microvm-runtime-plan.md` — builds OCI management, lifecycle, engine
     integration on top of this plan's VMM layer
   - `distribution-plan.md` — packages neovex + dependencies for each channel
@@ -21,10 +25,11 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 ## Control Plan Rules
 
 Source of truth:
-1. the current git worktrees (neovex, agentstation/crun)
+1. the current git worktree
 2. this plan's `Phase Status Ledger` and `Execution Log`
 3. `docs/research/libkrun-evaluation.md`
 4. `docs/research/vm-lifecycle-probes.md`
+5. `docs/research/gvisor-isolation-tier.md`
 
 ### Status model
 
@@ -42,13 +47,13 @@ neovex is a single binary. The VMM stack is system packages.
 ```
 neovex serve
   │
-  └── conmon (per VM, long-lived, survives neovex restart)
+  └── conmon -r /usr/libexec/neovex/crun (per VM, long-lived, survives neovex restart)
         │
         ├── stdout/stderr → log files (persistent)
         ├── exit status → exit file
         ├── attach socket for interactive access
         │
-        └── agentstation-crun run --bundle path id
+        └── /usr/libexec/neovex/crun run --bundle path id
               │
               ├── namespaces (PID, mount, user)
               ├── cgroups (memory, CPU limits)
@@ -63,12 +68,17 @@ neovex serve
                                 └── workload (postgres, etc.)
 ```
 
+conmon's `-r` flag accepts an arbitrary path to any OCI runtime binary. neovex
+passes `-r /usr/libexec/neovex/crun` so the forked crun is used without
+replacing the system crun. System Podman continues to use the distro crun
+undisturbed.
+
 ### Dependency comparison with Podman
 
 ```
 Podman:                             neovex:
   conmon               ✓             conmon
-  crun | runc          ✓             agentstation-crun (forked, +10 lines)
+  crun | runc          ✓             neovex-crun (patched crun, +10 lines, at /usr/libexec/neovex/crun)
   containers-common    ✓             containers-common
   netavark             ✗ (TSI)       —
   catatonit|tini       ✓             catatonit | tini | dumb-init
@@ -82,6 +92,23 @@ Podman:                             neovex:
 
 neovex drops only netavark (TSI replaces container networking) and adds
 libkrun/libkrunfw (not needed by Podman's default runc mode).
+
+### Evaluated alternatives (see research docs)
+
+- **conmon-rs** — Rust rewrite (v0.8.0). Deferred: not production-default, per-pod
+  model doesn't fit per-VM use, Podman integration incomplete
+  (containers/conmon-rs#1127 open since 2023). Revisit if it becomes the
+  Podman/CRI-O default.
+- **gVisor** — User-space kernel, no KVM needed. Deferred: syscall compat gaps,
+  I/O overhead, no hardware isolation boundary. See
+  `docs/research/gvisor-isolation-tier.md`.
+- **CRIU for snapshot/restore** — Cannot checkpoint KVM-based VMM processes (no
+  KVM fd support). Every VMM with snapshot/restore implements it natively. See
+  `docs/research/libkrun-evaluation.md` § "CRIU Cannot Solve the
+  Snapshot/Restore Gap".
+- **Warm pool mitigation** — Pre-boot idle VMs, aggressive rootfs caching,
+  optimized guest kernel. Documented in `docs/research/libkrun-evaluation.md`
+  § "Warm pool as a practical mitigation".
 
 ### Why no vsock
 
@@ -115,9 +142,41 @@ v2 (future, microvm-runtime-plan Phase M4+):
   Same transport, neovex is now in the data path for observability
 ```
 
+### Architectural evolution path
+
+The Podman subprocess model (conmon → crun → buildah) is correct for v1's
+long-running service VMs. CRI-O, containerd shims, and Podman all use this
+pattern in production. Every microVM-at-scale system (Fly.io 2M+ VMs,
+AWS Lambda, CodeSandbox, Gitpod Flex) eventually moved to direct VMM API
+integration — but they all started with subprocess orchestration and
+graduated when density/latency demands required it.
+
+If neovex evolves toward high-density ephemeral VMs, the migration path is:
+subprocess model → helper binary calling libkrun API directly (see
+`docs/research/libkrun-evaluation.md`). The helper binary pattern is
+architecturally compatible with the conmon process model — conmon monitors
+the helper the same way it monitors crun.
+
+### Rust crate target for Phase V3
+
+When this plan graduates from manual infrastructure work into Rust integration,
+the canonical crate target is `neovex-sandbox`, not `neovex-vmm`.
+
+The public seam should stay generic:
+
+- `SandboxBackend`
+- `SandboxSpec`
+- `SandboxHandle`
+- published-endpoint / port-projection types
+
+The first backend-specific implementation path should live under an internal
+module such as `crates/neovex-sandbox/src/backends/krun/`, which may own the
+current OCI/buildah + conmon + patched-crun + libkrun stack without turning
+those implementation details into public product nouns.
+
 ---
 
-## Fork: `agentstation/crun`
+## crun Patch: TSI Port Mapping
 
 ### What and why
 
@@ -137,7 +196,7 @@ only change needed.
 
 // Read TSI port map from OCI annotation
 // Format: "5432:15432,6379:16379" (guest:host)
-const char *port_map = find_annotation(def, "krun.neovex.tsi.port_map");
+const char *port_map = find_annotation(def, "krun.port_map");
 if (port_map) {
     krun_set_port_map(ctx_id, port_map);
 }
@@ -145,30 +204,163 @@ if (port_map) {
 
 That's it. ~10 lines of C.
 
-### Upstream strategy
+The annotation name `krun.port_map` follows the convention established by
+crun PR #1950 (Jan 2026), which added `krun.cpus`, `krun.ram_mib`, and
+`krun.variant`. Using the same `krun.*` namespace keeps the OCI annotations
+consistent with upstream conventions.
 
-TSI port mapping via OCI annotations is a generally useful feature — not
-neovex-specific. Submit a PR to `containers/crun` proposing it. If accepted,
-the fork becomes unnecessary.
+### Build-time patch, not a fork
 
-**PR title:** "krun: add TSI port mapping via OCI annotation"
-**Rationale:** Currently krun_set_port_map() is never called. Users who want
-TSI port forwarding (exposing guest services to the host) have no mechanism
-to configure it through the OCI spec.
+A full GitHub fork is overkill for ~10 lines of C. neovex uses the standard
+distro pattern: store a patch file, apply it to the upstream source at build
+time. This is how Debian, Fedora, Homebrew, and Alpine handle minimal
+customizations to upstream packages. No separate fork repo exists.
 
-### Build and distribution
+### End-to-end: patch → build → distribute → install
 
-The forked crun is built the standard way (autotools) and packaged as
-`agentstation-crun` (deb/rpm). See `distribution-plan.md` for details.
+**Step 1: Patch file lives in this repo**
+
+```
+agentstation/neovex (this repo):
+  patches/
+    crun/
+      0001-krun-add-tsi-port-mapping-via-oci-annotation.patch
+```
+
+The patch file is a standard unified diff generated from the upstream PR or
+via `git format-patch`. It is checked into the neovex repo alongside the
+Rust source code.
+
+**Step 2: CI builds the patched crun binary**
+
+A GitHub Actions workflow (defined in `distribution-plan.md` Phase D1) runs
+on each neovex release tag:
 
 ```bash
-# Build
-cd agentstation/crun
+# .github/workflows/build-neovex-crun.yml (conceptual)
+CRUN_VERSION=1.22
+curl -L -o crun-$CRUN_VERSION.tar.gz \
+  https://github.com/containers/crun/archive/refs/tags/$CRUN_VERSION.tar.gz
+tar xzf crun-$CRUN_VERSION.tar.gz
+cd crun-$CRUN_VERSION
+
+# Apply the neovex patch
+patch -p1 < $GITHUB_WORKSPACE/patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch
+
+# Build (requires: autoconf, automake, libkrun-dev, libseccomp-dev, etc.)
 ./autogen.sh
-./configure
+./configure --with-libkrun
 make
-# Result: crun binary with krun handler + TSI port mapping
+
+# Output: crun binary with krun handler + TSI port mapping
 ```
+
+The CI runner needs C build tools and libkrun-dev headers. The workflow pins
+`CRUN_VERSION` to a known-good upstream release.
+
+**Step 3: CI packages the binary per distribution channel**
+
+The same CI workflow (or downstream jobs) produces packages:
+
+| Channel | What CI produces | How patch is applied |
+|---------|-----------------|---------------------|
+| Binary tarball | `neovex-linux-amd64.tar.gz` containing `neovex` + `crun` | CI applies patch, ships binary |
+| Debian (deb) | `neovex-crun_1.22+neovex1_amd64.deb` | `debian/patches/series` + quilt (standard) |
+| Fedora (rpm) | `neovex-crun-1.22-1.neovex1.x86_64.rpm` | `Patch0:` in spec, `%autosetup -p1` |
+| Homebrew | Formula with `patch :DATA` block | Homebrew applies patch before `make` |
+| Container image | `ghcr.io/agentstation/neovex:latest` | `RUN patch -p1 < ...` in Dockerfile |
+
+Each format has a native mechanism for applying patches — the patch file is
+the same, only the build harness differs.
+
+**Step 4: User installs neovex, gets patched crun automatically**
+
+```bash
+# Debian/Ubuntu
+curl -fsSL https://neovex.dev/install.sh | sh
+# install.sh adds apt repo, then:
+# apt install neovex  (depends on neovex-crun, conmon, buildah, ...)
+# neovex-crun installs to /usr/libexec/neovex/crun
+
+# Fedora
+dnf copr enable agentstation/neovex
+dnf install neovex
+# neovex-crun installs to /usr/libexec/neovex/crun
+
+# Manual tarball
+tar xzf neovex-linux-amd64.tar.gz
+sudo mv neovex /usr/local/bin/
+sudo mkdir -p /usr/libexec/neovex
+sudo mv crun /usr/libexec/neovex/crun
+```
+
+The user never interacts with the patch. They install `neovex`, which depends
+on `neovex-crun`, which is a pre-built binary at `/usr/libexec/neovex/crun`.
+neovex invokes it via `conmon -r /usr/libexec/neovex/crun`.
+
+**If upstream independently adds port mapping support:** Delete the patch
+file, stop building `neovex-crun`, change the `neovex` package to depend on
+system `crun` (>= the version with port mapping). The
+`/usr/libexec/neovex/` path is no longer needed — neovex uses system crun
+directly.
+
+### Why not a full GitHub fork
+
+| | Full fork | Build-time patch |
+|---|-----------|-----------------|
+| Maintenance | Rebase entire repo on each upstream release | Verify 10-line patch applies cleanly |
+| Signal | "Major divergence" — misleading for 10 lines | "Minimal delta" — accurate |
+| Staleness | Fork drifts, looks abandoned if not synced | Patch is obviously temporary |
+| GPL compliance | Source = fork repo | Source = upstream tarball + patch file |
+| Drop when upstream merges | Delete fork repo, update packaging | Delete patch file, update packaging |
+
+### Upstream exit path
+
+We are not submitting an upstream PR — the change is too small to justify the
+overhead of upstream engagement (review cycles, API discussions, maintenance
+commitments). The build-time patch is the plan, not a fallback.
+
+If upstream independently adds `krun_set_port_map()` support via OCI
+annotations (likely, given PR #1950 established the pattern), we drop the
+patch and depend on system crun directly.
+
+### Patch update process
+
+When upstream crun releases a new version:
+
+1. Attempt `patch -p1 --dry-run` against the new release
+2. If it applies cleanly → update `CRUN_VERSION`, rebuild, done
+3. If it conflicts → manually resolve (~10 lines, usually trivial), regenerate
+   patch file
+4. If upstream added native port mapping support → delete the patch file,
+   depend on system crun directly
+
+### GPL-2.0 compliance
+
+crun is GPL-2.0. Distributing a patched binary requires providing the
+complete corresponding source. For each distribution channel:
+
+- **deb/rpm packages:** The source package (`.dsc` + `.orig.tar.gz` +
+  `.debian.tar.xz`, or SRPM) contains the upstream tarball + patch file +
+  build instructions. Standard and sufficient.
+- **Homebrew:** The formula references the upstream URL and includes the patch
+  inline. Anyone who has the formula can rebuild from source.
+- **Binary tarball:** Include a `SOURCE.md` pointing to the upstream release
+  URL and the patch file location in the neovex repo.
+
+### Package naming
+
+The patched crun is packaged as `neovex-crun`:
+
+- **Binary name:** `crun` (it IS crun, just patched)
+- **Install path:** `/usr/libexec/neovex/crun` (private to neovex)
+- **Package name:** `neovex-crun` (deb/rpm — makes the relationship clear)
+- **No Conflicts/Replaces/Provides:** Does not touch the system `crun`.
+  Podman, CRI-O, and any other container tools continue using the distro crun.
+
+The `neovex-crun` name follows the convention of scoping a patched build to
+the project that needs it, similar to how Fedora has `crun-krun` as a separate
+build of crun with libkrun support.
 
 ---
 
@@ -178,7 +370,7 @@ make
 
 | Package | What | Available on Debian 13 | Available on Fedora 40+ |
 |---------|------|----------------------|------------------------|
-| `agentstation-crun` | Forked crun with TSI | We package it | We package it |
+| `neovex-crun` | Patched crun with TSI port mapping | We package it | We package it |
 | `libkrun` | VMM library | **Not in repos** — we package it | `dnf install libkrun` ✓ |
 | `libkrunfw` | Guest kernel | **Not in repos** — we package it | `dnf install libkrunfw` ✓ |
 | `conmon` | Process monitor | `apt install conmon` ✓ | `dnf install conmon` ✓ |
@@ -250,20 +442,20 @@ buildah rm neovex-postgres
 
 ## Phase Plan
 
-### Phase V1: Fork crun
+### Phase V1: Patch crun
 
-**Goal:** Create `agentstation/crun` with TSI port mapping in the krun handler.
+**Goal:** Add TSI port mapping to crun's krun handler via build-time patch.
 
 **Scope:**
-1. Fork `containers/crun` at latest release
-2. Add `krun_set_port_map()` call driven by OCI annotation (~10 lines)
-3. Build and test on Debian 13 and Fedora
-4. Submit upstream PR to `containers/crun`
+1. Create patch file at
+   `patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch`
+2. Build patched crun and install to `/usr/libexec/neovex/crun`
+3. Test on Debian 13 and Fedora
 
 **Acceptance criteria:**
-- `crun run` with a krun-configured OCI bundle boots a VM with TSI port mapping
+- `/usr/libexec/neovex/crun run` with a krun-configured OCI bundle boots a VM with TSI port mapping
 - Guest service (e.g., `nc -l -p 8080`) is accessible from host via mapped port
-- Upstream PR submitted
+- System crun is unaffected (Podman still works with distro crun)
 
 ### Phase V2: System Integration
 
@@ -295,24 +487,32 @@ buildah rm neovex-postgres
 the crun process (which is the VMM). When the VM exits, `_exit()` kills the
 crun process, conmon detects it and writes the exit file.
 
-### Phase V3: neovex Wrapper
+### Phase V3: `neovex-sandbox` krun backend
 
 **Goal:** neovex can spawn and manage VMs programmatically.
 
 **Scope:**
-1. `crates/neovex-vmm/src/conmon.rs`: Spawn conmon as subprocess, read
-   sync pipe, manage PID files, read exit files, connect to attach socket
-2. `crates/neovex-vmm/src/bundle.rs`: Generate OCI bundle for crun
-   (config.json with krun handler, TSI annotations)
-3. `crates/neovex-vmm/src/buildah.rs`: Shell out to buildah for image
+1. `docs/plans/archive/runtime-sandbox-architecture-plan.md` `RS4` is complete so the Rust wrapper
+   lands on the canonical sandbox seam rather than inventing a second public
+   lifecycle surface.
+2. `crates/neovex-sandbox/src/backends/krun/conmon.rs`: Spawn conmon with
+   `-r /usr/libexec/neovex/crun` as subprocess, read sync pipe, manage
+   PID files, read exit files, connect to attach socket
+3. `crates/neovex-sandbox/src/backends/krun/bundle.rs`: Generate OCI bundle for crun
+   (config.json with krun handler, `krun.port_map` annotation)
+4. `crates/neovex-sandbox/src/backends/krun/buildah.rs`: Shell out to buildah for image
    pull/build/mount/inspect
-4. `crates/neovex-vmm/src/vm.rs`: VmHandle wrapping conmon management
+5. `crates/neovex-sandbox/src/backends/krun/vm.rs`: backend-local VM handle
+   wrapping conmon management
+6. `crates/neovex-sandbox/src/lib.rs`: expose the first generic
+   `SandboxBackend` / `SandboxHandle` seam needed by the server integration
 
 **Acceptance criteria:**
 - `neovex` can programmatically boot a postgres:16 VM, connect via TSI,
   run a query, stop the VM, verify exit status
 - VM survives `neovex` process restart (conmon keeps it alive)
 - Logs are persisted to disk via conmon
+- System crun/Podman remain functional (neovex uses private crun path)
 
 ---
 
@@ -320,9 +520,9 @@ crun process, conmon detects it and writes the exit file.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| V1: Fork crun | `todo` | none | ~10 lines of C |
+| V1: Patch crun | `todo` | none | ~10 line build-time patch |
 | V2: System integration | `todo` | V1, system packages installed | Manual testing |
-| V3: neovex wrapper | `todo` | V2 | Rust code in neovex-vmm crate |
+| V3: `neovex-sandbox` krun backend | `todo` | V2, `docs/plans/archive/runtime-sandbox-architecture-plan.md` RS4 | Rust code in `neovex-sandbox` under a backend-owned `krun` module |
 
 ---
 
@@ -331,10 +531,12 @@ crun process, conmon detects it and writes the exit file.
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | libkrun not packaged for Debian/Ubuntu | High | Medium | Package it ourselves (see distribution-plan.md) |
-| TSI port mapping PR rejected by crun upstream | Low | Low | Maintain fork (~10 lines, trivial rebase) |
+| crun krun.c churn causes patch conflicts | Medium | Low | krun.c has ~30 commits/year, but the patch is ~10 lines in one function. Verify `patch --dry-run` on each upstream release. Manual resolution is trivial when needed. |
 | conmon API changes between versions | Low | Low | conmon has a stable interface (used by Podman, CRI-O) |
 | buildah CLI output format changes | Medium | Medium | Pin buildah version, use --json output |
 | Rootless operation issues with KVM | Medium | Medium | Document KVM permissions, test rootless flow |
+| No snapshot/restore in libkrun | High | Low (for v1) | Long-running service VMs tolerate ~100ms cold boot. Warm pool and rootfs caching available if latency matters. See `docs/research/libkrun-evaluation.md` for full analysis. |
+| Subprocess model limits future density | Low | Medium | Standard for v1 (CRI-O, Podman do the same). See "Architectural evolution path" above for the migration path to direct libkrun API. |
 
 ---
 
@@ -343,9 +545,10 @@ crun process, conmon detects it and writes the exit file.
 | File | Repo | What to study |
 |------|------|---------------|
 | `src/libcrun/handlers/krun.c` | containers/crun | krun handler — the only file to patch |
+| PR #1950 (Jan 2026) | containers/crun | Reference: `krun.cpus`, `krun.ram_mib` annotations use same `find_annotation()` pattern |
 | `include/libkrun.h` | containers/libkrun | `krun_set_port_map()` signature |
-| `src/runtime_args.c` | containers/conmon | How conmon invokes crun |
-| `libpod/oci_conmon_common_linux.go` | containers/podman | How Podman invokes conmon |
+| `src/runtime_args.c` | containers/conmon | How conmon invokes crun (via `-r` flag) |
+| `libpod/oci_conmon_common_linux.go` | containers/podman | How Podman invokes conmon with `-r` runtime path |
 | `src/tini.c` | krallin/tini | PID 1 reference (signal forwarding) |
 
 ---

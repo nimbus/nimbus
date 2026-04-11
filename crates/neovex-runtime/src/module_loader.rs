@@ -5,12 +5,11 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use deno_core::{
-    ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader, ModuleSource,
-    ModuleSourceCode, ModuleSpecifier, ModuleType, RequestedModuleType, ResolutionKind,
-    SourceCodeCacheInfo, resolve_import,
+use crate::backends::v8::embedder::{
+    JsErrorBox, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
+    ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, RequestedModuleType,
+    ResolutionKind, SourceCodeCacheInfo, resolve_import,
 };
-use deno_error::JsErrorBox;
 use twox_hash::XxHash64;
 
 #[derive(Debug, Clone)]
@@ -118,12 +117,12 @@ impl BundleModuleCodeCache {
 }
 
 #[derive(Debug, Clone)]
-pub struct SandboxedModuleLoader {
+pub struct RestrictedModuleLoader {
     allowed_root: PathBuf,
     code_cache: Arc<BundleModuleCodeCache>,
 }
 
-impl SandboxedModuleLoader {
+impl RestrictedModuleLoader {
     pub fn new(allowed_root: PathBuf, code_cache: Arc<BundleModuleCodeCache>) -> Self {
         Self {
             allowed_root,
@@ -142,7 +141,7 @@ impl SandboxedModuleLoader {
         let path = specifier.to_file_path().map_err(|_| {
             JsErrorBox::generic(format!("invalid file module specifier: {specifier}"))
         })?;
-        let candidate = canonicalize_for_sandbox(&path).map_err(|error| {
+        let candidate = canonicalize_for_restricted_root(&path).map_err(|error| {
             JsErrorBox::generic(format!(
                 "failed to resolve runtime bundle import {}: {error}",
                 path.display()
@@ -186,7 +185,7 @@ impl SandboxedModuleLoader {
     }
 }
 
-impl ModuleLoader for SandboxedModuleLoader {
+impl ModuleLoader for RestrictedModuleLoader {
     fn resolve(
         &self,
         specifier: &str,
@@ -271,7 +270,7 @@ fn hash_module_source_bytes(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-fn canonicalize_for_sandbox(path: &Path) -> std::io::Result<PathBuf> {
+fn canonicalize_for_restricted_root(path: &Path) -> std::io::Result<PathBuf> {
     match path.canonicalize() {
         Ok(path) => Ok(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

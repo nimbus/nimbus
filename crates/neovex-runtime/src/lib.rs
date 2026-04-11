@@ -1,5 +1,5 @@
 mod affinity;
-mod backend;
+mod backends;
 mod context;
 mod error;
 mod executor;
@@ -14,7 +14,7 @@ mod watchdog;
 mod worker_loop;
 
 pub use context::RuntimeInvocationContext;
-pub use error::{ConvexRuntimeError, NeovexRuntimeError, Result};
+pub use error::{NeovexRuntimeError, Result};
 pub use executor::RuntimeExecutor;
 pub use host::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallCancellationCause,
@@ -29,6 +29,6 @@ pub use metrics::{
     RuntimeMetricsSnapshot, RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
 };
 pub use runtime::{
-    ConvexRuntime, InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntime, RuntimeBundle,
+    InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntime, RuntimeBundle,
     RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };

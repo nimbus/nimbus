@@ -25,7 +25,7 @@ struct SharedInvocationPermitState {
     bypasses_concurrency_limit: bool,
     cancellation: Option<HostCallCancellation>,
     initial_queue_started_at: Option<Instant>,
-    js_permit: Option<OwnedSemaphorePermit>,
+    runtime_permit: Option<OwnedSemaphorePermit>,
     active_permit: Option<OwnedSemaphorePermit>,
     active_entered: bool,
     invocation_started: bool,
@@ -50,7 +50,7 @@ impl SharedInvocationPermit {
                 bypasses_concurrency_limit,
                 cancellation,
                 initial_queue_started_at: None,
-                js_permit: None,
+                runtime_permit: None,
                 active_permit: None,
                 active_entered: false,
                 invocation_started: false,
@@ -88,7 +88,7 @@ impl SharedInvocationPermit {
                 .record_invocation_started_for_tenant(tenant_label.as_deref());
             policy
                 .metrics()
-                .increment_active_isolates_for_tenant(tenant_label.as_deref());
+                .increment_active_runtime_instances_for_tenant(tenant_label.as_deref());
             let mut state = self.inner.borrow_mut();
             state.active_entered = true;
             state.invocation_started = true;
@@ -112,13 +112,13 @@ impl SharedInvocationPermit {
             None => None,
         };
 
-        let js_permit = policy
-            .isolate_semaphore()
+        let runtime_permit = policy
+            .runtime_instance_semaphore()
             .acquire_owned()
             .await
             .map_err(|_| {
                 NeovexRuntimeError::Contract(
-                    "runtime isolate semaphore unexpectedly closed".to_string(),
+                    "runtime instance semaphore unexpectedly closed".to_string(),
                 )
             })?;
         policy.metrics().decrement_queued_invocations();
@@ -134,18 +134,18 @@ impl SharedInvocationPermit {
             .record_invocation_started_for_tenant(tenant_label.as_deref());
         policy
             .metrics()
-            .increment_active_isolates_for_tenant(tenant_label.as_deref());
+            .increment_active_runtime_instances_for_tenant(tenant_label.as_deref());
 
         let mut state = self.inner.borrow_mut();
         state.active_permit = active_permit;
-        state.js_permit = Some(js_permit);
+        state.runtime_permit = Some(runtime_permit);
         state.active_entered = true;
         state.invocation_started = true;
         Ok(())
     }
 
     pub(crate) fn begin_async_host_call(&self) {
-        let (policy, tenant_label, dispatch_handle, dropped_js_permit, dropped_active_permit) = {
+        let (policy, tenant_label, dispatch_handle, dropped_runtime_permit, dropped_active_permit) = {
             let mut state = self.inner.borrow_mut();
             state.in_flight_host_ops += 1;
             if state.bypasses_concurrency_limit || state.in_flight_host_ops != 1 {
@@ -154,7 +154,7 @@ impl SharedInvocationPermit {
             let policy = state.policy.clone();
             let tenant_label = state.tenant_label.clone();
             let dispatch_handle = state.dispatch_handle.clone();
-            let js_permit = state.js_permit.take();
+            let runtime_permit = state.runtime_permit.take();
             let active_permit = state.active_permit.take();
             if state.active_entered {
                 state.active_entered = false;
@@ -163,7 +163,7 @@ impl SharedInvocationPermit {
                 policy,
                 tenant_label,
                 dispatch_handle,
-                js_permit,
+                runtime_permit,
                 active_permit,
             )
         };
@@ -173,8 +173,8 @@ impl SharedInvocationPermit {
         }
         policy
             .metrics()
-            .decrement_active_isolates_for_tenant(tenant_label.as_deref());
-        drop(dropped_js_permit);
+            .decrement_active_runtime_instances_for_tenant(tenant_label.as_deref());
+        drop(dropped_runtime_permit);
         drop(dropped_active_permit);
     }
 
@@ -224,13 +224,13 @@ impl SharedInvocationPermit {
             }
             None => None,
         };
-        let js_permit = policy
-            .isolate_semaphore()
+        let runtime_permit = policy
+            .runtime_instance_semaphore()
             .acquire_owned()
             .await
             .map_err(|_| {
                 NeovexRuntimeError::Contract(
-                    "runtime isolate semaphore unexpectedly closed".to_string(),
+                    "runtime instance semaphore unexpectedly closed".to_string(),
                 )
             })?;
         policy.metrics().decrement_queued_invocations();
@@ -240,12 +240,12 @@ impl SharedInvocationPermit {
         }
         policy
             .metrics()
-            .increment_active_isolates_for_tenant(tenant_label.as_deref());
+            .increment_active_runtime_instances_for_tenant(tenant_label.as_deref());
 
         {
             let mut state = self.inner.borrow_mut();
             state.active_permit = active_permit;
-            state.js_permit = Some(js_permit);
+            state.runtime_permit = Some(runtime_permit);
             state.active_entered = true;
         }
 
@@ -266,7 +266,7 @@ impl SharedInvocationPermit {
             policy,
             tenant_label,
             dispatch_handle,
-            js_permit,
+            runtime_permit,
             active_permit,
             was_active,
             invocation_started,
@@ -280,14 +280,14 @@ impl SharedInvocationPermit {
                 state.policy.clone(),
                 state.tenant_label.clone(),
                 state.dispatch_handle.clone(),
-                state.js_permit.take(),
+                state.runtime_permit.take(),
                 state.active_permit.take(),
                 std::mem::take(&mut state.active_entered),
                 state.invocation_started,
             )
         };
 
-        drop(js_permit);
+        drop(runtime_permit);
         drop(active_permit);
 
         let ready_jobs = match dispatch_handle {
@@ -297,7 +297,7 @@ impl SharedInvocationPermit {
         if was_active {
             policy
                 .metrics()
-                .decrement_active_isolates_for_tenant(tenant_label.as_deref());
+                .decrement_active_runtime_instances_for_tenant(tenant_label.as_deref());
         }
         if invocation_started {
             policy

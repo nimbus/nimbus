@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-sqlite-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -59,9 +59,9 @@ bench-postgres-provider:
 bench-mysql-provider:
 	cargo bench -p neovex-engine --bench mysql-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
 
-# Benchmark the replica-connected SQLite provider against embedded SQLite plus replica-specific catch-up drills
-bench-sqlite-replica-provider:
-	cargo bench -p neovex-engine --bench sqlite-replica-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
+# Benchmark the libsql replica provider against embedded SQLite plus replica-specific catch-up drills
+bench-libsql-replica-provider:
+	cargo bench -p neovex-engine --bench libsql-replica-provider-benchmarks -- $(if $(REPORT),--markdown $(REPORT),) $(if $(WORKLOAD),--workload $(WORKLOAD),)
 
 # Dependency audit (licenses + vulnerabilities)
 deny:

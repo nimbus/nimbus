@@ -218,7 +218,7 @@ impl Service {
             TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
             TenantPersistence::Redb(_)
             | TenantPersistence::Sqlite(_)
-            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::LibsqlReplica(_)
             | TenantPersistence::MySql(_) => {
                 opened
                     .executor

@@ -30,7 +30,7 @@ Source of truth:
 | Binary | Source | Size | Built by |
 |--------|--------|------|----------|
 | `neovex` | `agentstation/neovex` | ~60MB | Cargo (Rust + V8) |
-| `agentstation-crun` | `agentstation/crun` (fork) | ~2MB | autotools (C) |
+| `neovex-crun` | upstream crun + build-time patch | ~2MB | autotools (C) |
 
 ### System dependencies (not shipped — installed from OS repos)
 
@@ -87,23 +87,31 @@ The script:
 Package: neovex
 Version: 0.1.0
 Architecture: amd64
-Depends: agentstation-crun, conmon, buildah, containers-common
+Depends: neovex-crun, conmon, buildah, containers-common
 Recommends: catatonit, passt, uidmap, fuse-overlayfs
 Description: Reactive document database with microVM runtime
 ```
 
-**Package: `agentstation-crun`**
+**Package: `neovex-crun`**
 
 ```
-Package: agentstation-crun
-Version: 1.19-neovex.1
+Package: neovex-crun
+Version: 1.19+neovex1
 Architecture: amd64
 Depends: libkrun (>= 1.17), libkrunfw, libcap2, libseccomp2, libyajl2
-Conflicts: crun
-Replaces: crun
-Provides: crun
-Description: OCI runtime with krun TSI port mapping support
+Description: crun OCI runtime with krun TSI port mapping (patched for neovex)
 ```
+
+Built from upstream crun release tarball + build-time patch (see
+`vmm-infrastructure-plan.md`). Installs to `/usr/libexec/neovex/crun`. Does
+NOT conflict with or replace the system `crun` — neovex invokes it via
+`conmon -r /usr/libexec/neovex/crun`. System Podman/CRI-O continue using
+the distro `crun` undisturbed.
+
+Version format: `{upstream_version}+neovex{patch_revision}`. The `+` separator
+follows Debian convention for local modifications. When upstream merges the
+port mapping PR, `neovex-crun` is dropped and replaced by a dependency on the
+system `crun` (>= the version that includes the patch).
 
 **Package: `libkrun` (for Debian/Ubuntu where it's not in repos)**
 
@@ -136,12 +144,13 @@ on GitHub Pages, Cloudflare R2, or Packagecloud).
 ```
 Name: neovex
 Version: 0.1.0
-Requires: agentstation-crun conmon buildah containers-common
+Requires: neovex-crun conmon buildah containers-common
 Recommends: catatonit passt shadow-utils fuse-overlayfs
 ```
 
 On Fedora, libkrun and libkrunfw are already in the repos. The
-`agentstation-crun` package replaces system crun.
+`neovex-crun` package installs to `/usr/libexec/neovex/crun` alongside
+the system crun (does not replace it).
 
 **COPR or custom repo:**
 ```
@@ -197,14 +206,15 @@ curl -L -o neovex.tar.gz \
 # Extract
 tar xzf neovex.tar.gz
 sudo mv neovex /usr/local/bin/
-sudo mv agentstation-crun /usr/local/bin/crun
+sudo mkdir -p /usr/libexec/neovex
+sudo mv neovex-crun /usr/libexec/neovex/crun
 
 # Install deps manually
 sudo apt install conmon buildah catatonit passt
 # For Debian: also install libkrun and libkrunfw from neovex apt repo
 ```
 
-The tarball includes: `neovex` + `agentstation-crun` + install instructions.
+The tarball includes: `neovex` + `neovex-crun` + install instructions.
 
 ### Channel 6: Container Image (for CI/CD tooling)
 
@@ -213,7 +223,7 @@ FROM debian:13-slim
 RUN apt-get update && apt-get install -y \
     conmon buildah catatonit passt uidmap fuse-overlayfs
 COPY neovex /usr/local/bin/
-COPY agentstation-crun /usr/local/bin/crun
+COPY neovex-crun /usr/libexec/neovex/crun
 # Note: This container must run with --privileged and /dev/kvm access
 ```
 
@@ -270,11 +280,11 @@ build {
 
 ### Phase D1: CI Build Pipeline
 
-**Goal:** Automated builds of neovex and agentstation-crun for Linux x86_64.
+**Goal:** Automated builds of neovex and neovex-crun for Linux x86_64.
 
 **Scope:**
 - GitHub Actions workflow: build neovex (cargo build --release)
-- GitHub Actions workflow: build agentstation-crun (autotools)
+- GitHub Actions workflow: build neovex-crun (download upstream tarball, apply patch, autotools)
 - GitHub Releases: upload binaries as release assets
 - Tarball (Channel 5): neovex + crun + README
 
@@ -288,7 +298,7 @@ build {
 **Goal:** `apt install neovex` works on Debian 13 and Ubuntu 24.04+.
 
 **Scope:**
-- Build .deb packages: neovex, agentstation-crun, libkrun, libkrunfw
+- Build .deb packages: neovex, neovex-crun, libkrun, libkrunfw
 - Host apt repository (GitHub Pages or Cloudflare R2)
 - GPG-sign packages
 - Install script (Channel 1) adds the repo and installs
@@ -302,7 +312,7 @@ build {
 **Goal:** `dnf install neovex` works on Fedora 40+.
 
 **Scope:**
-- Build .rpm packages: neovex, agentstation-crun
+- Build .rpm packages: neovex, neovex-crun
 - libkrun/libkrunfw already in Fedora repos — just depend on them
 - Publish via COPR (free RPM build service)
 

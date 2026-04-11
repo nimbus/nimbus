@@ -84,7 +84,7 @@ pub(crate) struct RuntimeLimitsResponse {
     pub max_heap_mb: usize,
     pub initial_heap_mb: usize,
     pub execution_timeout_ms: u64,
-    pub max_concurrent_isolates: usize,
+    pub max_concurrent_runtime_instances: usize,
     pub worker_threads: usize,
     pub max_active_top_level_invocations_per_tenant: usize,
     pub max_in_flight_top_level_invocations_per_tenant: usize,

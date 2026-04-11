@@ -18,8 +18,9 @@ pub use neovex_storage::EmbeddedProviderKind;
 pub use neovex_storage::MonthlyActiveUsersSnapshot;
 pub use neovex_storage::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
-    MaterializedJournalSnapshot, ShadowMaterializer, ShadowMaterializerConfig,
-    ShadowMaterializerManifest,
+    LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaRefreshCause,
+    LibsqlReplicaRefreshPath, MaterializedJournalSnapshot, ShadowMaterializer,
+    ShadowMaterializerConfig, ShadowMaterializerManifest,
 };
 pub use persistence_config::{
     ControlPlaneConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,

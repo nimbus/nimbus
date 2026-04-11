@@ -16,8 +16,8 @@ use crate::limits::RuntimePolicy;
 #[cfg(test)]
 use crate::watchdog::WatchdogTimer;
 
-mod bootstrap;
-mod bundle;
+pub(crate) mod bootstrap;
+pub(crate) mod bundle;
 mod cooperative;
 mod driver;
 mod facade;
@@ -26,11 +26,9 @@ mod invocation;
 
 #[cfg(test)]
 use self::bootstrap::RuntimeCancellationState;
-pub(crate) use self::bootstrap::{
-    ReusableRuntime, RuntimeConstructionMode, RuntimeInvocationTimeoutController,
-    RuntimeWorkerIsolatePool,
-};
+pub(crate) use self::bootstrap::RuntimeInvocationTimeoutController;
 pub use self::bundle::RuntimeBundle;
+pub(crate) use self::bundle::RuntimeBundleIdentity;
 #[cfg(test)]
 use self::helpers::deserialize_json_value;
 pub use self::invocation::{
@@ -52,14 +50,6 @@ pub(crate) use self::cooperative::{
 };
 
 use self::driver::RuntimeInvocationDriver;
-
-/// Legacy alias for Convex-shaped integrations.
-pub type ConvexRuntime = NeovexRuntime;
-
-#[cfg(test)]
-pub(crate) fn bootstrap_snapshot_build_count_for_test() -> usize {
-    self::driver::snapshot_build_count_for_test()
-}
 
 #[cfg(test)]
 mod tests {

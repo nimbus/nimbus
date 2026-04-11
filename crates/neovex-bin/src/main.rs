@@ -14,13 +14,13 @@ const CONFIG_FILE_ENV: &str = "NEOVEX_CONFIG";
 const DATA_DIR_ENV: &str = "NEOVEX_DATA_DIR";
 const CONTROL_DATA_DIR_ENV: &str = "NEOVEX_CONTROL_DATA_DIR";
 const TENANT_PROVIDER_ENV: &str = "NEOVEX_TENANT_PROVIDER";
-const SQLITE_URL_ENV: &str = "NEOVEX_SQLITE_URL";
-const SQLITE_AUTH_TOKEN_ENV: &str = "NEOVEX_SQLITE_AUTH_TOKEN";
-const SQLITE_ADMIN_URL_ENV: &str = "NEOVEX_SQLITE_ADMIN_URL";
-const SQLITE_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_SQLITE_ADMIN_AUTH_HEADER";
-const SQLITE_METADATA_NAMESPACE_ENV: &str = "NEOVEX_SQLITE_METADATA_NAMESPACE";
-const SQLITE_TENANT_NAMESPACE_PREFIX_ENV: &str = "NEOVEX_SQLITE_TENANT_NAMESPACE_PREFIX";
-const SQLITE_REPLICA_CACHE_DIR_ENV: &str = "NEOVEX_SQLITE_REPLICA_CACHE_DIR";
+const LIBSQL_URL_ENV: &str = "NEOVEX_LIBSQL_URL";
+const LIBSQL_AUTH_TOKEN_ENV: &str = "NEOVEX_LIBSQL_AUTH_TOKEN";
+const LIBSQL_ADMIN_URL_ENV: &str = "NEOVEX_LIBSQL_ADMIN_URL";
+const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NEOVEX_LIBSQL_ADMIN_AUTH_HEADER";
+const LIBSQL_METADATA_NAMESPACE_ENV: &str = "NEOVEX_LIBSQL_METADATA_NAMESPACE";
+const LIBSQL_TENANT_NAMESPACE_PREFIX_ENV: &str = "NEOVEX_LIBSQL_TENANT_NAMESPACE_PREFIX";
+const LIBSQL_REPLICA_CACHE_DIR_ENV: &str = "NEOVEX_LIBSQL_REPLICA_CACHE_DIR";
 const POSTGRES_URL_ENV: &str = "NEOVEX_POSTGRES_URL";
 const POSTGRES_METADATA_SCHEMA_ENV: &str = "NEOVEX_POSTGRES_METADATA_SCHEMA";
 const POSTGRES_TENANT_SCHEMA_PREFIX_ENV: &str = "NEOVEX_POSTGRES_TENANT_SCHEMA_PREFIX";
@@ -57,37 +57,37 @@ struct Cli {
     tenant_provider: Option<CliTenantProvider>,
 
     /// Canonical libsql primary URL for tenant persistence when
-    /// `--tenant-provider=sqlite-replica`.
+    /// `--tenant-provider=libsql-replica`.
     #[arg(long)]
-    sqlite_url: Option<String>,
+    libsql_url: Option<String>,
 
     /// Optional auth token for the libsql primary when
-    /// `--tenant-provider=sqlite-replica`.
+    /// `--tenant-provider=libsql-replica`.
     #[arg(long)]
-    sqlite_auth_token: Option<String>,
+    libsql_auth_token: Option<String>,
 
     /// Admin API URL used to provision libsql namespaces when
-    /// `--tenant-provider=sqlite-replica`.
+    /// `--tenant-provider=libsql-replica`.
     #[arg(long)]
-    sqlite_admin_url: Option<String>,
+    libsql_admin_url: Option<String>,
 
     /// Optional `Authorization` header value for the libsql admin API when
-    /// `--tenant-provider=sqlite-replica`.
+    /// `--tenant-provider=libsql-replica`.
     #[arg(long)]
-    sqlite_admin_auth_header: Option<String>,
+    libsql_admin_auth_header: Option<String>,
 
     /// Provider metadata namespace for replica-connected SQLite tenant routing.
     #[arg(long)]
-    sqlite_metadata_namespace: Option<String>,
+    libsql_metadata_namespace: Option<String>,
 
     /// Prefix used when deriving per-tenant libsql namespaces.
     #[arg(long)]
-    sqlite_tenant_namespace_prefix: Option<String>,
+    libsql_tenant_namespace_prefix: Option<String>,
 
     /// Provider-owned local cache root for embedded replica files when
-    /// `--tenant-provider=sqlite-replica`.
+    /// `--tenant-provider=libsql-replica`.
     #[arg(long)]
-    sqlite_replica_cache_dir: Option<PathBuf>,
+    libsql_replica_cache_dir: Option<PathBuf>,
 
     /// Canonical Postgres resource URL for tenant persistence when
     /// `--tenant-provider=postgres`.
@@ -151,9 +151,9 @@ struct Cli {
     #[arg(long, default_value_t = default_runtime_timeout_secs())]
     runtime_timeout_secs: u64,
 
-    /// Maximum number of concurrent top-level runtime isolates.
-    #[arg(long, default_value_t = default_runtime_max_isolates())]
-    runtime_max_isolates: usize,
+    /// Maximum number of concurrent top-level runtime instances.
+    #[arg(long, default_value_t = default_runtime_max_instances())]
+    runtime_max_instances: usize,
 
     /// Number of runtime worker threads.
     #[arg(long, default_value_t = default_runtime_worker_threads())]
@@ -168,7 +168,7 @@ struct Cli {
 #[serde(rename_all = "kebab-case")]
 enum CliTenantProvider {
     Sqlite,
-    SqliteReplica,
+    LibsqlReplica,
     Redb,
     Postgres,
     Mysql,
@@ -178,12 +178,12 @@ impl CliTenantProvider {
     fn parse_name(value: &str) -> neovex::Result<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "sqlite" => Ok(Self::Sqlite),
-            "sqlite-replica" | "sqlite_replica" => Ok(Self::SqliteReplica),
+            "libsql-replica" | "libsql_replica" => Ok(Self::LibsqlReplica),
             "redb" => Ok(Self::Redb),
             "postgres" => Ok(Self::Postgres),
             "mysql" => Ok(Self::Mysql),
             other => Err(Error::InvalidInput(format!(
-                "unsupported tenant provider '{other}'; expected sqlite, sqlite-replica, redb, postgres, or mysql"
+                "unsupported tenant provider '{other}'; expected sqlite, libsql-replica, redb, postgres, or mysql"
             ))),
         }
     }
@@ -201,13 +201,13 @@ struct PersistenceFileConfig {
     data_dir: Option<PathBuf>,
     control_data_dir: Option<PathBuf>,
     tenant_provider: Option<CliTenantProvider>,
-    sqlite_url: Option<String>,
-    sqlite_auth_token: Option<String>,
-    sqlite_admin_url: Option<String>,
-    sqlite_admin_auth_header: Option<String>,
-    sqlite_metadata_namespace: Option<String>,
-    sqlite_tenant_namespace_prefix: Option<String>,
-    sqlite_replica_cache_dir: Option<PathBuf>,
+    libsql_url: Option<String>,
+    libsql_auth_token: Option<String>,
+    libsql_admin_url: Option<String>,
+    libsql_admin_auth_header: Option<String>,
+    libsql_metadata_namespace: Option<String>,
+    libsql_tenant_namespace_prefix: Option<String>,
+    libsql_replica_cache_dir: Option<PathBuf>,
     postgres_url: Option<String>,
     postgres_metadata_schema: Option<String>,
     postgres_tenant_schema_prefix: Option<String>,
@@ -225,13 +225,13 @@ struct PersistenceEnv {
     data_dir: Option<PathBuf>,
     control_data_dir: Option<PathBuf>,
     tenant_provider: Option<CliTenantProvider>,
-    sqlite_url: Option<String>,
-    sqlite_auth_token: Option<String>,
-    sqlite_admin_url: Option<String>,
-    sqlite_admin_auth_header: Option<String>,
-    sqlite_metadata_namespace: Option<String>,
-    sqlite_tenant_namespace_prefix: Option<String>,
-    sqlite_replica_cache_dir: Option<PathBuf>,
+    libsql_url: Option<String>,
+    libsql_auth_token: Option<String>,
+    libsql_admin_url: Option<String>,
+    libsql_admin_auth_header: Option<String>,
+    libsql_metadata_namespace: Option<String>,
+    libsql_tenant_namespace_prefix: Option<String>,
+    libsql_replica_cache_dir: Option<PathBuf>,
     postgres_url: Option<String>,
     postgres_metadata_schema: Option<String>,
     postgres_tenant_schema_prefix: Option<String>,
@@ -250,13 +250,13 @@ impl PersistenceEnv {
             data_dir: std::env::var_os(DATA_DIR_ENV).map(PathBuf::from),
             control_data_dir: std::env::var_os(CONTROL_DATA_DIR_ENV).map(PathBuf::from),
             tenant_provider: optional_env_tenant_provider(TENANT_PROVIDER_ENV)?,
-            sqlite_url: std::env::var(SQLITE_URL_ENV).ok(),
-            sqlite_auth_token: std::env::var(SQLITE_AUTH_TOKEN_ENV).ok(),
-            sqlite_admin_url: std::env::var(SQLITE_ADMIN_URL_ENV).ok(),
-            sqlite_admin_auth_header: std::env::var(SQLITE_ADMIN_AUTH_HEADER_ENV).ok(),
-            sqlite_metadata_namespace: std::env::var(SQLITE_METADATA_NAMESPACE_ENV).ok(),
-            sqlite_tenant_namespace_prefix: std::env::var(SQLITE_TENANT_NAMESPACE_PREFIX_ENV).ok(),
-            sqlite_replica_cache_dir: std::env::var_os(SQLITE_REPLICA_CACHE_DIR_ENV)
+            libsql_url: std::env::var(LIBSQL_URL_ENV).ok(),
+            libsql_auth_token: std::env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
+            libsql_admin_url: std::env::var(LIBSQL_ADMIN_URL_ENV).ok(),
+            libsql_admin_auth_header: std::env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
+            libsql_metadata_namespace: std::env::var(LIBSQL_METADATA_NAMESPACE_ENV).ok(),
+            libsql_tenant_namespace_prefix: std::env::var(LIBSQL_TENANT_NAMESPACE_PREFIX_ENV).ok(),
+            libsql_replica_cache_dir: std::env::var_os(LIBSQL_REPLICA_CACHE_DIR_ENV)
                 .map(PathBuf::from),
             postgres_url: std::env::var(POSTGRES_URL_ENV).ok(),
             postgres_metadata_schema: std::env::var(POSTGRES_METADATA_SCHEMA_ENV).ok(),
@@ -284,8 +284,8 @@ fn default_runtime_timeout_secs() -> u64 {
     RuntimeLimits::default().execution_timeout.as_secs()
 }
 
-fn default_runtime_max_isolates() -> usize {
-    RuntimeLimits::default().max_concurrent_isolates
+fn default_runtime_max_instances() -> usize {
+    RuntimeLimits::default().max_concurrent_runtime_instances
 }
 
 fn default_runtime_worker_threads() -> usize {
@@ -314,7 +314,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_heap_mb: cli.runtime_heap_mb,
         initial_heap_mb: cli.runtime_initial_heap_mb,
         execution_timeout: Duration::from_secs(cli.runtime_timeout_secs),
-        max_concurrent_isolates: cli.runtime_max_isolates,
+        max_concurrent_runtime_instances: cli.runtime_max_instances,
         worker_threads: cli.runtime_worker_threads,
         max_nested_runtime_invocations: cli.runtime_max_nested_calls,
         ..RuntimeLimits::default()
@@ -386,41 +386,41 @@ fn service_persistence_config_from_sources(
         .or(env.tenant_provider)
         .or(file.tenant_provider)
         .unwrap_or(CliTenantProvider::Sqlite);
-    let sqlite_url = cli
-        .sqlite_url
+    let libsql_url = cli
+        .libsql_url
         .clone()
-        .or_else(|| env.sqlite_url.clone())
-        .or_else(|| file.sqlite_url.clone());
-    let sqlite_auth_token = cli
-        .sqlite_auth_token
+        .or_else(|| env.libsql_url.clone())
+        .or_else(|| file.libsql_url.clone());
+    let libsql_auth_token = cli
+        .libsql_auth_token
         .clone()
-        .or_else(|| env.sqlite_auth_token.clone())
-        .or_else(|| file.sqlite_auth_token.clone());
-    let sqlite_admin_url = cli
-        .sqlite_admin_url
+        .or_else(|| env.libsql_auth_token.clone())
+        .or_else(|| file.libsql_auth_token.clone());
+    let libsql_admin_url = cli
+        .libsql_admin_url
         .clone()
-        .or_else(|| env.sqlite_admin_url.clone())
-        .or_else(|| file.sqlite_admin_url.clone());
-    let sqlite_admin_auth_header = cli
-        .sqlite_admin_auth_header
+        .or_else(|| env.libsql_admin_url.clone())
+        .or_else(|| file.libsql_admin_url.clone());
+    let libsql_admin_auth_header = cli
+        .libsql_admin_auth_header
         .clone()
-        .or_else(|| env.sqlite_admin_auth_header.clone())
-        .or_else(|| file.sqlite_admin_auth_header.clone());
-    let sqlite_metadata_namespace = cli
-        .sqlite_metadata_namespace
+        .or_else(|| env.libsql_admin_auth_header.clone())
+        .or_else(|| file.libsql_admin_auth_header.clone());
+    let libsql_metadata_namespace = cli
+        .libsql_metadata_namespace
         .clone()
-        .or_else(|| env.sqlite_metadata_namespace.clone())
-        .or_else(|| file.sqlite_metadata_namespace.clone());
-    let sqlite_tenant_namespace_prefix = cli
-        .sqlite_tenant_namespace_prefix
+        .or_else(|| env.libsql_metadata_namespace.clone())
+        .or_else(|| file.libsql_metadata_namespace.clone());
+    let libsql_tenant_namespace_prefix = cli
+        .libsql_tenant_namespace_prefix
         .clone()
-        .or_else(|| env.sqlite_tenant_namespace_prefix.clone())
-        .or_else(|| file.sqlite_tenant_namespace_prefix.clone());
-    let sqlite_replica_cache_dir = cli
-        .sqlite_replica_cache_dir
+        .or_else(|| env.libsql_tenant_namespace_prefix.clone())
+        .or_else(|| file.libsql_tenant_namespace_prefix.clone());
+    let libsql_replica_cache_dir = cli
+        .libsql_replica_cache_dir
         .clone()
-        .or_else(|| env.sqlite_replica_cache_dir.clone())
-        .or_else(|| file.sqlite_replica_cache_dir.clone());
+        .or_else(|| env.libsql_replica_cache_dir.clone())
+        .or_else(|| file.libsql_replica_cache_dir.clone());
     let postgres_url = cli
         .postgres_url
         .clone()
@@ -468,13 +468,13 @@ fn service_persistence_config_from_sources(
         .or(env.mysql_max_connections)
         .or(file.mysql_max_connections);
 
-    let sqlite_replica_overrides_present = sqlite_url.is_some()
-        || sqlite_auth_token.is_some()
-        || sqlite_admin_url.is_some()
-        || sqlite_admin_auth_header.is_some()
-        || sqlite_metadata_namespace.is_some()
-        || sqlite_tenant_namespace_prefix.is_some()
-        || sqlite_replica_cache_dir.is_some();
+    let libsql_replica_overrides_present = libsql_url.is_some()
+        || libsql_auth_token.is_some()
+        || libsql_admin_url.is_some()
+        || libsql_admin_auth_header.is_some()
+        || libsql_metadata_namespace.is_some()
+        || libsql_tenant_namespace_prefix.is_some()
+        || libsql_replica_cache_dir.is_some();
     let postgres_overrides_present = postgres_url.is_some()
         || postgres_metadata_schema.is_some()
         || postgres_tenant_schema_prefix.is_some()
@@ -490,10 +490,10 @@ fn service_persistence_config_from_sources(
         CliTenantProvider::Sqlite => {
             if postgres_overrides_present
                 || mysql_overrides_present
-                || sqlite_replica_overrides_present
+                || libsql_replica_overrides_present
             {
                 return Err(Error::InvalidInput(
-                    "External provider config requires --tenant-provider=sqlite-replica, --tenant-provider=postgres, or --tenant-provider=mysql (or the equivalent env/config setting)"
+                    "External provider config requires --tenant-provider=libsql-replica, --tenant-provider=postgres, or --tenant-provider=mysql (or the equivalent env/config setting)"
                         .to_string(),
                 ));
             }
@@ -508,10 +508,10 @@ fn service_persistence_config_from_sources(
         CliTenantProvider::Redb => {
             if postgres_overrides_present
                 || mysql_overrides_present
-                || sqlite_replica_overrides_present
+                || libsql_replica_overrides_present
             {
                 return Err(Error::InvalidInput(
-                    "External provider config requires --tenant-provider=sqlite-replica, --tenant-provider=postgres, or --tenant-provider=mysql (or the equivalent env/config setting)"
+                    "External provider config requires --tenant-provider=libsql-replica, --tenant-provider=postgres, or --tenant-provider=mysql (or the equivalent env/config setting)"
                         .to_string(),
                 ));
             }
@@ -523,7 +523,7 @@ fn service_persistence_config_from_sources(
                 control_plane: neovex::ControlPlaneConfig::embedded_redb(control_data_dir),
             })
         }
-        CliTenantProvider::SqliteReplica => {
+        CliTenantProvider::LibsqlReplica => {
             if postgres_overrides_present {
                 return Err(Error::InvalidInput(
                     "Postgres config requires --tenant-provider=postgres or the equivalent env/config setting"
@@ -536,31 +536,31 @@ fn service_persistence_config_from_sources(
                         .to_string(),
                 ));
             }
-            let sqlite_url = sqlite_url.ok_or_else(|| {
+            let libsql_url = libsql_url.ok_or_else(|| {
                 Error::InvalidInput(
-                    "--sqlite-url, NEOVEX_SQLITE_URL, or persistence.sqlite_url is required when the tenant provider is sqlite-replica"
+                    "--libsql-url, NEOVEX_LIBSQL_URL, or persistence.libsql_url is required when the tenant provider is libsql-replica"
                         .to_string(),
                 )
             })?;
-            let sqlite_replica_cache_dir = sqlite_replica_cache_dir.ok_or_else(|| {
+            let libsql_replica_cache_dir = libsql_replica_cache_dir.ok_or_else(|| {
                 Error::InvalidInput(
-                    "--sqlite-replica-cache-dir, NEOVEX_SQLITE_REPLICA_CACHE_DIR, or persistence.sqlite_replica_cache_dir is required when the tenant provider is sqlite-replica"
+                    "--libsql-replica-cache-dir, NEOVEX_LIBSQL_REPLICA_CACHE_DIR, or persistence.libsql_replica_cache_dir is required when the tenant provider is libsql-replica"
                         .to_string(),
                 )
             })?;
-            let sqlite_admin_url = sqlite_admin_url.ok_or_else(|| {
+            let libsql_admin_url = libsql_admin_url.ok_or_else(|| {
                 Error::InvalidInput(
-                    "--sqlite-admin-url, NEOVEX_SQLITE_ADMIN_URL, or persistence.sqlite_admin_url is required when the tenant provider is sqlite-replica"
+                    "--libsql-admin-url, NEOVEX_LIBSQL_ADMIN_URL, or persistence.libsql_admin_url is required when the tenant provider is libsql-replica"
                         .to_string(),
                 )
             })?;
-            let mut config = ServicePersistenceConfig::sqlite_replica(
+            let mut config = ServicePersistenceConfig::libsql_replica(
                 control_data_dir,
-                sqlite_url,
-                sqlite_auth_token,
-                sqlite_admin_url,
-                sqlite_admin_auth_header,
-                sqlite_replica_cache_dir,
+                libsql_url,
+                libsql_auth_token,
+                libsql_admin_url,
+                libsql_admin_auth_header,
+                libsql_replica_cache_dir,
             );
             if let neovex::TenantRoutingConfig::NamespacePerTenant {
                 metadata_namespace,
@@ -568,10 +568,10 @@ fn service_persistence_config_from_sources(
                 ..
             } = &mut config.tenant_provider.routing
             {
-                if let Some(value) = sqlite_metadata_namespace {
+                if let Some(value) = libsql_metadata_namespace {
                     *metadata_namespace = value;
                 }
-                if let Some(value) = sqlite_tenant_namespace_prefix {
+                if let Some(value) = libsql_tenant_namespace_prefix {
                     *tenant_namespace_prefix = value;
                 }
             }
@@ -584,9 +584,9 @@ fn service_persistence_config_from_sources(
                         .to_string(),
                 ));
             }
-            if sqlite_replica_overrides_present {
+            if libsql_replica_overrides_present {
                 return Err(Error::InvalidInput(
-                    "Replica-connected SQLite config requires --tenant-provider=sqlite-replica or the equivalent env/config setting"
+                    "Replica-connected SQLite config requires --tenant-provider=libsql-replica or the equivalent env/config setting"
                         .to_string(),
                 ));
             }
@@ -620,9 +620,9 @@ fn service_persistence_config_from_sources(
                         .to_string(),
                 ));
             }
-            if sqlite_replica_overrides_present {
+            if libsql_replica_overrides_present {
                 return Err(Error::InvalidInput(
-                    "Replica-connected SQLite config requires --tenant-provider=sqlite-replica or the equivalent env/config setting"
+                    "Replica-connected SQLite config requires --tenant-provider=libsql-replica or the equivalent env/config setting"
                         .to_string(),
                 ));
             }
@@ -810,26 +810,26 @@ mod tests {
     }
 
     #[test]
-    fn cli_builds_sqlite_replica_typed_config_with_overrides() {
+    fn cli_builds_libsql_replica_typed_config_with_overrides() {
         let cli = Cli::parse_from([
             "neovex",
             "--tenant-provider",
-            "sqlite-replica",
+            "libsql-replica",
             "--control-data-dir",
             "./control",
-            "--sqlite-url",
+            "--libsql-url",
             "libsql://127.0.0.1:8080",
-            "--sqlite-auth-token",
+            "--libsql-auth-token",
             "replica-secret",
-            "--sqlite-admin-url",
+            "--libsql-admin-url",
             "http://127.0.0.1:8081",
-            "--sqlite-admin-auth-header",
+            "--libsql-admin-auth-header",
             "Bearer replica-admin",
-            "--sqlite-metadata-namespace",
+            "--libsql-metadata-namespace",
             "provider_meta",
-            "--sqlite-tenant-namespace-prefix",
+            "--libsql-tenant-namespace-prefix",
             "tenant_sqlite_",
-            "--sqlite-replica-cache-dir",
+            "--libsql-replica-cache-dir",
             "./replica-cache",
         ]);
         let config = service_persistence_config_from_sources(
@@ -837,7 +837,7 @@ mod tests {
             &PersistenceFileConfig::default(),
             &PersistenceEnv::default(),
         )
-        .expect("sqlite replica config should build");
+        .expect("libsql replica config should build");
         assert_eq!(
             config.control_plane,
             neovex::ControlPlaneConfig::embedded_redb("./control")
@@ -852,7 +852,7 @@ mod tests {
         );
         assert_eq!(
             config.tenant_provider.credentials,
-            neovex::ProviderCredentials::SqliteReplica {
+            neovex::ProviderCredentials::LibsqlReplica {
                 primary_url: "libsql://127.0.0.1:8080".to_string(),
                 auth_token: Some("replica-secret".to_string()),
                 admin_api_url: "http://127.0.0.1:8081".to_string(),
@@ -870,20 +870,20 @@ mod tests {
     }
 
     #[test]
-    fn env_builds_sqlite_replica_typed_config_with_generic_resource_name() {
+    fn env_builds_libsql_replica_typed_config_with_generic_resource_name() {
         let cli = Cli::parse_from(["neovex"]);
         let env = PersistenceEnv {
-            tenant_provider: Some(CliTenantProvider::SqliteReplica),
+            tenant_provider: Some(CliTenantProvider::LibsqlReplica),
             control_data_dir: Some(PathBuf::from("./control-from-env")),
-            sqlite_url: Some("libsql://127.0.0.1:8080".to_string()),
-            sqlite_admin_url: Some("http://127.0.0.1:8081".to_string()),
-            sqlite_replica_cache_dir: Some(PathBuf::from("./replica-cache-from-env")),
+            libsql_url: Some("libsql://127.0.0.1:8080".to_string()),
+            libsql_admin_url: Some("http://127.0.0.1:8081".to_string()),
+            libsql_replica_cache_dir: Some(PathBuf::from("./replica-cache-from-env")),
             ..PersistenceEnv::default()
         };
 
         let config =
             service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
-                .expect("env-backed sqlite replica config should build");
+                .expect("env-backed libsql replica config should build");
 
         assert_eq!(
             config.control_plane,
@@ -891,7 +891,7 @@ mod tests {
         );
         assert_eq!(
             config.tenant_provider.credentials,
-            neovex::ProviderCredentials::SqliteReplica {
+            neovex::ProviderCredentials::LibsqlReplica {
                 primary_url: "libsql://127.0.0.1:8080".to_string(),
                 auth_token: None,
                 admin_api_url: "http://127.0.0.1:8081".to_string(),

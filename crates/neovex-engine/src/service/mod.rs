@@ -215,7 +215,7 @@ impl Service {
                     data_dir: control_data_dir,
                 },
             ) => {
-                let ProviderCredentials::SqliteReplica {
+                let ProviderCredentials::LibsqlReplica {
                     primary_url,
                     auth_token,
                     admin_api_url,
@@ -226,7 +226,7 @@ impl Service {
                         "Replica-connected SQLite tenant persistence requires a primary URL, optional primary auth token, and admin API configuration".to_string(),
                     ));
                 };
-                Self::new_with_simulation_and_sqlite_replica_config(
+                Self::new_with_simulation_and_libsql_replica_config(
                     control_data_dir.clone(),
                     LibsqlReplicaProviderConfig {
                         primary_url: primary_url.clone(),
@@ -374,7 +374,7 @@ impl Service {
         })
     }
 
-    async fn new_with_simulation_and_sqlite_replica_config(
+    async fn new_with_simulation_and_libsql_replica_config(
         control_data_dir: PathBuf,
         provider_config: LibsqlReplicaProviderConfig,
         clock: Arc<dyn Clock>,
@@ -389,7 +389,7 @@ impl Service {
                 control_data_dir.clone(),
                 storage_executor.handle(),
             )?));
-        let sqlite_replica_provider = Arc::new(
+        let libsql_replica_provider = Arc::new(
             LibsqlReplicaProvider::connect_with_simulation(
                 provider_config,
                 storage_executor.handle(),
@@ -403,7 +403,7 @@ impl Service {
             tenants: RwLock::new(HashMap::new()),
             tenant_load_gate: AsyncMutex::new(()),
             embedded_provider_kind: None,
-            persistence_provider: PersistenceProvider::SqliteReplica(sqlite_replica_provider),
+            persistence_provider: PersistenceProvider::LibsqlReplica(libsql_replica_provider),
             control_plane_provider,
             clock,
             storage_fault_injector,
@@ -474,14 +474,14 @@ impl Service {
             PersistenceProvider::Postgres(provider) => Some(provider.clone()),
             PersistenceProvider::Redb(_)
             | PersistenceProvider::Sqlite(_)
-            | PersistenceProvider::SqliteReplica(_)
+            | PersistenceProvider::LibsqlReplica(_)
             | PersistenceProvider::MySql(_) => None,
         }
     }
 
-    pub(crate) fn sqlite_replica_provider(&self) -> Option<Arc<LibsqlReplicaProvider>> {
+    pub(crate) fn libsql_replica_provider(&self) -> Option<Arc<LibsqlReplicaProvider>> {
         match &self.persistence_provider {
-            PersistenceProvider::SqliteReplica(provider) => Some(provider.clone()),
+            PersistenceProvider::LibsqlReplica(provider) => Some(provider.clone()),
             PersistenceProvider::Redb(_)
             | PersistenceProvider::Sqlite(_)
             | PersistenceProvider::Postgres(_)
@@ -494,7 +494,7 @@ impl Service {
             PersistenceProvider::MySql(provider) => Some(provider.clone()),
             PersistenceProvider::Redb(_)
             | PersistenceProvider::Sqlite(_)
-            | PersistenceProvider::SqliteReplica(_)
+            | PersistenceProvider::LibsqlReplica(_)
             | PersistenceProvider::Postgres(_) => None,
         }
     }

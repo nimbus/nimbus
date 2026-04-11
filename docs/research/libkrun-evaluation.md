@@ -492,3 +492,52 @@ This pattern gives you:
 - Clean lifecycle management (waitpid + PR_SET_PDEATHSIG)
 - Backend swappability (same interface, different VMM)
 - Tokio compatibility (no fork from async context)
+
+---
+
+## CRIU Cannot Solve the Snapshot/Restore Gap
+
+CRIU (Checkpoint/Restore In Userspace) is in the Podman dependency chain and
+supports `podman container checkpoint` for standard Linux containers. It was
+evaluated as a potential way to add snapshot/restore to libkrun without native
+VMM support.
+
+**CRIU cannot checkpoint KVM-based VMM processes.** Blockers:
+
+1. **No KVM fd support.** CRIU has no handler for `/dev/kvm`, VM fds, or vCPU
+   fds. KVM state (vCPU registers, VMCS, interrupt routing, memory slots) lives
+   in kernel structures that CRIU cannot serialize. There is no merged or
+   in-progress CRIU work to add KVM support.
+
+2. **No libkrun device model serialization.** Even if KVM kernel state were
+   solved, libkrun's virtio device model state (queue positions, in-flight I/O)
+   has no serialization API.
+
+3. **Industry precedent.** Every VMM with snapshot/restore (Firecracker, QEMU,
+   Cloud Hypervisor) implements it natively via purpose-built code that calls
+   KVM ioctls (`KVM_GET_REGS`, `KVM_GET_SREGS`, `KVM_GET_MSRS`, `KVM_GET_LAPIC`,
+   etc.) and serializes device model state. None use CRIU. VMM snapshot requires
+   coordinated device quiesce + KVM ioctl extraction — inherently VMM-aware,
+   not generic process checkpoint.
+
+CRIU does capture guest memory (mmap'd in the VMM's address space), but that is
+insufficient without the KVM kernel-side state and device model.
+
+**The real path to snapshot/restore** is native `krun_snapshot()`/`krun_restore()`
+APIs in libkrun itself, following Firecracker's pattern. No timeline from
+upstream (v2.x, no specific date).
+
+### Warm pool as a practical mitigation
+
+Without snapshot/restore, libkrun cold-boots in ~80-100ms (optimized kernel).
+For long-running service VMs (postgres, redis), this is acceptable. If sub-10ms
+allocation is needed in the future:
+
+1. **Pre-boot idle VMs.** Maintain a pool of booted, idle VMs. Assign on demand
+   (~0ms allocation, ~30-50MB memory per idle VM).
+2. **Aggressive rootfs caching.** Image pull/unpack (seconds) dominates cold
+   boot (~100ms). Cache buildah-mounted rootfs across restarts.
+3. **Optimized guest kernel.** Strip libkrunfw's kernel to essentials.
+4. **neovex already has V8 isolates.** For code that doesn't need hardware
+   isolation, V8 isolates provide sub-millisecond startup. VMs are reserved
+   for workloads that need full OS compatibility (databases, services).

@@ -1,7 +1,7 @@
 use super::*;
 
 mod direct;
-mod runtime;
+mod runtime_backed;
 
 pub(super) async fn handle_named_subscription(
     ctx: &SocketSessionCtx<'_>,
@@ -14,7 +14,7 @@ pub(super) async fn handle_named_subscription(
         .runtime_subscription_kind(&request.name, ConvexFunctionVisibility::Public)
         .is_some()
     {
-        runtime::handle_runtime_named_subscription(
+        runtime_backed::handle_runtime_named_subscription(
             ctx,
             current_auth,
             active_subscriptions,

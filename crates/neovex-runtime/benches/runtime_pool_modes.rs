@@ -173,7 +173,7 @@ fn build_runtime(
         execution_model,
         runtime_pool_kind: pool_mode.runtime_pool_kind(),
         routing_affinity: RuntimeRoutingAffinity::Tenant,
-        max_concurrent_isolates: 1,
+        max_concurrent_runtime_instances: 1,
         worker_threads: 1,
         max_heap_mb: 256,
         // Criterion may run 16k+ iterations per closure call. Set the warm
@@ -312,9 +312,9 @@ export {};
         }
         match self.pool_mode {
             PoolMode::StartupSnapshotCache => {
-                assert_eq!(snapshot.isolate_pool_misses, 1);
+                assert_eq!(snapshot.runtime_pool_misses, 1);
                 assert_eq!(
-                    snapshot.isolate_pool_hits,
+                    snapshot.runtime_pool_hits,
                     total_invocations.saturating_sub(1)
                 );
                 assert_eq!(snapshot.retained_runtime_pool_entries, 0);
@@ -438,9 +438,9 @@ export {};
         }
         match self.pool_mode {
             PoolMode::StartupSnapshotCache => {
-                assert_eq!(snapshot.isolate_pool_misses, 1);
+                assert_eq!(snapshot.runtime_pool_misses, 1);
                 assert_eq!(
-                    snapshot.isolate_pool_hits,
+                    snapshot.runtime_pool_hits,
                     total_invocations.saturating_sub(1)
                 );
                 assert_eq!(snapshot.retained_runtime_pool_entries, 0);

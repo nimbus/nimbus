@@ -42,7 +42,7 @@ async fn worker_invocations_reuse_worker_local_tokio_runtime() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -77,23 +77,23 @@ async fn worker_invocations_reuse_worker_local_tokio_runtime() {
     assert_eq!(second_result, json!({ "workerRuntimeId": 1 }));
     assert_eq!(test_state.worker_runtime_builds(), 1);
     let metrics = executor.policy().metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
-    assert_eq!(metrics.isolate_pool_replacements, 0);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_replacements, 0);
 }
 
 #[test]
 fn sibling_threads_can_boot_runtime_executors_in_parallel() {
     let _test_lock = runtime_executor_test_lock().blocking_lock();
     let (_bundle_dir, bundle_path) = write_constant_bundle();
-    let before = crate::runtime::bootstrap_snapshot_build_count_for_test();
+    let before = crate::backends::v8::v8_bootstrap_snapshot_build_count_for_test();
     let barrier = Arc::new(Barrier::new(3));
 
     let worker =
         |request_id: &'static str, barrier: Arc<Barrier>, bundle_path: std::path::PathBuf| {
             std::thread::spawn(move || {
                 let mut limits = run_to_completion_snapshot_runtime_test_limits();
-                limits.max_concurrent_isolates = 1;
+                limits.max_concurrent_runtime_instances = 1;
                 limits.worker_threads = 1;
                 let policy = Arc::new(RuntimePolicy::new(limits));
                 let executor = RuntimeExecutor::new(policy.clone());
@@ -128,7 +128,7 @@ fn sibling_threads_can_boot_runtime_executors_in_parallel() {
         json!("ok")
     );
 
-    let after = crate::runtime::bootstrap_snapshot_build_count_for_test();
+    let after = crate::backends::v8::v8_bootstrap_snapshot_build_count_for_test();
     assert!(
         after.saturating_sub(before) <= 1,
         "parallel sibling-thread executor startups should reuse one process-global bootstrap snapshot"
@@ -145,7 +145,7 @@ fn blocking_worker_invocation_succeeds_without_tokio_runtime_on_calling_thread()
 
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -173,13 +173,13 @@ fn blocking_worker_invocation_succeeds_without_tokio_runtime_on_calling_thread()
 }
 
 #[tokio::test]
-async fn timed_out_worker_invocations_record_isolate_pool_replacements() {
+async fn timed_out_worker_invocations_record_runtime_pool_replacements() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_timeout_bundle_dir, timeout_bundle_path) = write_busy_loop_bundle();
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.execution_timeout = Duration::from_millis(50);
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -210,7 +210,7 @@ async fn timed_out_worker_invocations_record_isolate_pool_replacements() {
     assert_eq!(recovery_result, Value::Null);
 
     let metrics = policy.metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
-    assert_eq!(metrics.isolate_pool_replacements, 1);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_replacements, 1);
 }

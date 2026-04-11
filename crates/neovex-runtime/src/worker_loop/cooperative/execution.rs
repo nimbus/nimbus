@@ -58,7 +58,7 @@ impl CooperativeWorkerLoop {
                 function = %job.context.function_name,
                 kind = job.context.kind,
                 execution_ms = execution.as_secs_f64() * 1000.0,
-                active_isolates = metrics.snapshot().active_isolates,
+                active_runtime_instances = metrics.snapshot().active_runtime_instances,
                 "runtime worker invocation completed"
             );
         }
@@ -120,7 +120,7 @@ impl CooperativeWorkerLoop {
         self.policy.metrics().record_worker_dispatch();
         let runtime = job.runtime.clone().into_policy(self.policy.clone());
         let worker_runtime = &self.worker_runtime;
-        let isolate_pool = &mut self.isolate_pool;
+        let v8_runtime_pool = &mut self.v8_runtime_pool;
         let watchdog = self.watchdog.clone();
         let activity_signal = self.activity_signal.clone();
         let worker_id = self.worker_id;
@@ -142,7 +142,7 @@ impl CooperativeWorkerLoop {
             );
             let slot = runtime
                 .start_cooperative_locker_runtime_slot(
-                    isolate_pool,
+                    v8_runtime_pool,
                     CooperativeRuntimeSlotStart {
                         invocation: RuntimeInvocationExecution {
                             watchdog,

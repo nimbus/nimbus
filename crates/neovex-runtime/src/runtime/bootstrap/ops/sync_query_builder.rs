@@ -1,6 +1,4 @@
-use deno_core::{OpState, op2};
-use deno_error::JsErrorBox;
-
+use crate::backends::v8::embedder::{JsErrorBox, OpState, op2};
 use crate::host::HostCallOperation;
 
 use super::super::payloads::{

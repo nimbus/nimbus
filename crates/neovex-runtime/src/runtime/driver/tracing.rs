@@ -1,11 +1,12 @@
 use tracing::{debug, warn};
 
 use crate::RuntimeInvocationContext;
+use crate::backends::v8::V8RuntimeConstructionMode;
 
-use super::super::{InvocationRequest, RuntimeBundle, RuntimeConstructionMode};
+use super::super::{InvocationRequest, RuntimeBundle};
 
 pub(super) fn trace_snapshot_seeded_runtime_phase(
-    construction_mode: RuntimeConstructionMode,
+    construction_mode: V8RuntimeConstructionMode,
     bundle: &RuntimeBundle,
     context: Option<&RuntimeInvocationContext>,
     request: Option<&InvocationRequest>,
@@ -21,7 +22,7 @@ pub(super) fn trace_snapshot_seeded_runtime_phase(
 }
 
 pub(super) fn trace_snapshot_seeded_runtime_phase_with_optional_bundle(
-    construction_mode: RuntimeConstructionMode,
+    construction_mode: V8RuntimeConstructionMode,
     bundle: Option<&RuntimeBundle>,
     context: Option<&RuntimeInvocationContext>,
     request: Option<&InvocationRequest>,
@@ -45,7 +46,7 @@ pub(super) fn trace_snapshot_seeded_runtime_phase_with_optional_bundle(
 }
 
 pub(super) fn trace_snapshot_seeded_runtime_error(
-    construction_mode: RuntimeConstructionMode,
+    construction_mode: V8RuntimeConstructionMode,
     bundle: &RuntimeBundle,
     context: Option<&RuntimeInvocationContext>,
     request: Option<&InvocationRequest>,
@@ -63,7 +64,7 @@ pub(super) fn trace_snapshot_seeded_runtime_error(
 }
 
 pub(super) fn trace_snapshot_seeded_runtime_error_with_optional_bundle(
-    construction_mode: RuntimeConstructionMode,
+    construction_mode: V8RuntimeConstructionMode,
     bundle: Option<&RuntimeBundle>,
     context: Option<&RuntimeInvocationContext>,
     request: Option<&InvocationRequest>,

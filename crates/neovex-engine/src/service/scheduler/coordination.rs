@@ -137,7 +137,7 @@ impl Service {
                 TenantPersistence::Postgres(store) => store.has_scheduled_work_async().await?,
                 TenantPersistence::Redb(_)
                 | TenantPersistence::Sqlite(_)
-                | TenantPersistence::SqliteReplica(_)
+                | TenantPersistence::LibsqlReplica(_)
                 | TenantPersistence::MySql(_) => {
                     runtime
                         .read_storage
@@ -158,7 +158,7 @@ impl Service {
                 TenantPersistence::Postgres(store) => store.has_scheduled_work_async().await?,
                 TenantPersistence::Redb(_)
                 | TenantPersistence::Sqlite(_)
-                | TenantPersistence::SqliteReplica(_)
+                | TenantPersistence::LibsqlReplica(_)
                 | TenantPersistence::MySql(_) => {
                     runtime
                         .read_storage
@@ -183,7 +183,7 @@ impl Service {
             TenantPersistence::Postgres(store) => store.has_scheduled_work_async().await?,
             TenantPersistence::Redb(_)
             | TenantPersistence::Sqlite(_)
-            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::LibsqlReplica(_)
             | TenantPersistence::MySql(_) => {
                 opened
                     .executor
@@ -203,7 +203,7 @@ impl Service {
             TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
             TenantPersistence::Redb(_)
             | TenantPersistence::Sqlite(_)
-            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::LibsqlReplica(_)
             | TenantPersistence::MySql(_) => {
                 opened
                     .executor

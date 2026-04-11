@@ -37,7 +37,7 @@ impl ServicePersistenceConfig {
         }
     }
 
-    pub fn sqlite_replica(
+    pub fn libsql_replica(
         control_data_dir: impl Into<PathBuf>,
         primary_url: impl Into<String>,
         auth_token: Option<String>,
@@ -46,7 +46,7 @@ impl ServicePersistenceConfig {
         replica_cache_dir: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            tenant_provider: TenantProviderConfig::sqlite_replica(
+            tenant_provider: TenantProviderConfig::libsql_replica(
                 primary_url,
                 auth_token,
                 admin_api_url,
@@ -108,7 +108,7 @@ impl TenantProviderConfig {
         }
     }
 
-    pub fn sqlite_replica(
+    pub fn libsql_replica(
         primary_url: impl Into<String>,
         auth_token: Option<String>,
         admin_api_url: impl Into<String>,
@@ -124,7 +124,7 @@ impl TenantProviderConfig {
                 replica_cache_dir: replica_cache_dir.into(),
             },
             pool: PoolConfig::default(),
-            credentials: ProviderCredentials::SqliteReplica {
+            credentials: ProviderCredentials::LibsqlReplica {
                 primary_url: primary_url.into(),
                 auth_token,
                 admin_api_url: admin_api_url.into(),
@@ -193,7 +193,7 @@ pub struct PoolConfig {
 pub enum ProviderCredentials {
     None,
     ConnectionString(String),
-    SqliteReplica {
+    LibsqlReplica {
         primary_url: String,
         auth_token: Option<String>,
         admin_api_url: String,

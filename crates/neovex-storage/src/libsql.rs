@@ -2,9 +2,10 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use hyper::client::HttpConnector;
 use hyper::client::connect::{Connected, Connection as HyperConnection};
@@ -27,6 +28,7 @@ use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::{Notify, Semaphore};
 use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 use tower_service::Service;
+use tracing::{debug, warn};
 
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
@@ -61,6 +63,88 @@ DROP TABLE IF EXISTS metadata;
 
 type LibsqlTransportError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibsqlReplicaBarrierPath {
+    Unknown,
+    AlreadyCurrentCache,
+    WaitedForBackgroundRefresh,
+    IncrementalCatchUp,
+    FullSnapshotRebuild,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibsqlReplicaRefreshCause {
+    Unknown,
+    CommitBarrier,
+    DurableJournalReplay,
+    SchemaMismatch,
+    SchemaWrite,
+    BootstrapExport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibsqlReplicaRefreshPath {
+    Unknown,
+    IncrementalCatchUp,
+    FullSnapshotRebuild,
+    IncrementalFallbackToSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LibsqlReplicaFreshnessStats {
+    pub required_sequence: SequenceNumber,
+    pub local_durable_head: SequenceNumber,
+    pub local_applied_sequence: SequenceNumber,
+    pub refresh_needed: bool,
+    pub refresh_requested: bool,
+    pub refresh_inflight: bool,
+    pub last_barrier_path: LibsqlReplicaBarrierPath,
+    pub barrier_current_count: u64,
+    pub barrier_waited_for_background_refresh_count: u64,
+    pub barrier_incremental_catch_up_count: u64,
+    pub barrier_full_snapshot_rebuild_count: u64,
+    pub last_refresh_cause: LibsqlReplicaRefreshCause,
+    pub last_refresh_path: LibsqlReplicaRefreshPath,
+    pub incremental_refresh_count: u64,
+    pub full_snapshot_refresh_count: u64,
+    pub incremental_fallback_to_snapshot_count: u64,
+    pub refresh_error_count: u64,
+    pub last_refresh_duration_ms: u64,
+    pub last_refresh_required_sequence: SequenceNumber,
+    pub last_refresh_local_durable_head: SequenceNumber,
+    pub last_refresh_applied_sequence: SequenceNumber,
+    pub last_refresh_error: Option<String>,
+}
+
+struct LibsqlReplicaFreshnessMetrics {
+    requested_refresh_cause: AtomicU8,
+    refresh_attempt_path: AtomicU8,
+    last_barrier_path: AtomicU8,
+    barrier_current_count: AtomicU64,
+    barrier_waited_for_background_refresh_count: AtomicU64,
+    barrier_incremental_catch_up_count: AtomicU64,
+    barrier_full_snapshot_rebuild_count: AtomicU64,
+    last_refresh_cause: AtomicU8,
+    last_refresh_path: AtomicU8,
+    incremental_refresh_count: AtomicU64,
+    full_snapshot_refresh_count: AtomicU64,
+    incremental_fallback_to_snapshot_count: AtomicU64,
+    refresh_error_count: AtomicU64,
+    last_refresh_duration_ms: AtomicU64,
+    last_refresh_required_sequence: AtomicU64,
+    last_refresh_local_durable_head: AtomicU64,
+    last_refresh_applied_sequence: AtomicU64,
+    last_refresh_error: RwLock<Option<String>>,
+}
+
+struct ReplicaRefreshOutcome {
+    path: LibsqlReplicaRefreshPath,
+    progress: JournalProgress,
+}
+
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct LibsqlTransportConnector {
@@ -72,6 +156,272 @@ pub struct LibsqlTransportConnector {
 pub enum LibsqlTransportStream {
     Http(TcpStream),
     Https(TlsStream<TcpStream>),
+}
+
+impl LibsqlReplicaBarrierPath {
+    fn to_atomic(self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::AlreadyCurrentCache => 1,
+            Self::WaitedForBackgroundRefresh => 2,
+            Self::IncrementalCatchUp => 3,
+            Self::FullSnapshotRebuild => 4,
+        }
+    }
+
+    fn from_atomic(value: u8) -> Self {
+        match value {
+            1 => Self::AlreadyCurrentCache,
+            2 => Self::WaitedForBackgroundRefresh,
+            3 => Self::IncrementalCatchUp,
+            4 => Self::FullSnapshotRebuild,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn from_refresh_path(path: LibsqlReplicaRefreshPath) -> Self {
+        match path {
+            LibsqlReplicaRefreshPath::IncrementalCatchUp => Self::IncrementalCatchUp,
+            LibsqlReplicaRefreshPath::FullSnapshotRebuild
+            | LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot => Self::FullSnapshotRebuild,
+            LibsqlReplicaRefreshPath::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl LibsqlReplicaRefreshCause {
+    fn to_atomic(self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::CommitBarrier => 1,
+            Self::DurableJournalReplay => 2,
+            Self::SchemaMismatch => 3,
+            Self::SchemaWrite => 4,
+            Self::BootstrapExport => 5,
+        }
+    }
+
+    fn from_atomic(value: u8) -> Self {
+        match value {
+            1 => Self::CommitBarrier,
+            2 => Self::DurableJournalReplay,
+            3 => Self::SchemaMismatch,
+            4 => Self::SchemaWrite,
+            5 => Self::BootstrapExport,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl LibsqlReplicaRefreshPath {
+    fn to_atomic(self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::IncrementalCatchUp => 1,
+            Self::FullSnapshotRebuild => 2,
+            Self::IncrementalFallbackToSnapshot => 3,
+        }
+    }
+
+    fn from_atomic(value: u8) -> Self {
+        match value {
+            1 => Self::IncrementalCatchUp,
+            2 => Self::FullSnapshotRebuild,
+            3 => Self::IncrementalFallbackToSnapshot,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl LibsqlReplicaFreshnessMetrics {
+    fn new() -> Self {
+        Self {
+            requested_refresh_cause: AtomicU8::new(LibsqlReplicaRefreshCause::Unknown.to_atomic()),
+            refresh_attempt_path: AtomicU8::new(LibsqlReplicaRefreshPath::Unknown.to_atomic()),
+            last_barrier_path: AtomicU8::new(LibsqlReplicaBarrierPath::Unknown.to_atomic()),
+            barrier_current_count: AtomicU64::new(0),
+            barrier_waited_for_background_refresh_count: AtomicU64::new(0),
+            barrier_incremental_catch_up_count: AtomicU64::new(0),
+            barrier_full_snapshot_rebuild_count: AtomicU64::new(0),
+            last_refresh_cause: AtomicU8::new(LibsqlReplicaRefreshCause::Unknown.to_atomic()),
+            last_refresh_path: AtomicU8::new(LibsqlReplicaRefreshPath::Unknown.to_atomic()),
+            incremental_refresh_count: AtomicU64::new(0),
+            full_snapshot_refresh_count: AtomicU64::new(0),
+            incremental_fallback_to_snapshot_count: AtomicU64::new(0),
+            refresh_error_count: AtomicU64::new(0),
+            last_refresh_duration_ms: AtomicU64::new(0),
+            last_refresh_required_sequence: AtomicU64::new(0),
+            last_refresh_local_durable_head: AtomicU64::new(0),
+            last_refresh_applied_sequence: AtomicU64::new(0),
+            last_refresh_error: RwLock::new(None),
+        }
+    }
+
+    fn note_refresh_request(&self, cause: LibsqlReplicaRefreshCause) {
+        self.requested_refresh_cause
+            .store(cause.to_atomic(), Ordering::Release);
+    }
+
+    fn requested_refresh_cause(&self) -> LibsqlReplicaRefreshCause {
+        LibsqlReplicaRefreshCause::from_atomic(self.requested_refresh_cause.load(Ordering::Acquire))
+    }
+
+    fn note_refresh_attempt_path(&self, path: LibsqlReplicaRefreshPath) {
+        self.refresh_attempt_path
+            .store(path.to_atomic(), Ordering::Release);
+    }
+
+    fn refresh_attempt_path(&self) -> LibsqlReplicaRefreshPath {
+        LibsqlReplicaRefreshPath::from_atomic(self.refresh_attempt_path.load(Ordering::Acquire))
+    }
+
+    fn record_barrier_path(&self, path: LibsqlReplicaBarrierPath) {
+        self.last_barrier_path
+            .store(path.to_atomic(), Ordering::Release);
+        match path {
+            LibsqlReplicaBarrierPath::AlreadyCurrentCache => {
+                self.barrier_current_count.fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaBarrierPath::WaitedForBackgroundRefresh => {
+                self.barrier_waited_for_background_refresh_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaBarrierPath::IncrementalCatchUp => {
+                self.barrier_incremental_catch_up_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaBarrierPath::FullSnapshotRebuild => {
+                self.barrier_full_snapshot_rebuild_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaBarrierPath::Unknown => {}
+        }
+    }
+
+    fn record_refresh_success(
+        &self,
+        cause: LibsqlReplicaRefreshCause,
+        outcome: &ReplicaRefreshOutcome,
+        duration_ms: u64,
+        required_sequence: SequenceNumber,
+    ) {
+        self.last_refresh_cause
+            .store(cause.to_atomic(), Ordering::Release);
+        self.last_refresh_path
+            .store(outcome.path.to_atomic(), Ordering::Release);
+        self.last_refresh_duration_ms
+            .store(duration_ms, Ordering::Release);
+        self.last_refresh_required_sequence
+            .store(required_sequence.0, Ordering::Release);
+        self.last_refresh_local_durable_head
+            .store(outcome.progress.durable_head.0, Ordering::Release);
+        self.last_refresh_applied_sequence
+            .store(outcome.progress.applied_head.0, Ordering::Release);
+        match outcome.path {
+            LibsqlReplicaRefreshPath::IncrementalCatchUp => {
+                self.incremental_refresh_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaRefreshPath::FullSnapshotRebuild => {
+                self.full_snapshot_refresh_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot => {
+                self.incremental_fallback_to_snapshot_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            LibsqlReplicaRefreshPath::Unknown => {}
+        }
+        if let Ok(mut guard) = self.last_refresh_error.write() {
+            *guard = None;
+        }
+    }
+
+    fn record_refresh_error(
+        &self,
+        cause: LibsqlReplicaRefreshCause,
+        path: LibsqlReplicaRefreshPath,
+        duration_ms: u64,
+        required_sequence: SequenceNumber,
+        local_progress: JournalProgress,
+        error: &Error,
+    ) {
+        self.last_refresh_cause
+            .store(cause.to_atomic(), Ordering::Release);
+        self.last_refresh_path
+            .store(path.to_atomic(), Ordering::Release);
+        self.last_refresh_duration_ms
+            .store(duration_ms, Ordering::Release);
+        self.last_refresh_required_sequence
+            .store(required_sequence.0, Ordering::Release);
+        self.last_refresh_local_durable_head
+            .store(local_progress.durable_head.0, Ordering::Release);
+        self.last_refresh_applied_sequence
+            .store(local_progress.applied_head.0, Ordering::Release);
+        self.refresh_error_count.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_refresh_error.write() {
+            *guard = Some(error.to_string());
+        }
+    }
+
+    fn snapshot(
+        &self,
+        required_sequence: SequenceNumber,
+        local_progress: JournalProgress,
+        refresh_needed: bool,
+        refresh_requested: bool,
+        refresh_inflight: bool,
+    ) -> LibsqlReplicaFreshnessStats {
+        let last_refresh_error = self
+            .last_refresh_error
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| Some("libsql replica refresh error lock poisoned".to_string()));
+        LibsqlReplicaFreshnessStats {
+            required_sequence,
+            local_durable_head: local_progress.durable_head,
+            local_applied_sequence: local_progress.applied_head,
+            refresh_needed,
+            refresh_requested,
+            refresh_inflight,
+            last_barrier_path: LibsqlReplicaBarrierPath::from_atomic(
+                self.last_barrier_path.load(Ordering::Acquire),
+            ),
+            barrier_current_count: self.barrier_current_count.load(Ordering::Relaxed),
+            barrier_waited_for_background_refresh_count: self
+                .barrier_waited_for_background_refresh_count
+                .load(Ordering::Relaxed),
+            barrier_incremental_catch_up_count: self
+                .barrier_incremental_catch_up_count
+                .load(Ordering::Relaxed),
+            barrier_full_snapshot_rebuild_count: self
+                .barrier_full_snapshot_rebuild_count
+                .load(Ordering::Relaxed),
+            last_refresh_cause: LibsqlReplicaRefreshCause::from_atomic(
+                self.last_refresh_cause.load(Ordering::Acquire),
+            ),
+            last_refresh_path: LibsqlReplicaRefreshPath::from_atomic(
+                self.last_refresh_path.load(Ordering::Acquire),
+            ),
+            incremental_refresh_count: self.incremental_refresh_count.load(Ordering::Relaxed),
+            full_snapshot_refresh_count: self.full_snapshot_refresh_count.load(Ordering::Relaxed),
+            incremental_fallback_to_snapshot_count: self
+                .incremental_fallback_to_snapshot_count
+                .load(Ordering::Relaxed),
+            refresh_error_count: self.refresh_error_count.load(Ordering::Relaxed),
+            last_refresh_duration_ms: self.last_refresh_duration_ms.load(Ordering::Acquire),
+            last_refresh_required_sequence: SequenceNumber(
+                self.last_refresh_required_sequence.load(Ordering::Acquire),
+            ),
+            last_refresh_local_durable_head: SequenceNumber(
+                self.last_refresh_local_durable_head.load(Ordering::Acquire),
+            ),
+            last_refresh_applied_sequence: SequenceNumber(
+                self.last_refresh_applied_sequence.load(Ordering::Acquire),
+            ),
+            last_refresh_error,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +605,7 @@ pub struct LibsqlReplicaTenantStore {
     refresh_inflight: Arc<AtomicBool>,
     refresh_complete: Arc<Notify>,
     required_cache_sequence: Arc<AtomicU64>,
+    freshness_metrics: Arc<LibsqlReplicaFreshnessMetrics>,
 }
 
 #[derive(Clone)]
@@ -680,6 +1031,7 @@ impl LibsqlReplicaTenantStore {
             refresh_inflight: Arc::new(AtomicBool::new(false)),
             refresh_complete: Arc::new(Notify::new()),
             required_cache_sequence: Arc::new(AtomicU64::new(initial_applied)),
+            freshness_metrics: Arc::new(LibsqlReplicaFreshnessMetrics::new()),
         }
     }
 
@@ -713,6 +1065,8 @@ impl LibsqlReplicaTenantStore {
         let local_schema = self.active_cache_store()?.load_schema()?;
         if local_schema != remote_schema {
             self.refresh_needed.store(true, Ordering::Release);
+            self.freshness_metrics
+                .note_refresh_request(LibsqlReplicaRefreshCause::SchemaMismatch);
             self.schedule_background_refresh();
         }
         Ok(remote_schema)
@@ -733,6 +1087,19 @@ impl LibsqlReplicaTenantStore {
         })
     }
 
+    pub fn replica_freshness_stats(&self) -> Result<LibsqlReplicaFreshnessStats> {
+        let required_sequence =
+            SequenceNumber(self.required_cache_sequence.load(Ordering::Acquire));
+        let local_progress = self.active_cache_store()?.journal_progress()?;
+        Ok(self.freshness_metrics.snapshot(
+            required_sequence,
+            local_progress,
+            self.refresh_needed.load(Ordering::Acquire),
+            self.refresh_requested.load(Ordering::Acquire),
+            self.refresh_inflight.load(Ordering::Acquire),
+        ))
+    }
+
     pub fn recover_durable_journal(&self) -> Result<JournalProgress> {
         let progress = self.journal_progress()?;
         if progress.applied_head.0 < progress.durable_head.0 {
@@ -741,18 +1108,18 @@ impl LibsqlReplicaTenantStore {
             if !records.is_empty() {
                 let applied_head =
                     self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
-                self.note_required_cache_sequence(applied_head);
+                self.note_required_cache_sequence_with_cause(
+                    applied_head,
+                    LibsqlReplicaRefreshCause::DurableJournalReplay,
+                );
             } else {
-                self.note_required_cache_sequence(progress.durable_head);
+                self.note_required_cache_sequence_with_cause(
+                    progress.durable_head,
+                    LibsqlReplicaRefreshCause::DurableJournalReplay,
+                );
             }
         }
-        if self.refresh_needed.load(Ordering::Acquire)
-            || self.active_cache_store()?.applied_sequence()?.0
-                < self.required_cache_sequence.load(Ordering::Acquire)
-        {
-            self.schedule_background_refresh();
-            return self.refresh_local_cache();
-        }
+        self.ensure_local_cache_current()?;
         self.journal_progress()
     }
 
@@ -781,6 +1148,8 @@ impl LibsqlReplicaTenantStore {
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
+        self.freshness_metrics
+            .note_refresh_request(LibsqlReplicaRefreshCause::BootstrapExport);
         self.refresh_local_cache()?;
         self.active_cache_store()?
             .export_durable_journal_bootstrap()
@@ -998,7 +1367,10 @@ impl LibsqlReplicaTenantStore {
         let records = records.to_vec();
         let applied_head =
             self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
-        self.note_required_cache_sequence(applied_head);
+        self.note_required_cache_sequence_with_cause(
+            applied_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
         Ok(())
     }
 
@@ -1337,18 +1709,28 @@ impl LibsqlReplicaTenantStore {
 
     fn ensure_local_cache_current(&self) -> Result<()> {
         if self.local_cache_satisfies_requirements()? {
+            self.freshness_metrics
+                .record_barrier_path(LibsqlReplicaBarrierPath::AlreadyCurrentCache);
             return Ok(());
         }
         self.schedule_background_refresh();
         self.wait_for_background_refresh()?;
         if self.local_cache_satisfies_requirements()? {
+            self.freshness_metrics
+                .record_barrier_path(LibsqlReplicaBarrierPath::WaitedForBackgroundRefresh);
             return Ok(());
         }
-        self.refresh_local_cache()?;
+        let outcome = self.refresh_local_cache()?;
+        self.freshness_metrics
+            .record_barrier_path(LibsqlReplicaBarrierPath::from_refresh_path(outcome.path));
         Ok(())
     }
 
-    fn note_required_cache_sequence(&self, sequence: SequenceNumber) {
+    fn note_required_cache_sequence_with_cause(
+        &self,
+        sequence: SequenceNumber,
+        cause: LibsqlReplicaRefreshCause,
+    ) {
         let mut current = self.required_cache_sequence.load(Ordering::Acquire);
         while sequence.0 > current {
             match self.required_cache_sequence.compare_exchange(
@@ -1361,17 +1743,75 @@ impl LibsqlReplicaTenantStore {
                 Err(updated) => current = updated,
             }
         }
+        self.freshness_metrics.note_refresh_request(cause);
         self.schedule_background_refresh();
     }
 
-    fn refresh_local_cache(&self) -> Result<JournalProgress> {
-        if !self.refresh_needed.load(Ordering::Acquire) {
-            return self.catch_up_local_cache_from_remote_durable_journal();
+    fn refresh_local_cache(&self) -> Result<ReplicaRefreshOutcome> {
+        let cause = self.freshness_metrics.requested_refresh_cause();
+        let required_sequence =
+            SequenceNumber(self.required_cache_sequence.load(Ordering::Acquire));
+        let local_progress = self.active_cache_store()?.journal_progress()?;
+        let started = Instant::now();
+        let refresh_result = if !self.refresh_needed.load(Ordering::Acquire) {
+            self.freshness_metrics
+                .note_refresh_attempt_path(LibsqlReplicaRefreshPath::IncrementalCatchUp);
+            self.catch_up_local_cache_from_remote_durable_journal()
+        } else {
+            self.freshness_metrics
+                .note_refresh_attempt_path(LibsqlReplicaRefreshPath::FullSnapshotRebuild);
+            self.refresh_local_cache_from_snapshot()
+        };
+        let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        match refresh_result {
+            Ok(outcome) => {
+                self.freshness_metrics.record_refresh_success(
+                    cause,
+                    &outcome,
+                    duration_ms,
+                    required_sequence,
+                );
+                debug!(
+                    tenant = %self.tenant_id,
+                    namespace = %self.namespace,
+                    cause = ?cause,
+                    path = ?outcome.path,
+                    duration_ms,
+                    required_sequence = required_sequence.0,
+                    local_durable_before = local_progress.durable_head.0,
+                    local_applied_before = local_progress.applied_head.0,
+                    local_durable_after = outcome.progress.durable_head.0,
+                    local_applied_after = outcome.progress.applied_head.0,
+                    "libsql replica refresh completed"
+                );
+                Ok(outcome)
+            }
+            Err(error) => {
+                let path = self.freshness_metrics.refresh_attempt_path();
+                self.freshness_metrics.record_refresh_error(
+                    cause,
+                    path,
+                    duration_ms,
+                    required_sequence,
+                    local_progress,
+                    &error,
+                );
+                warn!(
+                    tenant = %self.tenant_id,
+                    namespace = %self.namespace,
+                    cause = ?cause,
+                    path = ?path,
+                    duration_ms,
+                    required_sequence = required_sequence.0,
+                    error = %error,
+                    "libsql replica refresh failed"
+                );
+                Err(error)
+            }
         }
-        self.refresh_local_cache_from_snapshot()
     }
 
-    fn refresh_local_cache_from_snapshot(&self) -> Result<JournalProgress> {
+    fn refresh_local_cache_from_snapshot(&self) -> Result<ReplicaRefreshOutcome> {
         let snapshot = self.block_on(fetch_remote_namespace_snapshot(
             &self.provider.primary_url,
             self.provider.auth_token.as_deref(),
@@ -1426,18 +1866,24 @@ impl LibsqlReplicaTenantStore {
             .push(previous);
         self.refresh_needed.store(false, Ordering::Release);
         self.reap_retired_caches()?;
-        Ok(JournalProgress {
-            durable_head,
-            applied_head: next_store.applied_sequence()?,
+        Ok(ReplicaRefreshOutcome {
+            path: LibsqlReplicaRefreshPath::FullSnapshotRebuild,
+            progress: JournalProgress {
+                durable_head,
+                applied_head: next_store.applied_sequence()?,
+            },
         })
     }
 
-    fn catch_up_local_cache_from_remote_durable_journal(&self) -> Result<JournalProgress> {
+    fn catch_up_local_cache_from_remote_durable_journal(&self) -> Result<ReplicaRefreshOutcome> {
         let store = self.active_cache_store()?;
         let local_progress = store.journal_progress()?;
         let required_sequence = self.required_cache_sequence.load(Ordering::Acquire);
         if local_progress.applied_head.0 >= required_sequence {
-            return Ok(local_progress);
+            return Ok(ReplicaRefreshOutcome {
+                path: LibsqlReplicaRefreshPath::IncrementalCatchUp,
+                progress: local_progress,
+            });
         }
 
         if local_progress.durable_head.0 < required_sequence {
@@ -1450,11 +1896,20 @@ impl LibsqlReplicaTenantStore {
 
         let recovered = store.recover_durable_journal()?;
         if recovered.applied_head.0 >= required_sequence {
-            return Ok(recovered);
+            return Ok(ReplicaRefreshOutcome {
+                path: LibsqlReplicaRefreshPath::IncrementalCatchUp,
+                progress: recovered,
+            });
         }
 
         self.refresh_needed.store(true, Ordering::Release);
-        self.refresh_local_cache_from_snapshot()
+        self.freshness_metrics
+            .note_refresh_attempt_path(LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot);
+        let snapshot = self.refresh_local_cache_from_snapshot()?;
+        Ok(ReplicaRefreshOutcome {
+            path: LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot,
+            progress: snapshot.progress,
+        })
     }
 
     fn local_cache_satisfies_requirements(&self) -> Result<bool> {
@@ -2398,9 +2853,15 @@ impl LibsqlReplicaWriteTransaction {
             Ok(())
         })?;
         if let Some(commit) = &commit {
-            self.store.note_required_cache_sequence(commit.sequence);
+            self.store.note_required_cache_sequence_with_cause(
+                commit.sequence,
+                LibsqlReplicaRefreshCause::CommitBarrier,
+            );
         } else if self.refresh_cache_after_commit {
             self.store.refresh_needed.store(true, Ordering::Release);
+            self.store
+                .freshness_metrics
+                .note_refresh_request(LibsqlReplicaRefreshCause::SchemaWrite);
             self.store.schedule_background_refresh();
         }
         Ok(commit)

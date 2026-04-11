@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::backends::v8::{DeferredV8RuntimeDropQueue, V8WorkerRuntimePool};
 use crate::executor::{RuntimeWorkerJob, SharedInvocationPermit};
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
-use crate::runtime::{CooperativeLockerRuntimeSlot, RuntimeWorkerIsolatePool};
+use crate::runtime::CooperativeLockerRuntimeSlot;
 use crate::watchdog::WatchdogTimer;
 
 use super::{WorkerLoop, WorkerLoopFactory};
@@ -58,11 +59,11 @@ struct CooperativeWorkerLoop {
     policy: Arc<RuntimePolicy>,
     watchdog: WatchdogTimer,
     worker_runtime: tokio::runtime::Runtime,
-    isolate_pool: RuntimeWorkerIsolatePool,
+    v8_runtime_pool: V8WorkerRuntimePool,
     activity_signal: Arc<crate::executor::WorkerActivitySignal>,
     activity_generation: u64,
     scheduler: CooperativeScheduler<CooperativeInvocation>,
-    deferred_runtime_drops: Vec<deno_core::JsRuntime>,
+    deferred_v8_runtime_drops: DeferredV8RuntimeDropQueue,
 }
 
 struct CooperativeInvocation {
@@ -97,11 +98,11 @@ impl CooperativeWorkerLoop {
             policy,
             watchdog,
             worker_runtime,
-            isolate_pool: RuntimeWorkerIsolatePool::new(),
+            v8_runtime_pool: V8WorkerRuntimePool::new(),
             activity_signal,
             activity_generation,
             scheduler: CooperativeScheduler::new(),
-            deferred_runtime_drops: Vec::new(),
+            deferred_v8_runtime_drops: DeferredV8RuntimeDropQueue::new(),
         }
     }
 }

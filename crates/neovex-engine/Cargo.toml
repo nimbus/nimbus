@@ -48,7 +48,7 @@ name = "mysql-provider-benchmarks"
 harness = false
 
 [[bench]]
-name = "sqlite-replica-provider-benchmarks"
+name = "libsql-replica-provider-benchmarks"
 harness = false
 
 [[bench]]

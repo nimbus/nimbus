@@ -23,9 +23,10 @@ pub use async_storage::{
     TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
 };
 pub use libsql::{
-    LibsqlReplicaProvider, LibsqlReplicaProviderConfig, LibsqlReplicaTenantRegistration,
-    LibsqlReplicaTenantStorage, LibsqlReplicaTenantStore, LibsqlReplicaWriteTransaction,
-    OpenedLibsqlReplicaTenant,
+    LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
+    LibsqlReplicaProviderConfig, LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath,
+    LibsqlReplicaTenantRegistration, LibsqlReplicaTenantStorage, LibsqlReplicaTenantStore,
+    LibsqlReplicaWriteTransaction, OpenedLibsqlReplicaTenant,
 };
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
 pub use mysql::{

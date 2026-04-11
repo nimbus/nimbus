@@ -1,7 +1,8 @@
 # Plan: Wasmtime Backend
 
 Canonical deferred design and execution plan for adding a wasmtime-based WASM
-backend to `neovex-runtime` alongside the existing `deno_core` V8 backend.
+backend to `neovex-runtime` alongside the existing V8 backend implemented via
+`deno_core`.
 
 This document owns the durable forward-looking context for WASM Component Model
 execution via wasmtime: backend abstraction refactor, WIT interface definitions,
@@ -73,8 +74,8 @@ Do not rely on prior chat transcripts as progress state.
 
 - `ARCHITECTURE.md` is the source of truth for the landed `WorkerLoopFactory` /
   `WorkerLoop` seam.
-- `docs/plans/v8-locker-fork-plan.md` is the source of truth for the current
-  `deno_core` + Locker backend and cooperative scheduling.
+- `docs/plans/v8-locker-fork-plan.md` is the source of truth for the current V8
+  backend implementation via `deno_core` + Locker cooperative scheduling.
 - `docs/plans/raw-v8-warm-backend-plan.md` is the source of truth for the
   future raw-V8 warm backend.
 - This plan does **not** reopen the decision to keep scheduling above the
@@ -97,7 +98,7 @@ The WASI Component Model is that typed, capability-scoped ABI.
 The V8 and wasmtime backends serve different execution contracts, type
 constraints, and scheduling models:
 
-| Dimension | `deno_core` (V8) | `wasmtime` (WASM) |
+| Dimension | `V8` (implemented via `deno_core`) | `wasmtime` (WASM) |
 |-----------|------------------|-------------------|
 | Language | JavaScript / TypeScript | Any language → WASM component |
 | Thread safety | `!Send` (`JsRuntime`) — worker-local only | `Send + Sync` — cross-thread capable |
@@ -110,7 +111,7 @@ constraints, and scheduling models:
 
 The key rules are:
 
-- **Do not force wasmtime semantics into the `deno_core` path.**
+- **Do not force wasmtime semantics into the V8 path.**
 - **Do not force V8 constraints onto the wasmtime path.** (`!Send`, Locker,
   deferred destruction — none apply to wasmtime.)
 - **Both backends share the same outer scheduler/admission/metrics seam.**
@@ -145,7 +146,7 @@ unchanged.
 
 ```text
 RuntimeBackendKind
-  - deno_core          (existing)
+  - v8                 (existing)
   - wasmtime           (new)
 
 RuntimeExecutionModel
@@ -155,7 +156,7 @@ RuntimeExecutionModel
 
 RuntimePoolKind
   - startup_snapshot_cache       (existing — V8 only)
-  - retained_jsruntime_pool      (existing — V8 only)
+  - warm_pool                    (existing — V8 only)
   - precompiled_module_cache     (new — wasmtime, fresh Store per invoke)
   - retained_store_pool          (new — wasmtime, retained Store with reset)
 ```
@@ -164,18 +165,20 @@ Validation rules — reject at construction, not at runtime:
 
 | `backend_kind` | Allowed `execution_model` | Allowed `pool_kind` |
 |----------------|---------------------------|---------------------|
-| `deno_core` | `run_to_completion`, `cooperative_locker` | `startup_snapshot_cache`, `retained_jsruntime_pool` |
+| `v8` | `run_to_completion`, `cooperative_locker` | `startup_snapshot_cache`, `warm_pool` |
 | `wasmtime` | `run_to_completion`, `cooperative_fuel` | `precompiled_module_cache`, `retained_store_pool` |
 
 ## Proposed Internal Shape
 
 ### Backend abstraction refactor
 
-The current `RuntimeBackendInvocation` contains `NeovexRuntime` which is
-V8-specific. The canonical refactor splits this:
+The current `RuntimeBackendInvocation` contains `NeovexRuntime`, which should
+remain the generic execution facade rather than being treated as V8-specific.
+The canonical refactor hardens that boundary like this:
 
 ```text
-InvocationEnvelope (backend-agnostic)
+RuntimeBackendInvocation (backend-agnostic envelope)
+  - runtime: NeovexRuntime
   - watchdog: WatchdogTimer
   - bundle: RuntimeBundle
   - request: InvocationRequest
@@ -187,11 +190,12 @@ RuntimeBackendFactory (trait, receives host + policy at construction)
   -> create() -> RuntimeBackend
 
 RuntimeBackend (trait, per-worker)
-  -> invoke(InvocationEnvelope) -> Result<Value>
+  -> invoke(RuntimeBackendInvocation) -> Result<Value>
 ```
 
-The `NeovexRuntime` moves inside `DenoRuntimeBackend` — it is the deno
-backend's business, not the scheduling layer's.
+The concrete V8 backend owns V8-local runtime pools and deferred runtime-drop
+state below this envelope. The scheduling layer should not own those
+backend-specific details.
 
 ### Cooperative backend driver abstraction
 
@@ -218,9 +222,9 @@ CooperativeWorkerLoop<D: CooperativeBackendDriver>
 V8 implementation:
 
 ```text
-DenoLockerDriver
-  - isolate_pool: RuntimeWorkerIsolatePool
-  - deferred_runtime_drops: Vec<JsRuntime>
+V8LockerDriver
+  - v8_runtime_pool: V8WorkerRuntimePool
+  - deferred_runtime_drops: DeferredV8RuntimeDropQueue
   - Slot = CooperativeLockerRuntimeSlot
 ```
 
@@ -270,7 +274,7 @@ WasmtimeModuleCache (process-wide, Send + Sync)
     - cache by bundle SHA-256
 ```
 
-Unlike V8's worker-local `RuntimeWorkerIsolatePool`, the wasmtime module cache
+Unlike V8's worker-local `V8WorkerRuntimePool`, the wasmtime module cache
 is process-wide because `wasmtime::Engine` and `Component` are `Send + Sync`.
 One compilation per bundle, ever, until engine config changes.
 
@@ -396,12 +400,12 @@ Promote this plan only if all of the following are true:
 
 | Phase | Status | Summary | Hard Dependencies | Gate Note |
 |-------|--------|---------|-------------------|-----------|
-| W1 | `todo` | Backend abstraction refactor | Locker fork plan Phase 5 `done` | decouple `RuntimeBackendInvocation` from `NeovexRuntime`; make `CooperativeWorkerLoop` generic over `CooperativeBackendDriver`; V8 path must remain green |
+| W1 | `todo` | Backend abstraction refactor | Locker fork plan Phase 5 `done` | keep `NeovexRuntime` as the generic execution facade while pushing V8- and wasmtime-owned state below `RuntimeBackend` / `CooperativeBackendDriver`; V8 path must remain green |
 | W2 | `todo` | wasmtime engine, WIT definitions, and `neovex:host` linker | W1 | add `wasmtime` dependency; create `wasmtime::Engine` config; define `neovex:host` WIT package; build `component::Linker<InvocationHostState>` mapping WIT imports to `HostBridge` calls |
 | W3 | `todo` | Run-to-completion wasmtime backend | W1, W2 | `WasmtimeBackendFactory`, `WasmtimeBackend`, `WasmtimeModuleCache`, Store lifecycle, `PrecompiledModuleCache` pool kind; end-to-end invocation of a `neovex-function` world component through the existing `RunToCompletionWorkerLoop` |
 | W4 | `todo` | Bundle format extension | W2, W3 | `BundleContent::WasmComponent`, `ComponentWorld` enum, integrity checks on WASM components, pre-compilation pipeline, codegen integration for WASM component bundles |
 | W5 | `todo` | Cooperative fuel-based scheduling | W1, W2, W3 | `WasmtimeFuelDriver`, `WasmtimeFuelSlot`, `CooperativeFuel` execution model; fuel-based yield/resume through the generic `CooperativeWorkerLoop<WasmtimeFuelDriver>`; park on async host imports, resume on I/O completion |
-| W6 | `todo` | Retained Store pool | W3, W5 | `RetainedStorePool` pool kind; worker-local Store reuse with selective `InvocationHostState` reset; bounded pool with LRU eviction and retirement cap; same pool invariants as V8 retained path |
+| W6 | `todo` | Retained Store pool | W3, W5 | `RetainedStorePool` pool kind; worker-local Store reuse with selective `InvocationHostState` reset; bounded pool with LRU eviction and retirement cap; same pool invariants as the V8 warm-pool path |
 | W7 | `todo` | Observability, validation, and benchmark comparison | W3, W5 | runtime metrics for wasmtime backend (compilation time, fuel consumed, Store pool hits/misses, evictions); benchmark harness extension in `runtime_pool_modes.rs`; comparison report against V8 path for representative workloads |
 
 ## Phase Order and Dependencies

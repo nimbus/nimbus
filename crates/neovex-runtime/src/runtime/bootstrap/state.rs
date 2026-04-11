@@ -2,8 +2,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use deno_core::{CancelHandle, JsRuntime};
-
+use crate::backends::v8::embedder::{CancelHandle, JsRuntime};
 use crate::error::Result;
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostBridge, HostCallCancellation};

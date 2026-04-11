@@ -1,5 +1,4 @@
-use deno_core::JsRuntime;
-
+use crate::backends::v8::embedder::JsRuntime;
 use crate::error::{NeovexRuntimeError, Result};
 
 const BOOTSTRAP_SOURCE: &str = r#"

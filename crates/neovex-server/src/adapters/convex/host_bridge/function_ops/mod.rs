@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::invocations::{
+use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
     invoke_runtime_bundle_blocking_with_host, invoke_runtime_bundle_on_worker_with_host,
 };

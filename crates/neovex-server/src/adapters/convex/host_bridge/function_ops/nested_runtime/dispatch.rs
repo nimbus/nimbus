@@ -143,7 +143,7 @@ impl ConvexHostBridge {
         self.registry
             .runtime_policy()
             .metrics()
-            .record_fallback_cross_isolate_dispatch();
+            .record_fallback_cross_runtime_dispatch();
         tracing::debug!(
             tenant = %self.tenant_id,
             function = %name,
@@ -209,7 +209,7 @@ impl ConvexHostBridge {
         self.registry
             .runtime_policy()
             .metrics()
-            .record_fallback_cross_isolate_dispatch();
+            .record_fallback_cross_runtime_dispatch();
         tracing::debug!(
             tenant = %self.tenant_id,
             function = %name,

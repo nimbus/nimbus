@@ -3,8 +3,37 @@ use serde_json::json;
 use super::*;
 
 #[test]
-fn runtime_host_request_rejects_unknown_operation_names_during_deserialization() {
-    let error = serde_json::from_value::<HostCallRequest>(json!({
+fn convex_host_request_roundtrips_between_adapter_wire_names_and_runtime_types() {
+    let request = serde_json::from_value::<ConvexHostCallRequest>(json!({
+        "operation": "convex.ctx.db.get",
+        "payload": {
+            "id": "doc-1",
+        },
+    }))
+    .expect("convex host request should deserialize");
+    assert_eq!(
+        HostCallRequest::from(request.clone()),
+        HostCallRequest {
+            operation: HostCallOperation::CtxDbGet,
+            payload: json!({
+                "id": "doc-1",
+            }),
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(request).expect("convex host request should serialize"),
+        json!({
+            "operation": "convex.ctx.db.get",
+            "payload": {
+                "id": "doc-1",
+            },
+        })
+    );
+}
+
+#[test]
+fn convex_host_request_rejects_unknown_operation_names_during_deserialization() {
+    let error = serde_json::from_value::<ConvexHostCallRequest>(json!({
         "operation": "convex.ctx.unknown",
         "payload": {},
     }))

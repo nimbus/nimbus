@@ -5,7 +5,7 @@ async fn cooperative_execution_model_processes_worker_invocations() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -41,9 +41,9 @@ async fn cooperative_execution_model_processes_worker_invocations() {
     assert_eq!(test_state.worker_runtime_builds(), 1);
 
     let metrics = executor.policy().metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
-    assert_eq!(metrics.isolate_pool_replacements, 0);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_replacements, 0);
 }
 
 #[tokio::test]
@@ -51,7 +51,7 @@ async fn cooperative_execution_model_resumes_parked_invocations_after_host_compl
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -80,7 +80,7 @@ async fn cooperative_execution_model_resumes_parked_invocations_after_host_compl
     host.wait_until_started("slow-1").await;
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            if policy.metrics_snapshot().active_isolates == 0 {
+            if policy.metrics_snapshot().active_runtime_instances == 0 {
                 break;
             }
             tokio::task::yield_now().await;
@@ -110,7 +110,7 @@ async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_ru
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = cooperative_startup_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
@@ -150,7 +150,9 @@ async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_ru
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             let metrics = policy.metrics_snapshot();
-            if metrics.active_isolates == 0 && host.started_ids().len() >= slow_requests.len() {
+            if metrics.active_runtime_instances == 0
+                && host.started_ids().len() >= slow_requests.len()
+            {
                 break;
             }
             tokio::task::yield_now().await;
@@ -173,8 +175,8 @@ async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_ru
     }
 
     let metrics = policy.metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 3);
-    assert_eq!(metrics.isolate_pool_replacements, 0);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 3);
+    assert_eq!(metrics.runtime_pool_replacements, 0);
     assert_eq!(metrics.retained_runtime_pool_entries, 0);
 }

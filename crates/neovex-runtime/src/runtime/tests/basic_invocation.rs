@@ -58,7 +58,7 @@ export {};
         serde_json::json!({
             "ok": true,
             "host": {
-                "operation": "convex.ctx.db.get",
+                "operation": "ctx_db_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -167,7 +167,7 @@ export {};
         serde_json::json!({
             "ok": true,
             "awaited": {
-                "operation": "convex.ctx.db.get",
+                "operation": "ctx_db_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -286,7 +286,7 @@ export {};
     .expect("bundle should write");
 
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_isolates = 1;
+    limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime = NeovexRuntime::with_policy(Arc::new(RecordingHost::default()), policy.clone());
@@ -312,9 +312,9 @@ export {};
     assert_eq!(first, serde_json::json!({ "moduleLoadCount": 1 }));
     assert_eq!(second, serde_json::json!({ "moduleLoadCount": 1 }));
     let metrics = policy.metrics_snapshot();
-    assert_eq!(metrics.isolate_pool_misses, 1);
-    assert_eq!(metrics.isolate_pool_hits, 1);
-    assert_eq!(metrics.isolate_pool_replacements, 0);
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
+    assert_eq!(metrics.runtime_pool_replacements, 0);
     assert_eq!(metrics.bundle_loads, 2);
     assert!(metrics.bundle_load_nanos_total > 0);
     assert_eq!(metrics.bundle_module_loads, 2);

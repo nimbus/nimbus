@@ -1,7 +1,5 @@
 use super::*;
 
-type ConvexHostOperation = HostCallOperation;
-
 trait ConvexHostOperationDispatch {
     fn dispatch_sync(
         self,
@@ -24,7 +22,7 @@ trait ConvexHostOperationDispatch {
     ) -> std::result::Result<Value, NeovexRuntimeError>;
 }
 
-impl ConvexHostOperationDispatch for ConvexHostOperation {
+impl ConvexHostOperationDispatch for HostCallOperation {
     fn dispatch_sync(
         self,
         bridge: &ConvexHostBridge,

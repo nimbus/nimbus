@@ -16,6 +16,11 @@ boundary research, and proposed configuration surface from the original raw-V8
 investigation. The reference inventory and strengths matrix remain valuable
 context for any future warm-execution work.
 
+Historical sections below retain some pre-rename vocabulary from when this plan
+was authored, especially `deno_core` and `retained_jsruntime_pool`. Read those
+as historical equivalents of today's V8 backend and older warm-pool naming, not
+as the current public runtime surface.
+
 ---
 
 ## Status

@@ -193,7 +193,7 @@ impl Service {
             TenantPersistence::Postgres(store) => store.load_schema_async().await?,
             TenantPersistence::Redb(_)
             | TenantPersistence::Sqlite(_)
-            | TenantPersistence::SqliteReplica(_)
+            | TenantPersistence::LibsqlReplica(_)
             | TenantPersistence::MySql(_) => {
                 runtime
                     .read_storage

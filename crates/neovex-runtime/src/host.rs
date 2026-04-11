@@ -10,87 +10,63 @@ use tokio::sync::Notify;
 use crate::error::{NeovexRuntimeError, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HostCallOperation {
-    #[serde(rename = "convex.http_route")]
     HttpRoute,
-    #[serde(rename = "convex.ctx.query")]
     CtxQuery,
-    #[serde(rename = "convex.ctx.paginated_query")]
     CtxPaginatedQuery,
-    #[serde(rename = "convex.ctx.mutation")]
     CtxMutation,
-    #[serde(rename = "convex.ctx.action")]
     CtxAction,
-    #[serde(rename = "convex.ctx.run_query")]
     CtxRunQuery,
-    #[serde(rename = "convex.ctx.run_mutation")]
     CtxRunMutation,
-    #[serde(rename = "convex.ctx.run_action")]
     CtxRunAction,
-    #[serde(rename = "convex.ctx.db.get")]
     CtxDbGet,
-    #[serde(rename = "convex.ctx.db.query.start")]
     CtxDbQueryStart,
-    #[serde(rename = "convex.ctx.db.query.with_index")]
     CtxDbQueryWithIndex,
-    #[serde(rename = "convex.ctx.db.query.filter")]
     CtxDbQueryFilter,
-    #[serde(rename = "convex.ctx.db.query.order")]
     CtxDbQueryOrder,
-    #[serde(rename = "convex.ctx.db.query.collect")]
     CtxDbQueryCollect,
-    #[serde(rename = "convex.ctx.db.query.take")]
     CtxDbQueryTake,
-    #[serde(rename = "convex.ctx.db.query.paginate")]
     CtxDbQueryPaginate,
-    #[serde(rename = "convex.ctx.db.query.first")]
     CtxDbQueryFirst,
-    #[serde(rename = "convex.ctx.db.query.unique")]
     CtxDbQueryUnique,
-    #[serde(rename = "convex.ctx.db.insert")]
     CtxDbInsert,
-    #[serde(rename = "convex.ctx.db.patch")]
     CtxDbPatch,
-    #[serde(rename = "convex.ctx.db.delete")]
     CtxDbDelete,
-    #[serde(rename = "convex.ctx.scheduler.run_after")]
     CtxSchedulerRunAfter,
-    #[serde(rename = "convex.ctx.scheduler.run_at")]
     CtxSchedulerRunAt,
-    #[serde(rename = "convex.ctx.scheduler.cancel")]
     CtxSchedulerCancel,
-    #[serde(rename = "convex.ctx.runtime.enter_nested_call")]
     CtxRuntimeEnterNestedCall,
 }
 
 impl HostCallOperation {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::HttpRoute => "convex.http_route",
-            Self::CtxQuery => "convex.ctx.query",
-            Self::CtxPaginatedQuery => "convex.ctx.paginated_query",
-            Self::CtxMutation => "convex.ctx.mutation",
-            Self::CtxAction => "convex.ctx.action",
-            Self::CtxRunQuery => "convex.ctx.run_query",
-            Self::CtxRunMutation => "convex.ctx.run_mutation",
-            Self::CtxRunAction => "convex.ctx.run_action",
-            Self::CtxDbGet => "convex.ctx.db.get",
-            Self::CtxDbQueryStart => "convex.ctx.db.query.start",
-            Self::CtxDbQueryWithIndex => "convex.ctx.db.query.with_index",
-            Self::CtxDbQueryFilter => "convex.ctx.db.query.filter",
-            Self::CtxDbQueryOrder => "convex.ctx.db.query.order",
-            Self::CtxDbQueryCollect => "convex.ctx.db.query.collect",
-            Self::CtxDbQueryTake => "convex.ctx.db.query.take",
-            Self::CtxDbQueryPaginate => "convex.ctx.db.query.paginate",
-            Self::CtxDbQueryFirst => "convex.ctx.db.query.first",
-            Self::CtxDbQueryUnique => "convex.ctx.db.query.unique",
-            Self::CtxDbInsert => "convex.ctx.db.insert",
-            Self::CtxDbPatch => "convex.ctx.db.patch",
-            Self::CtxDbDelete => "convex.ctx.db.delete",
-            Self::CtxSchedulerRunAfter => "convex.ctx.scheduler.run_after",
-            Self::CtxSchedulerRunAt => "convex.ctx.scheduler.run_at",
-            Self::CtxSchedulerCancel => "convex.ctx.scheduler.cancel",
-            Self::CtxRuntimeEnterNestedCall => "convex.ctx.runtime.enter_nested_call",
+            Self::HttpRoute => "http_route",
+            Self::CtxQuery => "ctx_query",
+            Self::CtxPaginatedQuery => "ctx_paginated_query",
+            Self::CtxMutation => "ctx_mutation",
+            Self::CtxAction => "ctx_action",
+            Self::CtxRunQuery => "ctx_run_query",
+            Self::CtxRunMutation => "ctx_run_mutation",
+            Self::CtxRunAction => "ctx_run_action",
+            Self::CtxDbGet => "ctx_db_get",
+            Self::CtxDbQueryStart => "ctx_db_query_start",
+            Self::CtxDbQueryWithIndex => "ctx_db_query_with_index",
+            Self::CtxDbQueryFilter => "ctx_db_query_filter",
+            Self::CtxDbQueryOrder => "ctx_db_query_order",
+            Self::CtxDbQueryCollect => "ctx_db_query_collect",
+            Self::CtxDbQueryTake => "ctx_db_query_take",
+            Self::CtxDbQueryPaginate => "ctx_db_query_paginate",
+            Self::CtxDbQueryFirst => "ctx_db_query_first",
+            Self::CtxDbQueryUnique => "ctx_db_query_unique",
+            Self::CtxDbInsert => "ctx_db_insert",
+            Self::CtxDbPatch => "ctx_db_patch",
+            Self::CtxDbDelete => "ctx_db_delete",
+            Self::CtxSchedulerRunAfter => "ctx_scheduler_run_after",
+            Self::CtxSchedulerRunAt => "ctx_scheduler_run_at",
+            Self::CtxSchedulerCancel => "ctx_scheduler_cancel",
+            Self::CtxRuntimeEnterNestedCall => "ctx_runtime_enter_nested_call",
         }
     }
 }
@@ -123,7 +99,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&request).expect("host call request should serialize"),
             json!({
-                "operation": "convex.ctx.db.get",
+                "operation": "ctx_db_get",
                 "payload": { "id": "doc-1" },
             })
         );
@@ -132,7 +108,7 @@ mod tests {
     #[test]
     fn host_call_request_rejects_unknown_operation_names_during_deserialization() {
         let error = serde_json::from_value::<HostCallRequest>(json!({
-            "operation": "convex.ctx.unknown",
+            "operation": "ctx_unknown",
             "payload": {},
         }))
         .expect_err("unknown operation names should fail to deserialize");

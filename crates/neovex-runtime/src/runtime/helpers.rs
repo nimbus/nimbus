@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use deno_core::{JsRuntime, scope, serde_v8, v8};
 use serde_json::Value;
 
+use crate::backends::v8::embedder::{JsRuntime, scope, serde_v8, v8};
 use crate::error::{NeovexRuntimeError, Result};
 use crate::limits::RuntimeLimits;
 

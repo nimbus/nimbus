@@ -90,7 +90,7 @@ flowchart LR
 |-----------|---------------------|--------------------|-----------------|-------------------|
 | Mutations (HTTP, WS) | `EO2` outer CoDel gate plus inner queue capacity | journal worker and durable apply path | `mutation_journal_queue_capacity` | already implemented in `EO2` |
 | Queries (HTTP, WS) | slots returned on completion | read-serving and query execution concurrency | `max_concurrent_queries` | query latency degrades under mixed load while other existing gates remain below saturation |
-| V8 invocations | oversubscribed workers plus JS permits and per-tenant active/in-flight caps | isolate execution and worker occupancy | `max_concurrent_isolates`, `worker_threads`, per-tenant active/in-flight caps | already implemented in `EO5` |
+| V8 invocations | oversubscribed workers plus JS permits and per-tenant active/in-flight caps | isolate execution and worker occupancy | `max_concurrent_runtime_instances`, `worker_threads`, per-tenant active/in-flight caps | already implemented in `EO5` |
 | Storage I/O | semaphore or IOPS-style budget | bounded read/write executor capacity | read/write semaphore counts or explicit IOPS slots | storage wait dominates multiple work classes even when upstream gates are healthy |
 | Scheduled jobs | slots returned on completion | scheduler fan-out and scheduled mutation execution concurrency | `max_concurrent_scheduled_jobs` | foreground latency regresses under scheduled-job bursts despite `EO7` bounded fan-out |
 
@@ -226,7 +226,7 @@ inventing a new control plane first.
 
 Available signal includes:
 
-- active isolates
+- active runtime instances
 - queued invocations
 - worker dispatch totals
 - queue wait totals

@@ -4,8 +4,6 @@ mod nested_runtime;
 mod shared;
 mod sync_query_builder;
 
-use deno_core::extension;
-
 use self::async_effects::{
     op_neovex_ctx_action, op_neovex_ctx_db_delete, op_neovex_ctx_db_insert, op_neovex_ctx_db_patch,
     op_neovex_ctx_mutation, op_neovex_ctx_scheduler_cancel, op_neovex_ctx_scheduler_run_after,
@@ -24,6 +22,7 @@ use self::sync_query_builder::{
     op_neovex_ctx_query_filter, op_neovex_ctx_query_order, op_neovex_ctx_query_start,
     op_neovex_ctx_query_with_index,
 };
+use crate::backends::v8::embedder::{Extension, extension};
 
 extension!(
     neovex_runtime_ext,
@@ -56,6 +55,6 @@ extension!(
     ],
 );
 
-pub(crate) fn runtime_extension() -> deno_core::Extension {
+pub(crate) fn runtime_extension() -> Extension {
     neovex_runtime_ext::init()
 }

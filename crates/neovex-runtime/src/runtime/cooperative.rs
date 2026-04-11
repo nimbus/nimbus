@@ -4,21 +4,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
-use deno_core::error::JsError;
-use deno_core::{PollEventLoopOptions, v8};
 use serde_json::Value;
 
 use crate::RuntimeInvocationContext;
+use crate::backends::v8::embedder::{JsError, PollEventLoopOptions, v8};
+use crate::backends::v8::{ReusableV8Runtime, V8WorkerRuntimePool};
 use crate::error::Result;
 use crate::executor::{SharedInvocationPermit, WorkerActivitySignal};
 use crate::host::HostCallCancellation;
 use crate::watchdog::WatchdogTimer;
 
 use super::helpers::{deserialize_json_value, runtime_js_error};
-use super::{
-    InvocationRequest, NeovexRuntime, ReusableRuntime, RuntimeBundle, RuntimeInvocationDriver,
-    RuntimeWorkerIsolatePool,
-};
+use super::{InvocationRequest, NeovexRuntime, RuntimeBundle, RuntimeInvocationDriver};
 
 pub(crate) struct RuntimeInvocationExecution {
     pub(crate) watchdog: WatchdogTimer,
@@ -163,7 +160,7 @@ impl CooperativeLockerRuntimeSlot {
         result
     }
 
-    pub(crate) async fn finish_with_runtime(self) -> (Result<Value>, Option<ReusableRuntime>) {
+    pub(crate) async fn finish_with_runtime(self) -> (Result<Value>, Option<ReusableV8Runtime>) {
         let mut slot = self;
         let Some((driver, result)) = slot.completed.take() else {
             return (
@@ -179,7 +176,7 @@ impl CooperativeLockerRuntimeSlot {
     pub(crate) async fn finish_with_result_and_runtime(
         self,
         result: Result<Value>,
-    ) -> (Result<Value>, Option<ReusableRuntime>) {
+    ) -> (Result<Value>, Option<ReusableV8Runtime>) {
         let mut slot = self;
         let Some((driver, _)) = slot.completed.take() else {
             return (
@@ -200,7 +197,7 @@ impl CooperativeLockerRuntimeSlot {
 impl NeovexRuntime {
     pub(crate) async fn start_cooperative_locker_runtime_slot(
         &self,
-        isolate_pool: &mut RuntimeWorkerIsolatePool,
+        v8_runtime_pool: &mut V8WorkerRuntimePool,
         start: CooperativeRuntimeSlotStart,
     ) -> Result<CooperativeLockerRuntimeSlot> {
         let CooperativeRuntimeSlotStart {
@@ -216,7 +213,7 @@ impl NeovexRuntime {
             activity_signal,
         } = start;
         bundle.verify_integrity()?;
-        let runtime = isolate_pool.take_runtime_with_options_for_invocation(
+        let runtime = v8_runtime_pool.take_runtime_with_options_for_invocation(
             self,
             &bundle,
             Some(&context),

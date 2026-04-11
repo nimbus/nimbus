@@ -33,9 +33,15 @@ Use the repo docs for architecture and behavior details:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md` to find the owning active or deferred execution plan
-- The active dependency-baseline cleanup plan is
-  `docs/plans/dependency-baseline-cleanup-plan.md`; use it for the current
-  `cargo deny` / dependency-shape cleanup workstream.
+- The storage provider contracts and observability follow-up plan is complete
+  and archived at
+  `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`;
+  use it only for historical review of the storage-provider naming,
+  replica-consistency, observability, and external schema-metadata cleanup
+  pass.
+- The dependency-baseline cleanup plan is complete and archived at
+  `docs/plans/archive/dependency-baseline-cleanup-plan.md`; use it only for
+  historical review of the `cargo deny` / dependency-shape cleanup workstream.
 - The SQLite storage migration plan is complete and archived at
   `docs/plans/archive/pluggable-storage-backend-plan.md`; use it only for
   historical review, not as live progress state.
@@ -66,8 +72,13 @@ Use the repo docs for architecture and behavior details:
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- The active dependency-baseline cleanup workstream is owned by
-  `docs/plans/dependency-baseline-cleanup-plan.md`.
+- The storage-provider contracts and observability workstream is complete and
+  archived at
+  `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`;
+  do not reopen it as live progress state.
+- The dependency-baseline cleanup workstream is complete and archived at
+  `docs/plans/archive/dependency-baseline-cleanup-plan.md`; do not reopen it as
+  live progress state.
 - Do not resume plans from `docs/plans/archive/` unless the user explicitly
   asks for historical review or follow-up on a completed workstream.
 - If archived work needs a new execution pass, create or promote a new active
@@ -82,7 +93,9 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/external-sql-storage-backends-plan.md` is also historical design
   context only. The replica-connected SQLite provider plan in
   `docs/plans/archive/sqlite-replica-provider-plan.md` is also historical
-  context only. The storage hardening follow-up plan in
+  context only. The storage-provider contracts and observability follow-up plan
+  in `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
+  is also historical context only. The storage hardening follow-up plan in
   `docs/plans/archive/storage-layer-hardening-plan.md` is also historical
   context only. If later provider-topology work starts beyond those completed
   records, promote or author a new active plan instead of reopening archived
@@ -112,6 +125,7 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 | `neovex-core` | `crates/neovex-core/` | Shared types and validation (zero I/O) |
 | `neovex-engine` | `crates/neovex-engine/` | Central coordinator (`Service`) |
 | `neovex-runtime` | `crates/neovex-runtime/` | V8 execution (zero workspace deps) |
+| `neovex-sandbox` | `crates/neovex-sandbox/` | Generic sandbox and isolation seam |
 | `neovex-server` | `crates/neovex-server/` | HTTP/WebSocket transport |
 | `neovex-storage` | `crates/neovex-storage/` | Persistence layer |
 | `neovex-testing` | `crates/neovex-testing/` | Shared test fixtures and deterministic harness helpers |

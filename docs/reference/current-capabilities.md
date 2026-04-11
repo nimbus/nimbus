@@ -27,7 +27,7 @@ cleaner design is preferred.
 - durable at-least-once scheduled job execution
 - persisted scheduled job completion and failure results for observability
 - schemaless behavior for tables without an installed schema
-- per-tenant engine diagnostics for journal, worker, and materialized-serving health at `GET /debug/tenants/{tenant_id}/engine/metrics`
+- per-tenant engine diagnostics for journal, worker, materialized-serving, and `libsql` replica freshness health at `GET /debug/tenants/{tenant_id}/engine/metrics`
 
 ## Runtime And Convex Surface
 

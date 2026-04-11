@@ -38,6 +38,3 @@ pub enum NeovexRuntimeError {
 }
 
 pub type Result<T> = std::result::Result<T, NeovexRuntimeError>;
-
-/// Legacy alias for Convex-shaped integrations.
-pub type ConvexRuntimeError = NeovexRuntimeError;
