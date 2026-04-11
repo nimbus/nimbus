@@ -1,13 +1,14 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use neovex_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Filter, JobId,
-    Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema,
-    Timestamp, WriteOp, WriteOpType,
+    Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, StorageErrorKind, TableName,
+    TableSchema, Timestamp, WriteOp, WriteOpType,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -71,6 +72,8 @@ CREATE TABLE IF NOT EXISTS metadata (
 );
 "#;
 
+const MIN_SQLITE_READ_CONNECTIONS: usize = 2;
+
 pub fn sqlite_init_sql() -> &'static str {
     SQLITE_INIT_SQL
 }
@@ -86,6 +89,8 @@ pub struct SqliteTenantStore {
     path: PathBuf,
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
+    max_read_connections: usize,
+    open_read_connections: Arc<AtomicUsize>,
     read_connections: Arc<Mutex<Vec<Connection>>>,
     schema_cache: Arc<RwLock<Schema>>,
 }
@@ -107,18 +112,45 @@ pub struct SqliteWriteTransaction {
 
 struct PooledSqliteConnection {
     conn: Option<Connection>,
+    open_read_connections: Arc<AtomicUsize>,
     pool: Arc<Mutex<Vec<Connection>>>,
 }
 
 impl SqliteTenantStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_simulation(path, Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+        Self::open_with_max_read_connections(path, default_sqlite_read_connection_limit())
+    }
+
+    pub(crate) fn open_with_max_read_connections(
+        path: impl AsRef<Path>,
+        max_read_connections: usize,
+    ) -> Result<Self> {
+        Self::open_with_simulation_and_max_read_connections(
+            path,
+            Arc::new(SystemClock),
+            Arc::new(NoopFaultInjector),
+            max_read_connections,
+        )
     }
 
     pub fn open_with_simulation(
         path: impl AsRef<Path>,
         clock: Arc<dyn Clock>,
         fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        Self::open_with_simulation_and_max_read_connections(
+            path,
+            clock,
+            fault_injector,
+            default_sqlite_read_connection_limit(),
+        )
+    }
+
+    pub(crate) fn open_with_simulation_and_max_read_connections(
+        path: impl AsRef<Path>,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        max_read_connections: usize,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
@@ -128,14 +160,20 @@ impl SqliteTenantStore {
             path,
             clock,
             fault_injector,
+            max_read_connections: max_read_connections.max(1),
+            open_read_connections: Arc::new(AtomicUsize::new(0)),
             read_connections: Arc::new(Mutex::new(Vec::new())),
             schema_cache: Arc::new(RwLock::new(Schema::default())),
         };
-        let conn = store.open_connection()?;
+        let conn = store.open_pooled_read_connection()?;
         let schema = load_schema_from_conn(&conn)?;
         store.replace_cached_schema(schema)?;
         store.lock_read_connections()?.push(conn);
         Ok(store)
+    }
+
+    pub fn max_read_connections(&self) -> usize {
+        self.max_read_connections
     }
 
     pub fn read_snapshot(&self) -> Result<SqliteReadSnapshot> {
@@ -1032,14 +1070,51 @@ impl SqliteTenantStore {
         Ok(conn)
     }
 
+    fn reserve_read_connection_slot(&self) -> Result<()> {
+        let mut current = self.open_read_connections.load(Ordering::Acquire);
+        loop {
+            if current >= self.max_read_connections {
+                return Err(Error::ResourceExhausted(format!(
+                    "sqlite read connection pool exhausted at {} open connections",
+                    self.max_read_connections
+                )));
+            }
+            match self.open_read_connections.compare_exchange(
+                current,
+                current.saturating_add(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(updated) => current = updated,
+            }
+        }
+    }
+
+    fn release_read_connection_slot(&self) {
+        self.open_read_connections.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    fn open_pooled_read_connection(&self) -> Result<Connection> {
+        self.reserve_read_connection_slot()?;
+        match self.open_connection() {
+            Ok(conn) => Ok(conn),
+            Err(error) => {
+                self.release_read_connection_slot();
+                Err(error)
+            }
+        }
+    }
+
     fn acquire_read_connection(&self) -> Result<PooledSqliteConnection> {
         let conn = self
             .lock_read_connections()?
             .pop()
             .map(Ok)
-            .unwrap_or_else(|| self.open_connection())?;
+            .unwrap_or_else(|| self.open_pooled_read_connection())?;
         Ok(PooledSqliteConnection {
             conn: Some(conn),
+            open_read_connections: self.open_read_connections.clone(),
             pool: self.read_connections.clone(),
         })
     }
@@ -1989,12 +2064,21 @@ impl Deref for PooledSqliteConnection {
 
 impl Drop for PooledSqliteConnection {
     fn drop(&mut self) {
-        if let Some(conn) = self.conn.take()
-            && let Ok(mut pool) = self.pool.lock()
-        {
+        let Some(conn) = self.conn.take() else {
+            return;
+        };
+        if let Ok(mut pool) = self.pool.lock() {
             pool.push(conn);
+        } else {
+            self.open_read_connections.fetch_sub(1, Ordering::AcqRel);
         }
     }
+}
+
+fn default_sqlite_read_connection_limit() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().max(MIN_SQLITE_READ_CONNECTIONS))
+        .unwrap_or(MIN_SQLITE_READ_CONNECTIONS)
 }
 
 fn initialize_connection(conn: &Connection) -> Result<()> {
@@ -2578,7 +2662,37 @@ fn sql_value_from_json(value: &serde_json::Value) -> Result<SqlValue> {
 }
 
 fn map_sqlite_error(error: rusqlite::Error) -> Error {
-    Error::Storage(error.to_string())
+    let message = error.to_string();
+    match error {
+        rusqlite::Error::SqliteFailure(code, _) => match code.code {
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => {
+                Error::storage(StorageErrorKind::Busy, message)
+            }
+            rusqlite::ErrorCode::OutOfMemory | rusqlite::ErrorCode::DiskFull => {
+                Error::ResourceExhausted(message)
+            }
+            rusqlite::ErrorCode::PermissionDenied
+            | rusqlite::ErrorCode::ReadOnly
+            | rusqlite::ErrorCode::AuthorizationForStatementDenied => {
+                Error::PermissionDenied(message)
+            }
+            rusqlite::ErrorCode::CannotOpen => {
+                Error::storage(StorageErrorKind::Unavailable, message)
+            }
+            rusqlite::ErrorCode::SystemIoFailure => Error::storage(StorageErrorKind::Io, message),
+            rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase => {
+                Error::storage(StorageErrorKind::Corruption, message)
+            }
+            rusqlite::ErrorCode::OperationAborted
+            | rusqlite::ErrorCode::OperationInterrupted
+            | rusqlite::ErrorCode::SchemaChanged
+            | rusqlite::ErrorCode::FileLockingProtocolFailed => {
+                Error::storage(StorageErrorKind::Transient, message)
+            }
+            _ => Error::storage(StorageErrorKind::Other, message),
+        },
+        _ => Error::storage(StorageErrorKind::Other, message),
+    }
 }
 
 fn validate_durable_journal_stream_limit(limit: usize) -> Result<()> {

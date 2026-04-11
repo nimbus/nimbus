@@ -13,8 +13,8 @@ use testcontainers_modules::{
 };
 
 use super::{
-    DurableMutationRecord, Duration, PostgresProvider, PostgresProviderConfig, TableSchema,
-    WriteOp, WriteOpType, timeout,
+    Document, DurableMutationRecord, Duration, FieldSchema, FieldType, IndexDefinition,
+    PostgresProvider, PostgresProviderConfig, TableSchema, WriteOp, WriteOpType, timeout,
 };
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
@@ -557,6 +557,133 @@ async fn postgres_durable_journal_recovery_applies_pending_records() {
                 .as_ref(),
             Some(&second)
         );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_index_reads_round_trip_after_schema_write() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("indexed-reads").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table_schema = TableSchema {
+            table: TableName::new("tasks").expect("table name should build"),
+            fields: vec![
+                FieldSchema {
+                    name: "team".to_string(),
+                    field_type: FieldType::String,
+                    required: true,
+                },
+                FieldSchema {
+                    name: "status".to_string(),
+                    field_type: FieldType::String,
+                    required: true,
+                },
+                FieldSchema {
+                    name: "rank".to_string(),
+                    field_type: FieldType::Number,
+                    required: true,
+                },
+            ],
+            indexes: vec![IndexDefinition {
+                name: "by_team_status_rank".to_string(),
+                fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
+            }],
+            access_policy: None,
+        };
+        opened
+            .store
+            .replace_table_schema(&table_schema)
+            .expect("schema write should succeed");
+
+        let first = Document::new(
+            table_schema.table.clone(),
+            serde_json::Map::from_iter([
+                ("team".to_string(), serde_json::json!("alpha")),
+                ("status".to_string(), serde_json::json!("open")),
+                ("rank".to_string(), serde_json::json!(1)),
+            ]),
+        );
+        let second = Document::new(
+            table_schema.table.clone(),
+            serde_json::Map::from_iter([
+                ("team".to_string(), serde_json::json!("alpha")),
+                ("status".to_string(), serde_json::json!("open")),
+                ("rank".to_string(), serde_json::json!(3)),
+            ]),
+        );
+        let third = Document::new(
+            table_schema.table.clone(),
+            serde_json::Map::from_iter([
+                ("team".to_string(), serde_json::json!("beta")),
+                ("status".to_string(), serde_json::json!("closed")),
+                ("rank".to_string(), serde_json::json!(2)),
+            ]),
+        );
+        opened
+            .store
+            .insert(&first)
+            .expect("first insert should succeed");
+        opened
+            .store
+            .insert(&second)
+            .expect("second insert should succeed");
+        opened
+            .store
+            .insert(&third)
+            .expect("third insert should succeed");
+
+        let direct = opened
+            .store
+            .get(&first.table, &first.id)
+            .expect("direct point read should succeed")
+            .expect("first document should exist");
+        assert_eq!(direct, first);
+
+        let mut check_cancel = || Ok(());
+        let scanned = opened
+            .store
+            .scan_table_matching_cancellable(&table_schema.table, &mut check_cancel, |document| {
+                Ok(document.fields.get("team").and_then(|value| value.as_str()) == Some("alpha"))
+            })
+            .expect("table scan should succeed");
+        assert_eq!(scanned.len(), 2);
+        assert!(scanned.iter().any(|document| document.id == first.id));
+        assert!(scanned.iter().any(|document| document.id == second.id));
+
+        let mut check_cancel = || Ok(());
+        let prefix = opened
+            .store
+            .index_scan_prefix_cancellable(
+                &table_schema.table,
+                "by_team_status_rank",
+                &[serde_json::json!("alpha"), serde_json::json!("open")],
+                &mut check_cancel,
+            )
+            .expect("prefix index scan should succeed");
+        assert_eq!(prefix.len(), 2);
+        assert!(prefix.iter().any(|document| document.id == first.id));
+        assert!(prefix.iter().any(|document| document.id == second.id));
+
+        let mut check_cancel = || Ok(());
+        let ranged = opened
+            .store
+            .index_scan_composite_range_cancellable(
+                &table_schema.table,
+                "by_team_status_rank",
+                &[serde_json::json!("alpha"), serde_json::json!("open")],
+                Some(&serde_json::json!(2)),
+                Some(&serde_json::json!(4)),
+                true,
+                false,
+                &mut check_cancel,
+            )
+            .expect("composite range index scan should succeed");
+        assert_eq!(ranged.len(), 1);
+        assert_eq!(ranged[0].id, second.id);
     })
     .await;
 }

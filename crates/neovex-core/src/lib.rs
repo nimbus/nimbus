@@ -20,7 +20,7 @@ pub use dependency::{
     commit_intersects_dependency_set, durable_record_intersects_dependency_set,
 };
 pub use document::Document;
-pub use error::{Error, Result};
+pub use error::{Error, Result, StorageErrorKind};
 pub use mutation::{CommitEntry, DurableMutationRecord, Mutation, WriteOp, WriteOpType};
 pub use query::{Cursor, Filter, FilterOp, OrderBy, OrderDirection, Page, PaginatedQuery, Query};
 pub use scheduled::{

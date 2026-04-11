@@ -1,14 +1,19 @@
 use std::future::Future;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::task::{Context, Poll};
 
 use hyper::client::HttpConnector;
+use hyper::client::connect::{Connected, Connection as HyperConnection};
 use libsql::{Builder, Connection, Database, Transaction, TransactionBehavior};
+use native_tls::TlsConnector as NativeTlsConnector;
 use neovex_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema, TenantId, Timestamp,
-    WriteOp, WriteOpType,
+    ScheduledJobResult, Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId,
+    Timestamp, WriteOp, WriteOpType,
 };
 use reqwest::Client as HttpClient;
 use reqwest::header::AUTHORIZATION;
@@ -16,8 +21,12 @@ use rusqlite::{Connection as LocalSqliteConnection, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 use tokio::runtime::Handle as TokioRuntimeHandle;
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
+use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
+use tower_service::Service;
 
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
@@ -50,6 +59,21 @@ DROP TABLE IF EXISTS commit_log;
 DROP TABLE IF EXISTS metadata;
 "#;
 
+type LibsqlTransportError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct LibsqlTransportConnector {
+    http: HttpConnector,
+    tls: TokioTlsConnector,
+}
+
+#[doc(hidden)]
+pub enum LibsqlTransportStream {
+    Http(TcpStream),
+    Https(TlsStream<TcpStream>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibsqlReplicaProviderConfig {
     pub primary_url: String,
@@ -77,6 +101,113 @@ impl LibsqlReplicaProviderConfig {
             replica_cache_dir: replica_cache_dir.into(),
         }
     }
+}
+
+impl LibsqlTransportConnector {
+    fn new() -> Result<Self> {
+        let mut http = HttpConnector::new();
+        http.enforce_http(false);
+        http.set_nodelay(true);
+        let tls = NativeTlsConnector::builder()
+            .build()
+            .map(TokioTlsConnector::from)
+            .map_err(|error| {
+                Error::storage(
+                    StorageErrorKind::Other,
+                    format!("failed to build libsql TLS connector: {error}"),
+                )
+            })?;
+        Ok(Self { http, tls })
+    }
+}
+
+impl Service<hyper::http::Uri> for LibsqlTransportConnector {
+    type Response = LibsqlTransportStream;
+    type Error = LibsqlTransportError;
+    type Future =
+        Pin<Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        self.http.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, uri: hyper::http::Uri) -> Self::Future {
+        let mut http = self.http.clone();
+        let tls = self.tls.clone();
+        Box::pin(async move {
+            let scheme = uri.scheme_str().unwrap_or("https");
+            let stream = http.call(uri.clone()).await?;
+            if scheme.eq_ignore_ascii_case("http") {
+                return Ok(LibsqlTransportStream::Http(stream));
+            }
+            if !scheme.eq_ignore_ascii_case("https") {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("unsupported libsql URI scheme '{scheme}'"),
+                )
+                .into());
+            }
+            let host = uri.host().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "libsql URI is missing a host")
+            })?;
+            let tls_stream = tls.connect(host, stream).await?;
+            Ok(LibsqlTransportStream::Https(tls_stream))
+        })
+    }
+}
+
+impl HyperConnection for LibsqlTransportStream {
+    fn connected(&self) -> Connected {
+        match self {
+            Self::Http(stream) => stream.connected(),
+            Self::Https(stream) => stream.get_ref().get_ref().get_ref().connected(),
+        }
+    }
+}
+
+impl AsyncRead for LibsqlTransportStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Http(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Https(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for LibsqlTransportStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Self::Http(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Https(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Http(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Https(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Http(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Https(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+#[doc(hidden)]
+pub fn libsql_transport_connector() -> Result<LibsqlTransportConnector> {
+    LibsqlTransportConnector::new()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +251,9 @@ pub struct LibsqlReplicaTenantStore {
     retired_caches: Arc<Mutex<Vec<ReplicaCacheHandle>>>,
     next_cache_generation: Arc<AtomicU64>,
     refresh_needed: Arc<AtomicBool>,
+    refresh_requested: Arc<AtomicBool>,
+    refresh_inflight: Arc<AtomicBool>,
+    refresh_complete: Arc<Notify>,
     required_cache_sequence: Arc<AtomicU64>,
 }
 
@@ -176,8 +310,7 @@ impl LibsqlReplicaProvider {
                 "libsql admin API URL cannot be empty".to_string(),
             ));
         }
-        std::fs::create_dir_all(&config.replica_cache_dir)
-            .map_err(|error| Error::Storage(error.to_string()))?;
+        std::fs::create_dir_all(&config.replica_cache_dir).map_err(storage_io_error)?;
         ensure_remote_namespace_exists(
             &config.admin_api_url,
             config.admin_auth_header.as_deref(),
@@ -381,8 +514,7 @@ impl LibsqlReplicaProvider {
         .map_err(map_libsql_error)?;
         let replica_dir = self.replica_dir_for_tenant(tenant_id);
         if replica_dir.exists() {
-            std::fs::remove_dir_all(&replica_dir)
-                .map_err(|error| Error::Storage(error.to_string()))?;
+            std::fs::remove_dir_all(&replica_dir).map_err(storage_io_error)?;
         }
         Ok(())
     }
@@ -447,10 +579,16 @@ impl LibsqlReplicaProvider {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
         let path_for_open = replica_path.clone();
+        let read_parallelism = self.tenant_read_parallelism;
         let local_store = self
             .runtime_handle
             .spawn_blocking(move || {
-                SqliteTenantStore::open_with_simulation(path_for_open, clock, fault_injector)
+                SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                    path_for_open,
+                    clock,
+                    fault_injector,
+                    read_parallelism,
+                )
             })
             .await
             .map_err(map_join_error)??;
@@ -538,6 +676,9 @@ impl LibsqlReplicaTenantStore {
             retired_caches: Arc::new(Mutex::new(Vec::new())),
             next_cache_generation: Arc::new(AtomicU64::new(1)),
             refresh_needed: Arc::new(AtomicBool::new(false)),
+            refresh_requested: Arc::new(AtomicBool::new(false)),
+            refresh_inflight: Arc::new(AtomicBool::new(false)),
+            refresh_complete: Arc::new(Notify::new()),
             required_cache_sequence: Arc::new(AtomicU64::new(initial_applied)),
         }
     }
@@ -572,6 +713,7 @@ impl LibsqlReplicaTenantStore {
         let local_schema = self.active_cache_store()?.load_schema()?;
         if local_schema != remote_schema {
             self.refresh_needed.store(true, Ordering::Release);
+            self.schedule_background_refresh();
         }
         Ok(remote_schema)
     }
@@ -608,6 +750,7 @@ impl LibsqlReplicaTenantStore {
             || self.active_cache_store()?.applied_sequence()?.0
                 < self.required_cache_sequence.load(Ordering::Acquire)
         {
+            self.schedule_background_refresh();
             return self.refresh_local_cache();
         }
         self.journal_progress()
@@ -845,9 +988,6 @@ impl LibsqlReplicaTenantStore {
         }
         let records = records.to_vec();
         self.block_on(self.append_remote_durable_records_batch(records.as_slice()))?;
-        if let Some(last) = records.last() {
-            self.note_required_cache_sequence(last.sequence);
-        }
         Ok(())
     }
 
@@ -1196,10 +1336,12 @@ impl LibsqlReplicaTenantStore {
     }
 
     fn ensure_local_cache_current(&self) -> Result<()> {
-        let required = self.required_cache_sequence.load(Ordering::Acquire);
-        let refresh_needed = self.refresh_needed.load(Ordering::Acquire);
-        let local_applied = self.active_cache_store()?.applied_sequence()?.0;
-        if !refresh_needed && local_applied >= required {
+        if self.local_cache_satisfies_requirements()? {
+            return Ok(());
+        }
+        self.schedule_background_refresh();
+        self.wait_for_background_refresh()?;
+        if self.local_cache_satisfies_requirements()? {
             return Ok(());
         }
         self.refresh_local_cache()?;
@@ -1219,10 +1361,17 @@ impl LibsqlReplicaTenantStore {
                 Err(updated) => current = updated,
             }
         }
-        self.refresh_needed.store(true, Ordering::Release);
+        self.schedule_background_refresh();
     }
 
     fn refresh_local_cache(&self) -> Result<JournalProgress> {
+        if !self.refresh_needed.load(Ordering::Acquire) {
+            return self.catch_up_local_cache_from_remote_durable_journal();
+        }
+        self.refresh_local_cache_from_snapshot()
+    }
+
+    fn refresh_local_cache_from_snapshot(&self) -> Result<JournalProgress> {
         let snapshot = self.block_on(fetch_remote_namespace_snapshot(
             &self.provider.primary_url,
             self.provider.auth_token.as_deref(),
@@ -1243,13 +1392,19 @@ impl LibsqlReplicaTenantStore {
         let path_for_open = replica_path.clone();
         let clock = self.provider.clock.clone();
         let fault_injector = self.provider.fault_injector.clone();
+        let read_parallelism = self.provider.tenant_read_parallelism;
         let next_store = {
             materialize_snapshot_to_replica_cache(
                 replica_dir.as_path(),
                 path_for_materialize.as_path(),
                 snapshot,
             )?;
-            SqliteTenantStore::open_with_simulation(path_for_open, clock, fault_injector)?
+            SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                path_for_open,
+                clock,
+                fault_injector,
+                read_parallelism,
+            )?
         };
         let next_store = Arc::new(next_store);
         let next_handle = ReplicaCacheHandle {
@@ -1270,13 +1425,98 @@ impl LibsqlReplicaTenantStore {
             .map_err(|_| Error::Internal("libsql retired cache lock poisoned".to_string()))?
             .push(previous);
         self.refresh_needed.store(false, Ordering::Release);
-        self.required_cache_sequence
-            .store(next_store.applied_sequence()?.0, Ordering::Release);
         self.reap_retired_caches()?;
         Ok(JournalProgress {
             durable_head,
             applied_head: next_store.applied_sequence()?,
         })
+    }
+
+    fn catch_up_local_cache_from_remote_durable_journal(&self) -> Result<JournalProgress> {
+        let store = self.active_cache_store()?;
+        let local_progress = store.journal_progress()?;
+        let required_sequence = self.required_cache_sequence.load(Ordering::Acquire);
+        if local_progress.applied_head.0 >= required_sequence {
+            return Ok(local_progress);
+        }
+
+        if local_progress.durable_head.0 < required_sequence {
+            let next_sequence = SequenceNumber(local_progress.durable_head.0.saturating_add(1));
+            let records = self.block_on(self.load_remote_durable_records_from(next_sequence))?;
+            if !records.is_empty() {
+                store.append_durable_records_batch(records.as_slice())?;
+            }
+        }
+
+        let recovered = store.recover_durable_journal()?;
+        if recovered.applied_head.0 >= required_sequence {
+            return Ok(recovered);
+        }
+
+        self.refresh_needed.store(true, Ordering::Release);
+        self.refresh_local_cache_from_snapshot()
+    }
+
+    fn local_cache_satisfies_requirements(&self) -> Result<bool> {
+        let required = self.required_cache_sequence.load(Ordering::Acquire);
+        let full_refresh_needed = self.refresh_needed.load(Ordering::Acquire);
+        let local_applied = self.active_cache_store()?.applied_sequence()?.0;
+        Ok(!full_refresh_needed && local_applied >= required)
+    }
+
+    fn schedule_background_refresh(&self) {
+        self.refresh_requested.store(true, Ordering::Release);
+        if self
+            .refresh_inflight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        let store = self.clone();
+        let refresh_complete = self.refresh_complete.clone();
+        let refresh_inflight = self.refresh_inflight.clone();
+        self.provider.runtime_handle.spawn_blocking(move || {
+            let refresh_result = store.run_background_refresh_loop();
+            refresh_inflight.store(false, Ordering::Release);
+            refresh_complete.notify_waiters();
+            let should_reschedule = refresh_result.is_ok()
+                && (store.refresh_requested.load(Ordering::Acquire)
+                    || store
+                        .local_cache_satisfies_requirements()
+                        .map(|ready| !ready)
+                        .unwrap_or(false));
+            if should_reschedule {
+                store.schedule_background_refresh();
+            }
+        });
+    }
+
+    fn run_background_refresh_loop(&self) -> Result<()> {
+        loop {
+            self.refresh_requested.store(false, Ordering::Release);
+            self.refresh_local_cache()?;
+            if !self.refresh_requested.load(Ordering::Acquire)
+                && self.local_cache_satisfies_requirements()?
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    fn wait_for_background_refresh(&self) -> Result<()> {
+        while self.refresh_inflight.load(Ordering::Acquire) {
+            let notified = self.refresh_complete.notified();
+            if !self.refresh_inflight.load(Ordering::Acquire) {
+                break;
+            }
+            self.block_on(async move {
+                notified.await;
+                Ok(())
+            })?;
+        }
+        Ok(())
     }
 
     fn reap_retired_caches(&self) -> Result<()> {
@@ -2161,6 +2401,7 @@ impl LibsqlReplicaWriteTransaction {
             self.store.note_required_cache_sequence(commit.sequence);
         } else if self.refresh_cache_after_commit {
             self.store.refresh_needed.store(true, Ordering::Release);
+            self.store.schedule_background_refresh();
         }
         Ok(commit)
     }
@@ -2501,9 +2742,10 @@ fn row_to_document(
         id: *id,
         table: table.clone(),
         creation_time: Timestamp(u64::try_from(creation_time).map_err(|_| {
-            Error::Storage(format!(
-                "negative creation_time in libsql row: {creation_time}"
-            ))
+            Error::storage(
+                StorageErrorKind::Corruption,
+                format!("negative creation_time in libsql row: {creation_time}"),
+            )
         })?),
         fields: deserialize_json(data_json)?,
     })
@@ -2511,7 +2753,10 @@ fn row_to_document(
 
 fn sequence_from_i64(value: i64) -> Result<SequenceNumber> {
     Ok(SequenceNumber(u64::try_from(value).map_err(|_| {
-        Error::Storage(format!("negative libsql sequence value: {value}"))
+        Error::storage(
+            StorageErrorKind::Corruption,
+            format!("negative libsql sequence value: {value}"),
+        )
     })?))
 }
 
@@ -2636,7 +2881,7 @@ async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocum
             table_name: row.get::<String>(0).map_err(map_libsql_error)?,
             id: row.get::<String>(1).map_err(map_libsql_error)?,
             creation_time: u64::try_from(creation_time).map_err(|_| {
-                Error::Storage(format!(
+                Error::storage(StorageErrorKind::Corruption, format!(
                     "remote libsql creation_time {creation_time} is negative for namespace snapshot"
                 ))
             })?,
@@ -2714,7 +2959,7 @@ async fn query_remote_commit_log_rows(conn: &Connection) -> Result<Vec<RemoteCom
         let sequence = row.get::<i64>(0).map_err(map_libsql_error)?;
         result.push(RemoteCommitLogRow {
             sequence: u64::try_from(sequence).map_err(|_| {
-                Error::Storage(format!(
+                Error::storage(StorageErrorKind::Corruption, format!(
                     "remote libsql durable sequence {sequence} is negative for namespace snapshot"
                 ))
             })?,
@@ -2744,7 +2989,7 @@ fn materialize_snapshot_to_replica_cache(
     replica_path: &Path,
     snapshot: RemoteNamespaceSnapshot,
 ) -> Result<()> {
-    std::fs::create_dir_all(replica_dir).map_err(|error| Error::Storage(error.to_string()))?;
+    std::fs::create_dir_all(replica_dir).map_err(storage_io_error)?;
     let staging_path = staged_replica_path(replica_path);
     remove_sqlite_artifacts(staging_path.as_path())?;
 
@@ -2767,8 +3012,7 @@ fn materialize_snapshot_to_replica_cache(
     drop(conn);
 
     remove_sqlite_artifacts(replica_path)?;
-    std::fs::rename(staging_path.as_path(), replica_path)
-        .map_err(|error| Error::Storage(error.to_string()))?;
+    std::fs::rename(staging_path.as_path(), replica_path).map_err(storage_io_error)?;
     Ok(())
 }
 
@@ -2905,7 +3149,7 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(Error::Storage(error.to_string())),
+        Err(error) => Err(storage_io_error(error)),
     }
 }
 
@@ -2961,26 +3205,13 @@ async fn open_remote_database(
     auth_token: Option<&str>,
     namespace: &str,
 ) -> Result<Database> {
-    let mut builder = Builder::new_remote(
+    let builder = Builder::new_remote(
         primary_url.to_string(),
         auth_token.unwrap_or_default().to_string(),
     )
-    .namespace(namespace.to_string());
-    if let Some(connector) = plain_http_connector(primary_url) {
-        builder = builder.connector(connector);
-    }
+    .namespace(namespace.to_string())
+    .connector(libsql_transport_connector()?);
     builder.build().await.map_err(map_libsql_error)
-}
-
-fn plain_http_connector(primary_url: &str) -> Option<HttpConnector> {
-    if !primary_url.starts_with("http://") {
-        return None;
-    }
-
-    let mut connector = HttpConnector::new();
-    connector.enforce_http(true);
-    connector.set_nodelay(true);
-    Some(connector)
 }
 
 async fn ensure_remote_namespace_exists(
@@ -3002,9 +3233,12 @@ async fn ensure_remote_namespace_exists(
     if status.is_success() || (status.as_u16() == 400 && body.contains("already exists")) {
         return Ok(());
     }
-    Err(Error::Storage(format!(
-        "libsql admin namespace create failed for '{namespace}': status={status}, body={body}"
-    )))
+    Err(Error::storage(
+        StorageErrorKind::Unavailable,
+        format!(
+            "libsql admin namespace create failed for '{namespace}': status={status}, body={body}"
+        ),
+    ))
 }
 
 async fn drop_remote_namespace(
@@ -3027,9 +3261,12 @@ async fn drop_remote_namespace(
     {
         return Ok(());
     }
-    Err(Error::Storage(format!(
-        "libsql admin namespace delete failed for '{namespace}': status={status}, body={body}"
-    )))
+    Err(Error::storage(
+        StorageErrorKind::Unavailable,
+        format!(
+            "libsql admin namespace delete failed for '{namespace}': status={status}, body={body}"
+        ),
+    ))
 }
 
 fn apply_admin_auth(
@@ -3106,15 +3343,41 @@ fn validate_namespace_input(value: &str, field: &str) -> Result<()> {
 }
 
 fn map_libsql_error(error: libsql::Error) -> Error {
-    Error::Storage(error.to_string())
+    let message = error.to_string();
+    match error {
+        libsql::Error::ConnectionFailed(_)
+        | libsql::Error::Hrana(_)
+        | libsql::Error::WriteDelegation(_)
+        | libsql::Error::Replication(_)
+        | libsql::Error::Sync(_)
+        | libsql::Error::InvalidTlsConfiguration(_) => {
+            Error::storage(StorageErrorKind::Unavailable, message)
+        }
+        libsql::Error::WalConflict => Error::storage(StorageErrorKind::Busy, message),
+        libsql::Error::SqliteFailure(code, _) | libsql::Error::RemoteSqliteFailure(_, code, _) => {
+            map_sqlite_result_code(code, message)
+        }
+        _ => Error::storage(StorageErrorKind::Other, message),
+    }
 }
 
 fn map_local_sqlite_error(error: rusqlite::Error) -> Error {
-    Error::Storage(error.to_string())
+    let message = error.to_string();
+    match error {
+        rusqlite::Error::SqliteFailure(code, _) => {
+            map_sqlite_result_code(code.extended_code, message)
+        }
+        _ => Error::storage(StorageErrorKind::Other, message),
+    }
 }
 
 fn map_admin_api_error(error: reqwest::Error) -> Error {
-    Error::Storage(format!("libsql admin API request failed: {error}"))
+    let message = format!("libsql admin API request failed: {error}");
+    if error.is_connect() || error.is_timeout() {
+        Error::storage(StorageErrorKind::Unavailable, message)
+    } else {
+        Error::storage(StorageErrorKind::Transient, message)
+    }
 }
 
 fn map_permit_error(_error: tokio::sync::AcquireError) -> Error {
@@ -3123,4 +3386,21 @@ fn map_permit_error(_error: tokio::sync::AcquireError) -> Error {
 
 fn map_join_error(error: tokio::task::JoinError) -> Error {
     Error::Internal(format!("libsql replica read task failed: {error}"))
+}
+
+fn storage_io_error(error: impl std::fmt::Display) -> Error {
+    Error::storage(StorageErrorKind::Io, error.to_string())
+}
+
+fn map_sqlite_result_code(code: i32, message: String) -> Error {
+    match code & 0xff {
+        5 | 6 => Error::storage(StorageErrorKind::Busy, message),
+        3 | 8 | 23 => Error::PermissionDenied(message),
+        7 | 13 => Error::ResourceExhausted(message),
+        10 => Error::storage(StorageErrorKind::Io, message),
+        11 | 26 => Error::storage(StorageErrorKind::Corruption, message),
+        14 => Error::storage(StorageErrorKind::Unavailable, message),
+        9 | 15 | 17 => Error::storage(StorageErrorKind::Transient, message),
+        _ => Error::storage(StorageErrorKind::Other, message),
+    }
 }

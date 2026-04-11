@@ -11,19 +11,46 @@ pub(in crate::adapters::convex) enum ConvexRuntimeResponseEnvelope {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(in crate::adapters::convex) enum ConvexRuntimeEncodedError {
     Cancelled,
-    TenantNotFound { tenant_id: String },
-    DocumentNotFound { document_id: String },
-    ScheduledJobNotFound { job_id: String },
-    AlreadyExists { message: String },
-    Conflict { message: String },
-    ResourceExhausted { message: String },
-    PermissionDenied { message: String },
-    InvalidInput { message: String },
-    SchemaValidation { message: String },
-    SchemaNotFound { table: String },
-    Storage { message: String },
-    Serialization { message: String },
-    Internal { message: String },
+    TenantNotFound {
+        tenant_id: String,
+    },
+    DocumentNotFound {
+        document_id: String,
+    },
+    ScheduledJobNotFound {
+        job_id: String,
+    },
+    AlreadyExists {
+        message: String,
+    },
+    Conflict {
+        message: String,
+    },
+    ResourceExhausted {
+        message: String,
+    },
+    PermissionDenied {
+        message: String,
+    },
+    InvalidInput {
+        message: String,
+    },
+    SchemaValidation {
+        message: String,
+    },
+    SchemaNotFound {
+        table: String,
+    },
+    Storage {
+        storage_kind: String,
+        message: String,
+    },
+    Serialization {
+        message: String,
+    },
+    Internal {
+        message: String,
+    },
 }
 
 impl ConvexRuntimeResponseEnvelope {
@@ -67,7 +94,10 @@ impl ConvexRuntimeEncodedError {
             Error::SchemaNotFound(table) => Self::SchemaNotFound {
                 table: table.to_string(),
             },
-            Error::Storage(message) => Self::Storage { message },
+            Error::Storage { kind, message } => Self::Storage {
+                storage_kind: kind.as_str().to_string(),
+                message,
+            },
             Error::Serialization(message) => Self::Serialization { message },
             Error::Internal(message) => Self::Internal { message },
         }
@@ -96,9 +126,38 @@ impl ConvexRuntimeEncodedError {
             Self::SchemaNotFound { table } => TableName::new(table)
                 .map(Error::SchemaNotFound)
                 .unwrap_or_else(|error| Error::Internal(error.to_string())),
-            Self::Storage { message } => Error::Storage(message),
+            Self::Storage {
+                storage_kind,
+                message,
+            } => storage_kind
+                .parse()
+                .map(|kind| Error::storage(kind, message))
+                .unwrap_or_else(Error::Internal),
             Self::Serialization { message } => Error::Serialization(message),
             Self::Internal { message } => Error::Internal(message),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neovex_core::StorageErrorKind;
+
+    #[test]
+    fn storage_error_round_trips_through_runtime_encoding() {
+        let encoded = ConvexRuntimeEncodedError::from_core_error(Error::storage(
+            StorageErrorKind::Unavailable,
+            "replica cache unavailable",
+        ));
+
+        let decoded = encoded.into_core_error();
+        match decoded {
+            Error::Storage { kind, message } => {
+                assert_eq!(kind, StorageErrorKind::Unavailable);
+                assert_eq!(message, "replica cache unavailable");
+            }
+            other => panic!("expected storage error, got {other:?}"),
         }
     }
 }
