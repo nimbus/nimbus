@@ -580,7 +580,7 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn postgres_listener_reconnect_recovers_missed_journal_hints() {
+async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() {
     with_postgres_service_config(|service_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-notify-reconnect").expect("tenant id should build");
         let service = Arc::new(
@@ -627,6 +627,10 @@ async fn postgres_listener_reconnect_recovers_missed_journal_hints() {
             .expect("tenant should exist");
         opened
             .store
+            .replace_table_schema(&tasks_schema())
+            .expect("external schema write should succeed");
+        opened
+            .store
             .insert(&Document {
                 table: tasks_table(),
                 id: DocumentId::new(),
@@ -652,6 +656,23 @@ async fn postgres_listener_reconnect_recovers_missed_journal_hints() {
                 }
             },
             |restored| *restored,
+        )
+        .await;
+        wait_for_value(
+            "postgres reconnect should recover missed schema changes",
+            Duration::from_secs(4),
+            Duration::from_millis(25),
+            || {
+                let service = service.clone();
+                let tenant_id = tenant_id.clone();
+                async move {
+                    service
+                        .get_schema_async(tenant_id)
+                        .await
+                        .expect("schema should load")
+                }
+            },
+            |schema| schema.get_table(&tasks_table()).is_some(),
         )
         .await;
         wait_for_value(
