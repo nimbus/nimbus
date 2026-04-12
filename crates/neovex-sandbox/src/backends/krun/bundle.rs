@@ -99,6 +99,7 @@ pub(crate) fn build_bundle_config(hostname: &str, spec: &SandboxSpec) -> Result<
             "readonly": spec.filesystem.readonly,
         },
         "hostname": hostname,
+        "mounts": default_linux_mounts(),
         "annotations": annotations,
         "linux": {
             "namespaces": [
@@ -109,6 +110,54 @@ pub(crate) fn build_bundle_config(hostname: &str, spec: &SandboxSpec) -> Result<
             ],
         },
     }))
+}
+
+/// Standard OCI Linux mounts that `crun spec` would generate.  crun requires
+/// at least a `mounts` block to be present in config.json.
+fn default_linux_mounts() -> Value {
+    json!([
+        {
+            "destination": "/proc",
+            "type": "proc",
+            "source": "proc"
+        },
+        {
+            "destination": "/dev",
+            "type": "tmpfs",
+            "source": "tmpfs",
+            "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
+        },
+        {
+            "destination": "/dev/pts",
+            "type": "devpts",
+            "source": "devpts",
+            "options": ["nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620"]
+        },
+        {
+            "destination": "/dev/shm",
+            "type": "tmpfs",
+            "source": "shm",
+            "options": ["nosuid", "noexec", "nodev", "mode=1777", "size=65536k"]
+        },
+        {
+            "destination": "/dev/mqueue",
+            "type": "mqueue",
+            "source": "mqueue",
+            "options": ["nosuid", "noexec", "nodev"]
+        },
+        {
+            "destination": "/sys",
+            "type": "sysfs",
+            "source": "sysfs",
+            "options": ["nosuid", "noexec", "nodev", "ro"]
+        },
+        {
+            "destination": "/sys/fs/cgroup",
+            "type": "cgroup",
+            "source": "cgroup",
+            "options": ["nosuid", "noexec", "nodev", "relatime", "ro"]
+        }
+    ])
 }
 
 fn process_env(process: &SandboxProcessSpec) -> Vec<String> {
