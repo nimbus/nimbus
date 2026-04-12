@@ -2,7 +2,7 @@
 
 use std::env;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -45,12 +45,13 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
     }
 
     let backend = KrunSandboxBackend::new(config.clone());
+    let guest_port_str = guest_port.to_string();
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         "http-smoke",
         SandboxBackendKind::Krun,
         SandboxFilesystemSpec::new(rootfs),
-        SandboxProcessSpec::new(["/bin/busybox", "httpd", "-f", "-p", guest_port.to_string()]),
+        SandboxProcessSpec::new(["/bin/busybox", "httpd", "-f", "-p", &guest_port_str]),
     )
     .with_port_binding(SandboxPortBinding::new(
         "http",
@@ -127,23 +128,33 @@ fn wait_for_ready(
 }
 
 fn wait_for_http_response(port: u16, timeout: Duration) -> String {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
-            stream
-                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-                .expect("HTTP probe should be writable");
-            stream.shutdown(Shutdown::Write).ok();
+        match TcpStream::connect_timeout(&addr, Duration::from_secs(2)) {
+            Ok(mut stream) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("read timeout should be settable");
+                stream
+                    .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                    .expect("HTTP probe should be writable");
 
-            let mut response = String::new();
-            stream
-                .read_to_string(&mut response)
-                .expect("HTTP probe should be readable");
-            if !response.is_empty() {
-                return response;
+                let mut response = vec![0u8; 4096];
+                match stream.read(&mut response) {
+                    Ok(n) if n > 0 => {
+                        let text = String::from_utf8_lossy(&response[..n]).to_string();
+                        return text;
+                    }
+                    Ok(_) => eprintln!("HTTP probe connected but got empty response"),
+                    Err(error) => eprintln!("HTTP probe read error: {error}"),
+                }
+            }
+            Err(error) => {
+                eprintln!("HTTP probe connect error on port {port}: {error}");
             }
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(500));
     }
 
     panic!(
