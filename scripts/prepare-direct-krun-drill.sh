@@ -226,6 +226,13 @@ runtime_command=(
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
+  printf '%s\n' '# The krun handler writes .krun_config.json to the rootfs via openat2 during'
+  printf '%s\n' '# crun create.  In rootless mode this requires a user namespace with UID 0'
+  printf '%s\n' '# mapped to the real user.  Re-exec under buildah unshare if needed.'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]] && command -v buildah >/dev/null 2>&1; then'
+  printf '%s\n' '  exec buildah unshare -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
   printf 'rm -f %q %q %q\n' "${runtime_pidfile}" "${launcher_pidfile}" "${exit_status_file}"
   printf 'trap '\''if [[ -f %q ]]; then runtime_pid="$(cat %q)"; kill -TERM "${runtime_pid}" 2>/dev/null || true; fi'\'' TERM INT\n' "${runtime_pidfile}" "${runtime_pidfile}"
   printf '%s\n' ''
