@@ -1,8 +1,8 @@
 --- a/src/libcrun/handlers/krun.c
 +++ b/src/libcrun/handlers/krun.c
-@@ -202,6 +202,51 @@
+@@ -232,6 +232,51 @@
  }
- 
+
  static int
 +libkrun_configure_port_map (uint32_t ctx_id, void *handle, libcrun_container_t *container, libcrun_error_t *err)
 +{
@@ -49,21 +49,21 @@
 +}
 +
 +static int
- libkrun_configure_flavor (void *cookie, yajl_val *config_tree, libcrun_error_t *err)
+ libkrun_configure_vm (uint32_t ctx_id, void *handle, bool *configured, yajl_val *config_tree, libcrun_container_t *container, libcrun_error_t *err)
  {
-   int ret, sev_indicated = 0;
-@@ -360,6 +405,14 @@
-       ret = krun_set_vm_config (ctx_id, num_vcpus, ram_mib);
-       if (UNLIKELY (ret < 0))
-         error (EXIT_FAILURE, -ret, "could not set krun vm configuration");
-+    }
-+
+   int32_t (*krun_set_vm_config) (uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib);
+@@ -507,6 +552,14 @@
+         }
+     }
+
 +  ret = libkrun_configure_port_map (ctx_id, handle, container, &err);
 +  if (UNLIKELY (ret))
 +    {
 +      libcrun_error_t *tmp_err = &err;
 +      libcrun_error_write_warning_and_release (NULL, &tmp_err);
 +      error (EXIT_FAILURE, ret, "could not configure krun port map");
-     }
- 
++    }
++
    yajl_tree_free (config_tree);
+
+   ret = krun_start_enter (ctx_id);

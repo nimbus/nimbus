@@ -178,6 +178,7 @@ if [[ -z "${command_file}" ]]; then
 fi
 command_file="$(resolve_file_path "${command_file}")"
 
+start_container_script="${container_state_dir}/start-container.sh"
 find_attach_sockets_script="${container_state_dir}/find-attach-sockets.sh"
 capture_process_tree_script="${container_state_dir}/capture-process-tree.sh"
 wait_for_exit_script="${container_state_dir}/wait-for-exit.sh"
@@ -215,11 +216,55 @@ fi
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
+  printf '%s\n' '# The krun handler writes .krun_config.json to the rootfs via openat2 during'
+  printf '%s\n' '# crun create.  In rootless mode this requires a user namespace with UID 0'
+  printf '%s\n' '# mapped to the real user.  Re-exec under buildah unshare if needed.'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]] && command -v buildah >/dev/null 2>&1; then'
+  printf '%s\n' '  exec buildah unshare -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
   printf 'exec '
   printf '%q ' "${command[@]}"
   printf '\n'
 } > "${command_file}"
 chmod 0755 "${command_file}"
+
+# start-container.sh: waits for crun to reach 'created' state then calls
+# 'crun start' to boot the krun VM.  Conmon with --full-attach holds
+# crun start until something connects to the attach socket.  This script
+# calls crun start directly, which is the same mechanism Podman uses via
+# the start pipe / sync pipe handshake.
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'set -euo pipefail'
+  printf '%s\n' ''
+  printf '%s\n' '# Re-exec under buildah unshare for rootless, same as run-conmon.sh.'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]] && command -v buildah >/dev/null 2>&1; then'
+  printf '%s\n' '  exec buildah unshare -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf '%s\n' 'timeout_seconds="${1:-30}"'
+  printf '%s\n' 'deadline=$((SECONDS + timeout_seconds))'
+  printf '%s\n' ''
+  printf '%s\n' '# Wait for the container to reach "created" state.'
+  printf '%s\n' 'while (( SECONDS <= deadline )); do'
+  printf '  status="$(%q state %q 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('"'"'status'"'"','"'"''"'"'))" 2>/dev/null || true)"\n' "${runtime_path}" "${container_id}"
+  printf '%s\n' '  if [[ "${status}" == "created" ]]; then'
+  printf '%s\n' '    break'
+  printf '%s\n' '  fi'
+  printf '%s\n' '  sleep 0.5'
+  printf '%s\n' 'done'
+  printf '%s\n' ''
+  printf '%s\n' 'if [[ "${status}" != "created" ]]; then'
+  printf '  echo "container %s did not reach created state within ${timeout_seconds}s (status=${status})" >&2\n' "${container_id}"
+  printf '%s\n' '  exit 1'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf '%q start %q\n' "${runtime_path}" "${container_id}"
+  printf 'echo "start.container_id=%s"\n' "${container_id}"
+  printf 'echo "start.status=started"\n'
+} > "${start_container_script}"
+chmod 0755 "${start_container_script}"
 
 {
   printf '%s\n' '#!/usr/bin/env bash'
@@ -304,6 +349,7 @@ chmod 0755 "${force_stop_script}"
   printf 'CONMON=%q\n' "${conmon_path}"
   printf 'RUNTIME=%q\n' "${runtime_path}"
   printf 'COMMAND_FILE=%q\n' "${command_file}"
+  printf 'START_CONTAINER=%q\n' "${start_container_script}"
   printf 'FIND_ATTACH_SOCKETS=%q\n' "${find_attach_sockets_script}"
   printf 'CAPTURE_PROCESS_TREE=%q\n' "${capture_process_tree_script}"
   printf 'WAIT_FOR_EXIT=%q\n' "${wait_for_exit_script}"
@@ -318,6 +364,7 @@ echo "drill.bundle_dir=${bundle_dir}"
 echo "drill.bundle_config=${bundle_config}"
 echo "drill.state_root=${state_root}"
 echo "drill.command_file=${command_file}"
+echo "drill.start_container_script=${start_container_script}"
 echo "drill.ctr_log=${ctr_log}"
 echo "drill.oci_log=${oci_log}"
 echo "drill.pidfile=${pidfile}"
@@ -326,6 +373,7 @@ echo "drill.exit_dir=${exit_dir}"
 echo "drill.exit_status_file=${exit_status_file}"
 echo "drill.persist_dir=${persist_dir}"
 echo "drill.attach_socket_search_root=${persist_dir}"
+echo "drill.start_container_cmd=bash ${start_container_script}"
 echo "drill.attach_socket_search_cmd=bash ${find_attach_sockets_script}"
 echo "drill.process_tree_cmd=bash ${capture_process_tree_script}"
 echo "drill.graceful_stop_cmd=bash ${graceful_stop_script}"

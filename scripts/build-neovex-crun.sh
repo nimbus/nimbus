@@ -138,6 +138,23 @@ echo "build.patch=${patch_file}"
 
 patch -d "${build_dir}" -p1 < "${patch_file}"
 
+# Ensure pkg-config can find libkrun.  When libkrun is built from source it
+# installs to /usr/local/lib64/pkgconfig by default, which is not on the
+# standard pkg-config search path on Debian.
+if ! pkg-config --exists libkrun 2>/dev/null; then
+  for candidate in /usr/local/lib64/pkgconfig /usr/local/lib/pkgconfig; do
+    if [[ -f "${candidate}/libkrun.pc" ]]; then
+      export PKG_CONFIG_PATH="${candidate}:${PKG_CONFIG_PATH:-}"
+      break
+    fi
+  done
+fi
+
+if ! pkg-config --exists libkrun 2>/dev/null; then
+  echo "libkrun.pc not found by pkg-config. Install libkrun or set PKG_CONFIG_PATH." >&2
+  exit 69
+fi
+
 (
   cd "${build_dir}"
   ./autogen.sh

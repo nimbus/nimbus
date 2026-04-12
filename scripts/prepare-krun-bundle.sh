@@ -175,6 +175,16 @@ annotations = config.setdefault("annotations", {})
 annotations["run.oci.handler"] = "krun"
 annotations["krun.port_map"] = f"{host_port}:{guest_port}"
 
+# krun containers must not create a separate network namespace: TSI handles
+# networking through vsock and binds host-side ports in the parent network
+# namespace.  Keeping a network namespace would hide TSI ports from the host.
+linux = config.setdefault("linux", {})
+namespaces = linux.get("namespaces", [])
+linux["namespaces"] = [ns for ns in namespaces if ns.get("type") != "network"]
+
+# Disable terminal for non-interactive krun drills.
+config["process"]["terminal"] = False
+
 with config_path.open("w", encoding="utf-8") as fh:
     json.dump(config, fh, indent=2)
     fh.write("\n")

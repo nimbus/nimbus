@@ -149,8 +149,8 @@ if command -v dpkg-query >/dev/null 2>&1; then
   print_line "host.packages" "dpkg-query"
   check_package_dpkg "conmon"
   check_package_dpkg "buildah"
-  check_package_dpkg "libkrun"
-  check_package_dpkg "libkrunfw"
+  check_package_dpkg "libkrun" optional
+  check_package_dpkg "libkrunfw" optional
   check_package_dpkg "uidmap" optional
   check_package_dpkg "passt" optional
   check_package_dpkg "fuse-overlayfs" optional
@@ -158,13 +158,64 @@ elif command -v rpm >/dev/null 2>&1; then
   print_line "host.packages" "rpm"
   check_package_rpm "conmon"
   check_package_rpm "buildah"
-  check_package_rpm "libkrun"
-  check_package_rpm "libkrunfw"
+  check_package_rpm "libkrun" optional
+  check_package_rpm "libkrunfw" optional
   check_package_rpm "shadow-utils" optional
   check_package_rpm "passt" optional
   check_package_rpm "fuse-overlayfs" optional
 else
   print_line "host.packages" "unavailable (dpkg-query/rpm not found)"
+fi
+
+# Check for libkrun/libkrunfw shared libraries regardless of how they were
+# installed (distro package or source build).  The package checks above only
+# cover the distro path; these library checks cover source-built installs at
+# /usr/local/lib64 or any other ldconfig-visible path.
+check_shared_lib() {
+  local label="$1"
+  local soname="$2"
+  local required="${3:-required}"
+  local path=""
+
+  path="$(ldconfig -p 2>/dev/null | grep -m1 "${soname}" | sed 's/.*=> //' || true)"
+  if [[ -n "${path}" ]]; then
+    print_line "${label}" "present path=${path}"
+    return 0
+  fi
+
+  # Also check common non-standard paths directly
+  for candidate in /usr/local/lib64/${soname}* /usr/local/lib/${soname}* /usr/lib64/${soname}* /usr/lib/${soname}*; do
+    if [[ -f "${candidate}" ]]; then
+      print_line "${label}" "present path=${candidate} (not in ldconfig cache — run sudo ldconfig)"
+      return 0
+    fi
+  done
+
+  print_line "${label}" "missing"
+  if [[ "${required}" == "required" ]]; then
+    mark_failure
+  fi
+}
+
+check_shared_lib "lib.libkrun" "libkrun.so"
+check_shared_lib "lib.libkrunfw" "libkrunfw.so"
+
+# Check that pkg-config can find libkrun (needed for building patched crun)
+if pkg-config --exists libkrun 2>/dev/null; then
+  libkrun_pc_path="$(pkg-config --variable=libdir libkrun 2>/dev/null || true)"
+  print_line "pkgconfig.libkrun" "present libdir=${libkrun_pc_path}"
+else
+  # Try known non-standard locations before failing
+  for candidate in /usr/local/lib64/pkgconfig /usr/local/lib/pkgconfig; do
+    if [[ -f "${candidate}/libkrun.pc" ]]; then
+      print_line "pkgconfig.libkrun" "present path=${candidate}/libkrun.pc (not on default PKG_CONFIG_PATH)"
+      break
+    fi
+  done
+  if ! [[ -f /usr/local/lib64/pkgconfig/libkrun.pc || -f /usr/local/lib/pkgconfig/libkrun.pc ]]; then
+    print_line "pkgconfig.libkrun" "missing (build-neovex-crun.sh will fail)"
+    mark_failure
+  fi
 fi
 
 if command -v podman >/dev/null 2>&1; then
