@@ -70,6 +70,7 @@ pub(crate) fn build_launch_plan(
     sandbox_id: &SandboxId,
     sandbox_name: &str,
     bundle_dir: &Path,
+    buildah_container_name: Option<&str>,
 ) -> KrunConmonLaunchPlan {
     let create_command = CommandSpec::new(config.conmon_path.clone()).args([
         "--api-version".to_owned(),
@@ -116,10 +117,14 @@ pub(crate) fn build_launch_plan(
     let buildah =
         BuildahCli::new(config.buildah_path.clone()).with_unshare(config.use_buildah_unshare);
 
+    // For image-backed sandboxes, the conmon create command must run inside the
+    // same buildah unshare session that mounts the rootfs overlay.  The state
+    // and start commands also need the mount alive, so chain the mount prefix
+    // into all three when a buildah container name is present.
     KrunConmonLaunchPlan {
-        create_command: buildah.maybe_wrap(create_command),
-        state_command: buildah.maybe_wrap(state_command),
-        start_command: buildah.maybe_wrap(start_command),
+        create_command: buildah.maybe_wrap_with_mount(create_command, buildah_container_name),
+        state_command: buildah.maybe_wrap_with_mount(state_command, buildah_container_name),
+        start_command: buildah.maybe_wrap_with_mount(start_command, buildah_container_name),
     }
 }
 
@@ -148,6 +153,7 @@ mod tests {
             &sandbox_id,
             "db",
             Path::new("/tmp/neovex-bundles/db-01"),
+            None,
         );
 
         assert_eq!(

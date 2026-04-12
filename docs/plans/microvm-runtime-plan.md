@@ -605,7 +605,7 @@ Developers can use muscle memory.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| M1: buildah integration | `in_progress` | V3 from vmm-infrastructure-plan | `BuildahCli`, buildah-backed launch materialization, and image-backed backend start/stop helpers landed; next slice is Linux-host verification of the integrated path plus remaining image-metadata wiring |
+| M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `todo` | M1 | |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
@@ -773,3 +773,40 @@ ss -tlnp | grep 15432                                 # should be empty
   cleanup. Verification evidence: `cargo fmt --all --check`,
   `cargo check -p neovex-sandbox`,
   and `cargo test -p neovex-sandbox` all passed on the current host.
+- 2026-04-12: Ran both the rootfs-only and image-backed Linux smoke tests on
+  Debian 13 x86_64 and fixed four issues. (1) `OciImageConfig` field
+  deserialization: OCI images frequently have `"Entrypoint": null` rather than
+  omitting the field; added `null_as_default` serde deserializer for `Vec` and
+  `BTreeMap` fields. (2) Empty `process.cwd` in bundle config: BusyBox image
+  has no `WorkingDir`, and the sparse spec path left cwd as `""` instead of
+  `/`; added `process_cwd()` fallback in `bundle.rs`. (3) Buildah overlay mount
+  lifetime: `buildah mount` inside one `buildah unshare` session creates a
+  mount that disappears when the session exits; the conmon create/state/start
+  commands ran in separate sessions, so the rootfs was gone before crun could
+  access it. Fixed by adding `wrap_unshare_with_mount()` to `BuildahCli` and
+  `maybe_wrap_with_mount()` to the conmon launch plan builder, so the mount
+  command chains inside the same user-namespace session as the wrapped command.
+  (4) Added the new `krun_backend_image_backed_smoke_pulls_and_boots_busybox`
+  ignored test alongside the existing rootfs-only test; both pass sequentially
+  on this host in ~13s total.
+  Decision: the image-backed smoke test complements (does not replace) the
+  rootfs-only smoke. The rootfs-only lane tests core krun/TSI/conmon
+  lifecycle without buildah image management; the image-backed lane tests the
+  full M1 integration path.
+  Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox` (25 pass),
+  `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1` (2 pass).
+  Env:
+  `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
+  `NEOVEX_KRUN_SMOKE_HOST_PORT=18080`,
+  `NEOVEX_KRUN_SMOKE_GUEST_PORT=8080`.
+  Remaining readiness gap: OCI runtime state `"running"` still maps to
+  `SandboxStatus::Ready` before the guest service binds its TSI port (one
+  initial TCP connection refused observed in both smoke tests). This must be
+  addressed in M3 with a proper startup probe.
