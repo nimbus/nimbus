@@ -32,77 +32,20 @@ Use the repo docs for architecture and behavior details:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- `docs/plans/README.md` to find the owning active or deferred execution plan
-- The storage provider contracts and observability follow-up plan is complete
-  and archived at
-  `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`;
-  use it only for historical review of the storage-provider naming,
-  replica-consistency, observability, and external schema-metadata cleanup
-  pass.
-- The dependency-baseline cleanup plan is complete and archived at
-  `docs/plans/archive/dependency-baseline-cleanup-plan.md`; use it only for
-  historical review of the `cargo deny` / dependency-shape cleanup workstream.
-- The SQLite storage migration plan is complete and archived at
-  `docs/plans/archive/pluggable-storage-backend-plan.md`; use it only for
-  historical review, not as live progress state.
-- The Postgres-first provider implementation plan is complete and archived at
-  `docs/plans/archive/postgres-storage-provider-plan.md`; use it only for
-  historical review, not as live progress state.
-- The umbrella external-provider plan at
-  `docs/plans/archive/external-sql-storage-backends-plan.md` is complete
-  historical design context. For future provider-topology implementation
-  work, use `docs/plans/README.md` to promote or author a new active plan
-  from that baseline rather than treating it as live progress state.
-- The MySQL provider implementation plan is complete and archived at
-  `docs/plans/archive/mysql-storage-provider-plan.md`; use it only for
-  historical review, not as live progress state.
-- The replica-connected SQLite provider plan is complete and archived at
-  `docs/plans/archive/sqlite-replica-provider-plan.md`; use it only for
-  historical review, not as live progress state.
-- The storage hardening follow-up plan is complete and archived at
-  `docs/plans/archive/storage-layer-hardening-plan.md`; use it only for
-  historical review, not as live progress state.
-- For cleanup or refactor work, go from `docs/plans/README.md` to the owning
-  active plan instead of assuming an archived cleanup pass is still live.
-- For future admission-control work, go from `docs/plans/README.md` to
-  `docs/plans/layered-admission-control-plan.md`.
+- For the current krun-backed VMM foundation workstream, go directly to
+  `docs/plans/vmm-infrastructure-plan.md` after the three docs above. That
+  plan is the live durable control plane for current patched-crun, conmon,
+  and system-integration progress.
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
-- For active roadmap work, start with `docs/plans/README.md`, then use the owning active plan as the durable control plane.
-- The storage-provider contracts and observability workstream is complete and
-  archived at
-  `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`;
-  do not reopen it as live progress state.
-- The dependency-baseline cleanup workstream is complete and archived at
-  `docs/plans/archive/dependency-baseline-cleanup-plan.md`; do not reopen it as
-  live progress state.
-- Do not resume plans from `docs/plans/archive/` unless the user explicitly
-  asks for historical review or follow-up on a completed workstream.
-- If archived work needs a new execution pass, create or promote a new active
-  plan instead of treating the archived plan as live progress state.
-- The SQLite storage migration plan in
-  `docs/plans/archive/pluggable-storage-backend-plan.md` is historical context
-  only. The Postgres-first provider implementation plan in
-  `docs/plans/archive/postgres-storage-provider-plan.md` is also historical
-  context only. The MySQL provider implementation plan in
-  `docs/plans/archive/mysql-storage-provider-plan.md` is also historical
-  context only. The umbrella external-provider plan in
-  `docs/plans/archive/external-sql-storage-backends-plan.md` is also
-  historical design context only. The replica-connected SQLite provider plan in
-  `docs/plans/archive/sqlite-replica-provider-plan.md` is also historical
-  context only. The storage-provider contracts and observability follow-up plan
-  in `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
-  is also historical context only. The storage hardening follow-up plan in
-  `docs/plans/archive/storage-layer-hardening-plan.md` is also historical
-  context only. If later provider-topology work starts beyond those completed
-  records, promote or author a new active plan instead of reopening archived
-  progress state.
-- For future layered admission work, use
-  `docs/plans/layered-admission-control-plan.md`.
-- For any active control plan, reread the plan's invariants section
+- For the current krun-backed microVM/VMM workstream, open
+  `docs/plans/vmm-infrastructure-plan.md` immediately after those three docs
+  instead of spending time rediscovering ownership through chat history.
+- Before changing code for this workstream, reread the VMM plan's
+  invariants section
   (`Cleanup Invariants`, `Migration Invariants`, or equivalent),
   `Current Assessed State`, `Current Review Findings`,
   `Feature Preservation Matrix`, `Control Plane Rules`,
