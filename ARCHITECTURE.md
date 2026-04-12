@@ -476,14 +476,18 @@ storage types directly.
   heap exceeded, contract violations, and user-thrown errors.
 
 **`neovex-sandbox`** — Generic isolation and sandbox-orchestration seam. This
-crate currently owns backend-agnostic types and traits only; concrete sandbox
-backends are intentionally deferred behind backend-owned module paths that have
-not landed yet.
+crate owns the stable sandbox nouns plus the first backend-owned krun
+implementation slice. The public seam stays generic, while backend-specific
+bundle generation, buildah command assembly, conmon/crun launch planning, and
+manifest-backed lifecycle scaffolding now live under `backends/krun/`. The
+remaining VMM work is host-level smoke execution and restart/log-persistence
+proof on Linux.
 
 - `backend.rs` — `SandboxBackend` plus `SandboxBackendKind` and the async
   future alias used for sandbox lifecycle operations.
-- `spec.rs` — `SandboxSpec`: tenant-scoped sandbox launch intent and backend
-  selection.
+- `spec.rs` — `SandboxSpec` plus `SandboxFilesystemSpec`,
+  `SandboxProcessSpec`, and `SandboxPortBinding`: tenant-scoped sandbox launch
+  intent, generic process/filesystem inputs, and published-port intent.
 - `instance.rs` — `SandboxId`, `SandboxHandle`, and `SandboxStatus`: stable
   sandbox-instance identity and status projection.
 - `endpoint.rs` — `PublishedEndpoint` plus `PublishedEndpointProtocol`: the
@@ -491,6 +495,13 @@ not landed yet.
   into runtime-facing service discovery.
 - `error.rs` — `SandboxError`: generic backend-unavailable, not-found, and
   operation-failed variants for the sandbox seam.
+- `backends/krun/` — backend-owned krun internals. `bundle.rs` writes OCI
+  bundle config with the krun handler and TSI port-map annotation,
+  `buildah.rs` owns buildah command assembly, `conmon.rs` builds the
+  `conmon -> /usr/libexec/neovex/crun` launch plan, `command.rs` holds the
+  reusable backend-local command spec, and `vm.rs` owns manifest-backed
+  `start`/`inspect`/`stop` lowering plus the current plan-only mode used for
+  cross-platform verification.
 
 ### Async Ownership Boundaries
 

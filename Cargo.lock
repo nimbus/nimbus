@@ -2519,9 +2519,13 @@ dependencies = [
 name = "neovex-sandbox"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "neovex-core",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
+ "ulid",
 ]
 
 [[package]]

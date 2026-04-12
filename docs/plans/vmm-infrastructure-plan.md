@@ -86,6 +86,15 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
   `make recreate-podman-machine`,
   `make verify-podman-machine-readiness-helper`, and
   `make verify-podman-machine-recreate-helper`.
+- The repo now also owns the first V3 code slice under
+  `crates/neovex-sandbox/src/backends/krun/`: `bundle.rs` for OCI config
+  generation, `buildah.rs` for backend-local buildah command assembly,
+  `conmon.rs` for `conmon -> /usr/libexec/neovex/crun` launch planning,
+  `command.rs` for backend-local command specs, and `vm.rs` for manifest-backed
+  `start` / `inspect` / `stop` lowering behind the generic `SandboxBackend`
+  trait. `SandboxSpec` now carries generic filesystem, process, and port
+  binding inputs so the sandbox seam can describe a real launch without leaking
+  krun nouns into the public API.
 - The checked-in patch has been verified to apply cleanly against a real local
   checkout at `~/src/github.com/containers/crun`.
 - The current local execution host is macOS 15.7.2 on Apple Silicon with no
@@ -297,9 +306,23 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 - `scripts/prepare-krun-bundle.sh` now removes the `network` namespace and sets
   `terminal: false` for krun bundles — TSI requires host network, and
   non-interactive drills fail with terminal mode enabled.
-- `crates/neovex-sandbox/` currently exposes only generic sandbox nouns; there
-  is still no concrete `backends/krun/` implementation, which is correct until
-  V1 and V2 are complete.
+- `crates/neovex-sandbox/` no longer stops at an empty seam. The first backend-
+  owned `backends/krun/` slice is now checked in and verified with targeted
+  unit tests, including bundle generation, buildah command assembly, conmon
+  launch planning, and a plan-only backend mode that exercises the generic
+  `SandboxBackend` trait without requiring Linux/KVM in this workspace.
+- The repo now also owns the first Rust-backend Linux smoke path definition:
+  `crates/neovex-sandbox/tests/krun_linux_smoke.rs` and
+  `docs/reference/krun-sandbox-backend-smoke.md`. The ignored integration test
+  is Linux-only and is designed to prove real VM boot, guest connectivity,
+  manifest-backed restart recovery, and persisted logs through the Rust backend
+  once it is run on a supported host.
+- The remaining `V3` gap is host-level integration rather than crate shape:
+  the Rust backend still needs a documented Linux smoke path that boots a real
+  VM through the backend, reaches the guest service, proves persisted logs, and
+  confirms the VM survives a neovex-process restart while conmon remains alive.
+  The repo-owned test and runbook now exist; the missing step is executing that
+  path on Linux and writing the resulting evidence back into this plan.
 - `docs/plans/microvm-runtime-plan.md` remains deferred and should not be used
   as the live progress ledger while this plan is still working through V1-V3.
 
@@ -1355,7 +1378,7 @@ best available substitute evidence in `Execution Log` before stopping.
 |-------|--------|-----------|-------|
 | V1: Patch crun | `done` | none | All repo-owned artifacts checked in. Patch updated to target upstream crun 1.27 (was 1.22). Linux host validation complete on Debian 13 x86_64: patched crun 1.27 with `+LIBKRUN` built and installed at `/usr/libexec/neovex/crun`, libkrun 1.17.4 and libkrunfw 5.3.0 built from source, system/private runtime separation verified, krun VM booted via direct `crun run` with TSI port mapping `18080:8080` proven via HTTP connectivity. The `prepare-krun-bundle.sh` script now removes the network namespace and sets `terminal: false` for krun bundles |
 | V2: System integration | `done` | V1, system packages installed | Conmon lifecycle drill proven on Debian 13: `conmon → crun → libkrun VM` process tree verified, TSI port binding confirmed, exit file written (code 137 from SIGKILL), attach socket present. Key finding: conmon `--full-attach` requires an attach connection (or manual `crun start`) to transition krun containers from `created` to `running`. libkrun and libkrunfw not packaged for Debian — built from source (`~/src/github.com/containers/libkrun` v1.17.4, `~/src/github.com/containers/libkrunfw` v5.3.0) |
-| V3: `neovex-sandbox` krun backend | `todo` | V2, `docs/plans/archive/runtime-sandbox-architecture-plan.md` RS4 | Rust code in `neovex-sandbox` under a backend-owned `krun` module |
+| V3: `neovex-sandbox` krun backend | `in_progress` | V2, `docs/plans/archive/runtime-sandbox-architecture-plan.md` RS4 | First backend-owned krun slice is checked in: generic `SandboxSpec` lowering, OCI bundle generation with `krun.port_map`, buildah command assembly, conmon/crun launch planning, manifest-backed `start` / `inspect` / `stop`, and a plan-only mode with targeted tests. Remaining gap: Linux host smoke execution, persisted-log proof, and restart-survival proof through the Rust backend |
 
 ---
 
@@ -1504,11 +1527,32 @@ best available substitute evidence in `Execution Log` before stopping.
   - completion evidence includes package versions, process tree, log/exit
     paths, and observed connectivity plus graceful-stop output
 - `ICP3` Rust handoff:
-  - `neovex-sandbox` starts owning `backends/krun/` code only after `ICP1` and
-    `ICP2` are complete
-  - server integration continues to lower through generic sandbox nouns
-  - completion evidence includes targeted test names, smoke-path commands, and
-    lifecycle observations captured in `Execution Log`
+  - `neovex-sandbox` now owns `backends/krun/` code after `ICP1` and `ICP2`
+    completed: `bundle.rs`, `buildah.rs`, `command.rs`, `conmon.rs`, and
+    `vm.rs` are checked in under the canonical backend-owned module path
+  - the generic sandbox seam now carries real launch intent via
+    `SandboxFilesystemSpec`, `SandboxProcessSpec`, and `SandboxPortBinding`,
+    while the public trait surface remains `SandboxBackend` /
+    `SandboxHandle` / `SandboxSpec`
+  - current repo-owned verification proves bundle generation, buildah command
+    assembly, conmon launch planning, manifest persistence, and plan-only
+    lifecycle lowering through the generic trait with:
+    `backends::krun::bundle::tests::bundle_config_sets_krun_handler_and_port_map`,
+    `backends::krun::bundle::tests::bundle_config_omits_network_namespace`,
+    `backends::krun::bundle::tests::write_bundle_config_materializes_config_json`,
+    `backends::krun::buildah::tests::wrap_unshare_prefixes_existing_command`,
+    `backends::krun::buildah::tests::build_command_matches_expected_shape`,
+    `backends::krun::conmon::tests::conmon_launch_plan_uses_private_runtime_and_buildah_unshare`,
+    `backends::krun::vm::tests::plan_only_backend_lowers_through_generic_trait_surface`,
+    and `backends::krun::vm::tests::plan_start_writes_bundle_and_manifest_under_backend_roots`
+  - the repo also now owns a Linux-only ignored integration test,
+    `crates/neovex-sandbox/tests/krun_linux_smoke.rs`, and an operator runbook
+    at `docs/reference/krun-sandbox-backend-smoke.md` so the next supported
+    host can exercise the Rust backend directly instead of reconstructing the
+    smoke flow from prose
+  - remaining completion evidence is host-level: a Linux smoke path through the
+    Rust backend, persisted-log proof, and restart-survival proof captured in
+    `Execution Log`
 
 ---
 
@@ -1582,3 +1626,4 @@ best available substitute evidence in `Execution Log` before stopping.
 | 2026-04-12 | V1 prep | `documented` | Materialized the first real Linux-host execution bundle from the pinned upstream checkout on the current machine so the other laptop has an immediate handoff target, not just the generator source. Running `bash scripts/prepare-linux-vmm-validation-bundle.sh --crun-source ~/src/github.com/containers/crun --output-root /tmp/neovex-linux-vmm-validation` produced a stable bundle rooted at `/tmp/neovex-linux-vmm-validation`, including `session.env`, `README.md`, `commands/00-run-through-lh6.sh`, the numbered queue scripts under `commands/`, and `99-writeback-checklist.txt`. This host-local artifact is now the concrete Linux-laptop handoff path: the operator can copy or recreate that bundle and run the exact queue commands without reconstructing the workflow from the docs first. | `bash scripts/prepare-linux-vmm-validation-bundle.sh --crun-source ~/src/github.com/containers/crun --output-root /tmp/neovex-linux-vmm-validation`; observed outputs `bundle.session_env=/tmp/neovex-linux-vmm-validation/session.env`, `bundle.queue_runner=/tmp/neovex-linux-vmm-validation/commands/00-run-through-lh6.sh`, `bundle.checklist=/tmp/neovex-linux-vmm-validation/99-writeback-checklist.txt`; `cargo fmt --all --check` | Hand `/tmp/neovex-linux-vmm-validation` to the Linux host or rerun the same generator there, then execute `commands/00-run-through-lh6.sh` and write each resulting artifact path back into this plan |
 | 2026-04-12 | V1+V2 | `done` | Completed the full Linux host validation queue (`LH1`-`LH6`) on Debian 13 x86_64. Updated the checked-in patch to target upstream crun `1.27` (was `1.22`). Built libkrun `1.17.4` from source (`~/src/github.com/containers/libkrun` tag `v1.17.4`) and libkrunfw `5.3.0` from source (`~/src/github.com/containers/libkrunfw` tag `v5.3.0`); both installed to `/usr/local/lib64/` with ldconfig entry at `/etc/ld.so.conf.d/libkrun.conf`. Built patched crun `1.27-dirty` with `+LIBKRUN` and installed at `/usr/libexec/neovex/crun`. Runtime separation verified: system crun `1.21` at `/usr/bin/crun`, Podman `5.4.2` using system runtime. Fixed `scripts/prepare-krun-bundle.sh` to remove the `network` namespace (TSI requires host network) and set `terminal: false` for non-interactive krun drills. Direct `crun run` inside `buildah unshare` proved: krun VM boot, TSI port binding (`18080:8080`), and HTTP connectivity to BusyBox httpd via TSI. Conmon lifecycle drill inside `buildah unshare` proved: `conmon → crun → libkrun VM` process tree with 8 worker threads, TSI port binding, exit file written (code `137` from SIGKILL), attach socket at bundle directory. Key findings: (1) krun containers require no network namespace in the OCI config because TSI handles networking via vsock; (2) conmon `--full-attach` holds `crun start` until an attach connection arrives — production Podman handles this, but the drill needed manual `crun start`; (3) the krun handler writes `.krun_config.json` to the rootfs during `crun create` via `openat2`, which requires the rootfs to be writable from the creating namespace — `buildah unshare` provides this; (4) libkrun and libkrunfw are not packaged for Debian 13 and must be built from source. | `bash scripts/prepare-linux-vmm-validation-bundle.sh --crun-source ~/src/github.com/containers/crun --output-root /tmp/neovex-linux-vmm-validation`; `bash scripts/verify-crun-patch.sh ~/src/github.com/containers/crun` (against `1.27`); `PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig bash scripts/build-neovex-crun.sh --source ~/src/github.com/containers/crun --output /tmp/neovex-linux-vmm-validation/stage/crun --install-path /usr/libexec/neovex/crun --sudo-install`; `bash scripts/verify-runtime-separation.sh --system-runtime /usr/bin/crun --private-runtime /usr/libexec/neovex/crun`; `buildah unshare -- crun run --bundle /tmp/neovex-linux-vmm-validation/bundle neovex-http` (TSI port `18080` bound, HTTP `404` from BusyBox); `buildah unshare -- conmon ... + crun start neovex-http` (process tree `conmon→libkrun VM`, exit file `137`); `cargo fmt --all --check` | Close out the script gaps exposed during `LH1`-`LH6` execution, then start V3 |
 | 2026-04-12 | V1+V2 closeout | `done` | Closed the five script gaps exposed during `LH1`-`LH6` execution. (1) `scripts/build-neovex-crun.sh` now auto-detects `libkrun.pc` in `/usr/local/lib64/pkgconfig` or `/usr/local/lib/pkgconfig` and sets `PKG_CONFIG_PATH` before `./configure --with-libkrun`, so the build no longer requires the caller to export the variable manually. (2) `scripts/check-vmm-host.sh` now checks for `libkrun.so` and `libkrunfw.so` via `ldconfig -p` and common non-standard paths, and verifies `libkrun.pc` via `pkg-config`. The distro-package checks for `libkrun`/`libkrunfw` are now informational (`optional`), so source-built installs no longer cause false failures. (3) `scripts/prepare-direct-krun-drill.sh` now emits a `buildah unshare` auto-re-exec preamble in the generated `run-runtime.sh`, so the krun handler's `openat2 .krun_config.json` succeeds in rootless mode without manual wrapping. (4) `scripts/prepare-conmon-krun-drill.sh` emits the same `buildah unshare` preamble in `run-conmon.sh`, plus a new `start-container.sh` script that polls `crun state` until the container reaches `created`, then calls `crun start` to boot the krun VM. This closes the conmon `--full-attach` lifecycle gap where the VM never started because nothing connected to the attach socket or called `crun start`. (5) Added `docs/research/krun-ci-build-and-distribution.md` capturing the full dependency map, source-build steps for libkrun/libkrunfw, GitHub runner requirements, key lifecycle learnings, and the gap between Debian (build from source) and Fedora (packaged) for CI targeting. All changed scripts pass `bash -n`, the three helper verifiers pass, and `cargo fmt --all --check` is clean. | `bash -n scripts/build-neovex-crun.sh`; `bash -n scripts/check-vmm-host.sh`; `bash -n scripts/prepare-krun-bundle.sh`; `bash -n scripts/prepare-direct-krun-drill.sh`; `bash -n scripts/prepare-conmon-krun-drill.sh`; `bash scripts/check-vmm-host.sh` (reports `supported` on this host with source-built libkrun); `bash scripts/verify-krun-bundle-helper.sh`; `bash scripts/verify-direct-krun-drill-helper.sh`; `bash scripts/verify-conmon-krun-drill-helper.sh`; `cargo fmt --all --check` | Start V3 `neovex-sandbox` krun backend implementation now that V1, V2, and the supporting script fixes have concrete Linux host evidence |
+| 2026-04-12 | V3 | `in_progress` | Landed the first backend-owned `neovex-sandbox` krun implementation slice. `SandboxSpec` now carries generic filesystem, process, and published-port intent via `SandboxFilesystemSpec`, `SandboxProcessSpec`, and `SandboxPortBinding`. `crates/neovex-sandbox/src/backends/krun/` now contains `bundle.rs` for OCI config generation with `run.oci.handler=krun` and `krun.port_map`, `buildah.rs` for backend-local buildah command assembly and `buildah unshare` wrapping, `conmon.rs` for deterministic `conmon -> /usr/libexec/neovex/crun` launch planning, `command.rs` for reusable backend-local command specs, and `vm.rs` for manifest-backed `start` / `inspect` / `stop` lowering behind the generic `SandboxBackend` trait. The backend now also distinguishes deliberate shutdown from unexpected crash semantics, so a forced stop can still surface as `SandboxStatus::Stopped`. The repo-owned Linux smoke path is now checked in via `crates/neovex-sandbox/tests/krun_linux_smoke.rs` plus `docs/reference/krun-sandbox-backend-smoke.md`; the missing closeout step is running that path on a supported Linux host and writing the resulting connectivity, log-persistence, and restart-survival evidence back into this plan. | `cargo fmt --all --check`; `cargo check -p neovex-sandbox -p neovex`; `cargo test -p neovex-sandbox` | Continue V3 on a supported Linux host by running `cargo test -p neovex-sandbox krun_backend_smoke_boots_http_service_and_survives_backend_restart -- --ignored --nocapture`, then record the concrete workdir, sandbox id, log paths, connectivity result, and restart-survival evidence here |
