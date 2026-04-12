@@ -647,22 +647,20 @@ Before M5, keep verification split across four lanes:
 
 ### Linux Agent Handoff
 
-- The current image-backed start path is locally verified, but it still needs a
-  Linux host rerun before we call the integration trustworthy end to end.
-- Promote the Linux Claude agent now. That handoff should rerun:
-  - `cargo fmt --all --check`
-  - `cargo check -p neovex-sandbox`
-  - `cargo test -p neovex-sandbox`
-  - `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored`
-- After the ignored smoke lane, record whether the integrated image-backed path
-  can replace the rootfs-only smoke setup directly or whether a second
-  image-backed smoke should live beside it.
-- For the ignored smoke test, record the exact values used for:
-  `NEOVEX_KRUN_SMOKE_ROOTFS`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME`,
-  `NEOVEX_KRUN_SMOKE_CONMON`,
-  and `NEOVEX_KRUN_SMOKE_BUILDAH`.
+- **M1 Linux verification is complete** (2026-04-12). Both the rootfs-only and
+  image-backed smoke tests pass on Debian 13. The image-backed test
+  complements the rootfs-only test (two lanes, not a replacement).
+- For future Linux reruns, the ignored smoke suite is safe to run without
+  `--test-threads=1` because the two tests use different default ports
+  (`18080` rootfs-only, `18081` image-backed).
+- Required environment for the ignored suite:
+  - `NEOVEX_KRUN_SMOKE_ROOTFS` — extracted BusyBox rootfs directory
+  - `NEOVEX_KRUN_SMOKE_WORKDIR` — scratch directory for bundle/state
+  - `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`
+  - `NEOVEX_KRUN_SMOKE_CONMON=$(command -v conmon)`
+  - `NEOVEX_KRUN_SMOKE_BUILDAH=$(command -v buildah)`
+- The next meaningful phase is M2/M3. The readiness gap (OCI `"running"` !=
+  service-ready) is the highest-priority follow-on.
 
 ### End-to-end (after M4)
 

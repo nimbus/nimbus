@@ -113,8 +113,11 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
 #[test]
 #[ignore = "requires a Linux host with KVM, buildah, conmon, and network access for image pull"]
 fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
-    let host_port = env_u16("NEOVEX_KRUN_SMOKE_HOST_PORT").unwrap_or(18080);
-    let guest_port = env_u16("NEOVEX_KRUN_SMOKE_GUEST_PORT").unwrap_or(8080);
+    // Use a different default port from the rootfs-only test so the two ignored
+    // tests can run in parallel without port collisions.  Callers can still
+    // override via env vars, but the defaults are safe for `-- --ignored`.
+    let host_port = env_u16("NEOVEX_KRUN_IMAGE_SMOKE_HOST_PORT").unwrap_or(18081);
+    let guest_port = env_u16("NEOVEX_KRUN_IMAGE_SMOKE_GUEST_PORT").unwrap_or(8081);
 
     let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
     let bundle_root = base_dir.join("image-bundles");
