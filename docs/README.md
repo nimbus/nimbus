@@ -16,6 +16,9 @@ and where to go next.
   native and optional Convex route catalog
 - [CLI reference](reference/cli.md):
   server flags and runtime-limit defaults
+- [krun VMM host validation](reference/krun-vmm-host-validation.md):
+  Linux-side build, install, and evidence capture runbook for the active
+  patched-crun VMM workstream
 - [Convex compatibility](convex/compatibility.md):
   current Convex-surface scope, limits, and demo entrypoints
 - [Runtime execution architecture rationale](research/runtime-execution-architecture-rationale.md):

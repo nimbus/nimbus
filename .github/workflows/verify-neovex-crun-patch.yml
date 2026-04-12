@@ -1,0 +1,128 @@
+name: Verify neovex-crun patch
+
+on:
+  pull_request:
+    paths:
+      - "patches/crun/**"
+      - "scripts/verify-crun-patch.sh"
+      - "scripts/check-vmm-host.sh"
+      - "scripts/collect-vmm-package-versions.sh"
+      - "scripts/collect-podman-machine-diagnostics.sh"
+      - "scripts/build-neovex-crun.sh"
+      - "scripts/prepare-krun-bundle.sh"
+      - "scripts/verify-krun-bundle-helper.sh"
+      - "scripts/verify-neovex-crun-fedora-userspace.sh"
+      - "scripts/prepare-direct-krun-drill.sh"
+      - "scripts/verify-direct-krun-drill-helper.sh"
+      - "scripts/verify-runtime-separation.sh"
+      - "scripts/verify-runtime-separation-helper.sh"
+      - "scripts/verify-podman-machine-diagnostics-helper.sh"
+      - "scripts/prepare-conmon-krun-drill.sh"
+      - "scripts/verify-conmon-krun-drill-helper.sh"
+      - "scripts/fixtures/crun-spec-config.json"
+      - "docs/reference/krun-vmm-host-validation.md"
+      - "Makefile"
+      - ".github/workflows/verify-neovex-crun-patch.yml"
+      - "docs/plans/vmm-infrastructure-plan.md"
+  push:
+    branches:
+      - main
+    paths:
+      - "patches/crun/**"
+      - "scripts/verify-crun-patch.sh"
+      - "scripts/check-vmm-host.sh"
+      - "scripts/collect-vmm-package-versions.sh"
+      - "scripts/collect-podman-machine-diagnostics.sh"
+      - "scripts/build-neovex-crun.sh"
+      - "scripts/prepare-krun-bundle.sh"
+      - "scripts/verify-krun-bundle-helper.sh"
+      - "scripts/verify-neovex-crun-fedora-userspace.sh"
+      - "scripts/prepare-direct-krun-drill.sh"
+      - "scripts/verify-direct-krun-drill-helper.sh"
+      - "scripts/verify-runtime-separation.sh"
+      - "scripts/verify-runtime-separation-helper.sh"
+      - "scripts/verify-podman-machine-diagnostics-helper.sh"
+      - "scripts/prepare-conmon-krun-drill.sh"
+      - "scripts/verify-conmon-krun-drill-helper.sh"
+      - "scripts/fixtures/crun-spec-config.json"
+      - "docs/reference/krun-vmm-host-validation.md"
+      - "Makefile"
+      - ".github/workflows/verify-neovex-crun-patch.yml"
+      - "docs/plans/vmm-infrastructure-plan.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Patch applies to pinned upstream crun
+    runs-on: ubuntu-latest
+    env:
+      CRUN_VERSION: "1.22"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify helper script syntax and help entrypoints
+        run: |
+          bash -n scripts/verify-crun-patch.sh
+          bash -n scripts/check-vmm-host.sh
+          bash -n scripts/collect-vmm-package-versions.sh
+          bash -n scripts/collect-podman-machine-diagnostics.sh
+          bash -n scripts/build-neovex-crun.sh
+          bash -n scripts/prepare-krun-bundle.sh
+          bash -n scripts/verify-krun-bundle-helper.sh
+          bash -n scripts/verify-neovex-crun-fedora-userspace.sh
+          bash -n scripts/prepare-direct-krun-drill.sh
+          bash -n scripts/verify-direct-krun-drill-helper.sh
+          bash -n scripts/verify-runtime-separation.sh
+          bash -n scripts/verify-runtime-separation-helper.sh
+          bash -n scripts/verify-podman-machine-diagnostics-helper.sh
+          bash -n scripts/prepare-conmon-krun-drill.sh
+          bash -n scripts/verify-conmon-krun-drill-helper.sh
+          bash scripts/build-neovex-crun.sh --help
+          bash scripts/collect-vmm-package-versions.sh --help
+          bash scripts/collect-podman-machine-diagnostics.sh --help
+          bash scripts/prepare-krun-bundle.sh --help
+          bash scripts/verify-neovex-crun-fedora-userspace.sh --help
+          bash scripts/prepare-direct-krun-drill.sh --help
+          bash scripts/verify-runtime-separation.sh --help
+          bash scripts/prepare-conmon-krun-drill.sh --help
+          bash scripts/collect-vmm-package-versions.sh
+
+      - name: Download pinned crun source
+        run: |
+          curl -fsSL -o crun.tar.gz \
+            "https://github.com/containers/crun/archive/refs/tags/${CRUN_VERSION}.tar.gz"
+          tar xzf crun.tar.gz
+
+      - name: Verify patch applies cleanly
+        run: bash scripts/verify-crun-patch.sh "${{ github.workspace }}/crun-${CRUN_VERSION}"
+
+      - name: Verify Fedora userspace crun build helper
+        run: |
+          bash scripts/verify-neovex-crun-fedora-userspace.sh \
+            --crun-source "${{ github.workspace }}/crun-${CRUN_VERSION}" \
+            --output-dir "${{ runner.temp }}/neovex-crun-fedora-userspace-output" \
+            --work-dir "${{ runner.temp }}/neovex-crun-fedora-userspace-build"
+
+      - name: Verify krun bundle helper
+        run: bash scripts/verify-krun-bundle-helper.sh
+
+      - name: Verify direct krun drill helper
+        run: bash scripts/verify-direct-krun-drill-helper.sh
+
+      - name: Verify runtime separation helper
+        run: bash scripts/verify-runtime-separation-helper.sh
+
+      - name: Verify Podman machine diagnostics helper
+        run: bash scripts/verify-podman-machine-diagnostics-helper.sh
+
+      - name: Verify conmon krun drill helper
+        run: bash scripts/verify-conmon-krun-drill-helper.sh

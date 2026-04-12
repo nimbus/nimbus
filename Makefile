@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime verify-crun-patch check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-linux-vmm-validation-bundle-helper build-neovex-crun prepare-krun-bundle verify-krun-bundle-helper verify-neovex-crun-fedora-userspace prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -105,6 +105,112 @@ verify-harness-repro:
 	@test -n "$(MODE)" || (echo "set MODE=pr|nightly" && exit 1)
 	@test -n "$(CASE)" || (echo "set CASE=<named-seed-case>" && exit 1)
 	bash scripts/verification-harness.sh repro "$(SURFACE)" "$(MODE)" "$(CASE)"
+
+# Verify the checked-in neovex crun patch applies to a local upstream source checkout
+verify-crun-patch:
+	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
+	bash scripts/verify-crun-patch.sh "$(CRUN_SRC)"
+
+# Check whether the current host is ready for Linux krun/conmon validation work
+check-vmm-host:
+	bash scripts/check-vmm-host.sh
+
+# Collect package-manager and command-level version evidence for the Linux VMM stack
+collect-vmm-package-versions:
+	bash scripts/collect-vmm-package-versions.sh
+
+# Collect best-effort Podman machine diagnostics for the macOS research lane
+collect-podman-machine-diagnostics:
+	@test -n "$(MACHINE)" || (echo "set MACHINE=<podman-machine-name>" && exit 1)
+	bash scripts/collect-podman-machine-diagnostics.sh --machine "$(MACHINE)" $(if $(PROVIDER),--provider "$(PROVIDER)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(CONFIG_ROOT),--config-root "$(CONFIG_ROOT)",) $(if $(DATA_ROOT),--data-root "$(DATA_ROOT)",) $(if $(TMP_ROOT),--tmp-root "$(TMP_ROOT)",) $(if $(PODMAN),--podman "$(PODMAN)",) $(if $(PS),--ps "$(PS)",) $(if $(SYSTEM_PROFILER),--system-profiler "$(SYSTEM_PROFILER)",) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",)
+
+# Check whether a Podman/libkrun machine tmp root will overflow Darwin's unix-socket path budget
+check-podman-machine-socket-paths:
+	@test -n "$(MACHINE)" || (echo "set MACHINE=<podman-machine-name>" && exit 1)
+	bash scripts/check-podman-machine-socket-paths.sh --machine "$(MACHINE)" $(if $(TMP_ROOT),--tmp-root "$(TMP_ROOT)",) $(if $(SOCKET_BYTE_LIMIT),--socket-byte-limit "$(SOCKET_BYTE_LIMIT)",)
+
+# Validate that a running Podman machine stays reachable via its named connection and machine ssh
+validate-podman-machine-readiness:
+	@test -n "$(MACHINE)" || (echo "set MACHINE=<podman-machine-name>" && exit 1)
+	bash scripts/validate-podman-machine-readiness.sh --machine "$(MACHINE)" $(if $(CONNECTION),--connection "$(CONNECTION)",) $(if $(PROVIDER),--provider "$(PROVIDER)",) $(if $(TMP_ROOT),--tmp-root "$(TMP_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(PODMAN),--podman "$(PODMAN)",) $(if $(PS),--ps "$(PS)",) $(if $(SYSTEM_PROFILER),--system-profiler "$(SYSTEM_PROFILER)",) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",) $(if $(SSH_COMMAND),--ssh-command "$(SSH_COMMAND)",)
+
+# Recreate a Podman machine with the short-runtime-dir recipe and capture readiness artifacts
+recreate-podman-machine:
+	@test -n "$(MACHINE)" || (echo "set MACHINE=<podman-machine-name>" && exit 1)
+	bash scripts/recreate-podman-machine.sh --machine "$(MACHINE)" $(if $(CONNECTION),--connection "$(CONNECTION)",) $(if $(PROVIDER),--provider "$(PROVIDER)",) $(if $(TMP_ROOT),--tmp-root "$(TMP_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(CPUS),--cpus "$(CPUS)",) $(if $(MEMORY),--memory "$(MEMORY)",) $(if $(DISK_SIZE),--disk-size "$(DISK_SIZE)",) $(if $(VOLUME),--volume "$(VOLUME)",) $(if $(SKIP_PRE_DIAGNOSTICS),--skip-pre-diagnostics,) $(if $(PODMAN),--podman "$(PODMAN)",) $(if $(PS),--ps "$(PS)",) $(if $(SYSTEM_PROFILER),--system-profiler "$(SYSTEM_PROFILER)",) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",) $(if $(SSH_COMMAND),--ssh-command "$(SSH_COMMAND)",)
+
+# Prepare a deterministic Linux-host LH1-LH6 execution bundle
+prepare-linux-vmm-validation-bundle:
+	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
+	bash scripts/prepare-linux-vmm-validation-bundle.sh --crun-source "$(CRUN_SRC)" $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(STAGE_DIR),--stage-dir "$(STAGE_DIR)",) $(if $(STAGE_BINARY),--stage-binary "$(STAGE_BINARY)",) $(if $(INSTALL_PATH),--install-path "$(INSTALL_PATH)",) $(if $(SYSTEM_RUNTIME),--system-runtime "$(SYSTEM_RUNTIME)",) $(if $(BUNDLE_DIR),--bundle-dir "$(BUNDLE_DIR)",) $(if $(IMAGE),--image "$(IMAGE)",) $(if $(BUILDAH_NAME),--buildah-name "$(BUILDAH_NAME)",) $(if $(HOST_PORT),--host-port "$(HOST_PORT)",) $(if $(GUEST_PORT),--guest-port "$(GUEST_PORT)",) $(if $(DIRECT_STATE_ROOT),--direct-state-root "$(DIRECT_STATE_ROOT)",) $(if $(DIRECT_CONTAINER_ID),--direct-container-id "$(DIRECT_CONTAINER_ID)",) $(if $(CONMON_STATE_ROOT),--conmon-state-root "$(CONMON_STATE_ROOT)",) $(if $(CONMON),--conmon "$(CONMON)",) $(if $(CONMON_NAME),--conmon-name "$(CONMON_NAME)",) $(if $(PROBE_HOST),--probe-host "$(PROBE_HOST)",) $(if $(PROBE_PATH),--probe-path "$(PROBE_PATH)",)
+
+# Build and optionally install the patched private neovex crun binary
+build-neovex-crun:
+	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
+	bash scripts/build-neovex-crun.sh --source "$(CRUN_SRC)" $(if $(OUTPUT),--output "$(OUTPUT)",) $(if $(INSTALL_PATH),--install-path "$(INSTALL_PATH)",) $(if $(SUDO_INSTALL),--sudo-install,)
+
+# Prepare a krun OCI bundle config with the correct annotations and port mapping shape
+prepare-krun-bundle:
+	@test -n "$(BUNDLE_DIR)" || (echo "set BUNDLE_DIR=/absolute/path/to/bundle-dir" && exit 1)
+	@test -n "$(ROOTFS)" || (echo "set ROOTFS=/absolute/path/to/rootfs" && exit 1)
+	@test -n "$(HOST_PORT)" || (echo "set HOST_PORT=<host-port>" && exit 1)
+	@test -n "$(GUEST_PORT)" || (echo "set GUEST_PORT=<guest-port>" && exit 1)
+	bash scripts/prepare-krun-bundle.sh --bundle-dir "$(BUNDLE_DIR)" --rootfs "$(ROOTFS)" --host-port "$(HOST_PORT)" --guest-port "$(GUEST_PORT)" $(if $(RUNTIME),--runtime "$(RUNTIME)",)
+
+# Verify the krun bundle helper against a checked-in config fixture
+verify-krun-bundle-helper:
+	bash scripts/verify-krun-bundle-helper.sh
+
+# Validate the patch + Linux userspace build helper inside a disposable Fedora container
+verify-neovex-crun-fedora-userspace:
+	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
+	bash scripts/verify-neovex-crun-fedora-userspace.sh --crun-source "$(CRUN_SRC)" $(if $(IMAGE),--image "$(IMAGE)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(WORK_DIR),--work-dir "$(WORK_DIR)",)
+
+# Prepare a deterministic direct private-runtime krun drill layout for Linux host execution
+prepare-direct-krun-drill:
+	@test -n "$(BUNDLE_DIR)" || (echo "set BUNDLE_DIR=/absolute/path/to/bundle-dir" && exit 1)
+	bash scripts/prepare-direct-krun-drill.sh --bundle-dir "$(BUNDLE_DIR)" $(if $(STATE_ROOT),--state-root "$(STATE_ROOT)",) $(if $(CONTAINER_ID),--container-id "$(CONTAINER_ID)",) $(if $(RUNTIME),--runtime "$(RUNTIME)",) $(if $(HOST_PORT),--host-port "$(HOST_PORT)",) $(if $(PROBE_HOST),--probe-host "$(PROBE_HOST)",) $(if $(PROBE_PATH),--probe-path "$(PROBE_PATH)",) $(if $(COMMAND_FILE),--command-file "$(COMMAND_FILE)",)
+
+# Verify the direct private-runtime krun drill helper against a temporary bundle
+verify-direct-krun-drill-helper:
+	bash scripts/verify-direct-krun-drill-helper.sh
+
+# Verify that the system runtime remains separate from the private neovex runtime path
+verify-runtime-separation:
+	bash scripts/verify-runtime-separation.sh $(if $(SYSTEM_RUNTIME),--system-runtime "$(SYSTEM_RUNTIME)",) $(if $(PRIVATE_RUNTIME),--private-runtime "$(PRIVATE_RUNTIME)",) $(if $(PODMAN),--podman "$(PODMAN)",)
+
+# Verify the runtime-separation helper against temporary fake runtimes
+verify-runtime-separation-helper:
+	bash scripts/verify-runtime-separation-helper.sh
+
+# Verify the Podman machine diagnostics helper against deterministic fake host artifacts
+verify-podman-machine-diagnostics-helper:
+	bash scripts/verify-podman-machine-diagnostics-helper.sh
+
+# Verify the Podman/libkrun socket-path helper against deterministic long-root and /tmp cases
+verify-podman-machine-socket-paths-helper:
+	bash scripts/verify-podman-machine-socket-paths-helper.sh
+
+# Verify the Podman machine readiness helper against deterministic fake host artifacts
+verify-podman-machine-readiness-helper:
+	bash scripts/verify-podman-machine-readiness-helper.sh
+
+# Verify the Podman machine recreate helper against deterministic fake host artifacts
+verify-podman-machine-recreate-helper:
+	bash scripts/verify-podman-machine-recreate-helper.sh
+
+# Verify the Linux-host LH1-LH6 command-bundle generator against deterministic fake inputs
+verify-linux-vmm-validation-bundle-helper:
+	bash scripts/verify-linux-vmm-validation-bundle-helper.sh
+
+# Prepare a deterministic conmon -> patched-crun drill layout for Linux host execution
+prepare-conmon-krun-drill:
+	@test -n "$(BUNDLE_DIR)" || (echo "set BUNDLE_DIR=/absolute/path/to/bundle-dir" && exit 1)
+	bash scripts/prepare-conmon-krun-drill.sh --bundle-dir "$(BUNDLE_DIR)" $(if $(STATE_ROOT),--state-root "$(STATE_ROOT)",) $(if $(CONTAINER_ID),--container-id "$(CONTAINER_ID)",) $(if $(NAME),--name "$(NAME)",) $(if $(CONMON),--conmon "$(CONMON)",) $(if $(RUNTIME),--runtime "$(RUNTIME)",) $(if $(COMMAND_FILE),--command-file "$(COMMAND_FILE)",) $(if $(TERMINAL),--terminal,)
+
+# Verify the conmon -> patched-crun drill helper against a temporary bundle
+verify-conmon-krun-drill-helper:
+	bash scripts/verify-conmon-krun-drill-helper.sh
 
 # Prepare an upstream convex-demos overlay, then run codegen + Neovex against it
 convex-demo: convex-demo-stop

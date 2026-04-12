@@ -9,21 +9,23 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via the
     retained redb embedded provider
+- `docs/plans/vmm-infrastructure-plan.md`
+  - active execution plan for the krun-backed VMM foundation: pinned crun
+    patch artifact, system dependency contract, and the subprocess
+    orchestration baseline that the deferred microVM runtime plan will consume
 
 ## Deferred design and experiment plans
 
-- `docs/plans/vmm-infrastructure-plan.md`
-  - canonical plan for VMM infrastructure: fork crun (+10 lines for TSI port
-    mapping), system dependencies (conmon, buildah, libkrun, libkrunfw,
-    catatonit, passt), conmon process model; follows Podman's architecture
 - `docs/plans/microvm-runtime-plan.md`
   - canonical plan for the microVM runtime: buildah integration (replaces
     custom OCI code), OCI bundle generation, lifecycle probes, engine
     integration (ctx.services.*), developer experience
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing neovex across all channels: install
-    script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew (macOS),
-    binary tarballs, container images, cloud VM images (AWS AMI, GCP)
+    script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
+    (macOS via krunkit/libkrun), binary tarballs, container images, cloud
+    VM images (AWS AMI, GCP). Channel 4 covers the macOS machine VM
+    architecture (krunkit, guest image, vsock, virtiofs, gvproxy)
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary

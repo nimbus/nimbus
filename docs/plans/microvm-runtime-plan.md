@@ -4,7 +4,17 @@ Canonical plan for adding a microVM-based runtime to neovex that runs
 OCI/Docker images in hardware-isolated microVMs, enabling V8 isolates to
 interact with containerized services via TSI networking.
 
-Builds on `vmm-infrastructure-plan.md` (crun fork, conmon, system deps).
+Builds on `vmm-infrastructure-plan.md` (patched crun, conmon, system deps).
+
+**Platform scope: Linux.** On macOS, the neovex server runs inside a Linux
+machine VM (see `distribution-plan.md` Channel 4). Services run as standard
+containers (crun, no krun handler) — the same way Podman runs containers on
+macOS. The API surface is identical. MicroVM isolation is a Linux production
+feature. macOS should mirror Podman's one-machine-VM architecture, not add a
+second host-side orchestration path or nested per-service microVMs for v1.
+`containers/podman-machine-os` currently builds that guest with standard
+container tooling (`crun`, `podman`, `netavark`, `aardvark-dns`), which
+supports the same conclusion from source.
 
 ---
 
