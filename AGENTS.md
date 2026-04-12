@@ -32,26 +32,22 @@ Use the repo docs for architecture and behavior details:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- For the current krun-backed VMM foundation workstream, go directly to
-  `docs/plans/vmm-infrastructure-plan.md` after the three docs above. That
-  plan is the live durable control plane for current patched-crun, conmon,
-  and system-integration progress.
+- For the current krun-backed microVM runtime workstream, go directly to
+  `docs/plans/microvm-runtime-plan.md` after the three docs above. That plan
+  is the live durable control plane for active buildah, OCI-bundle, probe,
+  and engine-integration progress.
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
-- For the current krun-backed microVM/VMM workstream, open
-  `docs/plans/vmm-infrastructure-plan.md` immediately after those three docs
+- For the current krun-backed microVM runtime workstream, open
+  `docs/plans/microvm-runtime-plan.md` immediately after those three docs
   instead of spending time rediscovering ownership through chat history.
-- Before changing code for this workstream, reread the VMM plan's
-  invariants section
-  (`Cleanup Invariants`, `Migration Invariants`, or equivalent),
+- Before changing code for this workstream, reread the microVM plan's
   `Current Assessed State`, `Current Review Findings`,
-  `Feature Preservation Matrix`, `Control Plane Rules`,
-  `Verification Contract`, `Roadmap Status Ledger`,
-  `Implementation Checkpoints`, `Dependency Graph`,
-  `Recommended Delivery Order`, and `Execution Log` before changing code.
+  `Phase Status Ledger`, `Verification Contract`, and `Execution Log`
+  before changing code.
 - Treat the roadmap plus the current git worktree as progress state. Do not rely on chat history to remember where work stopped.
 - If an item is already `in_progress` or the worktree is dirty, reconcile and resume that work before starting a new roadmap item.
 - Checkpoint roadmap state before stopping, handing off, or any likely context loss. Do not assume you will get an explicit compaction warning.

@@ -29,6 +29,10 @@ impl SandboxFilesystemSpec {
         self.readonly = readonly;
         self
     }
+
+    pub fn is_unspecified(&self) -> bool {
+        self.rootfs.as_os_str().is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +66,14 @@ impl SandboxProcessSpec {
     pub fn with_terminal(mut self, terminal: bool) -> Self {
         self.terminal = terminal;
         self
+    }
+
+    pub fn uses_default_env(&self) -> bool {
+        self.env == [DEFAULT_SANDBOX_PATH.to_owned()]
+    }
+
+    pub fn uses_default_cwd(&self) -> bool {
+        self.cwd == PathBuf::from("/")
     }
 }
 
