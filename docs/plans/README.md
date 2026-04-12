@@ -9,17 +9,18 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via the
     retained redb embedded provider
+- `docs/plans/microvm-runtime-plan.md`
+  - active execution plan for the krun-backed microVM runtime: buildah
+    integration, OCI bundle generation, lifecycle probes, engine integration
+    (`ctx.services.*`), and developer-facing service workflows
 - `docs/plans/vmm-infrastructure-plan.md`
-  - active execution plan for the krun-backed VMM foundation: pinned crun
-    patch artifact, system dependency contract, and the subprocess
-    orchestration baseline that the deferred microVM runtime plan will consume
+  - completed foundation baseline for the krun-backed microVM runtime: pinned
+    crun patch artifact, system dependency contract, Linux/macOS verification
+    evidence, and the subprocess orchestration seam the active microVM runtime
+    plan now consumes
 
 ## Deferred design and experiment plans
 
-- `docs/plans/microvm-runtime-plan.md`
-  - canonical plan for the microVM runtime: buildah integration (replaces
-    custom OCI code), OCI bundle generation, lifecycle probes, engine
-    integration (ctx.services.*), developer experience
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing neovex across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

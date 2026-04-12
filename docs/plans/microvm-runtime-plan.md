@@ -20,17 +20,62 @@ supports the same conclusion from source.
 
 ## Status
 
-- **Status:** `deferred`
+- **Status:** `in_progress`
 - **Primary owner:** this plan
-- **Activation gate:** promote when `vmm-infrastructure-plan.md` Phase V3 is
-  complete and `docs/plans/archive/runtime-sandbox-architecture-plan.md` `RS4`
-  has landed the canonical `neovex-sandbox` seam
+- **Activation gate:** met on 2026-04-12 after
+  `vmm-infrastructure-plan.md` reached V3 closeout on a real Linux host and
+  `docs/plans/archive/runtime-sandbox-architecture-plan.md` had already landed
+  the canonical `neovex-sandbox` seam
 - **Related plans:**
   - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
     baseline that owns the canonical sandbox crate naming and the server-facing
     seam this plan must consume
-  - `vmm-infrastructure-plan.md` — VMM foundation (crun fork, conmon, deps)
+  - `vmm-infrastructure-plan.md` — completed VMM foundation (crun fork,
+    conmon, deps, Linux validation evidence)
   - `distribution-plan.md` — packaging for all channels
+
+## Current Assessed State
+
+- `vmm-infrastructure-plan.md` V1 through V3 are complete, including real
+  Debian 13 validation for patched `crun`, `conmon`, libkrun/libkrunfw,
+  host-to-guest TSI connectivity, manifest-backed restart recovery, and log
+  persistence.
+- `crates/neovex-sandbox/src/backends/krun/` already owns the first concrete
+  backend skeleton: `bundle.rs`, `command.rs`, `conmon.rs`, `buildah.rs`, and
+  `vm.rs`.
+- `buildah.rs` now owns the first typed `BuildahCli` wrapper for pull/build/
+  mount/inspect/cleanup execution plus image-config translation into a backend-
+  local `OciImageConfig`. It also resolves image defaults into
+  `SandboxProcessSpec`, typed exposed-port records, and a combined
+  `OciImageLaunchDefaults` handoff object, and it can now materialize that
+  launch-default object directly from real buildah pull/build + mount +
+  inspect command sequences.
+- `vm.rs` now owns a backend-local launch-resolution seam that can merge sparse
+  generic `SandboxSpec` inputs with `OciImageLaunchDefaults`, persist image
+  metadata in the manifest, and write an OCI bundle from the resolved launch
+  spec. It now also exposes backend-local `start_from_image()` /
+  `start_from_build()` helpers that connect prepared buildah launches to real
+  krun start/stop lifecycle paths.
+- `vm.rs` currently reports OCI runtime state `"running"` as
+  `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
+  service readiness: one initial TCP connection was refused before the guest
+  service began answering through TSI.
+- The sandbox seam is now generic and stable enough to continue iterating here:
+  `SandboxSpec` carries filesystem, process, and port bindings without leaking
+  krun nouns into the public API.
+
+## Current Review Findings
+
+- The first typed buildah translation layer is now proven through a real
+  backend-local image-backed start path. The next M1/M2 follow-on is Linux-host
+  verification of that integrated path, then extending bundle generation with
+  image-user and stop-signal handling.
+- Readiness, startup, and liveness probing remain required follow-on work for
+  M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
+  but it is not a trustworthy published-endpoint readiness signal.
+- macOS remains a packaging and development surface only: the active runtime
+  plan should continue targeting Linux microVMs while keeping the API shape
+  portable to the machine-VM delivery path described in `distribution-plan.md`.
 
 ## Control Plan Rules
 
@@ -165,42 +210,41 @@ orchestration layer that:
 
 ### Phase M1: buildah Integration
 
-**Goal:** neovex can pull, build, and mount OCI images via buildah.
+**Goal:** neovex can pull, build, mount, inspect, and clean up OCI images via
+buildah through a typed Rust wrapper instead of ad hoc command strings.
 
 **Scope:**
 
 `crates/neovex-sandbox/src/backends/krun/buildah.rs`:
 ```rust
-/// Pull an image from a registry
-pub async fn pull(image_ref: &str) -> Result<String> {
-    // buildah from --name neovex-{ulid} docker://{image_ref}
-    // Returns: container name
+pub struct BuildahCli { /* binary path + rootless wrapping policy */ }
+
+pub struct OciImageConfig {
+    pub entrypoint: Vec<String>,
+    pub cmd: Vec<String>,
+    pub env: Vec<String>,
+    pub working_dir: Option<String>,
+    pub user: Option<String>,
+    pub exposed_ports: Vec<String>,
+    pub volumes: Vec<String>,
+    pub stop_signal: Option<String>,
+    pub healthcheck: Option<ImageHealthcheck>,
+    pub labels: BTreeMap<String, String>,
 }
 
-/// Build from a Dockerfile
-pub async fn build(dockerfile: &Path, context: &Path) -> Result<String> {
-    // buildah bud -t neovex-{ulid} -f {dockerfile} {context}
-    // buildah from --name neovex-{ulid} localhost/neovex-{ulid}
-    // Returns: container name
-}
-
-/// Mount a container's rootfs
-pub async fn mount(container: &str) -> Result<PathBuf> {
-    // buildah mount {container}
-    // Returns: /var/lib/containers/storage/overlay/.../merged
-}
-
-/// Inspect image config (Entrypoint, Cmd, Env, User, ExposedPorts, etc.)
-pub async fn inspect(container: &str) -> Result<OciImageConfig> {
-    // buildah inspect --format json {container}
-    // Parse: Entrypoint, Cmd, Env, WorkingDir, User, ExposedPorts,
-    //        Volumes, StopSignal, Healthcheck, Labels
-}
-
-/// Clean up
-pub async fn cleanup(container: &str) -> Result<()> {
-    // buildah umount {container}
-    // buildah rm {container}
+impl BuildahCli {
+    pub fn pull(&self, container_name: &str, image_reference: &str)
+        -> Result<BuildahContainer>;
+    pub fn build(
+        &self,
+        image_name: &str,
+        container_name: &str,
+        dockerfile: &Path,
+        context: &Path,
+    ) -> Result<BuildahContainer>;
+    pub fn mount_container(&self, container_name: &str) -> Result<PathBuf>;
+    pub fn inspect_container(&self, container_name: &str) -> Result<OciImageConfig>;
+    pub fn cleanup_container(&self, container_name: &str) -> Result<()>;
 }
 ```
 
@@ -209,6 +253,8 @@ pub async fn cleanup(container: &str) -> Result<()> {
 - Can build a Dockerfile via buildah
 - buildah inspect returns all 10 OCI image config fields correctly
 - Cleanup removes containers and unmounts
+- Unit tests cover command lowering, inspect JSON translation, and cleanup
+  ordering without requiring a live buildah installation
 
 ### Phase M2: OCI Bundle Generation
 
@@ -559,7 +605,7 @@ Developers can use muscle memory.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| M1: buildah integration | `todo` | V3 from vmm-infrastructure-plan | |
+| M1: buildah integration | `in_progress` | V3 from vmm-infrastructure-plan | `BuildahCli`, buildah-backed launch materialization, and image-backed backend start/stop helpers landed; next slice is Linux-host verification of the integrated path plus remaining image-metadata wiring |
 | M2: OCI bundle generation | `todo` | M1 | |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
@@ -598,6 +644,25 @@ Before M5, keep verification split across four lanes:
   port release after crash or forced stop
 - distribution probes on supported packaging targets before calling the stack
   production-ready
+
+### Linux Agent Handoff
+
+- The current image-backed start path is locally verified, but it still needs a
+  Linux host rerun before we call the integration trustworthy end to end.
+- Promote the Linux Claude agent now. That handoff should rerun:
+  - `cargo fmt --all --check`
+  - `cargo check -p neovex-sandbox`
+  - `cargo test -p neovex-sandbox`
+  - `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored`
+- After the ignored smoke lane, record whether the integrated image-backed path
+  can replace the rootfs-only smoke setup directly or whether a second
+  image-backed smoke should live beside it.
+- For the ignored smoke test, record the exact values used for:
+  `NEOVEX_KRUN_SMOKE_ROOTFS`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME`,
+  `NEOVEX_KRUN_SMOKE_CONMON`,
+  and `NEOVEX_KRUN_SMOKE_BUILDAH`.
 
 ### End-to-end (after M4)
 
@@ -651,4 +716,60 @@ ss -tlnp | grep 15432                                 # should be empty
 
 ## Execution Log
 
-_Empty — no work started._
+- 2026-04-12: Promoted this plan from `deferred` to `in_progress` after
+  `vmm-infrastructure-plan.md` reached V3 closeout with real Linux evidence.
+  Recorded the first M3 readiness finding from Linux smoke: OCI runtime state
+  `"running"` is not yet sufficient to publish `Ready`, because one initial
+  TSI TCP connection was refused before the guest service answered. Started M1
+  implementation by replacing the low-level buildah command stubs with a typed
+  CLI wrapper, inspect translation, and unit-level verification.
+- 2026-04-12: Landed `BuildahCli` in
+  `crates/neovex-sandbox/src/backends/krun/buildah.rs`, corrected the buildah
+  inspect command shape to use default JSON output with `--type container`
+  instead of template mode, and added script-backed unit tests for pull/build/
+  mount/inspect/cleanup lowering. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  and `cargo test -p neovex-sandbox` all passed on the current host.
+- 2026-04-12: Extended `OciImageConfig` with backend-local launch lowering:
+  `resolve_process_spec()` now merges image defaults plus overrides into a
+  generic `SandboxProcessSpec`, and `exposed_port_bindings()` parses typed
+  image port records for later port-manager wiring. Added unit coverage for
+  default-command lowering, override precedence, invalid empty commands,
+  exposed-port parsing, and invalid port-shape rejection. Verification
+  evidence: `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  and `cargo test -p neovex-sandbox` all passed on the current host.
+- 2026-04-12: Added `OciImageLaunchDefaults` so inspected image metadata,
+  mounted rootfs, parsed ports, stop signal, healthcheck, labels, and lowered
+  process defaults travel together as one backend-local handoff object.
+  Added unit coverage for that combined launch-default resolution. Verification
+  evidence: `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  and `cargo test -p neovex-sandbox` all passed on the current host.
+- 2026-04-12: Taught `vm.rs` to consume backend-local launch defaults during
+  planning via a new resolved-launch seam. `plan_start_with_launch_defaults()`
+  now materializes sparse generic specs from image defaults, preserves explicit
+  operator overrides, stores image metadata in the manifest, and writes bundle
+  config from the resolved launch spec. Added unit coverage for sparse-spec
+  materialization and explicit-override preservation. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  and `cargo test -p neovex-sandbox` all passed on the current host.
+- 2026-04-12: Extended `BuildahCli` with `prepare_image_launch()` and
+  `prepare_built_image_launch()` so the buildah wrapper can now produce a
+  fully prepared `PreparedImageLaunch` from real pull/build + mount + inspect
+  command sequences. Added script-backed unit coverage for both registry-image
+  and Dockerfile-build materialization paths. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  and `cargo test -p neovex-sandbox` all passed on the current host.
+- 2026-04-12: Wired the prepared launch seam into `vm.rs` through backend-local
+  `start_from_image()` / `start_from_build()` helpers. The krun backend now
+  tracks buildah container metadata in the manifest, uses the resolved launch
+  spec for image-backed start planning, and cleans up buildah mounts/containers
+  on stop. Added a plan-only integration test that proves image-backed
+  start-then-stop persists buildah metadata while running and clears it after
+  cleanup. Verification evidence: `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  and `cargo test -p neovex-sandbox` all passed on the current host.

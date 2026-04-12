@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::buildah::BuildahBinary;
+use super::buildah::BuildahCli;
 use super::command::CommandSpec;
 use crate::instance::SandboxId;
 
@@ -113,19 +113,13 @@ pub(crate) fn build_launch_plan(
         .arg("start")
         .arg(sandbox_id.as_str().to_owned());
 
-    if config.use_buildah_unshare {
-        let buildah = BuildahBinary::new(config.buildah_path.clone());
-        return KrunConmonLaunchPlan {
-            create_command: buildah.wrap_unshare(&create_command),
-            state_command: buildah.wrap_unshare(&state_command),
-            start_command: buildah.wrap_unshare(&start_command),
-        };
-    }
+    let buildah =
+        BuildahCli::new(config.buildah_path.clone()).with_unshare(config.use_buildah_unshare);
 
     KrunConmonLaunchPlan {
-        create_command,
-        state_command,
-        start_command,
+        create_command: buildah.maybe_wrap(create_command),
+        state_command: buildah.maybe_wrap(state_command),
+        start_command: buildah.maybe_wrap(start_command),
     }
 }
 
