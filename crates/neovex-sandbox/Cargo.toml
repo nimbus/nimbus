@@ -10,4 +10,10 @@ workspace = true
 [dependencies]
 neovex-core = { path = "../neovex-core" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+tempfile.workspace = true

@@ -6,6 +6,8 @@
 //! crate rather than leaking their implementation vocabulary into the rest of
 //! the workspace.
 
+pub mod backends;
+
 mod backend;
 mod endpoint;
 mod error;
@@ -16,4 +18,4 @@ pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
-pub use spec::SandboxSpec;
+pub use spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
