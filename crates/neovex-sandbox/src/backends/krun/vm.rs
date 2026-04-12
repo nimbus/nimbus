@@ -303,6 +303,9 @@ impl KrunSandboxBackend {
             &sandbox_id,
             &spec.name,
             &bundle_layout.bundle_dir,
+            buildah_container
+                .as_ref()
+                .map(|c| c.container_name.as_str()),
         );
 
         let handle = SandboxHandle::new(

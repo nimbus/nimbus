@@ -44,6 +44,52 @@ impl BuildahCli {
         }
     }
 
+    /// Wrap a command in `buildah unshare -- sh -c 'buildah mount <container> >/dev/null && <command>'`.
+    /// This ensures the buildah overlay rootfs mount exists in the same user
+    /// namespace session that runs the wrapped command.
+    pub fn wrap_unshare_with_mount(
+        &self,
+        container_name: &str,
+        command: &CommandSpec,
+    ) -> CommandSpec {
+        let mount_cmd = format!(
+            "{} mount {} >/dev/null",
+            shell_escape(&self.path.to_string_lossy()),
+            shell_escape(container_name),
+        );
+        let inner_cmd = format!(
+            "{} && {} {}",
+            mount_cmd,
+            shell_escape(&command.program.to_string_lossy()),
+            command
+                .args
+                .iter()
+                .map(|arg| shell_escape(arg))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        CommandSpec::new(self.path.clone())
+            .arg("unshare")
+            .arg("--")
+            .arg("sh")
+            .arg("-c")
+            .arg(inner_cmd)
+    }
+
+    /// Like `maybe_wrap`, but chains a `buildah mount` prefix inside the
+    /// `buildah unshare` session when a container name is provided.
+    pub fn maybe_wrap_with_mount(
+        &self,
+        command: CommandSpec,
+        container_name: Option<&str>,
+    ) -> CommandSpec {
+        match (self.use_unshare, container_name) {
+            (true, Some(name)) => self.wrap_unshare_with_mount(name, &command),
+            (true, None) => self.wrap_unshare(&command),
+            (false, _) => command,
+        }
+    }
+
     pub fn from_image_command(&self, container_name: &str, image_reference: &str) -> CommandSpec {
         CommandSpec::new(self.path.clone())
             .arg("from")
@@ -283,15 +329,21 @@ pub struct PreparedImageLaunch {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciImageConfig {
+    #[serde(default)]
     pub entrypoint: Vec<String>,
+    #[serde(default)]
     pub cmd: Vec<String>,
+    #[serde(default)]
     pub env: Vec<String>,
     pub working_dir: Option<String>,
     pub user: Option<String>,
+    #[serde(default)]
     pub exposed_ports: Vec<String>,
+    #[serde(default)]
     pub volumes: Vec<String>,
     pub stop_signal: Option<String>,
     pub healthcheck: Option<ImageHealthcheck>,
+    #[serde(default)]
     pub labels: BTreeMap<String, String>,
 }
 
@@ -345,26 +397,67 @@ struct BuildahImageEnvelope {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 struct BuildahImageFields {
-    #[serde(default, alias = "Entrypoint", alias = "entrypoint")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        alias = "Entrypoint",
+        alias = "entrypoint"
+    )]
     entrypoint: Vec<String>,
-    #[serde(default, alias = "Cmd", alias = "cmd")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        alias = "Cmd",
+        alias = "cmd"
+    )]
     cmd: Vec<String>,
-    #[serde(default, alias = "Env", alias = "env")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        alias = "Env",
+        alias = "env"
+    )]
     env: Vec<String>,
     #[serde(default, alias = "WorkingDir", alias = "working_dir")]
     working_dir: Option<String>,
     #[serde(default, alias = "User", alias = "user")]
     user: Option<String>,
-    #[serde(default, alias = "ExposedPorts", alias = "exposed_ports")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        alias = "ExposedPorts",
+        alias = "exposed_ports"
+    )]
     exposed_ports: BTreeMap<String, Value>,
-    #[serde(default, alias = "Volumes", alias = "volumes")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        alias = "Volumes",
+        alias = "volumes"
+    )]
     volumes: BTreeMap<String, Value>,
     #[serde(default, alias = "StopSignal", alias = "stop_signal")]
     stop_signal: Option<String>,
     #[serde(default, alias = "Healthcheck", alias = "healthcheck")]
     healthcheck: Option<ImageHealthcheck>,
-    #[serde(default, alias = "Labels", alias = "labels")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        alias = "Labels",
+        alias = "labels"
+    )]
     labels: BTreeMap<String, String>,
+}
+
+/// Deserialize a field that may be `null` in JSON as the type's `Default` value.
+/// This handles the common OCI case where buildah/Docker write `"Entrypoint": null`
+/// instead of omitting the field entirely.
+fn null_as_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default,
+{
+    Option::<T>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -379,6 +472,18 @@ pub struct OciExposedPort {
     pub port: u16,
     pub protocol: OciExposedPortProtocol,
     pub raw: String,
+}
+
+fn shell_escape(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_owned();
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'/' || b == b'.')
+    {
+        return s.to_owned();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn localhost_image_reference(image_name: &str) -> String {

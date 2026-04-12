@@ -92,7 +92,7 @@ pub(crate) fn build_bundle_config(hostname: &str, spec: &SandboxSpec) -> Result<
             },
             "args": spec.process.args,
             "env": process_env(&spec.process),
-            "cwd": spec.process.cwd.to_string_lossy(),
+            "cwd": process_cwd(&spec.process),
         },
         "root": {
             "path": spec.filesystem.rootfs.to_string_lossy(),
@@ -158,6 +158,15 @@ fn default_linux_mounts() -> Value {
             "options": ["nosuid", "noexec", "nodev", "relatime", "ro"]
         }
     ])
+}
+
+fn process_cwd(process: &SandboxProcessSpec) -> String {
+    let cwd = process.cwd.to_string_lossy();
+    if cwd.is_empty() {
+        "/".to_owned()
+    } else {
+        cwd.into_owned()
+    }
 }
 
 fn process_env(process: &SandboxProcessSpec) -> Vec<String> {

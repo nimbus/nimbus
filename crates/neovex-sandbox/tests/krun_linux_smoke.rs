@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use futures::executor::block_on;
 
 use neovex_core::TenantId;
+use neovex_sandbox::backends::krun::buildah::OciProcessOverrides;
 use neovex_sandbox::backends::krun::{
     KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
 };
@@ -105,6 +106,91 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
         SandboxStatus::Stopped,
         "a deliberate backend stop should be reported as stopped even if SIGKILL was required"
     );
+
+    cleanup_guard.disarm();
+}
+
+#[test]
+#[ignore = "requires a Linux host with KVM, buildah, conmon, and network access for image pull"]
+fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
+    let host_port = env_u16("NEOVEX_KRUN_SMOKE_HOST_PORT").unwrap_or(18080);
+    let guest_port = env_u16("NEOVEX_KRUN_SMOKE_GUEST_PORT").unwrap_or(8080);
+
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("image-bundles");
+    let state_root = base_dir.join("image-state");
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root.clone();
+    config.state_root = state_root.clone();
+    config.launch_mode = KrunLaunchMode::Execute;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    let backend = KrunSandboxBackend::new(config.clone());
+    let guest_port_str = guest_port.to_string();
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        "image-smoke",
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new(""),
+        SandboxProcessSpec::new(Vec::<String>::new()),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        PublishedEndpointProtocol::Http,
+        host_port,
+        guest_port,
+    ));
+
+    let overrides = OciProcessOverrides {
+        cmd: Some(vec![
+            "/bin/busybox".into(),
+            "httpd".into(),
+            "-f".into(),
+            "-p".into(),
+            guest_port_str,
+        ]),
+        ..Default::default()
+    };
+
+    let handle =
+        block_on(backend.start_from_image(spec, "docker://busybox:latest".to_owned(), overrides))
+            .expect("image-backed krun start should succeed");
+    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+
+    let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
+    assert_eq!(
+        ready_handle.status,
+        SandboxStatus::Ready,
+        "image-backed sandbox should reach ready"
+    );
+
+    let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        http_response.starts_with("HTTP/1.") || http_response.contains("404"),
+        "expected HTTP response from image-backed sandbox, got: {http_response}"
+    );
+
+    let restarted_backend = KrunSandboxBackend::new(config);
+    let restarted_handle = block_on(restarted_backend.inspect(&handle.id))
+        .expect("inspect should succeed")
+        .expect("image-backed sandbox should survive backend restart");
+    assert_eq!(restarted_handle.status, SandboxStatus::Ready);
+
+    block_on(restarted_backend.stop(&handle.id)).expect("stop should succeed");
+    let stopped_handle = block_on(restarted_backend.inspect(&handle.id))
+        .expect("inspect after stop should succeed")
+        .expect("stopped sandbox should still have a manifest");
+    assert_eq!(stopped_handle.status, SandboxStatus::Stopped);
 
     cleanup_guard.disarm();
 }
