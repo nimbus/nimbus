@@ -245,11 +245,93 @@ impl BuildahCli {
     ) -> Result<PreparedImageLaunch> {
         let rootfs = self.mount_container(&container.container_name)?;
         let image_config = self.inspect_container(&container.container_name)?;
-        let launch_defaults = image_config.resolve_launch_defaults(rootfs, overrides)?;
+
+        // Resolve any named user (e.g., "www-data") to numeric uid:gid while
+        // the rootfs overlay mount is still accessible.  In rootless mode, the
+        // mount only exists inside a `buildah unshare` session, so we read
+        // /etc/passwd and /etc/group from inside that session here, before the
+        // mount disappears.
+        let resolved_user = self.resolve_image_user(
+            &container.container_name,
+            image_config.user.as_deref(),
+            &rootfs,
+        )?;
+
+        let mut config_with_resolved_user = image_config;
+        config_with_resolved_user.user = resolved_user;
+
+        let launch_defaults =
+            config_with_resolved_user.resolve_launch_defaults(rootfs, overrides)?;
         Ok(PreparedImageLaunch {
             container,
             launch_defaults,
         })
+    }
+
+    /// Resolve an image USER string to numeric "uid:gid" by reading
+    /// /etc/passwd and /etc/group from inside the container's rootfs.
+    /// Runs inside `buildah unshare` so the overlay mount is accessible.
+    fn resolve_image_user(
+        &self,
+        container_name: &str,
+        user: Option<&str>,
+        rootfs: &Path,
+    ) -> Result<Option<String>> {
+        let Some(user) = user.map(str::trim).filter(|u| !u.is_empty()) else {
+            return Ok(None);
+        };
+
+        // If the user is already fully numeric (uid or uid:gid), pass through.
+        if is_numeric_user_spec(user) {
+            return Ok(Some(user.to_owned()));
+        }
+
+        // Read /etc/passwd from inside the rootfs via buildah unshare to
+        // resolve named users to numeric uid:gid.
+        let passwd_content = self.read_rootfs_file(container_name, rootfs, "etc/passwd")?;
+        let group_content = self.read_rootfs_file_optional(container_name, rootfs, "etc/group");
+
+        resolve_user_from_content(user, &passwd_content, group_content.as_deref())
+    }
+
+    fn read_rootfs_file(
+        &self,
+        container_name: &str,
+        rootfs: &Path,
+        relative_path: &str,
+    ) -> Result<String> {
+        let file_path = rootfs.join(relative_path);
+        let cat_command = CommandSpec::new("cat").arg(file_path.to_string_lossy().into_owned());
+        let buildah = BuildahCli::new(self.path.clone()).with_unshare(self.use_unshare);
+        let wrapped = buildah.wrap_unshare_with_mount(container_name, &cat_command);
+        let output =
+            wrapped
+                .to_command()
+                .output()
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read {relative_path} from container {container_name}: {error}"
+                    ),
+                })?;
+        if !output.status.success() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read {relative_path} from container {container_name}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn read_rootfs_file_optional(
+        &self,
+        container_name: &str,
+        rootfs: &Path,
+        relative_path: &str,
+    ) -> Option<String> {
+        self.read_rootfs_file(container_name, rootfs, relative_path)
+            .ok()
     }
 
     fn run_checked(&self, command: &CommandSpec, needs_unshare: bool, action: &str) -> Result<()> {
@@ -472,6 +554,97 @@ pub struct OciExposedPort {
     pub port: u16,
     pub protocol: OciExposedPortProtocol,
     pub raw: String,
+}
+
+fn is_numeric_user_spec(user: &str) -> bool {
+    let parts: Vec<&str> = user.split(':').collect();
+    match parts.len() {
+        1 => parts[0].parse::<u32>().is_ok(),
+        2 => parts[0].parse::<u32>().is_ok() && parts[1].parse::<u32>().is_ok(),
+        _ => false,
+    }
+}
+
+fn resolve_user_from_content(
+    user: &str,
+    passwd_content: &str,
+    group_content: Option<&str>,
+) -> Result<Option<String>> {
+    let (user_part, group_part) = match user.split_once(':') {
+        Some((u, g)) => (u.trim(), Some(g.trim())),
+        None => (user.trim(), None),
+    };
+
+    // Resolve user part
+    let (uid, default_gid) = if let Ok(uid) = user_part.parse::<u32>() {
+        let gid = find_passwd_gid_by_uid(passwd_content, uid);
+        (uid, gid.unwrap_or(0))
+    } else {
+        let entry = find_passwd_entry_by_name(passwd_content, user_part).ok_or_else(|| {
+            SandboxError::InvalidSpec {
+                message: format!(
+                    "image user {user:?} references user {user_part:?} not found in /etc/passwd"
+                ),
+            }
+        })?;
+        (entry.0, entry.1)
+    };
+
+    // Resolve group part
+    let gid = match group_part {
+        Some(g) if !g.is_empty() => {
+            if let Ok(gid) = g.parse::<u32>() {
+                gid
+            } else {
+                find_group_gid_by_name(group_content.unwrap_or(""), g).ok_or_else(|| {
+                    SandboxError::InvalidSpec {
+                        message: format!(
+                            "image user {user:?} references group {g:?} not found in /etc/group"
+                        ),
+                    }
+                })?
+            }
+        }
+        _ => default_gid,
+    };
+
+    Ok(Some(format!("{uid}:{gid}")))
+}
+
+fn find_passwd_entry_by_name(passwd_content: &str, name: &str) -> Option<(u32, u32)> {
+    for line in passwd_content.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() >= 4 && fields[0] == name {
+            if let (Ok(uid), Ok(gid)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>()) {
+                return Some((uid, gid));
+            }
+        }
+    }
+    None
+}
+
+fn find_passwd_gid_by_uid(passwd_content: &str, uid: u32) -> Option<u32> {
+    for line in passwd_content.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() >= 4 {
+            if let Ok(entry_uid) = fields[2].parse::<u32>() {
+                if entry_uid == uid {
+                    return fields[3].parse::<u32>().ok();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_group_gid_by_name(group_content: &str, name: &str) -> Option<u32> {
+    for line in group_content.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() >= 3 && fields[0] == name {
+            return fields[2].parse::<u32>().ok();
+        }
+    }
+    None
 }
 
 fn shell_escape(s: &str) -> String {

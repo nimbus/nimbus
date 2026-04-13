@@ -1041,13 +1041,15 @@ mod tests {
             rendered_bundle.contains("\"/usr/local/bin/service\""),
             "bundle config should use the image-default command when the generic spec is sparse"
         );
+        // krun bundles always use root for the VMM process (needs /dev/kvm).
+        // The image user is stored in the manifest, not the bundle.
         assert!(
-            rendered_bundle.contains("\"uid\": 1000"),
-            "bundle config should lower the image user uid into process.user"
+            rendered_bundle.contains("\"uid\": 0"),
+            "krun bundle should use root uid for VMM /dev/kvm access"
         );
         assert!(
-            rendered_bundle.contains("\"gid\": 1000"),
-            "bundle config should lower the image user gid into process.user"
+            rendered_bundle.contains("\"gid\": 0"),
+            "krun bundle should use root gid for VMM /dev/kvm access"
         );
     }
 
