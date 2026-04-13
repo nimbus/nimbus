@@ -71,6 +71,7 @@ pub(crate) fn build_launch_plan(
     sandbox_name: &str,
     bundle_dir: &Path,
     buildah_container_name: Option<&str>,
+    create_prelude: &[String],
 ) -> KrunConmonLaunchPlan {
     let create_command = CommandSpec::new(config.conmon_path.clone()).args([
         "--api-version".to_owned(),
@@ -128,7 +129,11 @@ pub(crate) fn build_launch_plan(
     // the real host user (no unshare) works because crun stores state under the
     // real user's XDG_RUNTIME_DIR.
     KrunConmonLaunchPlan {
-        create_command: buildah.maybe_wrap_with_mount(create_command, buildah_container_name),
+        create_command: buildah.maybe_wrap_with_mount_prelude(
+            create_command,
+            buildah_container_name,
+            create_prelude,
+        ),
         state_command: if buildah_container_name.is_some() {
             state_command
         } else {
@@ -168,6 +173,7 @@ mod tests {
             "db",
             Path::new("/tmp/neovex-bundles/db-01"),
             None,
+            &[],
         );
 
         assert_eq!(
@@ -189,6 +195,47 @@ mod tests {
         assert_eq!(
             launch_plan.start_command.program,
             PathBuf::from("/usr/bin/buildah")
+        );
+    }
+
+    #[test]
+    fn conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes() {
+        let sandbox_id = SandboxId::new("db-02");
+        let layout = KrunConmonLayout::new("/tmp/neovex-sandbox-state", &sandbox_id);
+        let config = KrunConmonConfig {
+            conmon_path: Path::new("/usr/bin/conmon").into(),
+            runtime_path: Path::new("/usr/libexec/neovex/crun").into(),
+            buildah_path: Path::new("/usr/bin/buildah").into(),
+            use_buildah_unshare: true,
+            log_level: "debug".to_owned(),
+        };
+
+        let launch_plan = build_launch_plan(
+            &config,
+            &layout,
+            &sandbox_id,
+            "db",
+            Path::new("/tmp/neovex-bundles/db-02"),
+            Some("db-02-image"),
+            &[r#"printf '%s' '{"cpus":2,"ram_mib":256}' > /tmp/rootfs/.krun_vm.json"#.to_owned()],
+        );
+
+        let script = launch_plan
+            .create_command
+            .args
+            .last()
+            .expect("buildah unshare launch should carry a shell script");
+        assert!(
+            script.contains("buildah mount db-02-image >/dev/null"),
+            "expected buildah mount inside the unshare shell script: {script}"
+        );
+        assert!(
+            script.contains(".krun_vm.json"),
+            "expected krun vm config prelude inside the unshare shell script: {script}"
+        );
+        assert!(
+            script.contains("/usr/bin/conmon"),
+            "expected conmon launch to remain the final command in the shell script: {script}"
         );
     }
 }

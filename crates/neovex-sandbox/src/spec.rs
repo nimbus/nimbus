@@ -116,6 +116,28 @@ impl SandboxPortBinding {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxResourceLimits {
+    pub cpu_count: Option<u8>,
+    pub memory_limit_bytes: Option<u64>,
+}
+
+impl SandboxResourceLimits {
+    pub fn with_cpu_count(mut self, cpu_count: u8) -> Self {
+        self.cpu_count = Some(cpu_count);
+        self
+    }
+
+    pub fn with_memory_limit_bytes(mut self, memory_limit_bytes: u64) -> Self {
+        self.memory_limit_bytes = Some(memory_limit_bytes);
+        self
+    }
+
+    pub fn is_unspecified(&self) -> bool {
+        self.cpu_count.is_none() && self.memory_limit_bytes.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxSpec {
     pub tenant_id: TenantId,
@@ -123,6 +145,7 @@ pub struct SandboxSpec {
     pub backend: SandboxBackendKind,
     pub filesystem: SandboxFilesystemSpec,
     pub process: SandboxProcessSpec,
+    pub resources: SandboxResourceLimits,
     pub port_bindings: Vec<SandboxPortBinding>,
 }
 
@@ -140,8 +163,24 @@ impl SandboxSpec {
             backend,
             filesystem,
             process,
+            resources: SandboxResourceLimits::default(),
             port_bindings: Vec::new(),
         }
+    }
+
+    pub fn with_resource_limits(mut self, resources: SandboxResourceLimits) -> Self {
+        self.resources = resources;
+        self
+    }
+
+    pub fn with_cpu_count(mut self, cpu_count: u8) -> Self {
+        self.resources.cpu_count = Some(cpu_count);
+        self
+    }
+
+    pub fn with_memory_limit_bytes(mut self, memory_limit_bytes: u64) -> Self {
+        self.resources.memory_limit_bytes = Some(memory_limit_bytes);
+        self
     }
 
     pub fn with_port_binding(mut self, port_binding: SandboxPortBinding) -> Self {

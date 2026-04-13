@@ -16,7 +16,7 @@ use neovex_sandbox::backends::krun::{
 };
 use neovex_sandbox::{
     PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxFilesystemSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxSpec, SandboxStatus,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec, SandboxStatus,
 };
 
 #[test]
@@ -586,6 +586,208 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("auto-port-assignment: all 3 sandboxes verified, port reuse confirmed");
 }
 
+/// M2 verification: prove direct-rootfs resource limits lower into both OCI
+/// memory limits and the krun VM config sidecar on a real Linux host.
+#[test]
+#[ignore = "requires a Linux host with KVM, conmon, and a mounted rootfs"]
+fn krun_backend_m2_direct_rootfs_resource_limits_lowering() {
+    let rootfs = env_path("NEOVEX_KRUN_SMOKE_ROOTFS");
+    let host_port: u16 = 18083;
+    let guest_port: u16 = 8083;
+
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("m2-resources-rootfs-bundles");
+    let state_root = base_dir.join("m2-resources-rootfs-state");
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root.clone();
+    config.state_root = state_root.clone();
+    config.launch_mode = KrunLaunchMode::Execute;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    let backend = KrunSandboxBackend::new(config);
+    let guest_port_str = guest_port.to_string();
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        "m2-rootfs-resources",
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new(rootfs.clone()),
+        SandboxProcessSpec::new(["/bin/busybox", "httpd", "-f", "-p", &guest_port_str]),
+    )
+    .with_resource_limits(
+        SandboxResourceLimits::default()
+            .with_cpu_count(2)
+            .with_memory_limit_bytes(256 * 1024 * 1024),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        PublishedEndpointProtocol::Http,
+        host_port,
+        guest_port,
+    ));
+
+    let handle =
+        block_on(backend.start(spec)).expect("rootfs-backed resource-limits sandbox should start");
+    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+
+    let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
+    assert_eq!(ready_handle.status, SandboxStatus::Ready);
+
+    let vm_config_path = rootfs.join(".krun_vm.json");
+    let vm_config_text = std::fs::read_to_string(&vm_config_path).unwrap_or_else(|_| {
+        panic!(
+            "direct-rootfs resource-limits test expected vm config at {}",
+            vm_config_path.display()
+        )
+    });
+    let vm_config: serde_json::Value =
+        serde_json::from_str(&vm_config_text).expect("vm config should be valid JSON");
+    assert_eq!(vm_config["cpus"].as_u64(), Some(2));
+    assert_eq!(vm_config["ram_mib"].as_u64(), Some(256));
+    eprintln!("direct-rootfs .krun_vm.json: {vm_config_text}");
+
+    let bundle_config_path = bundle_root.join(handle.id.as_str()).join("config.json");
+    let bundle_config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&bundle_config_path).unwrap_or_else(|_| {
+            panic!(
+                "bundle config should be readable at {}",
+                bundle_config_path.display()
+            )
+        }))
+        .expect("bundle config should be valid JSON");
+    assert_eq!(
+        bundle_config["linux"]["resources"]["memory"]["limit"].as_u64(),
+        Some(256 * 1024 * 1024)
+    );
+    eprintln!(
+        "direct-rootfs linux.resources.memory.limit: {:?}",
+        bundle_config["linux"]["resources"]["memory"]["limit"]
+    );
+
+    let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        http_response.starts_with("HTTP/1.") || http_response.contains("404"),
+        "expected HTTP response from direct-rootfs resource-limits sandbox, got: {http_response}"
+    );
+
+    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    cleanup_guard.disarm();
+}
+
+/// M2 verification: prove image-backed resource limits lower into both OCI
+/// memory limits and the krun VM config sidecar inside the mounted buildah
+/// container rootfs on a real Linux host.
+#[test]
+#[ignore = "requires a Linux host with KVM, buildah, conmon, and network access"]
+fn krun_backend_m2_image_backed_resource_limits_lowering() {
+    let host_port: u16 = 18084;
+    let guest_port: u16 = 8084;
+
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("m2-resources-image-bundles");
+    let state_root = base_dir.join("m2-resources-image-state");
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root.clone();
+    config.state_root = state_root.clone();
+    config.launch_mode = KrunLaunchMode::Execute;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    let backend = KrunSandboxBackend::new(config.clone());
+    let guest_port_str = guest_port.to_string();
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        "m2-image-resources",
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new(""),
+        SandboxProcessSpec::new(Vec::<String>::new()),
+    )
+    .with_resource_limits(
+        SandboxResourceLimits::default()
+            .with_cpu_count(2)
+            .with_memory_limit_bytes(256 * 1024 * 1024),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        PublishedEndpointProtocol::Http,
+        host_port,
+        guest_port,
+    ));
+
+    let overrides = OciProcessOverrides {
+        cmd: Some(vec![
+            "/bin/busybox".into(),
+            "httpd".into(),
+            "-f".into(),
+            "-p".into(),
+            guest_port_str,
+        ]),
+        ..Default::default()
+    };
+
+    let handle =
+        block_on(backend.start_from_image(spec, "docker://busybox:latest".to_owned(), overrides))
+            .expect("image-backed resource-limits sandbox should start");
+    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+
+    let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
+    assert_eq!(ready_handle.status, SandboxStatus::Ready);
+
+    let bundle_config_path = bundle_root.join(handle.id.as_str()).join("config.json");
+    let bundle_config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&bundle_config_path).unwrap_or_else(|_| {
+            panic!(
+                "bundle config should be readable at {}",
+                bundle_config_path.display()
+            )
+        }))
+        .expect("bundle config should be valid JSON");
+    assert_eq!(
+        bundle_config["linux"]["resources"]["memory"]["limit"].as_u64(),
+        Some(256 * 1024 * 1024)
+    );
+    eprintln!(
+        "image-backed linux.resources.memory.limit: {:?}",
+        bundle_config["linux"]["resources"]["memory"]["limit"]
+    );
+
+    let buildah = env::var("NEOVEX_KRUN_SMOKE_BUILDAH").unwrap_or("buildah".into());
+    let container_name = read_manifest_buildah_container_name(&state_root, &handle.id);
+    let vm_config_text = read_buildah_rootfs_file(&buildah, &container_name, ".krun_vm.json");
+    let vm_config: serde_json::Value =
+        serde_json::from_str(&vm_config_text).expect("vm config should be valid JSON");
+    assert_eq!(vm_config["cpus"].as_u64(), Some(2));
+    assert_eq!(vm_config["ram_mib"].as_u64(), Some(256));
+    eprintln!("image-backed .krun_vm.json ({container_name}): {vm_config_text}");
+
+    let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        http_response.starts_with("HTTP/1.") || http_response.contains("404"),
+        "expected HTTP response from image-backed resource-limits sandbox, got: {http_response}"
+    );
+
+    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    cleanup_guard.disarm();
+}
+
 fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
     let status = std::process::Command::new(program)
         .args(args)
@@ -596,6 +798,66 @@ fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
     if !allow_failure && !status.success() {
         panic!("{program} {} failed with {status}", args.join(" "));
     }
+}
+
+fn run_host_command_capture_stdout(program: &str, args: &[&str]) -> String {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {program} {}: {e}", args.join(" ")));
+    if !output.status.success() {
+        panic!("{program} {} failed with {}", args.join(" "), output.status);
+    }
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|e| panic!("stdout from {program} was not utf-8: {e}"))
+}
+
+fn read_manifest_buildah_container_name(
+    state_root: &std::path::Path,
+    sandbox_id: &neovex_sandbox::SandboxId,
+) -> String {
+    let manifest_path = state_root
+        .join("containers")
+        .join(sandbox_id.as_str())
+        .join("manifest.json");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap_or_else(|_| {
+            panic!("manifest should be readable at {}", manifest_path.display())
+        }))
+        .expect("manifest should be valid JSON");
+    manifest["buildah_container"]["container_name"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "manifest {} should record a buildah container name",
+                manifest_path.display()
+            )
+        })
+        .to_owned()
+}
+
+fn read_buildah_rootfs_file(
+    buildah_program: &str,
+    container_name: &str,
+    relative_path: &str,
+) -> String {
+    let script = r#"rootfs="$("$1" mount "$2")"
+test -n "$rootfs"
+cat "$rootfs/$3""#;
+    run_host_command_capture_stdout(
+        buildah_program,
+        &[
+            "unshare",
+            "--",
+            "sh",
+            "-c",
+            script,
+            "neovex-buildah-unshare",
+            buildah_program,
+            container_name,
+            relative_path,
+        ],
+    )
 }
 
 fn wait_for_ready(

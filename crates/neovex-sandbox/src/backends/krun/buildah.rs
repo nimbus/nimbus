@@ -52,14 +52,24 @@ impl BuildahCli {
         container_name: &str,
         command: &CommandSpec,
     ) -> CommandSpec {
+        self.wrap_unshare_with_mount_prelude(container_name, &[], command)
+    }
+
+    /// Like `wrap_unshare_with_mount`, but inserts shell-safe prelude commands
+    /// between the mount step and the wrapped program.
+    pub fn wrap_unshare_with_mount_prelude(
+        &self,
+        container_name: &str,
+        prelude_commands: &[String],
+        command: &CommandSpec,
+    ) -> CommandSpec {
         let mount_cmd = format!(
             "{} mount {} >/dev/null",
             shell_escape(&self.path.to_string_lossy()),
             shell_escape(container_name),
         );
-        let inner_cmd = format!(
-            "{} && {} {}",
-            mount_cmd,
+        let wrapped_command = format!(
+            "{} {}",
             shell_escape(&command.program.to_string_lossy()),
             command
                 .args
@@ -68,6 +78,11 @@ impl BuildahCli {
                 .collect::<Vec<_>>()
                 .join(" "),
         );
+        let mut inner_steps = Vec::with_capacity(prelude_commands.len() + 2);
+        inner_steps.push(mount_cmd);
+        inner_steps.extend(prelude_commands.iter().cloned());
+        inner_steps.push(wrapped_command);
+        let inner_cmd = inner_steps.join(" && ");
         CommandSpec::new(self.path.clone())
             .arg("unshare")
             .arg("--")
@@ -83,8 +98,19 @@ impl BuildahCli {
         command: CommandSpec,
         container_name: Option<&str>,
     ) -> CommandSpec {
+        self.maybe_wrap_with_mount_prelude(command, container_name, &[])
+    }
+
+    pub fn maybe_wrap_with_mount_prelude(
+        &self,
+        command: CommandSpec,
+        container_name: Option<&str>,
+        prelude_commands: &[String],
+    ) -> CommandSpec {
         match (self.use_unshare, container_name) {
-            (true, Some(name)) => self.wrap_unshare_with_mount(name, &command),
+            (true, Some(name)) => {
+                self.wrap_unshare_with_mount_prelude(name, prelude_commands, &command)
+            }
             (true, None) => self.wrap_unshare(&command),
             (false, _) => command,
         }

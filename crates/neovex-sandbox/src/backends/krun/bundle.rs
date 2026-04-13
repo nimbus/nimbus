@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::{Result, SandboxError};
-use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
+use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct KrunBundleLayout {
@@ -89,6 +90,7 @@ pub(crate) fn build_bundle_config(
     }
 
     validate_port_bindings(&spec.port_bindings)?;
+    validate_resource_limits(&spec.resources)?;
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
     // The image USER is resolved separately and stored in the sandbox manifest for
@@ -110,6 +112,20 @@ pub(crate) fn build_bundle_config(
         );
     }
 
+    let mut linux = serde_json::Map::new();
+    linux.insert(
+        "namespaces".to_owned(),
+        json!([
+            { "type": "mount" },
+            { "type": "uts" },
+            { "type": "ipc" },
+            { "type": "pid" },
+        ]),
+    );
+    if let Some(resources) = build_linux_resources(&spec.resources) {
+        linux.insert("resources".to_owned(), resources);
+    }
+
     Ok(json!({
         "ociVersion": "1.0.2",
         "process": {
@@ -129,14 +145,7 @@ pub(crate) fn build_bundle_config(
         "hostname": hostname,
         "mounts": default_linux_mounts(),
         "annotations": annotations,
-        "linux": {
-            "namespaces": [
-                { "type": "mount" },
-                { "type": "uts" },
-                { "type": "ipc" },
-                { "type": "pid" },
-            ],
-        },
+        "linux": Value::Object(linux),
     }))
 }
 
@@ -203,6 +212,47 @@ fn process_env(process: &SandboxProcessSpec) -> Vec<String> {
     process.env.clone()
 }
 
+fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
+    if matches!(resources.cpu_count, Some(0)) {
+        return Err(SandboxError::InvalidSpec {
+            message: "krun sandbox cpu_count must be greater than zero".to_owned(),
+        });
+    }
+
+    if matches!(resources.memory_limit_bytes, Some(0)) {
+        return Err(SandboxError::InvalidSpec {
+            message: "krun sandbox memory_limit_bytes must be greater than zero".to_owned(),
+        });
+    }
+
+    if let Some(memory_limit_bytes) = resources.memory_limit_bytes {
+        if memory_limit_bytes < MIN_MEMORY_LIMIT_BYTES {
+            return Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "krun sandbox memory_limit_bytes must be at least {MIN_MEMORY_LIMIT_BYTES} bytes"
+                ),
+            });
+        }
+    }
+
+    if resources.cpu_count.is_some() && resources.memory_limit_bytes.is_none() {
+        return Err(SandboxError::InvalidSpec {
+            message: "krun sandbox cpu_count requires memory_limit_bytes so crun can materialize /.krun_vm.json".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn build_linux_resources(resources: &SandboxResourceLimits) -> Option<Value> {
+    let memory_limit_bytes = resources.memory_limit_bytes?;
+    Some(json!({
+        "memory": {
+            "limit": memory_limit_bytes,
+        },
+    }))
+}
+
 fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
     let mut names = BTreeSet::new();
     let mut host_ports = BTreeSet::new();
@@ -251,7 +301,10 @@ mod tests {
     use super::{KrunBundleLayout, KrunBundleOptions, build_bundle_config, write_bundle_config};
     use crate::backend::SandboxBackendKind;
     use crate::endpoint::PublishedEndpointProtocol;
-    use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
+    use crate::spec::{
+        SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
+        SandboxSpec,
+    };
 
     #[test]
     fn bundle_config_sets_krun_handler_and_port_map() {
@@ -367,6 +420,37 @@ mod tests {
 
         assert_eq!(config["process"]["user"]["uid"], 0);
         assert_eq!(config["process"]["user"]["gid"], 0);
+    }
+
+    #[test]
+    fn bundle_config_sets_linux_memory_limit_from_generic_resources() {
+        let spec = sample_spec().with_resource_limits(
+            SandboxResourceLimits::default().with_memory_limit_bytes(256 * 1024 * 1024),
+        );
+
+        let config = build_bundle_config("neovex-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build with memory limits");
+
+        assert_eq!(
+            config["linux"]["resources"]["memory"]["limit"],
+            256 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn bundle_config_rejects_cpu_count_without_memory_limit() {
+        let spec =
+            sample_spec().with_resource_limits(SandboxResourceLimits::default().with_cpu_count(2));
+
+        let error = build_bundle_config("neovex-db", &spec, &KrunBundleOptions::default())
+            .expect_err("krun cpu count without memory should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cpu_count requires memory_limit_bytes"),
+            "expected actionable validation error, got: {error}"
+        );
     }
 
     fn sample_spec() -> SandboxSpec {

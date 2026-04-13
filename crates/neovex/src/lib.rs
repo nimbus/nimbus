@@ -24,7 +24,7 @@ pub use neovex_runtime::{
 pub use neovex_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
     SandboxFilesystemSpec, SandboxHandle, SandboxId, SandboxPortBinding, SandboxProcessSpec,
-    SandboxSpec, SandboxStatus,
+    SandboxResourceLimits, SandboxSpec, SandboxStatus,
 };
 pub use neovex_server::{
     ConvexRegistry, DEFAULT_LICENSE_PATH, EmptySandboxCatalog, LICENSE_FILE_ENV, LicenseDocument,

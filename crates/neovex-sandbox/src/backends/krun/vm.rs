@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use ulid::Ulid;
 
 use super::buildah::{
@@ -28,6 +29,8 @@ const DEFAULT_PUBLISHED_PORT_START: u16 = 15_000;
 const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
+const KRUN_VM_CONFIG_FILENAME: &str = ".krun_vm.json";
+const BYTES_PER_MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +129,7 @@ impl KrunSandboxBackend {
     fn finish_start(&self, launch_plan: KrunLaunchPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
         self.materialize_auto_port_bindings(&mut manifest)?;
+        self.materialize_krun_vm_config(&manifest)?;
         let launch_plan = KrunLaunchPlan { manifest };
 
         match self.config.launch_mode {
@@ -319,6 +323,10 @@ impl KrunSandboxBackend {
             buildah_container
                 .as_ref()
                 .map(|c| c.container_name.as_str()),
+            &krun_vm_config_prelude(
+                &resolved_launch.spec,
+                buildah_container.is_some() && self.config.use_buildah_unshare,
+            )?,
         );
 
         let handle = SandboxHandle::new(
@@ -407,6 +415,44 @@ impl KrunSandboxBackend {
                 process_user: manifest.image_metadata.user.clone(),
             },
         )
+    }
+
+    fn materialize_krun_vm_config(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        if manifest.buildah_container.is_some() && self.config.use_buildah_unshare {
+            return Ok(());
+        }
+
+        let vm_config_path = krun_vm_config_path(&manifest.spec.filesystem.rootfs);
+        match desired_krun_vm_config(&manifest.spec)? {
+            Some(vm_config) => {
+                let rendered = serde_json::to_vec_pretty(&vm_config).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!("failed to serialize krun vm config: {error}"),
+                    }
+                })?;
+                std::fs::write(&vm_config_path, rendered).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to write krun vm config {}: {error}",
+                            vm_config_path.display()
+                        ),
+                    }
+                })
+            }
+            None => {
+                if !vm_config_path.exists() {
+                    return Ok(());
+                }
+                std::fs::remove_file(&vm_config_path).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to remove stale krun vm config {}: {error}",
+                            vm_config_path.display()
+                        ),
+                    }
+                })
+            }
+        }
     }
 
     fn port_manager(&self) -> PortManager {
@@ -612,6 +658,12 @@ struct KrunImageMetadata {
     exposed_ports: Vec<OciExposedPort>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct KrunVmConfig {
+    cpus: u8,
+    ram_mib: u32,
+}
+
 fn ensure_linux_host() -> Result<()> {
     if cfg!(target_os = "linux") {
         return Ok(());
@@ -667,6 +719,63 @@ fn configured_stop_signal(image_metadata: &KrunImageMetadata) -> String {
         .filter(|signal| !signal.is_empty())
         .unwrap_or("TERM")
         .to_owned()
+}
+
+fn desired_krun_vm_config(spec: &SandboxSpec) -> Result<Option<KrunVmConfig>> {
+    let cpu_count = spec.resources.cpu_count;
+    let memory_limit_bytes = spec.resources.memory_limit_bytes;
+
+    match (cpu_count, memory_limit_bytes) {
+        (None, _) => Ok(None),
+        (Some(_), None) => Err(SandboxError::InvalidSpec {
+            message:
+                "krun sandbox cpu_count requires memory_limit_bytes so crun can configure /.krun_vm.json"
+                    .to_owned(),
+        }),
+        (Some(0), _) => Err(SandboxError::InvalidSpec {
+            message: "krun sandbox cpu_count must be greater than zero".to_owned(),
+        }),
+        (Some(_), Some(0)) => Err(SandboxError::InvalidSpec {
+            message: "krun sandbox memory_limit_bytes must be greater than zero".to_owned(),
+        }),
+        (Some(cpus), Some(memory_limit_bytes)) => {
+            let ram_mib = memory_limit_bytes.div_ceil(BYTES_PER_MIB);
+            let ram_mib = u32::try_from(ram_mib).map_err(|_| SandboxError::InvalidSpec {
+                message: format!(
+                    "krun sandbox memory_limit_bytes {memory_limit_bytes} exceeds the maximum supported MiB range"
+                ),
+            })?;
+            Ok(Some(KrunVmConfig { cpus, ram_mib }))
+        }
+    }
+}
+
+fn krun_vm_config_path(rootfs: &Path) -> PathBuf {
+    rootfs.join(KRUN_VM_CONFIG_FILENAME)
+}
+
+fn krun_vm_config_prelude(spec: &SandboxSpec, needs_unshare_mount: bool) -> Result<Vec<String>> {
+    if !needs_unshare_mount {
+        return Ok(Vec::new());
+    }
+
+    let vm_config_path = krun_vm_config_path(&spec.filesystem.rootfs);
+    let escaped_path = shell_escape(vm_config_path.to_string_lossy().as_ref());
+    match desired_krun_vm_config(spec)? {
+        Some(vm_config) => {
+            let rendered = json!({
+                "cpus": vm_config.cpus,
+                "ram_mib": vm_config.ram_mib,
+            })
+            .to_string();
+            Ok(vec![format!(
+                "printf '%s' {} > {}",
+                shell_escape(&rendered),
+                escaped_path,
+            )])
+        }
+        None => Ok(vec![format!("rm -f {escaped_path}")]),
+    }
 }
 
 fn resolve_launch_spec(
@@ -757,6 +866,18 @@ fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
 fn env_key(entry: &str) -> Option<&str> {
     let (key, _) = entry.split_once('=')?;
     (!key.is_empty()).then_some(key)
+}
+
+fn shell_escape(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_owned();
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'/' || b == b'.')
+    {
+        return s.to_owned();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {
@@ -938,14 +1059,17 @@ mod tests {
 
     use super::{
         KrunImageMetadata, KrunSandboxBackend, KrunSandboxBackendConfig, configured_stop_signal,
-        slugify,
+        desired_krun_vm_config, krun_vm_config_path, slugify,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
         ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
         OciProcessOverrides,
     };
-    use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
+    use crate::spec::{
+        SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
+        SandboxSpec,
+    };
 
     #[test]
     fn plan_only_backend_lowers_through_generic_trait_surface() {
@@ -1005,6 +1129,61 @@ mod tests {
         assert!(
             rendered_bundle.contains("\"krun.port_map\": \"15432:5432,18080:8080\""),
             "bundle config should preserve the host:guest TSI mapping"
+        );
+    }
+
+    #[test]
+    fn plan_only_start_writes_krun_vm_config_for_explicit_resource_limits() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let rootfs = temp_dir.path().join("rootfs");
+        fs::create_dir_all(&rootfs).expect("rootfs directory should exist");
+        let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        ));
+        let spec = sample_spec_with_rootfs(&rootfs).with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(2)
+                .with_memory_limit_bytes(256 * 1024 * 1024),
+        );
+
+        let handle = block_on(backend.start(spec)).expect("plan-only start should succeed");
+        let vm_config_path = krun_vm_config_path(&rootfs);
+        let vm_config =
+            fs::read_to_string(&vm_config_path).expect("krun vm config should be materialized");
+        let bundle = fs::read_to_string(
+            temp_dir
+                .path()
+                .join("bundles")
+                .join(handle.id.as_str())
+                .join("config.json"),
+        )
+        .expect("bundle config should be readable");
+
+        assert!(vm_config.contains("\"cpus\": 2"));
+        assert!(vm_config.contains("\"ram_mib\": 256"));
+        assert!(bundle.contains("\"limit\": 268435456"));
+    }
+
+    #[test]
+    fn plan_only_start_removes_stale_krun_vm_config_when_cpu_limit_is_unset() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let rootfs = temp_dir.path().join("rootfs");
+        fs::create_dir_all(&rootfs).expect("rootfs directory should exist");
+        let stale_vm_config = krun_vm_config_path(&rootfs);
+        fs::write(&stale_vm_config, "{\"cpus\":4,\"ram_mib\":512}")
+            .expect("stale krun vm config should be seeded");
+        let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        ));
+        let spec = sample_spec_with_rootfs(&rootfs).with_memory_limit_bytes(256 * 1024 * 1024);
+
+        block_on(backend.start(spec)).expect("plan-only start should succeed");
+
+        assert!(
+            !stale_vm_config.exists(),
+            "memory-only starts should remove stale krun vm config so crun uses the OCI memory limit path"
         );
     }
 
@@ -1221,6 +1400,50 @@ mod tests {
     }
 
     #[test]
+    fn start_from_image_plan_only_includes_krun_vm_config_prelude_when_unshare_is_enabled() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
+
+        let mut config = KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        );
+        config.buildah_path = buildah_path;
+        config.use_buildah_unshare = true;
+
+        let backend = KrunSandboxBackend::new(config);
+        let spec = sparse_image_spec("image-with-limits").with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(2)
+                .with_memory_limit_bytes(256 * 1024 * 1024),
+        );
+
+        let launch_plan = backend
+            .plan_start_from_image(&spec, "postgres:16", &OciProcessOverrides::default())
+            .expect("image-backed plan should succeed");
+
+        let script = launch_plan
+            .manifest
+            .conmon_launch
+            .create_command
+            .args
+            .last()
+            .expect("buildah unshare create command should have an inner shell script");
+        assert!(
+            script.contains(".krun_vm.json"),
+            "image-backed unshare create command should materialize /.krun_vm.json: {script}"
+        );
+        assert!(
+            script.contains("\"cpus\":2"),
+            "image-backed unshare create command should carry the requested cpu count: {script}"
+        );
+        assert!(
+            script.contains("\"ram_mib\":256"),
+            "image-backed unshare create command should carry the requested memory limit in MiB: {script}"
+        );
+    }
+
+    #[test]
     fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
@@ -1307,11 +1530,15 @@ mod tests {
     }
 
     fn sample_spec() -> SandboxSpec {
+        sample_spec_with_rootfs(Path::new("/srv/rootfs"))
+    }
+
+    fn sample_spec_with_rootfs(rootfs: &Path) -> SandboxSpec {
         SandboxSpec::new(
             TenantId::new("tenant").expect("tenant id should be valid"),
             "postgres-primary",
             SandboxBackendKind::Krun,
-            SandboxFilesystemSpec::new(Path::new("/srv/rootfs")),
+            SandboxFilesystemSpec::new(rootfs),
             SandboxProcessSpec::new(["/usr/bin/postgres", "-D", "/var/lib/postgresql/data"])
                 .with_env(["PATH=/usr/bin", "PGDATA=/var/lib/postgresql/data"]),
         )
@@ -1367,6 +1594,21 @@ mod tests {
 
     fn sample_image_metadata() -> KrunImageMetadata {
         KrunImageMetadata::default()
+    }
+
+    #[test]
+    fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
+        let error = desired_krun_vm_config(
+            &sample_spec().with_resource_limits(SandboxResourceLimits::default().with_cpu_count(2)),
+        )
+        .expect_err("cpu-only krun resource requests should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cpu_count requires memory_limit_bytes"),
+            "expected actionable validation error, got: {error}"
+        );
     }
 
     fn write_fake_buildah_script(temp_dir: &TempDir) -> (PathBuf, PathBuf) {

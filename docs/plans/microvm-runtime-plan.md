@@ -73,15 +73,22 @@ supports the same conclusion from source.
   bind them explicitly, the krun backend now allocates host ports from a
   backend-owned range, materializes generic `SandboxPortBinding`s, rewrites the
   bundle `krun.port_map`, and publishes those endpoints through the generic
-  sandbox handle. Current verification is unit/plan-only only; Linux-host proof
-  for auto-assigned ports remains outstanding.
+  sandbox handle. Linux-host proof now covers distinct-port allocation,
+  end-to-end TSI reachability, port release on stop, and released-port reuse.
+- `SandboxSpec` now also carries generic `SandboxResourceLimits`
+  (`cpu_count`, `memory_limit_bytes`). The krun backend lowers
+  `memory_limit_bytes` into OCI `linux.resources.memory.limit`, and when an
+  explicit whole-vCPU count is requested it materializes backend-owned
+  `/.krun_vm.json` data (`cpus`, `ram_mib`) so crun's krun handler can call
+  `krun_set_vm_config()`. This path is unit-verified locally but still needs
+  Linux-host promotion before M2 can move to `done`.
 - `vm.rs` currently reports OCI runtime state `"running"` as
   `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
   service readiness: one initial TCP connection was refused before the guest
   service began answering through TSI.
 - The sandbox seam is now generic and stable enough to continue iterating here:
-  `SandboxSpec` carries filesystem, process, and port bindings without leaking
-  krun nouns into the public API.
+  `SandboxSpec` carries filesystem, process, resources, and port bindings
+  without leaking krun nouns into the public API.
 
 ## Current Review Findings
 
@@ -100,7 +107,13 @@ supports the same conclusion from source.
 - Auto-port assignment from image `EXPOSE` is now Linux-verified: the
   `PortManager` allocates distinct host ports from the backend-owned range,
   stopped sandboxes release their ports for reuse, and the auto-assigned ports
-  are reachable via TSI. The remaining M2 work is resource limits only.
+  are reachable via TSI.
+- Resource limits are now implemented and locally unit-verified: generic
+  `SandboxResourceLimits` lower memory into OCI `linux.resources.memory.limit`,
+  and explicit whole-vCPU counts lower through backend-owned `/.krun_vm.json`
+  materialization for both direct-rootfs and image-backed buildah-unshare
+  launches. M2 still cannot move to `done` until that path is proven on a real
+  Linux host.
 - Readiness, startup, and liveness probing remain required follow-on work for
   M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
   but it is not a trustworthy published-endpoint readiness signal.
@@ -151,7 +164,7 @@ All Dockerfile instructions that affect runtime behavior are handled.
 | `ENTRYPOINT` | `Entrypoint` | OCI config.json `process.args` |
 | `ENV` | `Env` | OCI config.json `process.env` + `krun_set_env()` |
 | `WORKDIR` | `WorkingDir` | OCI config.json `process.cwd` |
-| `USER` | `User` | OCI config.json `process.user` (crun handles setuid) |
+| `USER` | `User` | Manifest `image_metadata.user` for future guest-side init drop (bundle stays root for `/dev/kvm`) |
 | `EXPOSE` | `ExposedPorts` | Annotation `krun.port_map` → TSI |
 | `VOLUME` | `Volumes` | virtiofs additional mounts (Phase M3) |
 | `STOPSIGNAL` | `StopSignal` | conmon sends this signal (not always SIGTERM) |
@@ -297,14 +310,18 @@ impl BuildahCli {
 - Generate OCI `config.json` per the runtime spec
 - Set `process.args` from image Entrypoint + Cmd
 - Set `process.env` from image Env + service-level overrides
-- Set `process.user` from image User
-- Set `linux.resources` from service config (memory, CPU)
+- Keep bundle `process.user` at root and store image `User` in backend-owned
+  manifest metadata for future guest-side application
+- Set `linux.resources.memory.limit` from generic `SandboxResourceLimits`
+  memory settings
 - Add annotation `run.oci.handler = "krun"` (selects krun handler in crun)
 - Add annotation `krun.port_map` from ExposedPorts
   (auto-assigned host ports via PortManager)
 - Set `root.path` to the buildah-mounted rootfs path
 - Preserve the configured `StopSignal` in backend-owned launch metadata so
   graceful shutdown uses the image-configured signal
+- Materialize backend-owned `/.krun_vm.json` when explicit whole-vCPU counts
+  are requested so crun's krun handler can call `krun_set_vm_config()`
 
 `crates/neovex-sandbox/src/backends/krun/port_manager.rs`:
 ```rust
@@ -321,6 +338,9 @@ get different host ports (e.g., 15000 and 15001).
 - `run.oci.handler` annotation selects krun handler
 - TSI port mapping annotation is correctly formatted
 - Multiple VMs get unique host port assignments
+- Generic memory limits lower into OCI `linux.resources.memory.limit`
+- Explicit whole-vCPU limits materialize `/.krun_vm.json` with `cpus` and
+  `ram_mib`
 
 ### Phase M3: Lifecycle Management
 
@@ -637,7 +657,7 @@ Developers can use muscle memory.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
-| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved and stored in manifest (bundle forces root for /dev/kvm), image STOPSIGNAL honored, and auto-port-assignment from image EXPOSE now proven end-to-end on Linux: sandbox A gets 15100, sandbox B gets 15101, stop A releases 15100, sandbox C reuses 15100. Guest-side user switching deferred to M3. Remaining M2 work: resource limits only |
+| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved and stored in manifest (bundle forces root for /dev/kvm), image STOPSIGNAL honored, and auto-port-assignment from image EXPOSE now proven end-to-end on Linux: sandbox A gets 15100, sandbox B gets 15101, stop A releases 15100, sandbox C reuses 15100. Local verification also covers generic `SandboxResourceLimits` lowering (`linux.resources.memory.limit` + `/.krun_vm.json` for explicit whole-vCPU counts). M2 remains `in_progress` until Linux host validation proves the resource-limits path end to end. Guest-side user switching deferred to M3 |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
@@ -652,8 +672,10 @@ Developers can use muscle memory.
    mounts. Named volumes need host-side storage managed by neovex.
 3. **conmon log rotation:** Does conmon rotate logs, or does neovex need to
    manage log file size?
-4. **TSI port auto-assignment:** When ports are not explicitly mapped (only
-   `EXPOSE` in Dockerfile), should neovex auto-assign host ports from a pool?
+4. **Compose fractional CPU values:** Compose allows strings like `cpus: "0.5"`
+   while krun ultimately needs whole guest vCPU counts. The compose adapter
+   must decide whether to reject fractional values, round them, or map them to
+   a separate quota abstraction before lowering into `SandboxResourceLimits`.
 5. **`depends_on: condition: service_healthy`:** neovex must start services
    in dependency order and wait for health checks. How to handle circular deps?
 6. **Inter-service networking:** In Compose, `db` resolves to the db
@@ -690,14 +712,28 @@ Before M5, keep verification split across four lanes:
   - `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`
   - `NEOVEX_KRUN_SMOKE_CONMON=$(command -v conmon)`
   - `NEOVEX_KRUN_SMOKE_BUILDAH=$(command -v buildah)`
-- The next Linux promotion should cover a non-root image `USER` and a
-  non-default image `STOPSIGNAL` on a real host so the new M2 lowering path is
-  proven beyond unit tests.
-- The next Linux promotion should also verify an image-backed sandbox that omits
-  explicit port bindings and instead relies on image `EXPOSE` metadata plus the
-  backend-local auto-assigned host-port range.
-- The next meaningful phase is M2/M3. The readiness gap (OCI `"running"` !=
-  service-ready) is the highest-priority follow-on.
+- The next Linux promotion should verify resource limits end to end on a real
+  host:
+  - direct-rootfs sandbox with `memory_limit_bytes=268435456` and
+    `cpu_count=2` writes `/.krun_vm.json` containing `{"cpus":2,"ram_mib":256}`
+    and still boots successfully
+  - image-backed sandbox with the same limits materializes that file through
+    the buildah-unshare create prelude and still reaches TSI-backed HTTP
+    readiness
+  - the generated bundle `config.json` records
+    `linux.resources.memory.limit = 268435456`
+- The required ignored smoke tests for that promotion now exist in
+  `crates/neovex-sandbox/tests/krun_linux_smoke.rs`:
+  - `krun_backend_m2_direct_rootfs_resource_limits_lowering`
+  - `krun_backend_m2_image_backed_resource_limits_lowering`
+- The preferred Linux execution entrypoint for that promotion is now
+  `scripts/verify-microvm-m2-resource-limits-helper.sh`. It reruns the focused
+  local gates, executes both ignored smoke tests with `--nocapture`, and writes
+  durable host-local logs under
+  `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`.
+- After that Linux proof lands, M2 can move to `done` and M3 becomes the next
+  active phase. The readiness gap (OCI `"running"` != service-ready) remains
+  the highest-priority follow-on once M2 closes.
 
 ### End-to-end (after M4)
 
@@ -924,5 +960,42 @@ ss -tlnp | grep 15432                                 # should be empty
   `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
   `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
   `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
-  Auto-port-assignment is now Linux-verified. M2 remains `in_progress` only
-  because resource limits are not yet implemented.
+  Auto-port-assignment is now Linux-verified.
+- 2026-04-12: Implemented the remaining M2 resource-limits seam locally on the
+  macOS development workspace. `SandboxSpec` now carries generic
+  `SandboxResourceLimits` (`cpu_count`, `memory_limit_bytes`) with public
+  builders and facade re-exports. `bundle.rs` now validates those limits and
+  lowers memory into OCI `linux.resources.memory.limit`. `vm.rs` now derives
+  backend-owned `/.krun_vm.json` data (`cpus`, `ram_mib`) for explicit
+  whole-vCPU requests, writes/removes that file directly for local rootfs
+  starts, and injects the same materialization step into the buildah-unshare
+  conmon create path for image-backed sandboxes. Added unit coverage for
+  bundle memory lowering, cpu-without-memory validation, direct-rootfs vm-config
+  write/remove behavior, image-backed unshare prelude generation, and the
+  backend launch-plan seam. Verification:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox` (39 pass).
+  M2 remains `in_progress` because the new resource-limits path is only
+  unit/local-verified; Linux host promotion is still required before this
+  phase can move to `done`.
+- 2026-04-12: Added the Linux-host proof harness for the remaining M2
+  promotion gate. `crates/neovex-sandbox/tests/krun_linux_smoke.rs` now
+  includes:
+  (1) `krun_backend_m2_direct_rootfs_resource_limits_lowering`, which boots a
+  real rootfs-backed BusyBox service with `memory_limit_bytes=268435456` and
+  `cpu_count=2`, then verifies `/.krun_vm.json` contains `{"cpus":2,"ram_mib":256}`,
+  `config.json` records `linux.resources.memory.limit = 268435456`, and the
+  guest responds over TSI;
+  (2) `krun_backend_m2_image_backed_resource_limits_lowering`, which starts an
+  image-backed BusyBox sandbox with the same limits, reads `/.krun_vm.json`
+  back out of the mounted buildah container rootfs via `buildah unshare`,
+  verifies the same bundle memory limit, and confirms TSI-backed HTTP reachability.
+  Added `scripts/verify-microvm-m2-resource-limits-helper.sh` as the checked-in
+  Linux execution entrypoint for those tests; it captures durable logs at
+  `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`.
+  Local verification after adding those host-only tests:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox` (39 pass),
+  `bash -n scripts/verify-microvm-m2-resource-limits-helper.sh`.
