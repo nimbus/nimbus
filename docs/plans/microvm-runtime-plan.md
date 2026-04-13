@@ -97,8 +97,10 @@ supports the same conclusion from source.
   image-configured signal first, waits the stop timeout, then falls back to
   SIGKILL. This was proven with a custom BusyBox image configured with
   `STOPSIGNAL SIGQUIT`.
-- The remaining M2 work is resource limits plus Linux-host verification for
-  auto-assigned ports from image `EXPOSE` metadata.
+- Auto-port assignment from image `EXPOSE` is now Linux-verified: the
+  `PortManager` allocates distinct host ports from the backend-owned range,
+  stopped sandboxes release their ports for reuse, and the auto-assigned ports
+  are reachable via TSI. The remaining M2 work is resource limits only.
 - Readiness, startup, and liveness probing remain required follow-on work for
   M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
   but it is not a trustworthy published-endpoint readiness signal.
@@ -635,7 +637,7 @@ Developers can use muscle memory.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
-| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved to numeric uid:gid and stored in manifest (bundle always uses root for VMM /dev/kvm access), image STOPSIGNAL honored during shutdown (SIGQUIT→timeout→SIGKILL proved with custom image). Backend-local `PortManager` now auto-assigns generic host port bindings from image `EXPOSE` metadata in unit/plan-only tests. Key finding: krun_setuid/krun_setgid don't work in rootless mode, guest-side user switching deferred to M3. Remaining M2 work: resource limits and Linux-host verification for auto-assigned ports |
+| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved and stored in manifest (bundle forces root for /dev/kvm), image STOPSIGNAL honored, and auto-port-assignment from image EXPOSE now proven end-to-end on Linux: sandbox A gets 15100, sandbox B gets 15101, stop A releases 15100, sandbox C reuses 15100. Guest-side user switching deferred to M3. Remaining M2 work: resource limits only |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
@@ -898,3 +900,29 @@ ss -tlnp | grep 15432                                 # should be empty
   Verification: `cargo fmt --all --check`,
   `cargo check -p neovex-sandbox`,
   `cargo test -p neovex-sandbox` (32 pass).
+- 2026-04-13: Ran M2 Linux-host verification for auto-port assignment from image
+  EXPOSE metadata on Debian 13 x86_64. Created a custom BusyBox image with
+  `EXPOSE 8080/tcp` via buildah config/commit. Launched three sandboxes via
+  `start_from_image()` with no explicit `SandboxPortBinding` entries and a
+  backend port range of `15100..=15105`:
+  (1) sandbox A got auto-assigned host port 15100 (first in range), HTTP
+  connectivity confirmed via TSI;
+  (2) sandbox B got auto-assigned host port 15101 (next available, distinct
+  from A), HTTP connectivity confirmed;
+  (3) stopped sandbox A → port 15100 released;
+  (4) sandbox C got auto-assigned host port 15100 (reused A's released port),
+  HTTP connectivity confirmed.
+  This proves: auto-assignment from the backend-owned range, distinct ports for
+  concurrent sandboxes, port release on stop, and port reuse after release —
+  all end-to-end on a real Linux host with real krun VMs and TSI networking.
+  Verification: `cargo fmt --all --check`, `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox` (32 pass),
+  `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
+  (4 pass, ~41s total).
+  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Auto-port-assignment is now Linux-verified. M2 remains `in_progress` only
+  because resource limits are not yet implemented.
