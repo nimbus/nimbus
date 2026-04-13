@@ -22,17 +22,21 @@ pub use neovex_runtime::{
     VerifiedUserIdentityKind,
 };
 pub use neovex_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFilesystemSpec, SandboxHandle, SandboxId, SandboxLifecycleSpec, SandboxPortBinding,
+    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+    SandboxBuildLaunchSpec, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
+    SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxPortBinding,
     SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
 };
 pub use neovex_server::{
-    ConvexRegistry, DEFAULT_LICENSE_PATH, EmptySandboxCatalog, LICENSE_FILE_ENV, LicenseDocument,
-    LicenseEntitlements, LicenseKind, LicenseLoadError, LicenseSnapshot, LicenseSourceInfo,
-    LicenseSourceKind, LicenseState, LicenseStatus, LicenseUsageSnapshot, SandboxCatalog,
-    build_router, build_router_with_convex, build_router_with_convex_and_license,
-    build_router_with_convex_and_license_and_sandbox_catalog,
-    build_router_with_convex_and_sandbox_catalog, build_router_with_license,
+    ConvexRegistry, DEFAULT_LICENSE_PATH, EmptySandboxCatalog, EmptySandboxServiceCatalog,
+    LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
+    LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus,
+    LicenseUsageSnapshot, SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch,
+    SandboxServiceManager, build_router, build_router_with_convex,
+    build_router_with_convex_and_license, build_router_with_convex_and_license_and_sandbox_catalog,
+    build_router_with_convex_and_license_and_sandbox_service_manager,
+    build_router_with_convex_and_sandbox_catalog,
+    build_router_with_convex_and_sandbox_service_manager, build_router_with_license,
     build_router_with_license_and_sandbox_catalog, build_router_with_sandbox_catalog, serve,
     serve_with_convex, serve_with_convex_and_license, serve_with_license,
 };

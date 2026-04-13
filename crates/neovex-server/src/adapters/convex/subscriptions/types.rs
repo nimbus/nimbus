@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use neovex_runtime::InvocationServices;
 
 #[derive(Debug, Clone)]
 pub(in crate::adapters::convex) enum ConvexSubscriptionTransform {
@@ -14,6 +15,7 @@ pub(in crate::adapters::convex) enum ConvexSubscriptionTransform {
         name: String,
         args: Value,
         auth: Option<InvocationAuth>,
+        services: InvocationServices,
         read_set: Option<RuntimeReadSet>,
         last_value: Option<Arc<Value>>,
     },
@@ -23,6 +25,7 @@ pub(in crate::adapters::convex) enum ConvexSubscriptionTransform {
         page_size: usize,
         cursor: Option<String>,
         auth: Option<InvocationAuth>,
+        services: InvocationServices,
         read_set: Option<RuntimeReadSet>,
         last_value: Option<Arc<Value>>,
     },
@@ -71,6 +74,7 @@ pub(in crate::adapters::convex) enum ConvexClientMessage {
 mod tests {
     use std::sync::Arc;
 
+    use neovex_runtime::InvocationServices;
     use serde_json::json;
 
     use super::ConvexSubscriptionTransform;
@@ -85,6 +89,7 @@ mod tests {
             name: "messages:list".to_string(),
             args: json!({}),
             auth: None,
+            services: InvocationServices::default(),
             read_set: None,
             last_value: Some(last_value.clone()),
         };

@@ -52,6 +52,8 @@ pub(in crate::adapters::convex) enum ConvexHostCallOperation {
     CtxSchedulerRunAt,
     #[serde(rename = "convex.ctx.scheduler.cancel")]
     CtxSchedulerCancel,
+    #[serde(rename = "convex.ctx.service.lookup")]
+    CtxServiceLookup,
     #[serde(rename = "convex.ctx.runtime.enter_nested_call")]
     CtxRuntimeEnterNestedCall,
 }
@@ -83,6 +85,7 @@ impl ConvexHostCallOperation {
             Self::CtxSchedulerRunAfter => "convex.ctx.scheduler.run_after",
             Self::CtxSchedulerRunAt => "convex.ctx.scheduler.run_at",
             Self::CtxSchedulerCancel => "convex.ctx.scheduler.cancel",
+            Self::CtxServiceLookup => "convex.ctx.service.lookup",
             Self::CtxRuntimeEnterNestedCall => "convex.ctx.runtime.enter_nested_call",
         }
     }
@@ -115,6 +118,7 @@ impl From<HostCallOperation> for ConvexHostCallOperation {
             HostCallOperation::CtxSchedulerRunAfter => Self::CtxSchedulerRunAfter,
             HostCallOperation::CtxSchedulerRunAt => Self::CtxSchedulerRunAt,
             HostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
+            HostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             HostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
         }
     }
@@ -147,6 +151,7 @@ impl From<ConvexHostCallOperation> for HostCallOperation {
             ConvexHostCallOperation::CtxSchedulerRunAfter => Self::CtxSchedulerRunAfter,
             ConvexHostCallOperation::CtxSchedulerRunAt => Self::CtxSchedulerRunAt,
             ConvexHostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
+            ConvexHostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             ConvexHostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
         }
     }

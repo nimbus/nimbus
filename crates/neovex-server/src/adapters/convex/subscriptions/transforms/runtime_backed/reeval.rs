@@ -1,7 +1,9 @@
 use std::sync::{Arc, RwLock};
 
 use neovex_core::{Error, Page, TenantId};
-use neovex_runtime::{HostCallCancellation, InvocationAuth, InvocationKind, InvocationRequest};
+use neovex_runtime::{
+    HostCallCancellation, InvocationAuth, InvocationKind, InvocationRequest, InvocationServices,
+};
 use serde_json::Value;
 
 use super::super::super::types::{ConvexSubscriptionTransform, ConvexSubscriptionTransforms};
@@ -12,10 +14,12 @@ use crate::adapters::convex::execution::{
 };
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
 use crate::execution::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
+use crate::service_registry::RuntimeServiceRegistry;
 
 pub(super) struct RuntimeTransformContext<'a> {
     service: &'a Arc<neovex_engine::Service>,
     registry: &'a Arc<ConvexRegistry>,
+    runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
     tenant_id: &'a TenantId,
     transforms: &'a RwLock<ConvexSubscriptionTransforms>,
     runtime_cancellation: &'a HostCallCancellation,
@@ -26,6 +30,7 @@ impl<'a> RuntimeTransformContext<'a> {
     pub(super) fn new(
         service: &'a Arc<neovex_engine::Service>,
         registry: &'a Arc<ConvexRegistry>,
+        runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
         tenant_id: &'a TenantId,
         transforms: &'a RwLock<ConvexSubscriptionTransforms>,
         runtime_cancellation: &'a HostCallCancellation,
@@ -34,6 +39,7 @@ impl<'a> RuntimeTransformContext<'a> {
         Self {
             service,
             registry,
+            runtime_service_registry,
             tenant_id,
             transforms,
             runtime_cancellation,
@@ -46,6 +52,7 @@ pub(super) struct RuntimeNamedQueryTransform {
     pub(super) name: String,
     pub(super) args: Value,
     pub(super) auth: Option<InvocationAuth>,
+    pub(super) services: InvocationServices,
     pub(super) read_set: Option<RuntimeReadSet>,
     pub(super) last_value: Option<Arc<Value>>,
 }
@@ -56,6 +63,7 @@ pub(super) struct RuntimeNamedPaginatedQueryTransform {
     pub(super) page_size: usize,
     pub(super) cursor: Option<String>,
     pub(super) auth: Option<InvocationAuth>,
+    pub(super) services: InvocationServices,
     pub(super) read_set: Option<RuntimeReadSet>,
     pub(super) last_value: Option<Arc<Value>>,
 }
@@ -71,6 +79,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
     let result = match invoke_named_convex_function_with_trace_async_cancellable(
         context.service,
         context.registry,
+        &context.runtime_service_registry,
         context.tenant_id,
         InvocationRequest {
             kind: InvocationKind::Query,
@@ -79,6 +88,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
             page_size: None,
             cursor: None,
             auth: transform.auth.clone(),
+            services: transform.services.clone(),
         },
         context.runtime_cancellation.clone(),
         Some(next_runtime_subscription_server_request_id(
@@ -104,6 +114,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
             name: transform.name,
             args: transform.args,
             auth: transform.auth,
+            services: transform.services,
             read_set: Some(new_read_set),
             last_value: Some(value.clone()),
         },
@@ -122,6 +133,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
     let result = match invoke_named_convex_function_with_trace_async_cancellable(
         context.service,
         context.registry,
+        &context.runtime_service_registry,
         context.tenant_id,
         InvocationRequest {
             kind: InvocationKind::PaginatedQuery,
@@ -130,6 +142,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
             page_size: Some(transform.page_size),
             cursor: transform.cursor.clone(),
             auth: transform.auth.clone(),
+            services: transform.services.clone(),
         },
         context.runtime_cancellation.clone(),
         Some(next_runtime_subscription_server_request_id(
@@ -161,6 +174,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
             page_size: transform.page_size,
             cursor: transform.cursor,
             auth: transform.auth,
+            services: transform.services,
             read_set: Some(new_read_set),
             last_value: Some(value.clone()),
         },

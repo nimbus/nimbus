@@ -10,6 +10,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
     invoke_runtime_bundle_on_worker_with_host_state,
 };
+use crate::service_registry::RuntimeServiceRegistry;
 
 use super::super::super::runtime_error_to_core;
 use super::super::required_runtime_bundle;
@@ -17,6 +18,7 @@ use super::super::required_runtime_bundle;
 pub(in crate::adapters::convex) async fn invoke_named_convex_function_async_cancellable(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
+    runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
     tenant_id: &TenantId,
     request: InvocationRequest,
     cancellation: HostCallCancellation,
@@ -25,6 +27,7 @@ pub(in crate::adapters::convex) async fn invoke_named_convex_function_async_canc
     invoke_named_convex_function_with_trace_async_cancellable(
         service,
         registry,
+        runtime_service_registry,
         tenant_id,
         request,
         cancellation,
@@ -37,6 +40,7 @@ pub(in crate::adapters::convex) async fn invoke_named_convex_function_async_canc
 pub(in crate::adapters::convex) async fn invoke_named_convex_function_with_trace_async_cancellable(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
+    runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
     tenant_id: &TenantId,
     request: InvocationRequest,
     cancellation: HostCallCancellation,
@@ -49,6 +53,8 @@ pub(in crate::adapters::convex) async fn invoke_named_convex_function_with_trace
         registry.clone(),
         tenant_id.clone(),
         request.auth.clone(),
+        request.services.clone(),
+        runtime_service_registry.clone(),
         normalize_principal_context(request.auth.as_ref()),
         server_request_id.clone(),
         invocation_kind.clone(),

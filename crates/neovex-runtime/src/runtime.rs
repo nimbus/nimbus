@@ -32,8 +32,9 @@ pub(crate) use self::bundle::RuntimeBundleIdentity;
 #[cfg(test)]
 use self::helpers::deserialize_json_value;
 pub use self::invocation::{
-    InvocationAuth, InvocationKind, InvocationRequest, RuntimeUserIdentity, VerifiedUserIdentity,
-    VerifiedUserIdentityKind,
+    InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,
+    InvocationServiceEndpoint, InvocationServiceProtocol, InvocationServices, RuntimeUserIdentity,
+    VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 
 #[derive(Clone)]

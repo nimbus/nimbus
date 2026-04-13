@@ -103,6 +103,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         transforms.clone(),
         state.service.clone(),
         convex_registry.clone(),
+        state.runtime_service_registry(),
         tenant_id.clone(),
         runtime_cancellation.clone(),
     ));

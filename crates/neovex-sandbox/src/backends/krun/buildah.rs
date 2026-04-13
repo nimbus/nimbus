@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::command::CommandSpec;
 use crate::error::{Result, SandboxError};
-use crate::spec::{SandboxFilesystemSpec, SandboxProcessSpec};
+use crate::spec::{SandboxFilesystemSpec, SandboxImageProcessOverrides, SandboxProcessSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildahCli {
@@ -196,7 +196,7 @@ impl BuildahCli {
         &self,
         container_name: &str,
         image_reference: &str,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedImageLaunch> {
         let container = self.pull(container_name, image_reference)?;
         self.prepare_launch_for_container(container, overrides)
@@ -208,7 +208,7 @@ impl BuildahCli {
         container_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedImageLaunch> {
         let container = self.build(image_name, container_name, dockerfile_path, context_path)?;
         self.prepare_launch_for_container(container, overrides)
@@ -267,7 +267,7 @@ impl BuildahCli {
     fn prepare_launch_for_container(
         &self,
         container: BuildahContainer,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedImageLaunch> {
         let rootfs = self.mount_container(&container.container_name)?;
         let image_config = self.inspect_container(&container.container_name)?;
@@ -464,15 +464,6 @@ pub struct OciImageLaunchDefaults {
     pub stop_signal: Option<String>,
     pub healthcheck: Option<ImageHealthcheck>,
     pub labels: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OciProcessOverrides {
-    pub entrypoint: Option<Vec<String>>,
-    pub cmd: Option<Vec<String>>,
-    pub env: Vec<String>,
-    pub cwd: Option<PathBuf>,
-    pub terminal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -757,7 +748,7 @@ impl OciImageConfig {
 
     pub fn resolve_process_spec(
         &self,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<SandboxProcessSpec> {
         let entrypoint = overrides
             .entrypoint
@@ -794,7 +785,7 @@ impl OciImageConfig {
     pub fn resolve_launch_defaults(
         &self,
         rootfs: impl Into<PathBuf>,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<OciImageLaunchDefaults> {
         Ok(OciImageLaunchDefaults {
             filesystem: SandboxFilesystemSpec::new(rootfs),
@@ -939,9 +930,10 @@ mod tests {
 
     use super::{
         BuildahCli, OciExposedPort, OciExposedPortProtocol, OciImageConfig, OciImageLaunchDefaults,
-        OciProcessOverrides, parse_inspect_output,
+        parse_inspect_output,
     };
     use crate::backends::krun::command::CommandSpec;
+    use crate::spec::SandboxImageProcessOverrides;
 
     #[test]
     fn wrap_unshare_prefixes_existing_command() {
@@ -1048,7 +1040,7 @@ mod tests {
             .expect("sample inspect output should parse");
 
         let process = config
-            .resolve_process_spec(&OciProcessOverrides::default())
+            .resolve_process_spec(&SandboxImageProcessOverrides::default())
             .expect("image defaults should lower into a process spec");
 
         assert_eq!(
@@ -1075,7 +1067,7 @@ mod tests {
             .expect("sample inspect output should parse");
 
         let process = config
-            .resolve_process_spec(&OciProcessOverrides {
+            .resolve_process_spec(&SandboxImageProcessOverrides {
                 entrypoint: Some(vec!["/bin/sh".to_owned(), "-lc".to_owned()]),
                 cmd: Some(vec!["exec custom-api".to_owned()]),
                 env: vec!["POSTGRES_DB=app".to_owned(), "LOG_LEVEL=debug".to_owned()],
@@ -1120,7 +1112,7 @@ mod tests {
         };
 
         let error = config
-            .resolve_process_spec(&OciProcessOverrides::default())
+            .resolve_process_spec(&SandboxImageProcessOverrides::default())
             .expect_err("missing command should be rejected");
         assert!(
             error
@@ -1193,10 +1185,10 @@ mod tests {
         let defaults = config
             .resolve_launch_defaults(
                 "/srv/rootfs",
-                &OciProcessOverrides {
+                &SandboxImageProcessOverrides {
                     cmd: Some(vec!["serve".to_owned()]),
                     env: vec!["SERVICE_MODE=foreground".to_owned()],
-                    ..OciProcessOverrides::default()
+                    ..SandboxImageProcessOverrides::default()
                 },
             )
             .expect("launch defaults should resolve");
@@ -1300,10 +1292,10 @@ mod tests {
             .prepare_image_launch(
                 "postgres-working",
                 "postgres:16",
-                &OciProcessOverrides {
+                &SandboxImageProcessOverrides {
                     env: vec!["PGPORT=5432".to_owned()],
                     cwd: Some(PathBuf::from("/workspace")),
-                    ..OciProcessOverrides::default()
+                    ..SandboxImageProcessOverrides::default()
                 },
             )
             .expect("prepared launch should succeed");
@@ -1386,7 +1378,7 @@ mod tests {
                 "api-working",
                 Path::new("/workspace/Dockerfile"),
                 Path::new("/workspace"),
-                &OciProcessOverrides::default(),
+                &SandboxImageProcessOverrides::default(),
             )
             .expect("prepared built launch should succeed");
 

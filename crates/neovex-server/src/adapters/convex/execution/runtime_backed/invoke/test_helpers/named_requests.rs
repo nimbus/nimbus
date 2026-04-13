@@ -32,6 +32,7 @@ pub(in crate::adapters::convex) fn execute_named_query_request(
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         );
     }
@@ -57,6 +58,7 @@ pub(in crate::adapters::convex) fn execute_named_paginated_query_request(
                 page_size: Some(request.page_size),
                 cursor: request.cursor,
                 auth: None,
+                services: Default::default(),
             },
         )?;
         return serde_json::from_value(value)
@@ -92,6 +94,7 @@ pub(in crate::adapters::convex) fn execute_named_mutation_request(
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         );
     }
@@ -123,6 +126,7 @@ pub(in crate::adapters::convex) fn execute_named_action_request(
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         );
     }

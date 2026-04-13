@@ -10,6 +10,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
     invoke_runtime_bundle_blocking_with_host_state,
 };
+use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
 
 use super::super::super::required_runtime_bundle;
 use super::super::super::runtime_error_to_core;
@@ -47,6 +48,9 @@ fn invoke_named_convex_function_with_trace_cancellable(
     request: InvocationRequest,
     cancellation: HostCallCancellation,
 ) -> Result<(Value, RuntimeReadSet), Error> {
+    let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
+        SandboxCatalogRuntimeServiceRegistry::new(Arc::new(crate::EmptySandboxCatalog)),
+    );
     let bundle = required_runtime_bundle(registry)?;
     let invocation_kind = request.kind.clone();
     let bridge = Arc::new(ConvexHostBridge::new_with_invocation_kind(
@@ -54,6 +58,8 @@ fn invoke_named_convex_function_with_trace_cancellable(
         registry.clone(),
         tenant_id.clone(),
         request.auth.clone(),
+        request.services.clone(),
+        runtime_service_registry,
         normalize_principal_context(request.auth.as_ref()),
         None,
         invocation_kind.clone(),
@@ -89,9 +95,13 @@ async fn invoke_named_convex_function_with_trace_async(
     tenant_id: &TenantId,
     request: InvocationRequest,
 ) -> Result<(Value, RuntimeReadSet), Error> {
+    let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
+        SandboxCatalogRuntimeServiceRegistry::new(Arc::new(crate::EmptySandboxCatalog)),
+    );
     invoke_named_convex_function_with_trace_async_cancellable(
         service,
         registry,
+        &runtime_service_registry,
         tenant_id,
         request,
         HostCallCancellation::default(),

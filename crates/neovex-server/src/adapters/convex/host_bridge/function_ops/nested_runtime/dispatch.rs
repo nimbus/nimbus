@@ -175,6 +175,7 @@ impl ConvexHostBridge {
             page_size: None,
             cursor: None,
             auth,
+            services: self.services.clone(),
         };
         let response = invoke_runtime_bundle_on_worker_with_host(
             &self.registry.runtime_executor(),
@@ -241,6 +242,7 @@ impl ConvexHostBridge {
             page_size: None,
             cursor: None,
             auth,
+            services: self.services.clone(),
         };
         let response = invoke_runtime_bundle_blocking_with_host(
             &self.registry.runtime_executor(),

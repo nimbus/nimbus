@@ -29,6 +29,7 @@ pub use metrics::{
     RuntimeMetricsSnapshot, RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
 };
 pub use runtime::{
-    InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntime, RuntimeBundle,
-    RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+    InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,
+    InvocationServiceEndpoint, InvocationServiceProtocol, InvocationServices, NeovexRuntime,
+    RuntimeBundle, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };

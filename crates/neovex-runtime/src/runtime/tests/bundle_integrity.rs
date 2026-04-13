@@ -50,6 +50,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -99,6 +100,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -155,6 +157,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -208,6 +211,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     assert_eq!(bundle.module_code_cache_entry_count(), 0);
@@ -353,6 +357,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     let first_result = runtime
@@ -451,6 +456,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     let first_result = runtime
@@ -550,6 +556,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     assert_eq!(canonical_bundle.identity(), dot_path_bundle.identity());

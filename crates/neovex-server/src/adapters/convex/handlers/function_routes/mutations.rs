@@ -21,6 +21,7 @@ pub(crate) async fn mutation(
             invoke_named_convex_function_async_cancellable(
                 &service,
                 &registry,
+                &state.runtime_service_registry(),
                 &tenant_id,
                 InvocationRequest {
                     kind: InvocationKind::Mutation,
@@ -29,6 +30,9 @@ pub(crate) async fn mutation(
                     page_size: None,
                     cursor: None,
                     auth: auth.clone(),
+                    services: state
+                        .runtime_service_registry()
+                        .snapshot_for_tenant(&tenant_id),
                 },
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-mutation")),

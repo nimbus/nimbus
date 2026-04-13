@@ -37,6 +37,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     let first = invoke_on_single_worker(&executor, runtime.clone(), &bundle, request.clone())
@@ -94,6 +95,7 @@ export {};
             page_size: None,
             cursor: None,
             auth: Some(test_invocation_auth("token-1")),
+            services: Default::default(),
         },
     )
     .await
@@ -109,6 +111,7 @@ export {};
             page_size: None,
             cursor: None,
             auth: Some(test_invocation_auth("token-2")),
+            services: Default::default(),
         },
     )
     .await
@@ -162,6 +165,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
     let runtime_owner = NeovexRuntime::with_policy(
         Arc::new(AsyncEchoHost),

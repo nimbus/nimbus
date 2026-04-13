@@ -9,6 +9,8 @@ use tower_http::services::ServeDir;
 use crate::adapters::convex::{self, ConvexRegistry};
 use crate::license::LicenseState;
 use crate::sandbox::{EmptySandboxCatalog, SandboxCatalog};
+use crate::service_manager::SandboxServiceManager;
+use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
 use crate::state::AppState;
 use crate::{http, ws};
 
@@ -46,12 +48,11 @@ pub fn build_router_with_license_and_sandbox_catalog(
     license_state: LicenseState,
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> Router {
-    let state = Arc::new(AppState::with_license_state_and_sandbox_catalog(
+    let state = Arc::new(AppState::with_license_state_and_runtime_service_registry(
         service,
         license_state,
-        sandbox_catalog,
+        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog)),
     ));
-    let _sandbox_catalog = state.sandbox_catalog();
     build_core_router()
         .layer(build_cors_layer())
         .with_state(state)
@@ -80,6 +81,21 @@ pub fn build_router_with_convex_and_sandbox_catalog(
     )
 }
 
+/// Builds the Neovex HTTP/WebSocket router with Convex support enabled and a
+/// server-owned sandbox service manager capable of start-on-first-reference activation.
+pub fn build_router_with_convex_and_sandbox_service_manager(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    sandbox_service_manager: Arc<SandboxServiceManager>,
+) -> Router {
+    build_router_with_convex_and_license_and_sandbox_service_manager(
+        service,
+        convex_registry,
+        LicenseState::community(),
+        sandbox_service_manager,
+    )
+}
+
 /// Builds the Neovex HTTP/WebSocket router with Convex support and an explicit license state.
 pub fn build_router_with_convex_and_license(
     service: Arc<Service>,
@@ -94,6 +110,23 @@ pub fn build_router_with_convex_and_license(
     )
 }
 
+/// Builds the Neovex HTTP/WebSocket router with Convex support, license state,
+/// and a server-owned sandbox service manager.
+pub fn build_router_with_convex_and_license_and_sandbox_service_manager(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    license_state: LicenseState,
+    sandbox_service_manager: Arc<SandboxServiceManager>,
+) -> Router {
+    let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = sandbox_service_manager;
+    build_router_with_convex_and_license_and_runtime_service_registry(
+        service,
+        convex_registry,
+        license_state,
+        runtime_service_registry,
+    )
+}
+
 /// Builds the Neovex HTTP/WebSocket router with Convex support, license state, and sandbox catalog.
 pub fn build_router_with_convex_and_license_and_sandbox_catalog(
     service: Arc<Service>,
@@ -101,15 +134,42 @@ pub fn build_router_with_convex_and_license_and_sandbox_catalog(
     license_state: LicenseState,
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> Router {
+    build_router_with_convex_and_license_and_runtime_service_registry(
+        service,
+        convex_registry,
+        license_state,
+        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog)),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn build_router_with_convex_and_runtime_service_registry(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+) -> Router {
+    build_router_with_convex_and_license_and_runtime_service_registry(
+        service,
+        convex_registry,
+        LicenseState::community(),
+        runtime_service_registry,
+    )
+}
+
+pub(crate) fn build_router_with_convex_and_license_and_runtime_service_registry(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    license_state: LicenseState,
+    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+) -> Router {
     let state = Arc::new(
-        AppState::with_convex_registry_and_license_state_and_sandbox_catalog(
+        AppState::with_convex_registry_and_license_state_and_runtime_service_registry(
             service,
             convex_registry,
             license_state,
-            sandbox_catalog,
+            runtime_service_registry,
         ),
     );
-    let _sandbox_catalog = state.sandbox_catalog();
     build_core_router()
         .merge(build_convex_router())
         .layer(build_cors_layer())

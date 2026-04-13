@@ -43,3 +43,10 @@ pub(in crate::adapters::convex) struct ConvexRuntimeFunctionCallPayload {
     #[serde(default)]
     pub(in crate::adapters::convex) auth: Option<InvocationAuth>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub(in crate::adapters::convex) struct ConvexRuntimeServiceLookupPayload {
+    pub(in crate::adapters::convex) service_name: String,
+    #[serde(default)]
+    pub(in crate::adapters::convex) session_id: Option<String>,
+}

@@ -155,6 +155,7 @@ fn benchmark_request() -> InvocationRequest {
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     }
 }
 

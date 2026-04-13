@@ -14,6 +14,7 @@ use super::super::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope}
 use super::fixture::host_bridge_fixture;
 use super::*;
 use crate::adapters::convex::normalize_principal_context;
+use crate::service_registry::SandboxCatalogRuntimeServiceRegistry;
 
 fn messages_table() -> TableName {
     TableName::new("messages").expect("table name should be valid")
@@ -116,6 +117,10 @@ fn mutation_bridge(
         registry,
         tenant_id,
         None,
+        Default::default(),
+        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+            crate::EmptySandboxCatalog,
+        ))),
         principal,
         None,
         InvocationKind::Mutation,
@@ -270,6 +275,10 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
         Arc::new(ConvexRegistry::empty()),
         tenant_id.clone(),
         Some(auth.clone()),
+        Default::default(),
+        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+            crate::EmptySandboxCatalog,
+        ))),
         normalize_principal_context(Some(&auth)),
         None,
     );

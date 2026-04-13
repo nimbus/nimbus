@@ -130,9 +130,39 @@ supports the same conclusion from source.
   Key finding: virtiofs in rootless krun VMs maps guest uid through the host
   user namespace, so non-root guests cannot write to the rootfs overlay;
   proof was captured via stderr/ctr.log instead of rootfs files.
-- The sandbox seam is now generic and stable enough to continue iterating here:
-  `SandboxSpec` carries filesystem, process, resources, and port bindings
-  without leaking krun nouns into the public API.
+- `neovex-server` now owns the M4 service-registry seam. `SandboxCatalog`
+  lists tenant sandboxes, `service_registry.rs` projects ready sandboxes'
+  published endpoints into serializable `InvocationServices`, and runtime
+  invocations carry that snapshot into V8 as `ctx.services.*`. The same server
+  seam now also handles lazy lookup for missing service names through an
+  internal `RuntimeServiceRegistry` plus a sync host op, caching successful
+  resolutions for the life of the invocation while keeping nested runtime calls
+  and runtime-subscription re-evaluation on the same composition root.
+- The M4 registry seam now has an explicit activation-capable blocking hook:
+  `RuntimeServiceRegistry::ensure_service_binding(...)`. `ctx.services`
+  property access still uses a sync host op, but that op now routes through the
+  blocking `ensure` boundary rather than the immediate `resolve` path. The
+  default sandbox-catalog implementation still returns only already-ready
+  bindings, while tests now prove a registry can block once for readiness and
+  still benefit from per-invocation `ctx.services` caching.
+- The sandbox seam now exposes generic source-specific launch nouns alongside
+  `SandboxSpec`: `SandboxImageLaunchSpec`, `SandboxBuildLaunchSpec`, and
+  `SandboxImageProcessOverrides` are public `neovex-sandbox` types, and
+  `SandboxBackend` now has matching `start_from_image(...)` /
+  `start_from_build(...)` entrypoints. `SandboxSpec` remains the resolved
+  filesystem/process/resources/port intent instead of being overloaded with
+  image/build-source concerns, so krun-specific image launch is no longer
+  trapped behind backend-local public types.
+- M4 now has a real server-owned manager implementation, not just a registry
+  seam. `neovex-server` exports `SandboxServiceManager` plus
+  `SandboxServiceCatalog` / `SandboxServiceLaunch` nouns, and the manager owns
+  declared sandbox-backed services, starts them through the generic
+  `SandboxBackend` entrypoints on first `ctx.services.<name>` access, polls for
+  readiness behind `ensure_service_binding(...)`, and then reuses the active
+  handle for later snapshots/lookups. Local router proof (2026-04-13): a
+  declared `db` service starts exactly once through a fake backend, waits for
+  readiness, returns port `15432`, remains visible in later snapshots, and is
+  stopped when the tenant is deleted through the HTTP API.
 
 ## Current Review Findings
 
@@ -187,12 +217,50 @@ supports the same conclusion from source.
   through the existing inspect-driven restart path. Linux-verified (2026-04-13):
   a sandbox with `OnFailure { max_restarts: 2 }` that exits 42 twice takes
   ~10s total (visible backoff), reaches `Ready` on port 18088 on third boot.
+- The first two M4 slices are now implemented and locally verified: V8 gets a
+  `ctx.services` view sourced from the server-owned runtime service registry,
+  nested runtime calls preserve the same invocation snapshot, and missing
+  service names now resolve lazily on first property access through a sync host
+  op backed by `RuntimeServiceRegistry`. Successful lookups are cached for the
+  remainder of the invocation. The next local M4 slice now proves that the
+  same sync host op can wait on a registry-provided `ensure_service_binding`
+  implementation, so the blocking boundary for future service activation is
+  explicit. The follow-on M4 slice now lands a real server-owned
+  `SandboxServiceManager`, so the remaining gap is no longer "invent a
+  service manager" but "prove that manager against a real krun-backed service
+  on Linux and validate teardown/cleanup semantics."
+- M4 now has a concrete sync/async design constraint: `ctx.services.<name>` is
+  synchronous property access inside V8, while sandbox launch is currently
+  asynchronous (`SandboxBackend::start(...) -> Future`). That means the new
+  lazy lookup seam is suitable for resolution, but true "start on first
+  reference" cannot be added casually without choosing where blocking is
+  allowed or introducing a higher-level activation boundary. The current local
+  design chooses the runtime service registry as that blocking boundary via
+  `ensure_service_binding(...)`. `SandboxServiceManager` now implements that
+  boundary locally; what remains is operational proof with a real krun-backed
+  service plus manager-owned stop/cleanup validation.
+- The generic sandbox API now has a cleaner multi-source launch boundary:
+  `SandboxSpec` stays the common resolved runtime intent, while image/build
+  source data lives in `SandboxImageLaunchSpec` / `SandboxBuildLaunchSpec`.
+  This is preferable to stuffing image/build concerns into `SandboxSpec`
+  because the service manager still needs image-default merging and process
+  override semantics before a runnable sandbox spec exists. Local proof now
+  covers both image-backed and build-backed launches through the public
+  `SandboxBackend` trait surface.
+- The service-manager design is now explicit in code: `neovex-server`
+  separates declared services (`SandboxServiceCatalog` / `SandboxServiceLaunch`)
+  from active handles (`SandboxCatalog`), validates tenant/service/backend
+  alignment before start, and reuses active handles once a service has been
+  activated. Local proof covers manager-level activation, router-level
+  `ctx.services` startup, and tenant-delete stop/cleanup with a fake backend.
+  Remaining M4 work is Linux-host end-to-end proof with a real krun-backed
+  service under the manager.
 - Upstream source review confirmed libkrun's built-in guest init does **not**
   parse or apply OCI `user`; it only consumes env, args/Cmd, WorkingDir/Cwd,
   and Entrypoint from `/.krun_config.json`. That means guest-side user
   switching needs an explicit helper/wrapper seam rather than another host-side
-  crun patch. The local implementation now follows that architecture; Linux
-  verification is the remaining step.
+  crun patch. The local implementation now follows that architecture, and Linux
+  verification is complete.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -262,7 +330,7 @@ SIGQUIT during shutdown.
 crates/
   neovex-sandbox/             # NEW: isolation/orchestration crate
     src/
-      lib.rs                  # SandboxManager, public API
+      lib.rs                  # Stable sandbox API, launch specs, handles
       spec.rs                 # SandboxSpec / service-level launch config
       instance.rs             # SandboxHandle / published endpoints
       backends/
@@ -500,10 +568,12 @@ neovex requests stop
 **Goal:** V8 isolates can access VM services.
 
 **Scope:**
-- `SandboxManager` in `neovex-sandbox/src/lib.rs`: sandbox lifecycle and
-  published-endpoint access
-- `neovex-server` owns the service registry and `ctx.services.<name>` projection
-  so the sandbox crate does not become a second server layer
+- `neovex-sandbox` owns the generic backend and launch nouns
+  (`SandboxSpec`, `SandboxImageLaunchSpec`, `SandboxBuildLaunchSpec`,
+  `SandboxBackend`)
+- `neovex-server` owns the service manager, service registry, and
+  `ctx.services.<name>` projection so the sandbox crate does not become a
+  second server layer
 - V8 adapter wiring exposes `ctx.services.<name>.port` from the server-managed
   service registry
 - V8 connects to services via standard TCP (through TSI)
@@ -735,7 +805,7 @@ Developers can use muscle memory.
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
 | M3: Lifecycle management | `done` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is Linux-verified via a statically-linked guest helper that drops to image uid:gid (www-data 33:33 proven via ctr.log). Key finding: virtiofs in rootless krun VMs maps guest uid through host user namespace so non-root guests cannot write to the rootfs overlay |
-| M4: Engine integration | `in_progress` | M3 | server-owned service registry + V8 access |
+| M4: Engine integration | `in_progress` | M3 | local slices landed: server-owned service-registry projection to `ctx.services.*`, lazy per-name lookup/caching, an activation-capable blocking `ensure_service_binding(...)` seam, generic sandbox image/build launch entrypoints on `SandboxBackend`, and a server-owned `SandboxServiceManager` that starts declared services on first reference and stops them on tenant deletion in local tests. A checked-in ignored Linux-host smoke lane now exists for the real krun-backed manager path; remaining work is executing that lane successfully on Linux and recording the evidence |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
 ---
@@ -758,6 +828,14 @@ Developers can use muscle memory.
    service's IP. With TSI, services connect via `localhost:port`. How do we
    handle service names in connection strings (e.g., `DATABASE_URL=postgres://db:5432`)?
    Options: rewrite env vars, inject /etc/hosts, or require explicit ports.
+7. **Service activation semantics:** The server-owned `SandboxServiceManager`
+   now proves that `ctx.services.<name>` can start a declared sandbox on first
+   reference through the blocking `ensure_service_binding(...)` seam, and the
+   HTTP tenant-delete route now proves manager-owned sandboxes are stopped on
+   teardown in local tests. The remaining open questions are operational:
+   how real service definitions are sourced outside tests and what Linux-host
+   evidence is required before calling the manager production-ready with a real
+   krun-backed workload.
 
 ---
 
@@ -795,8 +873,8 @@ Before M5, keep verification split across four lanes:
   - image-backed: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
     `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18084
   - Logs at `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
-- M3 is now the active phase. Startup-readiness, liveness, restart policy, and
-  restart backoff are Linux-verified.
+- **M3 is complete** (2026-04-13). Startup-readiness, liveness, restart
+  policy, restart backoff, and guest-side user switching are all Linux-verified.
 - **M3 startup-readiness gate Linux-verified** (2026-04-13): the
   `krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints` smoke
   test passes on Debian 13. A delayed-start BusyBox httpd sandbox initially
@@ -815,21 +893,57 @@ Before M5, keep verification split across four lanes:
   boot, is restarted by the backend, and reaches `Ready` on host port 18087
   with `restart_count == 1` and `last_exit_code == 42` recorded in the
   manifest.
-- The next active M3 item is guest-side user switching. Before running the
-  smoke, build the helper on the Linux host:
-  - `helper_root="$(bash scripts/build-neovex-guest-user-switch.sh)"`
-  - export `NEOVEX_KRUN_GUEST_USER_HELPER_ROOT="$helper_root"`
-- The checked-in ignored smoke is
-  `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest`:
-  - it builds a BusyBox-derived image with `USER www-data`
-  - the backend should keep bundle `process.user` at `0:0` for `/dev/kvm`
-  - the guest helper should drop the actual workload to uid/gid `33:33`
-  - the guest should write `/.neovex-m3-user-uid` and `/.neovex-m3-user-gid`
-    inside the image rootfs, both containing `33`
-  - the sandbox should still reach `Ready` and answer HTTP on host port `18089`
-  - bundle evidence should show `process.args[0] =
-    "/.neovex/neovex-guest-user-switch"`
-  - manifest evidence should continue to preserve `image_metadata.user`
+- **M3 guest-user-switch Linux-verified** (2026-04-13): the
+  `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest` smoke
+  test passes on Debian 13. Key evidence:
+  - helper root: `/tmp/neovex-guest-user-switch-root`
+  - bundle `process.user` stays root (`uid: 0`, `gid: 0`) for `/dev/kvm`
+  - bundle `process.args[0] = "/.neovex/neovex-guest-user-switch"`
+  - guest uid/gid proof comes from `ctr.log` (`NEOVEX_UID=33`, `NEOVEX_GID=33`)
+    because virtiofs/rootless uid mapping prevents reliable non-root writes
+    back into the overlay rootfs
+  - sandbox reaches `Ready` and answers HTTP on port `18089`
+  - manifest preserves `image_metadata.user = "33:33"`
+- **M4 is now the active phase.** Two local service-registry slices are now
+  in place and ready for follow-on Linux-host validation. The sandbox seam also
+  now exposes generic image/build launch entrypoints, and `neovex-server` now
+  has a real `SandboxServiceManager` that can start declared services in local
+  tests:
+  - `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`
+  - `cargo test -p neovex-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`
+  - `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`
+  - `cargo test -p neovex-server convex_runtime_query_lazily_resolves_missing_service_bindings -- --nocapture`
+  - `cargo test -p neovex-server convex_runtime_query_waits_for_activation_capable_service_lookup_once -- --nocapture`
+  - `cargo test -p neovex-server ensure_service_binding_ -- --nocapture`
+  - `cargo test -p neovex-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`
+  - `cargo test -p neovex-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`
+  - `cargo test -p neovex-server convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down -- --ignored --exact --nocapture`
+  - `cargo test -p neovex-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`
+  - `cargo test -p neovex-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`
+  - What this proves locally:
+    - invocation requests can carry server-projected `InvocationServices`
+    - V8 exposes those bindings as `ctx.services.<name>`
+    - nested runtime calls preserve the same service snapshot
+    - missing `ctx.services.<name>` lookups now resolve through the server-owned
+      `RuntimeServiceRegistry` and cache successful bindings within the
+      invocation
+    - sync `ctx.services.<name>` access can block once on a registry-provided
+      `ensure_service_binding(...)` path and still preserve per-invocation
+      caching
+    - the generic sandbox trait now accepts image-backed and build-backed
+      launch requests without exposing krun-only public types
+    - a real server-owned `SandboxServiceManager` can start a declared service
+      on first reference, poll until the handle becomes bindable, and reuse the
+      active handle on later lookups
+    - tenant deletion now routes through the same server-owned manager and
+      stops manager-owned sandboxes before the tenant is removed from storage
+    - the real Linux-host manager smoke path is checked in and compiles in the
+      server test binary; it reuses the existing `NEOVEX_KRUN_SMOKE_*`
+      environment contract plus `NEOVEX_KRUN_SMOKE_M4_HOST_PORT` /
+      `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT`
+  - What remains before M4 can close:
+    - execute the checked-in Linux-host smoke lane successfully and record the
+      resulting evidence in this plan
 
 ### End-to-end (after M4)
 
@@ -883,6 +997,116 @@ ss -tlnp | grep 15432                                 # should be empty
 
 ## Execution Log
 
+- 2026-04-13: Added the checked-in Linux-host M4 smoke lane for the real
+  manager-backed krun path:
+  `convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down`.
+  The new ignored server test spins up a real `KrunSandboxBackend` under
+  `SandboxServiceManager`, lets a Convex runtime query trigger `ctx.services`
+  activation for a BusyBox-backed service, proves HTTP reachability on the
+  returned TSI host port, then deletes the tenant and waits for both the
+  service snapshot and host port to disappear. The test compiles locally via
+  `cargo test -p neovex-server convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down -- --exact`;
+  the remaining M4 blocker is now executing that exact ignored lane
+  successfully on a Linux KVM host and recording the evidence here.
+- 2026-04-13: Landed the fifth local M4 engine-integration slice: tenant
+  teardown now routes through the runtime-service seam. Added a default
+  `RuntimeServiceRegistry::teardown_tenant(...)` hook, taught the HTTP
+  tenant-delete route to call it before deleting tenant storage, and made
+  `SandboxServiceManager` override it by stopping tracked sandboxes through the
+  generic backend and clearing later snapshots. Verification evidence:
+  `cargo check -p neovex-server -p neovex`,
+  `cargo fmt --all --check`,
+  `cargo test -p neovex-server teardown_tenant_ -- --nocapture`,
+  `cargo test -p neovex-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`,
+  `cargo test -p neovex-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`.
+  M4 remains `in_progress`: local start/stop lifecycle under the manager is now
+  real, but Linux-host end-to-end proof with a real krun-backed service still
+  remains.
+- 2026-04-13: Landed the fourth local M4 engine-integration slice: a real
+  server-owned `SandboxServiceManager`. Added public
+  `SandboxServiceCatalog` / `SandboxServiceLaunch` nouns plus
+  `SandboxServiceManager` in `neovex-server`, added router builders that accept
+  the manager directly, and implemented first-reference activation through the
+  existing blocking `RuntimeServiceRegistry::ensure_service_binding(...)`
+  boundary. The manager validates tenant/service/backend alignment, starts
+  declared services through the generic `SandboxBackend` image/build
+  entrypoints, polls `inspect()` until the service becomes bindable, and
+  reuses the active handle on later lookups. Verification evidence:
+  `cargo check -p neovex-server -p neovex`,
+  `cargo test -p neovex-server ensure_service_binding_ -- --nocapture`,
+  `cargo test -p neovex-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`,
+  `cargo test -p neovex-server convex_runtime_query_ -- --nocapture`.
+  M4 remained `in_progress`: local start-on-first-reference was real at this
+  point, but tenant-teardown stop/cleanup validation and Linux-host proof still
+  remained.
+- 2026-04-13: Promoted krun's image/build launch surface into the generic
+  `neovex-sandbox` API. Added public
+  `SandboxImageLaunchSpec` / `SandboxBuildLaunchSpec` /
+  `SandboxImageProcessOverrides` nouns, extended `SandboxBackend` with generic
+  `start_from_image(...)` and `start_from_build(...)` entrypoints, migrated the
+  krun backend and smoke/tests off the old krun-local public override type, and
+  added focused trait-surface coverage proving both image-backed and
+  build-backed launches lower through `Box<dyn SandboxBackend>`. Verification
+  evidence:
+  `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`,
+  `cargo test -p neovex-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`.
+  M4 remains `in_progress`: the generic launch seam is now available to a
+  future service manager, but no real activation/start-on-first-reference flow
+  or Linux-host end-to-end proof has landed yet.
+- 2026-04-13: Landed the third local M4 engine-integration slice. Added
+  `RuntimeServiceRegistry::ensure_service_binding(...)` as the explicit
+  blocking boundary for `ctx.services` lookups, changed the `CtxServiceLookup`
+  host op to call that hook instead of the immediate resolve path, and added
+  focused server coverage proving a registry can block once for a binding and
+  still benefit from per-invocation `ctx.services` caching. The default
+  `SandboxCatalogRuntimeServiceRegistry` remains resolve-only; this slice does
+  not start real sandboxes yet, but it establishes the contract a real
+  activation-capable service manager must implement. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-server -p neovex-runtime -p neovex`,
+  `cargo test -p neovex-server convex_runtime_query_waits_for_activation_capable_service_lookup_once -- --nocapture`.
+  M4 remains `in_progress`: the blocking activation seam is now explicit, but
+  a real sandbox-starting registry and Linux-host end-to-end proof still
+  remain.
+- 2026-04-13: Landed the second local M4 engine-integration slice. The V8
+  bootstrap now exposes `ctx.services` through a lazy proxy instead of a pure
+  frozen snapshot, successful missing-name lookups are resolved through the new
+  `op_neovex_ctx_service_lookup` sync host op and cached for the rest of the
+  invocation, and `neovex-server` now routes that host op through an internal
+  `RuntimeServiceRegistry` trait instead of reaching directly into
+  `SandboxCatalog`. Added a test-only router seam that accepts an explicit
+  runtime service registry so server tests can verify lazy lookup without
+  changing the public router API. Added focused coverage for runtime-side lazy
+  lookup/caching and for server-side lazy resolution with an empty initial
+  snapshot. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-server -p neovex-runtime -p neovex`,
+  `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`,
+  `cargo test -p neovex-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`,
+  `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`,
+  `cargo test -p neovex-server convex_runtime_query_lazily_resolves_missing_service_bindings -- --nocapture`.
+  M4 remains `in_progress`: lazy lookup is local-proof complete, but true
+  service activation/start-on-first-reference and Linux-host end-to-end proof
+  still remain.
+- 2026-04-13: Landed the first local M4 engine-integration slice. Added
+  `InvocationServices` / `InvocationServiceBinding` to the runtime invocation
+  contract, taught the V8 bootstrap to expose a frozen `ctx.services` object,
+  and introduced `crates/neovex-server/src/service_registry.rs` so the server
+  can project ready sandbox handles into that runtime-facing shape while
+  keeping `neovex-sandbox` generic. Top-level HTTP/runtime routes now snapshot
+  those bindings from `SandboxCatalog`, `ConvexHostBridge` preserves the same
+  snapshot for nested runtime calls, and runtime-subscription transforms now
+  carry the snapshot forward for re-evaluation. Added focused coverage for the
+  raw runtime projection and for server-side propagation through nested runtime
+  calls. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-server -p neovex-runtime -p neovex`,
+  `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`,
+  `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`.
+  M4 remains `in_progress`: the current slice is snapshot-only and still needs
+  lazy activation / "start on first reference" plus Linux-host end-to-end
+  validation against a real krun-backed service.
 - 2026-04-12: Promoted this plan from `deferred` to `in_progress` after
   `vmm-infrastructure-plan.md` reached V3 closeout with real Linux evidence.
   Recorded the first M3 readiness finding from Linux smoke: OCI runtime state
