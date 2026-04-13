@@ -119,15 +119,17 @@ supports the same conclusion from source.
   sandbox with `OnFailure { max_restarts: 2 }` that exits 42 twice before
   starting httpd takes ~10s total (visible backoff), reaches `Ready` on port
   18088, with `restart_count: 2` and 3 boots confirmed in rootfs marker.
-- Guest-side user switching is now implemented locally for M3. The krun backend
-  rewrites execute args to launch a mounted guest helper only when image
-  metadata carries a resolved numeric `USER`, injects `NEOVEX_GUEST_UID` /
-  `NEOVEX_GUEST_GID` into the guest env, and bind-mounts a backend-owned helper
-  root into `/.neovex` so the host-side VMM can stay root while the guest
-  workload drops to the image user. A new `neovex-guest-user-switch` binary now
-  lives under `crates/neovex-sandbox/src/bin/`, and
-  `scripts/build-neovex-guest-user-switch.sh` builds a static Linux helper for
-  host verification. Linux proof is still pending.
+- Guest-side user switching is now Linux-verified. The krun backend rewrites
+  execute args to launch a statically-linked `neovex-guest-user-switch` helper
+  (built via musl) only when image metadata carries a resolved numeric `USER`.
+  It injects `NEOVEX_GUEST_UID` / `NEOVEX_GUEST_GID` into the guest env, and
+  bind-mounts a backend-owned helper root into `/.neovex` so the host-side VMM
+  stays root while the guest workload drops to the image user. Linux proof
+  (2026-04-13): a BusyBox image with `USER www-data` → guest `id -u` reports
+  `33`, `id -g` reports `33` (via ctr.log), HTTP on port 18089 confirmed.
+  Key finding: virtiofs in rootless krun VMs maps guest uid through the host
+  user namespace, so non-root guests cannot write to the rootfs overlay;
+  proof was captured via stderr/ctr.log instead of rootfs files.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -140,10 +142,10 @@ supports the same conclusion from source.
   `krun_setuid()`/`krun_setgid()` don't work in rootless mode because the
   host user namespace can't switch to arbitrary UIDs. The correct path is
   guest-side user switching via an explicit guest helper/wrapper seam. The
-  image USER is resolved, stored in manifest metadata, and now lowered into
+  image USER is resolved, stored in manifest metadata, and lowered into
   guest helper env (`NEOVEX_GUEST_UID` / `NEOVEX_GUEST_GID`) plus a mounted
-  helper binary path. Linux proof of the end-to-end guest drop is still
-  pending.
+  static helper binary. Linux proof complete: www-data (33:33) confirmed via
+  ctr.log capture. M3 is complete.
 - The `STOPSIGNAL` path is fully verified: the backend sends the
   image-configured signal first, waits the stop timeout, then falls back to
   SIGKILL. This was proven with a custom BusyBox image configured with
@@ -732,8 +734,8 @@ Developers can use muscle memory.
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
-| M3: Lifecycle management | `in_progress` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is now implemented locally via a mounted guest helper and is the last remaining Linux-verification item before M3 can be marked done |
-| M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
+| M3: Lifecycle management | `done` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is Linux-verified via a statically-linked guest helper that drops to image uid:gid (www-data 33:33 proven via ctr.log). Key finding: virtiofs in rootless krun VMs maps guest uid through host user namespace so non-root guests cannot write to the rootfs overlay |
+| M4: Engine integration | `in_progress` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
 ---
@@ -1331,3 +1333,51 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo test -p neovex-sandbox` pass (`52` library tests + `2` helper-binary
   tests). Linux-host verification is now the remaining step before M3 can move
   to `done`.
+- 2026-04-13: Ran M3 guest-side user switching Linux-host verification on
+  Debian 13 x86_64.
+  Build: `bash scripts/build-neovex-guest-user-switch.sh` — fixed two issues:
+  (1) changed from glibc `+crt-static` to musl target
+  (`x86_64-unknown-linux-musl`) for a truly static binary; (2) fixed ldd check
+  to accept "statically linked" in addition to "not a dynamic executable";
+  (3) redirected cargo output to stderr so `$()` capture only gets the output
+  path. Helper built at `/tmp/neovex-guest-user-switch-root/neovex-guest-user-switch`
+  (459KB, static-pie, musl-linked).
+  First smoke attempt: test failed because the guest script wrote uid/gid to
+  `/.neovex-m3-user-uid` and `/.neovex-m3-user-gid` inside the rootfs, but
+  uid 33 (www-data) got "Permission denied". Root cause: the OCI config mounts
+  the rootfs root `./` as writable, but the BusyBox rootfs root directory is
+  `dr-xr-xr-x` (no write for non-root).
+  Second attempt: changed to `/tmp/.neovex-m3-user-uid` — still failed with
+  "Operation not permitted". Root cause: virtiofs maps guest uid through the
+  host user namespace. Guest uid 33 maps to a host uid that lacks write access
+  to the overlay.
+  Fix: changed the test to capture uid/gid via stderr (ctr.log) instead of
+  rootfs files. Guest script: `echo NEOVEX_UID=$(id -u) >&2; echo
+  NEOVEX_GID=$(id -g) >&2; exec /bin/busybox httpd -f -p 8089`.
+  After fix, the smoke test
+  `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest` passed
+  in ~7.6s:
+  (1) buildah fixture image created with `USER www-data`;
+  (2) bundle `process.user` = `{uid:0, gid:0}` (root for VMM /dev/kvm);
+  (3) bundle `process.args[0]` = `/.neovex/neovex-guest-user-switch`;
+  (4) ctr.log reports `NEOVEX_UID=33` and `NEOVEX_GID=33`;
+  (5) sandbox reached `Ready` with 1 published endpoint on host port 18089;
+  (6) HTTP probe on 127.0.0.1:18089 returned BusyBox httpd response;
+  (7) manifest `image_metadata.user` preserved as `33:33`.
+  Unused variable `guest_port_str` also removed from the test.
+  All 54 tests pass (52 unit + 2 integration). Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (54 pass on clean rerun),
+  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  krun_backend_m3_guest_user_switch_applies_image_user_inside_guest
+  -- --ignored --exact --test-threads=1` pass.
+  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
+  `NEOVEX_KRUN_GUEST_USER_HELPER_ROOT=/tmp/neovex-guest-user-switch-root`.
+  M3 is now done. All five M3 slices are Linux-verified: startup readiness,
+  liveness, restart policy, exponential backoff, and guest-side user switching.
+  M4 promoted to in_progress.
