@@ -18,7 +18,14 @@ pub(crate) struct KrunBundleLayout {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct KrunBundleOptions {
-    pub process_user: Option<String>,
+    pub additional_mounts: Vec<KrunBundleMount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KrunBundleMount {
+    pub destination: String,
+    pub source: PathBuf,
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,11 +100,8 @@ pub(crate) fn build_bundle_config(
     validate_resource_limits(&spec.resources)?;
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
-    // The image USER is resolved separately and stored in the sandbox manifest for
-    // guest-side application via the guest init process.  Unlike regular containers
-    // where the host manages user namespace mapping, krun guests have their own
-    // kernel and handle user switching internally.
-    let _configured_user = options.process_user.as_deref();
+    // Any image USER is applied later inside the guest after the VMM is already
+    // running, so the OCI bundle must keep the host-side VMM process as root.
     let process_user = ProcessUser::ROOT;
 
     let mut annotations = serde_json::Map::new();
@@ -126,6 +130,9 @@ pub(crate) fn build_bundle_config(
         linux.insert("resources".to_owned(), resources);
     }
 
+    let mut mounts = default_linux_mounts();
+    mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
+
     Ok(json!({
         "ociVersion": "1.0.2",
         "process": {
@@ -143,56 +150,65 @@ pub(crate) fn build_bundle_config(
             "readonly": spec.filesystem.readonly,
         },
         "hostname": hostname,
-        "mounts": default_linux_mounts(),
+        "mounts": mounts,
         "annotations": annotations,
         "linux": Value::Object(linux),
     }))
 }
 
-fn default_linux_mounts() -> Value {
-    json!([
-        {
+fn default_linux_mounts() -> Vec<Value> {
+    vec![
+        json!({
             "destination": "/proc",
             "type": "proc",
             "source": "proc"
-        },
-        {
+        }),
+        json!({
             "destination": "/dev",
             "type": "tmpfs",
             "source": "tmpfs",
             "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
-        },
-        {
+        }),
+        json!({
             "destination": "/dev/pts",
             "type": "devpts",
             "source": "devpts",
             "options": ["nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620"]
-        },
-        {
+        }),
+        json!({
             "destination": "/dev/shm",
             "type": "tmpfs",
             "source": "shm",
             "options": ["nosuid", "noexec", "nodev", "mode=1777", "size=65536k"]
-        },
-        {
+        }),
+        json!({
             "destination": "/dev/mqueue",
             "type": "mqueue",
             "source": "mqueue",
             "options": ["nosuid", "noexec", "nodev"]
-        },
-        {
+        }),
+        json!({
             "destination": "/sys",
             "type": "sysfs",
             "source": "sysfs",
             "options": ["nosuid", "noexec", "nodev", "ro"]
-        },
-        {
+        }),
+        json!({
             "destination": "/sys/fs/cgroup",
             "type": "cgroup",
             "source": "cgroup",
             "options": ["nosuid", "noexec", "nodev", "relatime", "ro"]
-        }
-    ])
+        }),
+    ]
+}
+
+fn bundle_mount_json(mount: &KrunBundleMount) -> Value {
+    json!({
+        "destination": mount.destination,
+        "type": "bind",
+        "source": mount.source,
+        "options": mount.options,
+    })
 }
 
 fn process_cwd(process: &SandboxProcessSpec) -> String {
@@ -298,7 +314,10 @@ mod tests {
 
     use neovex_core::TenantId;
 
-    use super::{KrunBundleLayout, KrunBundleOptions, build_bundle_config, write_bundle_config};
+    use super::{
+        KrunBundleLayout, KrunBundleMount, KrunBundleOptions, build_bundle_config,
+        write_bundle_config,
+    };
     use crate::backend::SandboxBackendKind;
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
@@ -318,6 +337,13 @@ mod tests {
             "15432:5432,18080:8080"
         );
         assert_eq!(config["process"]["terminal"], false);
+        assert_eq!(
+            config["mounts"]
+                .as_array()
+                .expect("mounts should be present")
+                .len(),
+            7
+        );
     }
 
     #[test]
@@ -358,14 +384,8 @@ mod tests {
         // krun VMMs always run as root because the crun process needs /dev/kvm.
         // Image USER is stored in the manifest for guest-side application.
         let spec = sample_spec();
-        let config = build_bundle_config(
-            "neovex-db",
-            &spec,
-            &KrunBundleOptions {
-                process_user: Some("1001:1002".to_owned()),
-            },
-        )
-        .expect("bundle config should build even with non-root configured user");
+        let config = build_bundle_config("neovex-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
 
         assert_eq!(
             config["process"]["user"]["uid"], 0,
@@ -389,14 +409,8 @@ mod tests {
         .expect("passwd file should be written");
 
         let spec = sample_spec_with_rootfs(&rootfs);
-        let config = build_bundle_config(
-            "neovex-db",
-            &spec,
-            &KrunBundleOptions {
-                process_user: Some("postgres".to_owned()),
-            },
-        )
-        .expect("bundle config should build with named user configured");
+        let config = build_bundle_config("neovex-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
 
         assert_eq!(config["process"]["user"]["uid"], 0);
         assert_eq!(config["process"]["user"]["gid"], 0);
@@ -409,17 +423,38 @@ mod tests {
         fs::create_dir_all(rootfs.join("etc")).expect("rootfs etc directory should exist");
 
         let spec = sample_spec_with_rootfs(&rootfs);
+        let config = build_bundle_config("neovex-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
+
+        assert_eq!(config["process"]["user"]["uid"], 0);
+        assert_eq!(config["process"]["user"]["gid"], 0);
+    }
+
+    #[test]
+    fn bundle_config_appends_additional_bind_mounts() {
+        let spec = sample_spec();
         let config = build_bundle_config(
             "neovex-db",
             &spec,
             &KrunBundleOptions {
-                process_user: Some("1234".to_owned()),
+                additional_mounts: vec![KrunBundleMount {
+                    destination: "/.neovex".to_owned(),
+                    source: Path::new("/usr/libexec/neovex").into(),
+                    options: vec!["rbind".to_owned(), "ro".to_owned()],
+                }],
             },
         )
-        .expect("bundle config should build with numeric user without /etc/passwd");
+        .expect("bundle config should build");
 
-        assert_eq!(config["process"]["user"]["uid"], 0);
-        assert_eq!(config["process"]["user"]["gid"], 0);
+        let mounts = config["mounts"]
+            .as_array()
+            .expect("mounts should be an array");
+        let helper_mount = mounts
+            .iter()
+            .find(|mount| mount["destination"] == "/.neovex")
+            .expect("expected helper bind mount to be present");
+        assert_eq!(helper_mount["source"], "/usr/libexec/neovex");
+        assert_eq!(helper_mount["type"], "bind");
     }
 
     #[test]

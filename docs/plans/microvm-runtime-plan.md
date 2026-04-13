@@ -119,6 +119,15 @@ supports the same conclusion from source.
   sandbox with `OnFailure { max_restarts: 2 }` that exits 42 twice before
   starting httpd takes ~10s total (visible backoff), reaches `Ready` on port
   18088, with `restart_count: 2` and 3 boots confirmed in rootfs marker.
+- Guest-side user switching is now implemented locally for M3. The krun backend
+  rewrites execute args to launch a mounted guest helper only when image
+  metadata carries a resolved numeric `USER`, injects `NEOVEX_GUEST_UID` /
+  `NEOVEX_GUEST_GID` into the guest env, and bind-mounts a backend-owned helper
+  root into `/.neovex` so the host-side VMM can stay root while the guest
+  workload drops to the image user. A new `neovex-guest-user-switch` binary now
+  lives under `crates/neovex-sandbox/src/bin/`, and
+  `scripts/build-neovex-guest-user-switch.sh` builds a static Linux helper for
+  host verification. Linux proof is still pending.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -130,9 +139,11 @@ supports the same conclusion from source.
   `process.user` because the VMM needs `/dev/kvm` access (root). And
   `krun_setuid()`/`krun_setgid()` don't work in rootless mode because the
   host user namespace can't switch to arbitrary UIDs. The correct path is
-  guest-side user switching via the guest init process (deferred to M3).
-  The image USER is resolved, stored in manifest metadata, and available for
-  guest-side application.
+  guest-side user switching via an explicit guest helper/wrapper seam. The
+  image USER is resolved, stored in manifest metadata, and now lowered into
+  guest helper env (`NEOVEX_GUEST_UID` / `NEOVEX_GUEST_GID`) plus a mounted
+  helper binary path. Linux proof of the end-to-end guest drop is still
+  pending.
 - The `STOPSIGNAL` path is fully verified: the backend sends the
   image-configured signal first, waits the stop timeout, then falls back to
   SIGKILL. This was proven with a custom BusyBox image configured with
@@ -174,7 +185,12 @@ supports the same conclusion from source.
   through the existing inspect-driven restart path. Linux-verified (2026-04-13):
   a sandbox with `OnFailure { max_restarts: 2 }` that exits 42 twice takes
   ~10s total (visible backoff), reaches `Ready` on port 18088 on third boot.
-  Guest-side user switching remains the other unfinished M3 item.
+- Upstream source review confirmed libkrun's built-in guest init does **not**
+  parse or apply OCI `user`; it only consumes env, args/Cmd, WorkingDir/Cwd,
+  and Entrypoint from `/.krun_config.json`. That means guest-side user
+  switching needs an explicit helper/wrapper seam rather than another host-side
+  crun patch. The local implementation now follows that architecture; Linux
+  verification is the remaining step.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -716,7 +732,7 @@ Developers can use muscle memory.
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
-| M3: Lifecycle management | `in_progress` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are all Linux-verified. Guest-side user switching remains the last M3 item |
+| M3: Lifecycle management | `in_progress` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is now implemented locally via a mounted guest helper and is the last remaining Linux-verification item before M3 can be marked done |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
@@ -777,9 +793,8 @@ Before M5, keep verification split across four lanes:
   - image-backed: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
     `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18084
   - Logs at `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
-- M3 is now the active phase. Startup-readiness, liveness, and basic restart
-  policy are Linux-verified. The next active M3 item is restart backoff
-  refinement.
+- M3 is now the active phase. Startup-readiness, liveness, restart policy, and
+  restart backoff are Linux-verified.
 - **M3 startup-readiness gate Linux-verified** (2026-04-13): the
   `krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints` smoke
   test passes on Debian 13. A delayed-start BusyBox httpd sandbox initially
@@ -798,17 +813,21 @@ Before M5, keep verification split across four lanes:
   boot, is restarted by the backend, and reaches `Ready` on host port 18087
   with `restart_count == 1` and `last_exit_code == 42` recorded in the
   manifest.
-- The next active M3 item is restart backoff refinement. The checked-in ignored
-  smoke is `krun_backend_m3_restart_backoff_delays_repeated_restarts`:
-  - it configures `SandboxRestartPolicy::OnFailure { max_restarts: 2 }`
-  - the first two boots exit 42 before becoming ready
-  - Linux proof should confirm the backend waits through visible backoff before
-    the third successful boot
-  - the third boot should reach `Ready` on host port 18088
-  - marker evidence should show three boots total
-  - manifest evidence should show `restart_count == 2` and `last_exit_code == 42`
-- After restart backoff is Linux-verified, the remaining M3 item is guest-side
-  user switching.
+- The next active M3 item is guest-side user switching. Before running the
+  smoke, build the helper on the Linux host:
+  - `helper_root="$(bash scripts/build-neovex-guest-user-switch.sh)"`
+  - export `NEOVEX_KRUN_GUEST_USER_HELPER_ROOT="$helper_root"`
+- The checked-in ignored smoke is
+  `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest`:
+  - it builds a BusyBox-derived image with `USER www-data`
+  - the backend should keep bundle `process.user` at `0:0` for `/dev/kvm`
+  - the guest helper should drop the actual workload to uid/gid `33:33`
+  - the guest should write `/.neovex-m3-user-uid` and `/.neovex-m3-user-gid`
+    inside the image rootfs, both containing `33`
+  - the sandbox should still reach `Ready` and answer HTTP on host port `18089`
+  - bundle evidence should show `process.args[0] =
+    "/.neovex/neovex-guest-user-switch"`
+  - manifest evidence should continue to preserve `image_metadata.user`
 
 ### End-to-end (after M4)
 
@@ -1294,3 +1313,21 @@ ss -tlnp | grep 15432                                 # should be empty
   `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 restart backoff slice is now Linux-verified. Guest-side user switching
   remains the last M3 item.
+- 2026-04-13: Landed the local M3 guest-user-switch slice on the macOS
+  workspace. Key design finding: upstream `containers/libkrun` `init/init.c`
+  does not parse or apply OCI `user`, so preserving `process.user` in
+  `/.krun_config.json` is insufficient. The krun backend now rewrites guest
+  process args to call `/.neovex/neovex-guest-user-switch` only when
+  `image_metadata.user` is present, injects `NEOVEX_GUEST_UID` /
+  `NEOVEX_GUEST_GID`, and bind-mounts `guest_user_helper_root` into `/.neovex`
+  in the OCI bundle. Added the guest helper binary at
+  `crates/neovex-sandbox/src/bin/neovex-guest-user-switch.rs`, a Linux helper
+  builder script at `scripts/build-neovex-guest-user-switch.sh`, and a new
+  ignored smoke `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest`
+  that expects a BusyBox image with `USER www-data` to write uid/gid marker
+  files containing `33` before serving HTTP on port 18089. Local verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` pass (`52` library tests + `2` helper-binary
+  tests). Linux-host verification is now the remaining step before M3 can move
+  to `done`.

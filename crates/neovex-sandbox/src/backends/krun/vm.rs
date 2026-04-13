@@ -14,7 +14,7 @@ use super::buildah::{
     BuildahCli, BuildahContainer, ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
     OciProcessOverrides, PreparedImageLaunch,
 };
-use super::bundle::{KrunBundleLayout, KrunBundleOptions, write_bundle_config};
+use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
 use super::command::CommandSpec;
 use super::conmon::{KrunConmonConfig, KrunConmonLaunchPlan, KrunConmonLayout, build_launch_plan};
 use super::port_manager::PortManager;
@@ -27,6 +27,7 @@ use crate::spec::{SandboxRestartPolicy, SandboxSpec};
 const DEFAULT_RUNTIME_PATH: &str = "/usr/libexec/neovex/crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
 const DEFAULT_BUILDAH_PATH: &str = "buildah";
+const DEFAULT_GUEST_USER_HELPER_ROOT: &str = "/usr/libexec/neovex";
 const DEFAULT_PUBLISHED_PORT_START: u16 = 15_000;
 const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
@@ -35,6 +36,11 @@ const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
 const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
 const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
 const KRUN_VM_CONFIG_FILENAME: &str = ".krun_vm.json";
+const GUEST_USER_HELPER_BINARY_NAME: &str = "neovex-guest-user-switch";
+const GUEST_USER_HELPER_GUEST_ROOT: &str = "/.neovex";
+const GUEST_USER_HELPER_GUEST_PATH: &str = "/.neovex/neovex-guest-user-switch";
+const GUEST_USER_UID_ENV: &str = "NEOVEX_GUEST_UID";
+const GUEST_USER_GID_ENV: &str = "NEOVEX_GUEST_GID";
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +57,7 @@ pub struct KrunSandboxBackendConfig {
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
+    pub guest_user_helper_root: PathBuf,
     pub use_buildah_unshare: bool,
     pub published_port_range: RangeInclusive<u16>,
     pub launch_mode: KrunLaunchMode,
@@ -78,6 +85,7 @@ impl Default for KrunSandboxBackendConfig {
             conmon_path: PathBuf::from(DEFAULT_CONMON_PATH),
             runtime_path: PathBuf::from(DEFAULT_RUNTIME_PATH),
             buildah_path: PathBuf::from(DEFAULT_BUILDAH_PATH),
+            guest_user_helper_root: PathBuf::from(DEFAULT_GUEST_USER_HELPER_ROOT),
             use_buildah_unshare: true,
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             launch_mode: KrunLaunchMode::Execute,
@@ -299,7 +307,8 @@ impl KrunSandboxBackend {
             });
         }
 
-        let resolved_launch = resolve_launch_spec(spec, launch_defaults);
+        let mut resolved_launch = resolve_launch_spec(spec, launch_defaults);
+        apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         let bundle_layout =
             KrunBundleLayout::new(self.config.bundle_root.join(sandbox_id.as_str()));
         write_bundle_config(
@@ -307,7 +316,10 @@ impl KrunSandboxBackend {
             &hostname_for(&resolved_launch.spec),
             &resolved_launch.spec,
             &KrunBundleOptions {
-                process_user: resolved_launch.image_metadata.user.clone(),
+                additional_mounts: guest_user_switch_mounts(
+                    &self.config,
+                    &resolved_launch.image_metadata,
+                ),
             },
         )?;
 
@@ -432,7 +444,7 @@ impl KrunSandboxBackend {
             &hostname_for(&manifest.spec),
             &manifest.spec,
             &KrunBundleOptions {
-                process_user: manifest.image_metadata.user.clone(),
+                additional_mounts: guest_user_switch_mounts(&self.config, &manifest.image_metadata),
             },
         )
     }
@@ -587,6 +599,7 @@ impl KrunSandboxBackend {
         clear_last_exit_code: bool,
     ) -> Result<()> {
         ensure_linux_host()?;
+        ensure_guest_user_helper_available(&self.config, manifest)?;
         spawn_background(&manifest.conmon_launch.create_command)?;
         let runtime_state = wait_for_runtime_state(
             &manifest.conmon_launch.state_command,
@@ -737,6 +750,12 @@ struct KrunImageMetadata {
 struct KrunVmConfig {
     cpus: u8,
     ram_mib: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GuestUserIds {
+    uid: u32,
+    gid: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -957,6 +976,56 @@ fn resolve_process_spec(
     resolved
 }
 
+fn apply_guest_user_switch(
+    spec: &mut SandboxSpec,
+    image_metadata: &KrunImageMetadata,
+) -> Result<()> {
+    let Some(target_user) = parse_guest_user(image_metadata.user.as_deref())? else {
+        return Ok(());
+    };
+
+    if !spec
+        .process
+        .args
+        .first()
+        .is_some_and(|arg| arg == GUEST_USER_HELPER_GUEST_PATH)
+    {
+        spec.process
+            .args
+            .insert(0, GUEST_USER_HELPER_GUEST_PATH.to_owned());
+    }
+
+    spec.process.env = merge_env_overrides(
+        &spec.process.env,
+        &[
+            format!("{GUEST_USER_UID_ENV}={}", target_user.uid),
+            format!("{GUEST_USER_GID_ENV}={}", target_user.gid),
+        ],
+    );
+
+    Ok(())
+}
+
+fn guest_user_switch_mounts(
+    config: &KrunSandboxBackendConfig,
+    image_metadata: &KrunImageMetadata,
+) -> Vec<KrunBundleMount> {
+    if image_metadata
+        .user
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+    {
+        return Vec::new();
+    }
+
+    vec![KrunBundleMount {
+        destination: GUEST_USER_HELPER_GUEST_ROOT.to_owned(),
+        source: config.guest_user_helper_root.clone(),
+        options: vec!["rbind".to_owned(), "ro".to_owned()],
+    }]
+}
+
 fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
     let mut merged = base.to_vec();
     for override_entry in overrides {
@@ -980,6 +1049,33 @@ fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
 fn env_key(entry: &str) -> Option<&str> {
     let (key, _) = entry.split_once('=')?;
     (!key.is_empty()).then_some(key)
+}
+
+fn parse_guest_user(user: Option<&str>) -> Result<Option<GuestUserIds>> {
+    let Some(user) = user.map(str::trim).filter(|user| !user.is_empty()) else {
+        return Ok(None);
+    };
+
+    let (uid, gid) = match user.split_once(':') {
+        Some((uid, gid)) => (
+            parse_guest_user_id("uid", uid, user)?,
+            parse_guest_user_id("gid", gid, user)?,
+        ),
+        None => (parse_guest_user_id("uid", user, user)?, 0),
+    };
+
+    Ok(Some(GuestUserIds { uid, gid }))
+}
+
+fn parse_guest_user_id(kind: &str, value: &str, user: &str) -> Result<u32> {
+    value
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| SandboxError::InvalidSpec {
+            message: format!(
+                "krun guest-side user switching requires a numeric image user, got {user:?} with invalid {kind} component {value:?}"
+            ),
+        })
 }
 
 fn running_status(manifest: &KrunSandboxManifest) -> SandboxStatus {
@@ -1100,6 +1196,36 @@ fn remove_if_exists(path: &Path) -> Result<()> {
         message: format!(
             "failed to remove stale runtime artifact {}: {error}",
             path.display()
+        ),
+    })
+}
+
+fn ensure_guest_user_helper_available(
+    config: &KrunSandboxBackendConfig,
+    manifest: &KrunSandboxManifest,
+) -> Result<()> {
+    if manifest
+        .image_metadata
+        .user
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+    {
+        return Ok(());
+    }
+
+    let helper_path = config
+        .guest_user_helper_root
+        .join(GUEST_USER_HELPER_BINARY_NAME);
+    if helper_path.is_file() {
+        return Ok(());
+    }
+
+    Err(SandboxError::OperationFailed {
+        message: format!(
+            "sandbox {} requires guest-side user switching, but helper {} is missing",
+            manifest.handle.id,
+            helper_path.display()
         ),
     })
 }
@@ -1286,10 +1412,12 @@ mod tests {
     use neovex_core::TenantId;
 
     use super::{
+        GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,
         KrunImageMetadata, KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
         KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, desired_krun_vm_config,
-        krun_vm_config_path, probe_target_ready, readiness_probe_target, restart_backoff_delay,
-        restart_policy_allows_restart, running_status, slugify, visible_published_endpoints,
+        krun_vm_config_path, parse_guest_user, probe_target_ready, readiness_probe_target,
+        restart_backoff_delay, restart_policy_allows_restart, running_status, slugify,
+        visible_published_endpoints,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
@@ -1451,13 +1579,19 @@ mod tests {
         );
         assert_eq!(
             launch_plan.manifest.spec.process.args,
-            vec!["/usr/local/bin/service".to_owned(), "serve".to_owned()]
+            vec![
+                GUEST_USER_HELPER_GUEST_PATH.to_owned(),
+                "/usr/local/bin/service".to_owned(),
+                "serve".to_owned(),
+            ]
         );
         assert_eq!(
             launch_plan.manifest.spec.process.env,
             vec![
                 "PATH=/usr/local/bin:/usr/bin".to_owned(),
                 "SERVICE_MODE=prod".to_owned(),
+                format!("{GUEST_USER_UID_ENV}=1000"),
+                format!("{GUEST_USER_GID_ENV}=1000"),
             ]
         );
         assert_eq!(
@@ -1487,8 +1621,8 @@ mod tests {
         let rendered_bundle = fs::read_to_string(&launch_plan.manifest.bundle_layout.config_path)
             .expect("bundle config should be readable");
         assert!(
-            rendered_bundle.contains("\"/usr/local/bin/service\""),
-            "bundle config should use the image-default command when the generic spec is sparse"
+            rendered_bundle.contains(&format!("\"{GUEST_USER_HELPER_GUEST_PATH}\"")),
+            "bundle config should wrap the image-default command with the guest user helper"
         );
         // krun bundles always use root for the VMM process (needs /dev/kvm).
         // The image user is stored in the manifest, not the bundle.
@@ -1499,6 +1633,10 @@ mod tests {
         assert!(
             rendered_bundle.contains("\"gid\": 0"),
             "krun bundle should use root gid for VMM /dev/kvm access"
+        );
+        assert!(
+            rendered_bundle.contains("\"destination\": \"/.neovex\""),
+            "bundle config should mount the guest helper root when image USER is set"
         );
     }
 
@@ -1532,6 +1670,7 @@ mod tests {
         assert_eq!(
             launch_plan.manifest.spec.process.args,
             vec![
+                GUEST_USER_HELPER_GUEST_PATH.to_owned(),
                 "/bin/sh".to_owned(),
                 "-lc".to_owned(),
                 "exec custom-api".to_owned(),
@@ -1543,6 +1682,8 @@ mod tests {
                 "PATH=/custom/bin".to_owned(),
                 "SERVICE_MODE=prod".to_owned(),
                 "APP_MODE=dev".to_owned(),
+                format!("{GUEST_USER_UID_ENV}=1000"),
+                format!("{GUEST_USER_GID_ENV}=1000"),
             ]
         );
         assert_eq!(
@@ -1758,6 +1899,35 @@ mod tests {
         assert_eq!(
             configured_stop_signal(&KrunImageMetadata::default()),
             "TERM"
+        );
+    }
+
+    #[test]
+    fn parse_guest_user_accepts_numeric_uid_and_uid_gid() {
+        assert_eq!(
+            parse_guest_user(Some("1234")).expect("uid should parse"),
+            Some(GuestUserIds { uid: 1234, gid: 0 })
+        );
+        assert_eq!(
+            parse_guest_user(Some("1234:5678")).expect("uid:gid should parse"),
+            Some(GuestUserIds {
+                uid: 1234,
+                gid: 5678
+            })
+        );
+        assert_eq!(
+            parse_guest_user(Some(" ")).expect("blank user should be ignored"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_guest_user_rejects_non_numeric_components() {
+        let error = parse_guest_user(Some("postgres:postgres"))
+            .expect_err("guest user switching should require numeric ids by this stage");
+        assert!(
+            error.to_string().contains("requires a numeric image user"),
+            "expected actionable numeric-user error, got: {error}"
         );
     }
 
