@@ -80,8 +80,10 @@ supports the same conclusion from source.
   `memory_limit_bytes` into OCI `linux.resources.memory.limit`, and when an
   explicit whole-vCPU count is requested it materializes backend-owned
   `/.krun_vm.json` data (`cpus`, `ram_mib`) so crun's krun handler can call
-  `krun_set_vm_config()`. This path is unit-verified locally but still needs
-  Linux-host promotion before M2 can move to `done`.
+  `krun_set_vm_config()`. Both direct-rootfs and image-backed resource-limit
+  paths are now Linux-verified on Debian 13: `/.krun_vm.json` contains
+  `{"cpus":2,"ram_mib":256}` and `linux.resources.memory.limit = 268435456`,
+  with TSI HTTP connectivity confirmed under the resource-limited VM.
 - `vm.rs` currently reports OCI runtime state `"running"` as
   `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
   service readiness: one initial TCP connection was refused before the guest
@@ -108,12 +110,10 @@ supports the same conclusion from source.
   `PortManager` allocates distinct host ports from the backend-owned range,
   stopped sandboxes release their ports for reuse, and the auto-assigned ports
   are reachable via TSI.
-- Resource limits are now implemented and locally unit-verified: generic
-  `SandboxResourceLimits` lower memory into OCI `linux.resources.memory.limit`,
-  and explicit whole-vCPU counts lower through backend-owned `/.krun_vm.json`
-  materialization for both direct-rootfs and image-backed buildah-unshare
-  launches. M2 still cannot move to `done` until that path is proven on a real
-  Linux host.
+- Resource limits are now Linux-verified: both direct-rootfs and image-backed
+  sandboxes confirmed `/.krun_vm.json` materialization (`cpus:2, ram_mib:256`),
+  OCI `linux.resources.memory.limit = 268435456`, and TSI HTTP connectivity
+  under the resource-limited VM on Debian 13. M2 is complete.
 - Readiness, startup, and liveness probing remain required follow-on work for
   M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
   but it is not a trustworthy published-endpoint readiness signal.
@@ -657,8 +657,8 @@ Developers can use muscle memory.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
-| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved and stored in manifest (bundle forces root for /dev/kvm), image STOPSIGNAL honored, and auto-port-assignment from image EXPOSE now proven end-to-end on Linux: sandbox A gets 15100, sandbox B gets 15101, stop A releases 15100, sandbox C reuses 15100. Local verification also covers generic `SandboxResourceLimits` lowering (`linux.resources.memory.limit` + `/.krun_vm.json` for explicit whole-vCPU counts). M2 remains `in_progress` until Linux host validation proves the resource-limits path end to end. Guest-side user switching deferred to M3 |
-| M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
+| M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
+| M3: Lifecycle management | `in_progress` | M2 | Probes, shutdown, restart. Readiness gap is the highest-priority item: OCI `"running"` does not mean the guest service is accepting connections |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
@@ -712,28 +712,15 @@ Before M5, keep verification split across four lanes:
   - `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`
   - `NEOVEX_KRUN_SMOKE_CONMON=$(command -v conmon)`
   - `NEOVEX_KRUN_SMOKE_BUILDAH=$(command -v buildah)`
-- The next Linux promotion should verify resource limits end to end on a real
-  host:
-  - direct-rootfs sandbox with `memory_limit_bytes=268435456` and
-    `cpu_count=2` writes `/.krun_vm.json` containing `{"cpus":2,"ram_mib":256}`
-    and still boots successfully
-  - image-backed sandbox with the same limits materializes that file through
-    the buildah-unshare create prelude and still reaches TSI-backed HTTP
-    readiness
-  - the generated bundle `config.json` records
-    `linux.resources.memory.limit = 268435456`
-- The required ignored smoke tests for that promotion now exist in
-  `crates/neovex-sandbox/tests/krun_linux_smoke.rs`:
-  - `krun_backend_m2_direct_rootfs_resource_limits_lowering`
-  - `krun_backend_m2_image_backed_resource_limits_lowering`
-- The preferred Linux execution entrypoint for that promotion is now
-  `scripts/verify-microvm-m2-resource-limits-helper.sh`. It reruns the focused
-  local gates, executes both ignored smoke tests with `--nocapture`, and writes
-  durable host-local logs under
-  `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`.
-- After that Linux proof lands, M2 can move to `done` and M3 becomes the next
-  active phase. The readiness gap (OCI `"running"` != service-ready) remains
-  the highest-priority follow-on once M2 closes.
+- **M2 Linux verification is complete** (2026-04-13). Resource limits verified
+  via `scripts/verify-microvm-m2-resource-limits-helper.sh`:
+  - direct-rootfs: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
+    `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18083
+  - image-backed: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
+    `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18084
+  - Logs at `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
+- M3 is now the active phase. The readiness gap (OCI `"running"` != service-ready)
+  is the highest-priority follow-on.
 
 ### End-to-end (after M4)
 
@@ -999,3 +986,26 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo check -p neovex-sandbox -p neovex`,
   `cargo test -p neovex-sandbox` (39 pass),
   `bash -n scripts/verify-microvm-m2-resource-limits-helper.sh`.
+- 2026-04-13: Ran M2 resource-limits Linux-host verification on Debian 13 x86_64
+  via `bash scripts/verify-microvm-m2-resource-limits-helper.sh`. Both the
+  direct-rootfs and image-backed lanes passed on the first attempt:
+  (1) direct-rootfs (`krun_backend_m2_direct_rootfs_resource_limits_lowering`):
+  `/.krun_vm.json` at rootfs `/tmp/neovex-sandbox-smoke-rootfs/.krun_vm.json`
+  contained `{"cpus":2,"ram_mib":256}`, bundle `config.json` had
+  `linux.resources.memory.limit = 268435456`, TSI HTTP on port 18083 confirmed.
+  (2) image-backed (`krun_backend_m2_image_backed_resource_limits_lowering`):
+  `.krun_vm.json` inside the buildah overlay rootfs contained
+  `{"cpus":2,"ram_mib":256}` (read via `buildah unshare -- cat`), bundle
+  `config.json` had `linux.resources.memory.limit = 268435456`, TSI HTTP on
+  port 18084 confirmed. Verification logs at
+  `/tmp/neovex-sandbox-smoke/m2-resource-limit-verification/direct-rootfs.log`,
+  `/tmp/neovex-sandbox-smoke/m2-resource-limit-verification/image-backed.log`,
+  `/tmp/neovex-sandbox-smoke/m2-resource-limit-verification/summary.txt`.
+  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Verification: `cargo fmt --all --check` pass, `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (39 pass), both resource-limit smoke tests pass.
+  M2 is now `done`. M3 promoted to `in_progress`.
