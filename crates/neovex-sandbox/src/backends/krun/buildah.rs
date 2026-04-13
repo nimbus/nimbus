@@ -279,15 +279,17 @@ impl BuildahCli {
         // mount disappears.
         let resolved_user = self.resolve_image_user(
             &container.container_name,
-            image_config.user.as_deref(),
+            overrides.user.as_deref().or(image_config.user.as_deref()),
             &rootfs,
         )?;
 
         let mut config_with_resolved_user = image_config;
         config_with_resolved_user.user = resolved_user;
+        let mut process_overrides = overrides.clone();
+        process_overrides.user = None;
 
         let launch_defaults =
-            config_with_resolved_user.resolve_launch_defaults(rootfs, overrides)?;
+            config_with_resolved_user.resolve_launch_defaults(rootfs, &process_overrides)?;
         Ok(PreparedImageLaunch {
             container,
             launch_defaults,
@@ -1072,6 +1074,7 @@ mod tests {
                 cmd: Some(vec!["exec custom-api".to_owned()]),
                 env: vec!["POSTGRES_DB=app".to_owned(), "LOG_LEVEL=debug".to_owned()],
                 cwd: Some(PathBuf::from("/workspace")),
+                user: None,
                 terminal: true,
             })
             .expect("overrides should lower into a process spec");
@@ -1339,6 +1342,27 @@ mod tests {
         assert_eq!(lines[0], "from --name postgres-working postgres:16");
         assert!(lines[1].ends_with(" mount postgres-working"));
         assert_eq!(lines[2], "inspect --type container postgres-working");
+    }
+
+    #[test]
+    fn prepare_image_launch_prefers_process_user_override_over_image_user() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let (script_path, _log_path) = write_fake_buildah_script(&temp_dir);
+        let buildah = BuildahCli::new(script_path).with_unshare(true);
+
+        let prepared = buildah
+            .prepare_image_launch(
+                "postgres-working",
+                "postgres:16",
+                &SandboxImageProcessOverrides::default().with_user("123:456"),
+            )
+            .expect("prepared launch should succeed");
+
+        assert_eq!(
+            prepared.launch_defaults.user,
+            Some("123:456".to_owned()),
+            "explicit process user override should win over the image USER"
+        );
     }
 
     #[test]

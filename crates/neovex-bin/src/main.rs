@@ -2,12 +2,25 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use neovex::{
-    ConvexRegistry, EmbeddedProviderKind, Error, LicenseState, RuntimeLimits, Service,
-    ServicePersistenceConfig, run_scheduler, serve_with_convex_and_license, serve_with_license,
+    ConvexRegistry, EmbeddedProviderKind, Error, LicenseState, RuntimeLimits, SandboxCatalog,
+    Service, ServicePersistenceConfig, run_scheduler, serve_with_convex_and_license,
+    serve_with_convex_and_license_and_sandbox_service_manager, serve_with_license,
+    serve_with_license_and_sandbox_catalog,
 };
 use serde::Deserialize;
+
+mod service;
+
+use crate::service::{
+    ServiceCommand, load_krun_backed_sandbox_service_manager, run_service_command,
+};
+
+#[cfg(all(test, target_os = "linux"))]
+use crate::service::load_compose_project_context;
+#[cfg(all(test, target_os = "linux"))]
+use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig};
 
 const DEFAULT_DATA_DIR: &str = "./data";
 const CONFIG_FILE_ENV: &str = "NEOVEX_CONFIG";
@@ -35,6 +48,9 @@ const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 #[derive(Debug, Parser)]
 #[command(name = "neovex", about = "Reactive document database")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Optional JSON config file. CLI flags override env and file values.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -135,6 +151,11 @@ struct Cli {
     #[arg(long)]
     convex_app_dir: Option<PathBuf>,
 
+    /// Optional Compose file that declares sandbox-backed services for
+    /// `ctx.services.*` activation.
+    #[arg(long)]
+    compose_file: Option<PathBuf>,
+
     /// Optional path to a Neovex license file. Defaults to ./.neovex/license.json when present.
     #[arg(long)]
     license_file: Option<PathBuf>,
@@ -162,6 +183,11 @@ struct Cli {
     /// Maximum number of nested runtime ctx.run* invocations allowed per request tree.
     #[arg(long, default_value_t = default_runtime_max_nested_calls())]
     runtime_max_nested_calls: usize,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    Service(ServiceCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -301,6 +327,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     let service_config = service_persistence_config_from_cli(&cli)?;
+    if let Some(command) = cli.command {
+        match command {
+            Command::Service(command) => {
+                run_service_command(command, &service_config).await?;
+                return Ok(());
+            }
+        }
+    }
+    let compose_control_data_dir =
+        control_data_dir_from_service_config(&service_config).to_path_buf();
     let service = Arc::new(Service::new_with_persistence_config(service_config).await?);
     let shutdown_service = service.clone();
     service.recover_scheduled_work_on_startup_async().await?;
@@ -329,6 +365,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|registry| registry.with_runtime_limits(runtime_limits.clone()))
         })
         .transpose()?;
+    let sandbox_service_manager = cli
+        .compose_file
+        .as_deref()
+        .map(|path| load_krun_backed_sandbox_service_manager(path, &compose_control_data_dir))
+        .transpose()?;
+    let sandbox_service_manager = sandbox_service_manager.map(Arc::new);
 
     tracing::info!(
         license_kind = ?license_snapshot.kind,
@@ -341,11 +383,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing::info!("neovex listening on {}", listener.local_addr()?);
-    let server_result = match convex_registry {
-        Some(registry) => {
+    let server_result = match (convex_registry, sandbox_service_manager) {
+        (Some(registry), Some(manager)) => {
+            serve_with_convex_and_license_and_sandbox_service_manager(
+                listener,
+                service,
+                registry,
+                license_state,
+                manager,
+            )
+            .await
+        }
+        (Some(registry), None) => {
             serve_with_convex_and_license(listener, service, registry, license_state).await
         }
-        None => serve_with_license(listener, service, license_state).await,
+        (None, Some(manager)) => {
+            let sandbox_catalog: Arc<dyn SandboxCatalog> = manager;
+            serve_with_license_and_sandbox_catalog(
+                listener,
+                service,
+                license_state,
+                sandbox_catalog,
+            )
+            .await
+        }
+        (None, None) => serve_with_license(listener, service, license_state).await,
     };
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;
@@ -652,6 +714,12 @@ fn service_persistence_config_from_sources(
     }
 }
 
+fn control_data_dir_from_service_config(config: &ServicePersistenceConfig) -> &Path {
+    match &config.control_plane {
+        neovex::ControlPlaneConfig::EmbeddedRedb { data_dir } => data_dir.as_path(),
+    }
+}
+
 fn load_runtime_config_file(path: Option<&Path>) -> neovex::Result<RuntimeConfigFile> {
     let Some(path) = path else {
         return Ok(RuntimeConfigFile::default());
@@ -696,6 +764,23 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    #[cfg(target_os = "linux")]
+    use std::env;
+    #[cfg(target_os = "linux")]
+    use std::time::Instant;
+
+    #[cfg(target_os = "linux")]
+    use neovex::{RuntimeBundle, build_router_with_convex_and_sandbox_service_manager};
+    #[cfg(target_os = "linux")]
+    use neovex_testing::{
+        HttpApiFixture, ServerFixture, ServiceFixture,
+        run_to_completion_snapshot_runtime_test_limits, wait_for_condition,
+    };
+    #[cfg(target_os = "linux")]
+    use serde_json::json;
+    #[cfg(target_os = "linux")]
+    use tempfile::tempdir;
+
     static TEST_CONFIG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn write_test_config(contents: &str) -> PathBuf {
@@ -721,6 +806,12 @@ mod tests {
             config,
             ServicePersistenceConfig::embedded("./data", EmbeddedProviderKind::Sqlite)
         );
+    }
+
+    #[test]
+    fn cli_parses_optional_compose_file_for_declared_services() {
+        let cli = Cli::parse_from(["neovex", "--compose-file", "./compose.dev.yaml"]);
+        assert_eq!(cli.compose_file, Some(PathBuf::from("./compose.dev.yaml")));
     }
 
     #[test]
@@ -1058,5 +1149,247 @@ mod tests {
 
         assert_eq!(config.tenant_provider.pool.min_connections, Some(2));
         assert_eq!(config.tenant_provider.pool.max_connections, Some(8));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "requires Linux KVM host with krun toolchain"]
+    async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tears_it_down() {
+        let tempdir = tempdir().expect("compose + convex tempdir should build");
+        let tenant_id = neovex::TenantId::new("demo").expect("tenant id should be valid");
+        let host_port = env_u16("NEOVEX_KRUN_SMOKE_M5_HOST_PORT").unwrap_or(18091);
+        let guest_port = env_u16("NEOVEX_KRUN_SMOKE_M5_GUEST_PORT").unwrap_or(8091);
+        let compose_path = write_compose_smoke_fixture(tempdir.path(), host_port, guest_port);
+        let registry = write_convex_service_query_fixture(tempdir.path());
+
+        let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+        let control_data_dir = base_dir.join("m5-compose-control");
+        let context = load_compose_project_context(&compose_path, &control_data_dir)
+            .expect("compose project context should load");
+        let mut config = context.control_plane.krun_backend_config();
+        config.launch_mode = KrunLaunchMode::Execute;
+        if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+            config.runtime_path = runtime_path.into();
+        }
+        if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+            config.conmon_path = conmon_path.into();
+        }
+        if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+            config.buildah_path = buildah_path.into();
+        }
+
+        let sandbox_service_manager = Arc::new(
+            crate::service::load_sandbox_service_manager(
+                &compose_path,
+                Arc::new(KrunSandboxBackend::new(config)),
+            )
+            .expect("compose-backed sandbox service manager should load")
+            .with_activation_poll_interval(Duration::from_millis(50))
+            .with_activation_timeout(Duration::from_secs(30)),
+        );
+        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let server = ServerFixture::start(build_router_with_convex_and_sandbox_service_manager(
+            fixture.service(),
+            registry,
+            sandbox_service_manager.clone(),
+        ))
+        .await;
+        let api = HttpApiFixture::new(&server);
+
+        assert_eq!(
+            api.create_tenant("demo").await.status(),
+            reqwest::StatusCode::CREATED
+        );
+
+        let response = api
+            .convex_named_query("demo", "services:activate", json!({}))
+            .await;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let port = response
+            .json::<serde_json::Value>()
+            .await
+            .expect("activation response should parse")
+            .as_u64()
+            .expect("port should be numeric");
+        assert_eq!(port, u64::from(host_port));
+
+        let http_response = wait_for_http_response(host_port, Duration::from_secs(15)).await;
+        assert!(
+            http_response.starts_with("HTTP/1.") || http_response.contains("404"),
+            "expected HTTP response from compose-backed krun service, got: {http_response}"
+        );
+        assert!(
+            sandbox_service_manager
+                .snapshot_for_tenant(&tenant_id)
+                .contains_key("db"),
+            "compose-backed manager should expose the declared db binding"
+        );
+
+        let delete = api.delete_tenant("demo").await;
+        assert_eq!(delete.status(), reqwest::StatusCode::NO_CONTENT);
+        wait_for_condition(
+            "compose-backed krun service should disappear after tenant deletion",
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+            || async {
+                reqwest::get(format!("http://127.0.0.1:{host_port}/"))
+                    .await
+                    .is_err()
+                    && sandbox_service_manager
+                        .snapshot_for_tenant(&tenant_id)
+                        .is_empty()
+            },
+        )
+        .await;
+    }
+
+    #[cfg(target_os = "linux")]
+    fn write_compose_smoke_fixture(root: &Path, host_port: u16, guest_port: u16) -> PathBuf {
+        let compose_path = root.join("compose.yaml");
+        fs::write(
+            &compose_path,
+            format!(
+                r#"
+name: Smoke App
+services:
+  db:
+    image: busybox:latest
+    ports:
+      - "{host_port}:{guest_port}"
+    command:
+      - /bin/busybox
+      - httpd
+      - -f
+      - -p
+      - "{guest_port}"
+    stop_grace_period: 5s
+"#
+            ),
+        )
+        .expect("compose smoke fixture should write");
+        compose_path
+    }
+
+    #[cfg(target_os = "linux")]
+    fn write_convex_service_query_fixture(app_dir: &Path) -> ConvexRegistry {
+        let convex_dir = app_dir.join(".neovex").join("convex");
+        fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+        fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec_pretty(&json!({
+                "functions": [{
+                    "name": "services:activate",
+                    "kind": "query",
+                    "plan": null,
+                    "runtime_handler": "async (ctx) => ctx.services.db.port"
+                }]
+            }))
+            .expect("convex manifest json should serialize"),
+        )
+        .expect("convex manifest should write");
+        fs::write(
+            convex_dir.join("http_routes.json"),
+            serde_json::to_vec_pretty(&json!({ "routes": [] }))
+                .expect("convex routes json should serialize"),
+        )
+        .expect("convex routes manifest should write");
+
+        let bundle_path = convex_dir.join("bundle.mjs");
+        fs::write(
+            &bundle_path,
+            r#"
+const definitions = new Map([
+  ["services:activate", {
+    name: "services:activate",
+    kind: "query",
+    runtime_handler: "async (ctx) => ctx.services.db.port",
+  }],
+]);
+
+function compileRuntimeHandler(definition) {
+  return new Function(
+    "ctx",
+    "args",
+    "request",
+    "return (" + definition.runtime_handler + ")(ctx, args, request);",
+  );
+}
+
+const handlers = new Map(
+  [...definitions.values()].map((definition) => [
+    definition.name,
+    compileRuntimeHandler(definition),
+  ]),
+);
+
+globalThis.__neovexInvoke = async function(request) {
+  try {
+    const handler = handlers.get(request.function_name);
+    return {
+      status: "ok",
+      value: await handler(
+        globalThis.__neovexCreateContext({
+          request,
+          sessionId: `${request.kind}:${request.function_name}`,
+        }),
+        request.args ?? {},
+        request,
+      ),
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "neovexHostError" in error) {
+      return { status: "error", error: error.neovexHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#,
+        )
+        .expect("convex runtime bundle should write");
+        let bundle_sha256 =
+            RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+        fs::write(
+            bundle_path.with_extension("sha256"),
+            format!("{bundle_sha256}\n"),
+        )
+        .expect("convex runtime bundle hash should write");
+
+        ConvexRegistry::from_app_dir(app_dir)
+            .expect("convex registry should load")
+            .with_runtime_limits(run_to_completion_snapshot_runtime_test_limits())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn env_path(name: &str) -> PathBuf {
+        PathBuf::from(env::var_os(name).unwrap_or_else(|| panic!("missing env var {name}")))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn env_u16(name: &str) -> Option<u16> {
+        env::var(name).ok().map(|value| {
+            value
+                .parse::<u16>()
+                .unwrap_or_else(|error| panic!("invalid {name} value {value:?}: {error}"))
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn wait_for_http_response(host_port: u16, timeout: Duration) -> String {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Ok(response) = reqwest::get(format!("http://127.0.0.1:{host_port}/")).await {
+                let status = response.status();
+                if let Ok(body) = response.text().await {
+                    return format!("HTTP/1.1 {status}\n{body}");
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for HTTP response on port {host_port}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }

@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,7 @@ pub struct SandboxImageProcessOverrides {
     #[serde(default)]
     pub env: Vec<String>,
     pub cwd: Option<PathBuf>,
+    pub user: Option<String>,
     #[serde(default)]
     pub terminal: bool,
 }
@@ -67,6 +69,11 @@ impl SandboxImageProcessOverrides {
 
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
+        self
+    }
+
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
         self
     }
 
@@ -256,6 +263,20 @@ pub enum SandboxRestartPolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxLifecycleSpec {
     pub restart_policy: SandboxRestartPolicy,
+    #[serde(default, with = "duration_millis_option")]
+    pub stop_timeout: Option<Duration>,
+}
+
+impl SandboxLifecycleSpec {
+    pub fn with_restart_policy(mut self, restart_policy: SandboxRestartPolicy) -> Self {
+        self.restart_policy = restart_policy;
+        self
+    }
+
+    pub fn with_stop_timeout(mut self, stop_timeout: Duration) -> Self {
+        self.stop_timeout = Some(stop_timeout);
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,6 +327,11 @@ impl SandboxSpec {
         self
     }
 
+    pub fn with_stop_timeout(mut self, stop_timeout: Duration) -> Self {
+        self.lifecycle.stop_timeout = Some(stop_timeout);
+        self
+    }
+
     pub fn with_cpu_count(mut self, cpu_count: u8) -> Self {
         self.resources.cpu_count = Some(cpu_count);
         self
@@ -327,5 +353,65 @@ impl SandboxSpec {
     ) -> Self {
         self.port_bindings.extend(port_bindings);
         self
+    }
+}
+
+mod duration_millis_option {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer, ser::Error as _};
+
+    pub(super) fn serialize<S>(value: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(duration) => {
+                let millis = u64::try_from(duration.as_millis())
+                    .map_err(|_| S::Error::custom("duration overflowed u64 milliseconds"))?;
+                serializer.serialize_some(&millis)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Option::<u64>::deserialize(deserializer)?.map(Duration::from_millis))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use super::{SandboxLifecycleSpec, SandboxRestartPolicy};
+
+    #[test]
+    fn sandbox_lifecycle_spec_serializes_stop_timeout_as_millis() {
+        let lifecycle = SandboxLifecycleSpec::default()
+            .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 3 })
+            .with_stop_timeout(Duration::from_millis(30_500));
+
+        let value = serde_json::to_value(&lifecycle).expect("lifecycle should serialize");
+        assert_eq!(
+            value,
+            json!({
+                "restart_policy": {
+                    "on_failure": {
+                        "max_restarts": 3
+                    }
+                },
+                "stop_timeout": 30_500
+            })
+        );
+
+        let roundtrip: SandboxLifecycleSpec =
+            serde_json::from_value(value).expect("lifecycle should deserialize");
+        assert_eq!(roundtrip, lifecycle);
     }
 }

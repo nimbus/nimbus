@@ -70,6 +70,14 @@ pub struct KrunSandboxBackendConfig {
 }
 
 impl KrunSandboxBackendConfig {
+    pub fn under_root(root: impl Into<PathBuf>) -> Self {
+        let mut config = Self::default();
+        let root = root.into();
+        config.bundle_root = root.join("bundles");
+        config.state_root = root.join("state");
+        config
+    }
+
     pub fn plan_only(bundle_root: impl Into<PathBuf>, state_root: impl Into<PathBuf>) -> Self {
         let mut config = Self::default();
         config.bundle_root = bundle_root.into();
@@ -491,15 +499,10 @@ impl KrunSandboxBackend {
         let pid = read_pid(&manifest.conmon_layout.pidfile)?;
         let stop_signal = configured_stop_signal(&manifest.image_metadata);
         signal_process(&stop_signal, pid)?;
-        if !wait_for_path(
-            &manifest.conmon_layout.exit_status_file,
-            self.config.stop_timeout,
-        ) {
+        let stop_timeout = configured_stop_timeout(&manifest.spec, &self.config);
+        if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
             signal_process("KILL", pid)?;
-            if !wait_for_path(
-                &manifest.conmon_layout.exit_status_file,
-                self.config.stop_timeout,
-            ) {
+            if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "sandbox {} did not write an exit file after TERM/KILL",
@@ -804,6 +807,10 @@ fn configured_stop_signal(image_metadata: &KrunImageMetadata) -> String {
         .filter(|signal| !signal.is_empty())
         .unwrap_or("TERM")
         .to_owned()
+}
+
+fn configured_stop_timeout(spec: &SandboxSpec, config: &KrunSandboxBackendConfig) -> Duration {
+    spec.lifecycle.stop_timeout.unwrap_or(config.stop_timeout)
 }
 
 fn restart_policy_allows_restart(
@@ -1399,10 +1406,10 @@ mod tests {
     use super::{
         GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,
         KrunImageMetadata, KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
-        KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, desired_krun_vm_config,
-        krun_vm_config_path, parse_guest_user, probe_target_ready, readiness_probe_target,
-        restart_backoff_delay, restart_policy_allows_restart, running_status, slugify,
-        visible_published_endpoints,
+        KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, configured_stop_timeout,
+        desired_krun_vm_config, krun_vm_config_path, parse_guest_user, probe_target_ready,
+        readiness_probe_target, restart_backoff_delay, restart_policy_allows_restart,
+        running_status, slugify, visible_published_endpoints,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
@@ -1970,6 +1977,25 @@ mod tests {
     }
 
     #[test]
+    fn configured_stop_timeout_prefers_sandbox_lifecycle_and_falls_back_to_backend_default() {
+        let backend_default = KrunSandboxBackendConfig {
+            stop_timeout: Duration::from_secs(5),
+            ..KrunSandboxBackendConfig::default()
+        };
+        assert_eq!(
+            configured_stop_timeout(
+                &sample_spec().with_stop_timeout(Duration::from_secs(30)),
+                &backend_default,
+            ),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            configured_stop_timeout(&sample_spec(), &backend_default),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
     fn parse_guest_user_accepts_numeric_uid_and_uid_gid() {
         assert_eq!(
             parse_guest_user(Some("1234")).expect("uid should parse"),
@@ -2271,6 +2297,7 @@ mod tests {
             manifest.spec.lifecycle.restart_policy,
             SandboxRestartPolicy::Never
         );
+        assert_eq!(manifest.spec.lifecycle.stop_timeout, None);
         assert!(
             manifest
                 .conmon_launch

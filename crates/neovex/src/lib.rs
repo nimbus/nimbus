@@ -38,7 +38,9 @@ pub use neovex_server::{
     build_router_with_convex_and_sandbox_catalog,
     build_router_with_convex_and_sandbox_service_manager, build_router_with_license,
     build_router_with_license_and_sandbox_catalog, build_router_with_sandbox_catalog, serve,
-    serve_with_convex, serve_with_convex_and_license, serve_with_license,
+    serve_with_convex, serve_with_convex_and_license,
+    serve_with_convex_and_license_and_sandbox_service_manager, serve_with_license,
+    serve_with_license_and_sandbox_catalog,
 };
 pub use neovex_storage::EmbeddedProviderKind;
 pub use neovex_storage::TenantStore;
