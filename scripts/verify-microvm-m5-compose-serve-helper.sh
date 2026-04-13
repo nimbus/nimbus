@@ -46,8 +46,8 @@ cargo test \
   --test-threads=1 \
   2>&1 | tee "${smoke_log}"
 
-project_root="$(grep '^M5_PROJECT_ROOT=' "${smoke_log}" | tail -1 | cut -d= -f2-)"
-project_key="$(grep '^M5_PROJECT_KEY=' "${smoke_log}" | tail -1 | cut -d= -f2-)"
+project_root="$(grep -o 'M5_PROJECT_ROOT=[^ ]*' "${smoke_log}" | tail -1 | cut -d= -f2-)"
+project_key="$(grep -o 'M5_PROJECT_KEY=[^ ]*' "${smoke_log}" | tail -1 | cut -d= -f2-)"
 
 if [[ -z "${project_root}" || -z "${project_key}" ]]; then
   echo "failed to extract M5 project identity from ${smoke_log}" >&2
