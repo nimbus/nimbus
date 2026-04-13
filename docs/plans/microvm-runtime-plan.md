@@ -869,7 +869,7 @@ Developers can use muscle memory.
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
 | M3: Lifecycle management | `done` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is Linux-verified via a statically-linked guest helper that drops to image uid:gid (www-data 33:33 proven via ctr.log). Key finding: virtiofs in rootless krun VMs maps guest uid through host user namespace so non-root guests cannot write to the rootfs overlay |
 | M4: Engine integration | `done` | M3 | local slices landed: server-owned service-registry projection to `ctx.services.*`, lazy per-name lookup/caching, an activation-capable blocking `ensure_service_binding(...)` seam, generic sandbox image/build launch entrypoints on `SandboxBackend`, and a server-owned `SandboxServiceManager` that starts declared services on first reference and stops them on tenant deletion in local tests. A checked-in ignored Linux-host smoke lane now exists for the real krun-backed manager path; Linux-verified on Debian 13 (2026-04-13): V8 function ctx.services.db.port triggered real krun service activation via SandboxServiceManager, HTTP connectivity confirmed on TSI port 18090, tenant deletion stopped service and released port. Sandbox db-01kp3ktd3gy7gjsbqwrxbaeant reached Ready then Stopped with exit code 137 after clean teardown |
-| M5: Developer experience | `done` | M4 | local Compose/CLI seam is active in `neovex-bin`: `neovex service config` parses/validates Compose YAML, prints a resolved typed service plan, supports `--services`, warns on ignored fields, resolves env_file + resource limits locally, validates lowerable process overrides (`command`, `entrypoint`, `working_dir`, `user`) against the sandbox launch seam, validates lifecycle overrides (`restart`, `stop_grace_period`) against `SandboxLifecycleSpec` with per-sandbox krun stop-timeout support, lowers validated services into a typed `SandboxServiceCatalog` bridge for the server manager, exposes an explicit `--compose-file` startup hook in the main binary, and now has backend-owned persisted-state plus local `service up` / `service down` / `service list` / `service inspect` / `service logs` / `service ps` wiring under the service-control-plane plan. Linux end-to-end proof and recovery drills complete: compose-serve smoke and recovery drill both passed on Debian 13 (2026-04-13). See service-control-plane-plan.md SCP5 for detailed evidence |
+| M5: Developer experience | `in_progress` | M4 | local Compose/CLI seam is active in `neovex-bin`: `neovex service config` parses/validates Compose YAML, prints a resolved typed service plan, supports `--services`, warns on ignored fields, resolves env_file + resource limits locally, validates lowerable process overrides (`command`, `entrypoint`, `working_dir`, `user`) against the sandbox launch seam, validates lifecycle overrides (`restart`, `stop_grace_period`) against `SandboxLifecycleSpec` with per-sandbox krun stop-timeout support, lowers validated services into a typed `SandboxServiceCatalog` bridge for the server manager, exposes an explicit `--compose-file` startup hook in the main binary, and now has backend-owned persisted-state plus local `service up` / `service down` / `service list` / `service inspect` / `service logs` / `service ps` wiring under the service-control-plane plan. Initial Debian 13 proof was recorded, but the recovery helper has since been hardened to bind to the exact current-run project root and sandbox ids; one Linux rerun is still required before calling M5 closed |
 
 ---
 
@@ -1859,19 +1859,25 @@ ss -tlnp | grep 15432                                 # should be empty
   `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT=8090`.
   State: `/tmp/neovex-sandbox-smoke/m4-manager-state/containers/db-01kp3ktd3gy7gjsbqwrxbaeant/manifest.json`.
   M4 is now done. M5 remains `todo`.
-- 2026-04-13: Ran M5/SCP5 Linux-host verification on Debian 13 x86_64.
-  Fixed compilation: made `RuntimeServiceRegistry` trait public, re-exported
-  from facade, fixed imports in `neovex-bin`.
+- 2026-04-13: Ran initial M5/SCP5 Linux-host verification on Debian 13 x86_64.
   Compose-serve smoke (`bash scripts/verify-microvm-m5-compose-serve-helper.sh`)
   passed (~9.5s): V8 `ctx.services.db.port = 18091`, HTTP on TSI port 18091,
-  tenant deletion teardown.
-  Recovery drill (`bash scripts/verify-microvm-m5-recovery-drill-helper.sh`)
-  passed: no leaked ports, no orphan processes, manifest persists (stopped,
-  shutdown_requested: true), logs persist, project layout
-  `smoke-app-444d8e7fafaa` intact.
-  Artifact paths:
-  `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/compose-serve.log`,
-  `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/summary.txt`,
-  `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`,
-  `/tmp/neovex-sandbox-smoke/m5-compose-control/services/projects/smoke-app-444d8e7fafaa/`.
-  M5 is now done. All phases M1 through M5 are complete.
+  tenant deletion teardown. Recovery drill
+  (`bash scripts/verify-microvm-m5-recovery-drill-helper.sh`) also reported
+  success and wrote
+  `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`.
+- 2026-04-13: Post-review hardening found two durability gaps in the initial
+  M5 closeout:
+  - the bin smoke had widened public API surface by making
+    `RuntimeServiceRegistry` public even though the test could assert through
+    the already-public `SandboxCatalog` surface on `SandboxServiceManager`
+  - the recovery helper could validate stale manifests/logs from the shared
+    `${NEOVEX_KRUN_SMOKE_WORKDIR}` and could miss orphaned conmon/crun
+    processes by grepping the host port rather than the sandbox identity
+  The current code now keeps `RuntimeServiceRegistry` internal again, records
+  the exact current-run project root/key in the compose-serve helper, clears
+  the M5 control root before the smoke run, and makes the recovery helper
+  validate exact manifest/log/sandbox-id paths from that run instead of using
+  `find ... | head -1`. Because the hardened helper has not been rerun on
+  Linux yet, M5 remains `in_progress` pending one more Linux-host verification
+  pass before the closeout can be trusted.

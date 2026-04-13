@@ -12,7 +12,7 @@ control-root layout, and lifecycle command semantics for
 
 ## Status
 
-- **Status:** `done`
+- **Status:** `in_progress`
 - **Primary owner:** this plan
 - **Activation gate:** met on 2026-04-13 after:
   - `microvm-runtime-plan.md` M4 reached `done`
@@ -277,7 +277,7 @@ backend remains authoritative for current runtime state.
 | SCP2: backend-owned summary/lookup seams | `done` | `KrunSandboxStateView` landed in `crates/neovex-sandbox/src/backends/krun/state.rs` with project listing, inspect-by-service identity, and log-path lookup over manifest-backed krun state |
 | SCP3: lifecycle commands | `done` | `config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps` now exist locally; `down` resolves one current target per service identity instead of fanning out across raw manifest history |
 | SCP4: CLI/server ownership unification | `done` | main server path plus explicit lifecycle commands now share `ComposeProjectContext`, project-scoped backend roots, and the `SandboxServiceCatalog` lowering bridge without a duplicate lifecycle database |
-| SCP5: end-to-end proof and operator docs | `done` | Linux-verified on Debian 13 (2026-04-13): compose-backed krun service activated via V8 `ctx.services.db.port`, HTTP on TSI port 18091, tenant deletion teardown, manifest/log persistence, no orphan processes, no leaked ports. Recovery drill script checked in at `scripts/verify-microvm-m5-recovery-drill-helper.sh` |
+| SCP5: end-to-end proof and operator docs | `in_progress` | Initial Debian 13 proof was recorded on 2026-04-13, but post-review hardening found the checked-in recovery helper could validate stale manifests/logs from the shared workdir and could miss orphaned conmon/crun processes by grepping the host port instead of sandbox identity. The helper now targets the exact current-run project root and sandbox ids; rerun on Linux is required before calling SCP5 closed again |
 
 ---
 
@@ -452,22 +452,28 @@ are true:
   - `cargo fmt --all --check`
   - `cargo check -p neovex-sandbox -p neovex-bin -p neovex`
   - `cargo test -p neovex-bin service:: -- --nocapture`
-- 2026-04-13: Ran SCP5 Linux-host verification on Debian 13 x86_64.
-  Fixed compilation issues: `RuntimeServiceRegistry` trait was `pub(crate)` in
-  `neovex-server`, preventing import from `neovex-bin` tests. Fixed by making
-  the trait public and re-exporting via the facade crate. Also fixed duplicate
-  import of `KrunLaunchMode` and unused `KrunSandboxBackendConfig` import.
+- 2026-04-13: Ran initial SCP5 Linux-host verification on Debian 13 x86_64.
   Compose-serve verification via
   `bash scripts/verify-microvm-m5-compose-serve-helper.sh` passed (~9.5s):
   - V8 function `services:activate` returned `ctx.services.db.port = 18091`
   - BusyBox httpd responded on TSI host port 18091 (guest 8091)
   - tenant deletion stopped service and released port
   - state at `/tmp/neovex-sandbox-smoke/m5-compose-control/services/projects/smoke-app-444d8e7fafaa/`
-  Recovery drill via `bash scripts/verify-microvm-m5-recovery-drill-helper.sh` passed:
-  - port 18091 released (no leaked ports)
-  - no orphan conmon/crun processes for the tested service
-  - manifest persists: `status: stopped`, `shutdown_requested: True`
-  - ctr.log and oci.log persist on disk
-  - project layout: `smoke-app-444d8e7fafaa`
-  - recovery drill summary at `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`
-  SCP5 is now done. The service control plane plan is complete.
+  Recovery drill via `bash scripts/verify-microvm-m5-recovery-drill-helper.sh`
+  also reported success and wrote
+  `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`.
+- 2026-04-13: Post-review hardening found two durability gaps in the initial
+  SCP5 closeout:
+  - the bin smoke had widened public API surface by making
+    `RuntimeServiceRegistry` public even though the test could assert through
+    the already-public `SandboxCatalog` surface on `SandboxServiceManager`
+  - the recovery helper could validate stale manifests/logs from the shared
+    `${NEOVEX_KRUN_SMOKE_WORKDIR}` and could miss orphaned conmon/crun
+    processes by grepping the host port rather than the sandbox identity
+  The current code now keeps `RuntimeServiceRegistry` internal again, records
+  the exact current-run project root/key in the compose-serve helper, clears
+  the M5 control root before the smoke run, and makes the recovery helper
+  validate exact manifest/log/sandbox-id paths from that run instead of using
+  `find ... | head -1`. Because the hardened recovery helper has not been
+  rerun on Linux yet, SCP5 remains `in_progress` pending one more Linux-host
+  verification pass.
