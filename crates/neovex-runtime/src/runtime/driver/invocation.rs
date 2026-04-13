@@ -198,6 +198,7 @@ impl NeovexRuntime {
         let timeout_triggered = Arc::new(AtomicBool::new(false));
         let heap_limit_triggered = Arc::new(AtomicBool::new(false));
         let external_cancellation_triggered = Arc::new(AtomicBool::new(false));
+        super::super::bootstrap::bind_runtime_host_bridge(&mut runtime, self.host.clone());
         super::super::bootstrap::reset_runtime_invocation_state(&mut runtime, permit.clone());
         super::super::bootstrap::reset_bootstrap_invocation_state(&mut runtime)?;
         let cancellation_signal = {

@@ -6,10 +6,10 @@ usage() {
 usage: prepare-linux-vmm-validation-bundle.sh --crun-source <path> [options]
 
 Prepare a deterministic Linux-host execution bundle for the `LH1`-`LH6`
-validation queue in `docs/plans/vmm-infrastructure-plan.md`. The bundle does
-not execute the VMM stack by itself; it stages numbered command scripts,
-artifact directories, and a write-back checklist so another Linux host can run
-the queue with minimal judgment.
+validation queue from the archived VMM foundation plan. The bundle does not
+execute the VMM stack by itself; it stages numbered command scripts, artifact
+directories, and a write-back checklist so another Linux host can run the
+queue with minimal judgment.
 
 options:
   --crun-source <path>         Upstream crun source checkout (required)
@@ -611,7 +611,8 @@ EOF
 chmod 0755 "${queue_runner}"
 
 cat > "${checklist_file}" <<EOF
-Record these paths and outcomes back into docs/plans/vmm-infrastructure-plan.md:
+Record these paths and outcomes alongside the current task and compare against
+docs/plans/archive/vmm-infrastructure-plan.md:
 
 LH1:
 - ${lh1_dir}/check-vmm-host.txt

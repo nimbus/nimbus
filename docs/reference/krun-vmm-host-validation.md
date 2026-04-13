@@ -1,11 +1,11 @@
 # krun VMM Host Validation
 
-This runbook is the operator-facing `V1` baseline for the active VMM
-infrastructure plan. It defines the reproducible Linux-side commands and
-evidence needed to build the patched private `neovex-crun` binary, stage it at
+This runbook is the operator-facing historical baseline for the krun-backed
+VMM foundation. It defines the reproducible Linux-side commands and evidence
+used to build the patched private `neovex-crun` binary, stage it at
 `/usr/libexec/neovex/crun`, prepare the first OCI bundle recipe with
-`krun.port_map` in `"host:guest"` form, and lay out the first repeatable
-conmon lifecycle drill.
+`krun.port_map` in `"host:guest"` form, and lay out the repeatable conmon
+lifecycle drill.
 
 On macOS, run this runbook inside the Linux machine guest described by
 `docs/plans/distribution-plan.md` Channel 4, not on the macOS host. The VMM
@@ -66,8 +66,8 @@ This emits:
 - `session.env` with the fixed paths and parameters for the Linux run
 - `commands/00-run-through-lh6.sh` for the full sequence
 - numbered `commands/01...11...` scripts for each queue step
-- `99-writeback-checklist.txt` listing the artifact files to record back into
-  `docs/plans/vmm-infrastructure-plan.md`
+- `99-writeback-checklist.txt` listing the artifact files to record alongside
+  the current task or compare against the archived VMM foundation evidence
 
 Recommended Linux-host entrypoint:
 
@@ -436,8 +436,9 @@ Notes:
 
 ## 9. Evidence To Record In The Plan
 
-When a Linux host completes this runbook, record all of the following in
-`docs/plans/vmm-infrastructure-plan.md`:
+When a Linux host completes this runbook, record all of the following in the
+current task notes or issue, and compare against the original closeout record
+in `docs/plans/archive/vmm-infrastructure-plan.md`:
 
 - host OS and version
 - upstream source path

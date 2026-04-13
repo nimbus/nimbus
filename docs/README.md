@@ -12,13 +12,16 @@ and where to go next.
   stable architecture, crate map, and invariants
 - [Current capabilities](reference/current-capabilities.md):
   snapshot of the current implemented surface
+- [MicroVM and service-control baseline](reference/microvm-service-baseline.md):
+  concise current baseline for the landed krun-backed microVM runtime,
+  `ctx.services.*` integration, and `neovex service ...` control surface
 - [HTTP and WebSocket API](reference/http-api.md):
   native and optional Convex route catalog
 - [CLI reference](reference/cli.md):
   server flags and runtime-limit defaults
 - [krun VMM host validation](reference/krun-vmm-host-validation.md):
-  Linux-side build, install, and evidence capture runbook for the active
-  patched-crun VMM workstream
+  Linux-side build, install, and evidence capture runbook for historical
+  patched-crun VMM validation and regression reruns
 - [Convex compatibility](convex/compatibility.md):
   current Convex-surface scope, limits, and demo entrypoints
 - [Runtime execution architecture rationale](research/runtime-execution-architecture-rationale.md):

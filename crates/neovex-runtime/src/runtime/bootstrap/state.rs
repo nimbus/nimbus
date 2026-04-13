@@ -9,9 +9,44 @@ use crate::host::{HostBridge, HostCallCancellation};
 use crate::runtime::NeovexRuntime;
 use crate::watchdog::{WatchdogRegistration, WatchdogTimer};
 
+#[derive(Default)]
+struct RuntimeHostBridgeSlotState {
+    bridge: Option<Arc<dyn HostBridge>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeHostBridgeSlot {
+    state: Arc<Mutex<RuntimeHostBridgeSlotState>>,
+}
+
+impl RuntimeHostBridgeSlot {
+    pub(crate) fn new(initial_bridge: Arc<dyn HostBridge>) -> Self {
+        let slot = Self::default();
+        slot.bind(initial_bridge);
+        slot
+    }
+
+    pub(crate) fn bind(&self, bridge: Arc<dyn HostBridge>) {
+        self.state
+            .lock()
+            .expect("runtime host bridge slot lock should not be poisoned")
+            .bridge = Some(bridge);
+    }
+
+    pub(crate) fn current(&self) -> Arc<dyn HostBridge> {
+        self.state
+            .lock()
+            .expect("runtime host bridge slot lock should not be poisoned")
+            .bridge
+            .as_ref()
+            .cloned()
+            .expect("runtime host bridge slot should be bound before invocation")
+    }
+}
+
 #[derive(Clone)]
-pub(super) struct RuntimeHostState {
-    pub(super) bridge: Arc<dyn HostBridge>,
+pub(super) struct InstalledRuntimeHostBridge {
+    pub(super) slot: RuntimeHostBridgeSlot,
 }
 
 #[derive(Clone)]
@@ -125,17 +160,31 @@ impl RuntimeInvocationTimeoutController {
 }
 
 pub(crate) fn initialize_runtime_state(runtime: &mut JsRuntime, runtime_owner: &NeovexRuntime) {
-    let op_state = runtime.op_state();
-    {
-        let mut state = op_state.borrow_mut();
-        state.put(RuntimeHostState {
-            bridge: runtime_owner.host.clone(),
-        });
-    }
+    install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
     reset_runtime_invocation_state(
         runtime,
         SharedInvocationPermit::new(runtime_owner.policy.clone(), None, None, true, None),
     );
+}
+
+pub(crate) fn install_runtime_host_bridge_slot(
+    runtime: &mut JsRuntime,
+    bridge: Arc<dyn HostBridge>,
+) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    state.put(InstalledRuntimeHostBridge {
+        slot: RuntimeHostBridgeSlot::new(bridge),
+    });
+}
+
+pub(crate) fn bind_runtime_host_bridge(runtime: &mut JsRuntime, bridge: Arc<dyn HostBridge>) {
+    let op_state = runtime.op_state();
+    let state = op_state.borrow();
+    state
+        .borrow::<InstalledRuntimeHostBridge>()
+        .slot
+        .bind(bridge);
 }
 
 pub(crate) fn reset_runtime_invocation_state(

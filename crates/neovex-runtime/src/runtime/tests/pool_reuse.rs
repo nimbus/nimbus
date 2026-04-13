@@ -4,6 +4,7 @@ use deno_core::{JsRuntime, PollEventLoopOptions};
 
 use super::*;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
+use crate::host::HostBridgeFuture;
 
 #[tokio::test]
 async fn pooled_runtime_invocations_keep_module_state_fresh() {
@@ -135,6 +136,95 @@ export {};
     assert_eq!(metrics.runtime_pool_misses, 1);
     assert_eq!(metrics.runtime_pool_hits, 1);
     assert_eq!(metrics.runtime_pool_replacements, 0);
+}
+
+#[derive(Clone)]
+struct TaggedAsyncDbGetHost {
+    host_id: &'static str,
+}
+
+impl HostBridge for TaggedAsyncDbGetHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Err(NeovexRuntimeError::Contract(
+            "sync host bridge path should not be used for async ops".to_string(),
+        ))
+    }
+
+    fn call_async(
+        &self,
+        _request: HostCallRequest,
+        _cancellation: HostCallCancellation,
+    ) -> HostBridgeFuture {
+        let host_id = self.host_id;
+        Box::pin(async move {
+            Ok(serde_json::json!({
+                "status": "ok",
+                "value": {
+                    "host_id": host_id,
+                },
+            }))
+        })
+    }
+}
+
+#[tokio::test]
+async fn warm_pooled_runtime_rebinds_host_bridge_per_invocation() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  return await ctx.db.get("messages", "doc-1");
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:get".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+
+    let first = invoke_on_single_worker(
+        &executor,
+        NeovexRuntime::with_policy(
+            Arc::new(TaggedAsyncDbGetHost { host_id: "first" }),
+            policy.clone(),
+        ),
+        &bundle,
+        request.clone(),
+    )
+    .await
+    .expect("first warm pooled invocation should succeed");
+    let second = invoke_on_single_worker(
+        &executor,
+        NeovexRuntime::with_policy(Arc::new(TaggedAsyncDbGetHost { host_id: "second" }), policy),
+        &bundle,
+        request,
+    )
+    .await
+    .expect("second warm pooled invocation should succeed");
+
+    assert_eq!(first, serde_json::json!({ "host_id": "first" }));
+    assert_eq!(second, serde_json::json!({ "host_id": "second" }));
+    let metrics = executor.policy().metrics_snapshot();
+    assert_eq!(metrics.runtime_pool_misses, 1);
+    assert_eq!(metrics.runtime_pool_hits, 1);
 }
 
 #[tokio::test]

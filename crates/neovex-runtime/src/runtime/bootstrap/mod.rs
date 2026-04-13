@@ -8,6 +8,6 @@ pub(crate) use self::source::{
     finalize_bootstrap, install_bootstrap, reset_bootstrap_invocation_state,
 };
 pub(crate) use self::state::{
-    RuntimeCancellationState, RuntimeInvocationTimeoutController, initialize_runtime_state,
-    reset_runtime_invocation_state,
+    RuntimeCancellationState, RuntimeInvocationTimeoutController, bind_runtime_host_bridge,
+    initialize_runtime_state, reset_runtime_invocation_state,
 };
