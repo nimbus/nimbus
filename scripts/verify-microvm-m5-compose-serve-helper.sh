@@ -29,6 +29,7 @@ mkdir -p "${log_root}"
 
 smoke_log="${log_root}/compose-serve.log"
 summary_file="${log_root}/summary.txt"
+metadata_file="${log_root}/metadata.json"
 
 cd "${repo_root}"
 
@@ -36,6 +37,7 @@ cargo fmt --all --check
 cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex
 cargo test -p neovex-bin
 
+export NEOVEX_KRUN_SMOKE_M5_METADATA_FILE="${metadata_file}"
 cargo test \
   -p neovex-bin \
   tests::convex_runtime_query_starts_real_krun_service_from_compose_file_and_tears_it_down \
@@ -46,16 +48,22 @@ cargo test \
   --test-threads=1 \
   2>&1 | tee "${smoke_log}"
 
-project_root="$(grep -o 'M5_PROJECT_ROOT=[^ ]*' "${smoke_log}" | tail -1 | cut -d= -f2-)"
-project_key="$(grep -o 'M5_PROJECT_KEY=[^ ]*' "${smoke_log}" | tail -1 | cut -d= -f2-)"
+if [[ ! -f "${metadata_file}" ]]; then
+  echo "compose smoke did not write metadata file: ${metadata_file}" >&2
+  exit 1
+fi
+
+project_root="$(python3 -c "import json; print(json.load(open('${metadata_file}'))['project_root'])")"
+project_key="$(python3 -c "import json; print(json.load(open('${metadata_file}'))['project_key'])")"
 
 if [[ -z "${project_root}" || -z "${project_key}" ]]; then
-  echo "failed to extract M5 project identity from ${smoke_log}" >&2
+  echo "failed to read M5 project identity from ${metadata_file}" >&2
   exit 1
 fi
 
 {
   printf 'm5.compose_serve.log=%s\n' "${smoke_log}"
+  printf 'm5.compose_serve.metadata=%s\n' "${metadata_file}"
   printf 'm5.compose_serve.host_port=%s\n' "${host_port}"
   printf 'm5.compose_serve.guest_port=%s\n' "${guest_port}"
   printf 'm5.compose_serve.control_root=%s\n' "${control_root}"
