@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -17,7 +19,7 @@ use super::command::CommandSpec;
 use super::conmon::{KrunConmonConfig, KrunConmonLaunchPlan, KrunConmonLayout, build_launch_plan};
 use super::port_manager::PortManager;
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
-use crate::endpoint::PublishedEndpoint;
+use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::SandboxSpec;
@@ -29,6 +31,7 @@ const DEFAULT_PUBLISHED_PORT_START: u16 = 15_000;
 const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
+const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
 const KRUN_VM_CONFIG_FILENAME: &str = ".krun_vm.json";
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 
@@ -156,6 +159,8 @@ impl KrunSandboxBackend {
             KrunLaunchMode::Execute => self.detect_runtime_status(&manifest)?,
         };
         manifest.handle.status = manifest.status;
+        manifest.handle.published_endpoints =
+            visible_published_endpoints(manifest.launch_mode, &manifest.spec, manifest.status);
         self.write_manifest(&manifest)?;
         Ok(Some(manifest.handle))
     }
@@ -334,7 +339,11 @@ impl KrunSandboxBackend {
             resolved_launch.spec.name.clone(),
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
-            published_endpoints(&resolved_launch.spec),
+            visible_published_endpoints(
+                self.config.launch_mode,
+                &resolved_launch.spec,
+                SandboxStatus::Starting,
+            ),
         );
         let manifest = KrunSandboxManifest {
             handle,
@@ -406,7 +415,8 @@ impl KrunSandboxBackend {
         }
 
         manifest.spec.port_bindings.extend(auto_bindings);
-        manifest.handle.published_endpoints = published_endpoints(&manifest.spec);
+        manifest.handle.published_endpoints =
+            visible_published_endpoints(manifest.launch_mode, &manifest.spec, manifest.status);
         write_bundle_config(
             &manifest.bundle_layout,
             &hostname_for(&manifest.spec),
@@ -476,8 +486,7 @@ impl KrunSandboxBackend {
         let mut manifest = launch_plan.manifest.clone();
         manifest.shutdown_requested = false;
         manifest.last_exit_code = None;
-        manifest.status = SandboxStatus::Starting;
-        manifest.handle.status = SandboxStatus::Starting;
+        synchronize_handle_status(&mut manifest, SandboxStatus::Starting);
         self.write_manifest(&manifest)?;
         Ok(manifest.handle)
     }
@@ -487,8 +496,7 @@ impl KrunSandboxBackend {
             manifest.shutdown_requested = true;
             manifest.last_exit_code =
                 Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-            manifest.status = SandboxStatus::Stopped;
-            manifest.handle.status = manifest.status;
+            synchronize_handle_status(manifest, SandboxStatus::Stopped);
             return self.write_manifest(manifest);
         }
 
@@ -515,8 +523,7 @@ impl KrunSandboxBackend {
         }
 
         manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-        manifest.status = SandboxStatus::Stopped;
-        manifest.handle.status = manifest.status;
+        synchronize_handle_status(manifest, SandboxStatus::Stopped);
         self.cleanup_manifest_buildah_artifacts(manifest)?;
         manifest.buildah_container = None;
         self.write_manifest(manifest)
@@ -533,7 +540,7 @@ impl KrunSandboxBackend {
 
         let runtime_state = runtime_state(&manifest.conmon_launch.state_command)?;
         match runtime_state.as_deref() {
-            Some("running") => Ok(SandboxStatus::Ready),
+            Some("running") => Ok(running_status(manifest)),
             Some("created") | Some("creating") => Ok(SandboxStatus::Starting),
             Some("stopped") => Ok(SandboxStatus::Stopped),
             Some("paused") => Ok(SandboxStatus::Stopping),
@@ -662,6 +669,12 @@ struct KrunImageMetadata {
 struct KrunVmConfig {
     cpus: u8,
     ram_mib: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadinessProbeTarget {
+    Tcp(SocketAddr),
+    Http(SocketAddr),
 }
 
 fn ensure_linux_host() -> Result<()> {
@@ -868,6 +881,95 @@ fn env_key(entry: &str) -> Option<&str> {
     (!key.is_empty()).then_some(key)
 }
 
+fn running_status(manifest: &KrunSandboxManifest) -> SandboxStatus {
+    match readiness_probe_target(manifest) {
+        Some(target) if probe_target_ready(target, readiness_probe_timeout(manifest)) => {
+            SandboxStatus::Ready
+        }
+        Some(_) => SandboxStatus::Starting,
+        None => SandboxStatus::Ready,
+    }
+}
+
+fn readiness_probe_target(manifest: &KrunSandboxManifest) -> Option<ReadinessProbeTarget> {
+    let endpoints = published_endpoints(&manifest.spec);
+    endpoints
+        .iter()
+        .find_map(|endpoint| match endpoint.protocol {
+            PublishedEndpointProtocol::Http => Some(ReadinessProbeTarget::Http(endpoint.address)),
+            PublishedEndpointProtocol::Https => Some(ReadinessProbeTarget::Tcp(endpoint.address)),
+            PublishedEndpointProtocol::Tcp => None,
+        })
+        .or_else(|| {
+            endpoints
+                .iter()
+                .find_map(|endpoint| match endpoint.protocol {
+                    PublishedEndpointProtocol::Tcp | PublishedEndpointProtocol::Https => {
+                        Some(ReadinessProbeTarget::Tcp(endpoint.address))
+                    }
+                    PublishedEndpointProtocol::Http => None,
+                })
+        })
+}
+
+fn readiness_probe_timeout(manifest: &KrunSandboxManifest) -> Duration {
+    manifest
+        .image_metadata
+        .healthcheck
+        .as_ref()
+        .and_then(|healthcheck| healthcheck.timeout)
+        .map(Duration::from_nanos)
+        .unwrap_or_else(|| Duration::from_millis(DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS))
+}
+
+fn probe_target_ready(target: ReadinessProbeTarget, timeout: Duration) -> bool {
+    match target {
+        ReadinessProbeTarget::Tcp(address) => TcpStream::connect_timeout(&address, timeout).is_ok(),
+        ReadinessProbeTarget::Http(address) => probe_http_ready(address, timeout),
+    }
+}
+
+fn probe_http_ready(address: SocketAddr, timeout: Duration) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, timeout) else {
+        return false;
+    };
+    if stream.set_read_timeout(Some(timeout)).is_err() {
+        return false;
+    }
+    if stream
+        .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut response = [0_u8; 256];
+    match stream.read(&mut response) {
+        Ok(read) if read > 0 => String::from_utf8_lossy(&response[..read]).starts_with("HTTP/"),
+        _ => false,
+    }
+}
+
+fn visible_published_endpoints(
+    launch_mode: KrunLaunchMode,
+    spec: &SandboxSpec,
+    status: SandboxStatus,
+) -> Vec<PublishedEndpoint> {
+    let endpoints = published_endpoints(spec);
+    if launch_mode == KrunLaunchMode::Execute && status != SandboxStatus::Ready {
+        Vec::new()
+    } else {
+        endpoints
+    }
+}
+
+fn synchronize_handle_status(manifest: &mut KrunSandboxManifest, status: SandboxStatus) {
+    manifest.status = status;
+    manifest.handle.status = status;
+    manifest.handle.published_endpoints =
+        visible_published_endpoints(manifest.launch_mode, &manifest.spec, status);
+}
+
 fn shell_escape(s: &str) -> String {
     if s.is_empty() {
         return "''".to_owned();
@@ -1048,8 +1150,12 @@ fn render_command_failure(stderr: &[u8]) -> String {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener};
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::thread;
+    use std::time::Duration;
 
     use futures::executor::block_on;
     use serde_json::json;
@@ -1058,14 +1164,18 @@ mod tests {
     use neovex_core::TenantId;
 
     use super::{
-        KrunImageMetadata, KrunSandboxBackend, KrunSandboxBackendConfig, configured_stop_signal,
-        desired_krun_vm_config, krun_vm_config_path, slugify,
+        KrunImageMetadata, KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
+        KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, desired_krun_vm_config,
+        krun_vm_config_path, probe_target_ready, readiness_probe_target, running_status, slugify,
+        visible_published_endpoints,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
         ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
         OciProcessOverrides,
     };
+    use crate::endpoint::PublishedEndpointProtocol;
+    use crate::instance::SandboxStatus;
     use crate::spec::{
         SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
         SandboxSpec,
@@ -1529,6 +1639,94 @@ mod tests {
         );
     }
 
+    #[test]
+    fn readiness_probe_target_prefers_http_endpoints() {
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            "api",
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new("/srv/rootfs"),
+            SandboxProcessSpec::new(["/bin/service"]),
+        )
+        .with_port_bindings([
+            SandboxPortBinding::tcp("postgres", 15432, 5432),
+            SandboxPortBinding::new("http", PublishedEndpointProtocol::Http, 18080, 8080),
+        ]);
+        let manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+
+        assert_eq!(
+            readiness_probe_target(&manifest),
+            Some(ReadinessProbeTarget::Http(SocketAddr::from((
+                [127, 0, 0, 1],
+                18080
+            ))))
+        );
+    }
+
+    #[test]
+    fn probe_target_ready_succeeds_for_http_listener() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should report local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("listener should accept");
+            let mut request = [0_u8; 256];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.0 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .expect("server should write response");
+        });
+
+        assert!(
+            probe_target_ready(ReadinessProbeTarget::Http(address), Duration::from_secs(1)),
+            "expected HTTP readiness probe to pass against local listener"
+        );
+        server.join().expect("server thread should join");
+    }
+
+    #[test]
+    fn running_status_stays_starting_until_probe_passes() {
+        let unused_listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
+        let address = unused_listener
+            .local_addr()
+            .expect("listener should report local addr");
+        drop(unused_listener);
+
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            "tcp-service",
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new("/srv/rootfs"),
+            SandboxProcessSpec::new(["/bin/service"]),
+        )
+        .with_port_binding(SandboxPortBinding::tcp("tcp", address.port(), 8080));
+        let manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+
+        assert_eq!(running_status(&manifest), SandboxStatus::Starting);
+    }
+
+    #[test]
+    fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
+        let spec = sample_spec();
+
+        assert!(
+            visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::Starting)
+                .is_empty(),
+            "execute-mode sandboxes should not publish endpoints before readiness succeeds"
+        );
+        assert_eq!(
+            visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::Ready).len(),
+            2
+        );
+        assert_eq!(
+            visible_published_endpoints(KrunLaunchMode::PlanOnly, &spec, SandboxStatus::Starting)
+                .len(),
+            2,
+            "plan-only starts should retain published endpoints for deterministic tests"
+        );
+    }
+
     fn sample_spec() -> SandboxSpec {
         sample_spec_with_rootfs(Path::new("/srv/rootfs"))
     }
@@ -1594,6 +1792,36 @@ mod tests {
 
     fn sample_image_metadata() -> KrunImageMetadata {
         KrunImageMetadata::default()
+    }
+
+    fn sample_manifest(spec: SandboxSpec, launch_mode: KrunLaunchMode) -> KrunSandboxManifest {
+        let endpoints = visible_published_endpoints(launch_mode, &spec, SandboxStatus::Starting);
+        KrunSandboxManifest {
+            handle: crate::instance::SandboxHandle::new(
+                crate::instance::SandboxId::new("sandbox-01"),
+                spec.name.clone(),
+                SandboxBackendKind::Krun,
+                SandboxStatus::Starting,
+                endpoints,
+            ),
+            spec,
+            image_metadata: KrunImageMetadata::default(),
+            buildah_container: None,
+            bundle_layout: super::KrunBundleLayout::new("/tmp/bundle"),
+            conmon_layout: super::KrunConmonLayout::new(
+                "/tmp/state",
+                &crate::instance::SandboxId::new("sandbox-01"),
+            ),
+            conmon_launch: super::KrunConmonLaunchPlan {
+                create_command: super::CommandSpec::new("/bin/true"),
+                state_command: super::CommandSpec::new("/bin/true"),
+                start_command: super::CommandSpec::new("/bin/true"),
+            },
+            last_exit_code: None,
+            launch_mode,
+            shutdown_requested: false,
+            status: SandboxStatus::Starting,
+        }
     }
 
     #[test]

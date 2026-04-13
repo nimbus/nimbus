@@ -84,10 +84,14 @@ supports the same conclusion from source.
   paths are now Linux-verified on Debian 13: `/.krun_vm.json` contains
   `{"cpus":2,"ram_mib":256}` and `linux.resources.memory.limit = 268435456`,
   with TSI HTTP connectivity confirmed under the resource-limited VM.
-- `vm.rs` currently reports OCI runtime state `"running"` as
-  `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
-  service readiness: one initial TCP connection was refused before the guest
-  service began answering through TSI.
+- `vm.rs` no longer treats OCI runtime state `"running"` as automatically
+  `Ready` in execute mode. It now derives a backend-local startup probe from
+  published endpoints, prefers HTTP endpoints over raw TCP when both exist,
+  keeps the sandbox in `Starting` until the probe succeeds, and hides
+  execute-mode published endpoints until readiness passes. Local unit coverage
+  now proves HTTP probe success, probe-target selection, failure-to-starting
+  fallback, and endpoint gating. Linux-host promotion for this M3 slice is
+  still outstanding.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -114,9 +118,10 @@ supports the same conclusion from source.
   sandboxes confirmed `/.krun_vm.json` materialization (`cpus:2, ram_mib:256`),
   OCI `linux.resources.memory.limit = 268435456`, and TSI HTTP connectivity
   under the resource-limited VM on Debian 13. M2 is complete.
-- Readiness, startup, and liveness probing remain required follow-on work for
-  M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
-  but it is not a trustworthy published-endpoint readiness signal.
+- The first M3 startup-readiness gate is now implemented locally: execute-mode
+  sandboxes remain `Starting` until a real endpoint probe succeeds, and
+  execute-mode published endpoints stay hidden until then. Linux-host proof for
+  that gate, plus broader liveness/restart behavior, remains outstanding.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -719,8 +724,15 @@ Before M5, keep verification split across four lanes:
   - image-backed: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
     `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18084
   - Logs at `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
-- M3 is now the active phase. The readiness gap (OCI `"running"` != service-ready)
-  is the highest-priority follow-on.
+- M3 is now the active phase. The first local M3 slice is a startup-readiness
+  gate in `vm.rs`: execute-mode sandboxes stay `Starting` until a host-side
+  probe reaches the published endpoint, and execute-mode endpoints remain hidden
+  until that probe succeeds.
+- The next Linux promotion should prove that gate on a real host by extending
+  the ignored smoke lane so:
+  - the sandbox initially remains `Starting`
+  - published endpoints stay empty while the guest is still booting
+  - status transitions to `Ready` only after the guest answers on TSI
 
 ### End-to-end (after M4)
 
@@ -1009,3 +1021,17 @@ ss -tlnp | grep 15432                                 # should be empty
   Verification: `cargo fmt --all --check` pass, `cargo check -p neovex-sandbox -p neovex` pass,
   `cargo test -p neovex-sandbox` (39 pass), both resource-limit smoke tests pass.
   M2 is now `done`. M3 promoted to `in_progress`.
+- 2026-04-12: Started the first concrete M3 implementation slice on the macOS
+  development workspace. `crates/neovex-sandbox/src/backends/krun/vm.rs` no
+  longer maps OCI runtime state `"running"` directly to `SandboxStatus::Ready`
+  in execute mode. Instead it now derives a backend-local readiness probe from
+  published endpoints, prefers HTTP endpoints over raw TCP when both exist,
+  keeps execute-mode sandboxes in `Starting` until that probe succeeds, and
+  hides execute-mode published endpoints until readiness passes. Added local
+  unit coverage for HTTP probe success, probe-target selection, failure-to-
+  `Starting` behavior, and endpoint gating while booting. Verification:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox` (43 pass).
+  This closes the first local M3 readiness gap but still needs Linux-host smoke
+  promotion before the plan can claim end-to-end proof for the new startup gate.

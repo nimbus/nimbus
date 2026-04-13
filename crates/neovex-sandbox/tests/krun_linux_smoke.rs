@@ -788,6 +788,103 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
     cleanup_guard.disarm();
 }
 
+/// M3 verification: prove execute-mode sandboxes remain `Starting` with no
+/// published endpoints until the guest actually begins answering on TSI.
+#[test]
+#[ignore = "requires a Linux host with KVM, conmon, and a mounted rootfs"]
+fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
+    let rootfs = env_path("NEOVEX_KRUN_SMOKE_ROOTFS");
+    let host_port: u16 = 18085;
+    let guest_port: u16 = 8085;
+
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("m3-readiness-bundles");
+    let state_root = base_dir.join("m3-readiness-state");
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root;
+    config.state_root = state_root;
+    config.launch_mode = KrunLaunchMode::Execute;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    let backend = KrunSandboxBackend::new(config);
+    let delayed_command = format!("sleep 2; exec /bin/busybox httpd -f -p {guest_port}");
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        "m3-readiness-gate",
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new(rootfs),
+        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &delayed_command]),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        PublishedEndpointProtocol::Http,
+        host_port,
+        guest_port,
+    ));
+
+    let handle = block_on(backend.start(spec)).expect("readiness-gated sandbox should start");
+    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+
+    assert_eq!(handle.status, SandboxStatus::Starting);
+    assert!(
+        handle.published_endpoints.is_empty(),
+        "execute-mode start should hide published endpoints until readiness succeeds"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut observed_starting = false;
+    while Instant::now() < deadline {
+        if let Some(current) =
+            block_on(backend.inspect(&handle.id)).expect("inspect should succeed")
+        {
+            if current.status == SandboxStatus::Starting {
+                observed_starting = true;
+                assert!(
+                    current.published_endpoints.is_empty(),
+                    "published endpoints should remain hidden while the guest is still booting"
+                );
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        observed_starting,
+        "expected to observe a Starting state before the delayed guest HTTP service became ready"
+    );
+
+    let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
+    assert_eq!(ready_handle.status, SandboxStatus::Ready);
+    assert_eq!(
+        ready_handle.published_endpoints.len(),
+        1,
+        "published endpoints should appear once readiness succeeds"
+    );
+    assert_eq!(
+        ready_handle.published_endpoints[0].address.port(),
+        host_port
+    );
+
+    let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        http_response.starts_with("HTTP/1.") || http_response.contains("404"),
+        "expected HTTP response from readiness-gated sandbox, got: {http_response}"
+    );
+
+    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    cleanup_guard.disarm();
+}
+
 fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
     let status = std::process::Command::new(program)
         .args(args)
