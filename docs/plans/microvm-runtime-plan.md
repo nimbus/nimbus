@@ -904,11 +904,10 @@ Before M5, keep verification split across four lanes:
     back into the overlay rootfs
   - sandbox reaches `Ready` and answers HTTP on port `18089`
   - manifest preserves `image_metadata.user = "33:33"`
-- **M4 is now the active phase.** Two local service-registry slices are now
-  in place and ready for follow-on Linux-host validation. The sandbox seam also
-  now exposes generic image/build launch entrypoints, and `neovex-server` now
-  has a real `SandboxServiceManager` that can start declared services in local
-  tests:
+- **M4 is complete** (2026-04-13). The sandbox seam now exposes generic
+  image/build launch entrypoints, `neovex-server` now has a real
+  `SandboxServiceManager`, and both the local M4 slices plus the Linux-host
+  krun-backed manager smoke are recorded here:
   - `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`
   - `cargo test -p neovex-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`
   - `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`
@@ -937,10 +936,10 @@ Before M5, keep verification split across four lanes:
       active handle on later lookups
     - tenant deletion now routes through the same server-owned manager and
       stops manager-owned sandboxes before the tenant is removed from storage
-    - the real Linux-host manager smoke path is checked in and compiles in the
-      server test binary; it reuses the existing `NEOVEX_KRUN_SMOKE_*`
-      environment contract plus `NEOVEX_KRUN_SMOKE_M4_HOST_PORT` /
-      `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT`
+    - the real Linux-host manager smoke path is checked in, uses the existing
+      `NEOVEX_KRUN_SMOKE_*` environment contract plus
+      `NEOVEX_KRUN_SMOKE_M4_HOST_PORT` / `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT`,
+      and now passes on Linux
   - **M4 Linux verification is complete** (2026-04-13). The ignored Linux-host
     smoke `tests::convex_functions::runtime_queries::execution::services::convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down`
     passed in ~10s on Debian 13:
@@ -951,6 +950,8 @@ Before M5, keep verification split across four lanes:
     - tenant deletion stopped the service (`shutdown_requested: true`,
       `last_exit_code: 137`) and released port 18090
     - state produced at `/tmp/neovex-sandbox-smoke/m4-manager-state/`
+- **M5 is the next phase.** No M5 implementation or verification is recorded
+  yet; start there rather than reopening M4 unless a regression appears.
 
 ### End-to-end (after M4)
 
