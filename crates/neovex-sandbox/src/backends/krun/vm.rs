@@ -886,6 +886,14 @@ fn running_status(manifest: &KrunSandboxManifest) -> SandboxStatus {
         Some(target) if probe_target_ready(target, readiness_probe_timeout(manifest)) => {
             SandboxStatus::Ready
         }
+        Some(_)
+            if matches!(
+                manifest.status,
+                SandboxStatus::Ready | SandboxStatus::NotReady
+            ) =>
+        {
+            SandboxStatus::NotReady
+        }
         Some(_) => SandboxStatus::Starting,
         None => SandboxStatus::Ready,
     }
@@ -1707,6 +1715,75 @@ mod tests {
     }
 
     #[test]
+    fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
+        let unused_listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
+        let address = unused_listener
+            .local_addr()
+            .expect("listener should report local addr");
+        drop(unused_listener);
+
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            "http-service",
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new("/srv/rootfs"),
+            SandboxProcessSpec::new(["/bin/service"]),
+        )
+        .with_port_binding(SandboxPortBinding::new(
+            "http",
+            PublishedEndpointProtocol::Http,
+            address.port(),
+            8080,
+        ));
+        let mut manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+        manifest.status = SandboxStatus::Ready;
+        manifest.handle.status = SandboxStatus::Ready;
+        manifest.handle.published_endpoints = visible_published_endpoints(
+            KrunLaunchMode::Execute,
+            &manifest.spec,
+            SandboxStatus::Ready,
+        );
+
+        assert_eq!(running_status(&manifest), SandboxStatus::NotReady);
+    }
+
+    #[test]
+    fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should report local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("listener should accept");
+            let mut request = [0_u8; 256];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.0 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .expect("server should write response");
+        });
+
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            "http-service",
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new("/srv/rootfs"),
+            SandboxProcessSpec::new(["/bin/service"]),
+        )
+        .with_port_binding(SandboxPortBinding::new(
+            "http",
+            PublishedEndpointProtocol::Http,
+            address.port(),
+            8080,
+        ));
+        let mut manifest = sample_manifest(spec, KrunLaunchMode::Execute);
+        manifest.status = SandboxStatus::NotReady;
+        manifest.handle.status = SandboxStatus::NotReady;
+
+        assert_eq!(running_status(&manifest), SandboxStatus::Ready);
+        server.join().expect("server thread should join");
+    }
+
+    #[test]
     fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
         let spec = sample_spec();
 
@@ -1718,6 +1795,11 @@ mod tests {
         assert_eq!(
             visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::Ready).len(),
             2
+        );
+        assert!(
+            visible_published_endpoints(KrunLaunchMode::Execute, &spec, SandboxStatus::NotReady)
+                .is_empty(),
+            "execute-mode sandboxes should withdraw endpoints when liveness probes regress"
         );
         assert_eq!(
             visible_published_endpoints(KrunLaunchMode::PlanOnly, &spec, SandboxStatus::Starting)

@@ -147,7 +147,10 @@ struct PortLeaseSpec {
 
 impl SandboxStatus {
     fn reserves_ports(self) -> bool {
-        matches!(self, Self::Starting | Self::Ready | Self::Stopping)
+        matches!(
+            self,
+            Self::Starting | Self::Ready | Self::NotReady | Self::Stopping
+        )
     }
 }
 
@@ -211,6 +214,27 @@ mod tests {
                 SandboxPortBinding::tcp("tcp-8080", 15001, 8080),
                 SandboxPortBinding::tcp("tcp-8443", 15002, 8443),
             ]
+        );
+    }
+
+    #[test]
+    fn allocate_missing_bindings_keeps_not_ready_ports_reserved() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "not-ready",
+            SandboxStatus::NotReady,
+            &[(15000, 5432)],
+        );
+
+        let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+        let allocated = manager
+            .allocate_missing_bindings(&[], &[tcp_exposed_port(8080)])
+            .expect("port allocation should succeed");
+
+        assert_eq!(
+            allocated,
+            vec![SandboxPortBinding::tcp("tcp-8080", 15001, 8080)]
         );
     }
 
