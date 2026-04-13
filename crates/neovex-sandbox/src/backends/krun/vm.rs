@@ -10,7 +10,7 @@ use super::buildah::{
     BuildahCli, BuildahContainer, ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
     OciProcessOverrides, PreparedImageLaunch,
 };
-use super::bundle::{KrunBundleLayout, write_bundle_config};
+use super::bundle::{KrunBundleLayout, KrunBundleOptions, write_bundle_config};
 use super::command::CommandSpec;
 use super::conmon::{KrunConmonConfig, KrunConmonLaunchPlan, KrunConmonLayout, build_launch_plan};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
@@ -279,6 +279,9 @@ impl KrunSandboxBackend {
             &bundle_layout,
             &hostname_for(&resolved_launch.spec),
             &resolved_launch.spec,
+            &KrunBundleOptions {
+                process_user: resolved_launch.image_metadata.user.clone(),
+            },
         )?;
 
         let conmon_layout = KrunConmonLayout::new(&self.config.state_root, &sandbox_id);
@@ -407,7 +410,8 @@ impl KrunSandboxBackend {
 
         manifest.shutdown_requested = true;
         let pid = read_pid(&manifest.conmon_layout.pidfile)?;
-        signal_process("TERM", pid)?;
+        let stop_signal = configured_stop_signal(&manifest.image_metadata);
+        signal_process(&stop_signal, pid)?;
         if !wait_for_path(
             &manifest.conmon_layout.exit_status_file,
             self.config.stop_timeout,
@@ -615,6 +619,16 @@ fn slugify(name: &str) -> String {
 
 fn buildah_container_name(sandbox_id: &SandboxId) -> String {
     format!("{}-image", sandbox_id.as_str())
+}
+
+fn configured_stop_signal(image_metadata: &KrunImageMetadata) -> String {
+    image_metadata
+        .stop_signal
+        .as_deref()
+        .map(str::trim)
+        .filter(|signal| !signal.is_empty())
+        .unwrap_or("TERM")
+        .to_owned()
 }
 
 fn resolve_launch_spec(
@@ -884,7 +898,10 @@ mod tests {
 
     use neovex_core::TenantId;
 
-    use super::{KrunSandboxBackend, KrunSandboxBackendConfig, slugify};
+    use super::{
+        KrunImageMetadata, KrunSandboxBackend, KrunSandboxBackendConfig, configured_stop_signal,
+        slugify,
+    };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
         ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
@@ -1024,6 +1041,14 @@ mod tests {
             rendered_bundle.contains("\"/usr/local/bin/service\""),
             "bundle config should use the image-default command when the generic spec is sparse"
         );
+        assert!(
+            rendered_bundle.contains("\"uid\": 1000"),
+            "bundle config should lower the image user uid into process.user"
+        );
+        assert!(
+            rendered_bundle.contains("\"gid\": 1000"),
+            "bundle config should lower the image user gid into process.user"
+        );
     }
 
     #[test]
@@ -1155,6 +1180,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn configured_stop_signal_prefers_image_metadata_and_falls_back_to_term() {
+        assert_eq!(
+            configured_stop_signal(&sample_image_metadata().with_stop_signal("SIGQUIT")),
+            "SIGQUIT"
+        );
+        assert_eq!(
+            configured_stop_signal(&sample_image_metadata().with_stop_signal("  ")),
+            "TERM"
+        );
+        assert_eq!(
+            configured_stop_signal(&KrunImageMetadata::default()),
+            "TERM"
+        );
+    }
+
     fn sample_spec() -> SandboxSpec {
         SandboxSpec::new(
             TenantId::new("tenant").expect("tenant id should be valid"),
@@ -1202,6 +1243,10 @@ mod tests {
             }),
             labels: BTreeMap::from([("com.example.service".to_owned(), "edge".to_owned())]),
         }
+    }
+
+    fn sample_image_metadata() -> KrunImageMetadata {
+        KrunImageMetadata::default()
     }
 
     fn write_fake_buildah_script(temp_dir: &TempDir) -> (PathBuf, PathBuf) {
@@ -1312,5 +1357,16 @@ esac
             }
         ])
         .to_string()
+    }
+
+    trait ImageMetadataTestExt {
+        fn with_stop_signal(self, stop_signal: &str) -> Self;
+    }
+
+    impl ImageMetadataTestExt for KrunImageMetadata {
+        fn with_stop_signal(mut self, stop_signal: &str) -> Self {
+            self.stop_signal = Some(stop_signal.to_owned());
+            self
+        }
     }
 }

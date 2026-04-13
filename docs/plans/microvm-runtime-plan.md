@@ -56,6 +56,11 @@ supports the same conclusion from source.
   spec. It now also exposes backend-local `start_from_image()` /
   `start_from_build()` helpers that connect prepared buildah launches to real
   krun start/stop lifecycle paths.
+- `bundle.rs` now owns the first image-user lowering seam for OCI bundle
+  generation: image `USER` values are resolved into numeric OCI
+  `process.user.uid` / `gid` values, including named-user lookup through the
+  mounted rootfs `/etc/passwd` when needed. The VM stop path now also honors
+  image-configured `StopSignal` values instead of hard-coding `TERM`.
 - `vm.rs` currently reports OCI runtime state `"running"` as
   `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
   service readiness: one initial TCP connection was refused before the guest
@@ -67,9 +72,11 @@ supports the same conclusion from source.
 ## Current Review Findings
 
 - The first typed buildah translation layer is now proven through a real
-  backend-local image-backed start path. The next M1/M2 follow-on is Linux-host
-  verification of that integrated path, then extending bundle generation with
-  image-user and stop-signal handling.
+  backend-local image-backed start path, and the first M2 slice now lowers
+  image `USER` into OCI `process.user` plus honors image `StopSignal` during
+  shutdown. The next M2 follow-on is Linux-host verification for those
+  non-default user/signal paths, then the remaining bundle/resource/port-manager
+  work.
 - Readiness, startup, and liveness probing remain required follow-on work for
   M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
   but it is not a trustworthy published-endpoint readiness signal.
@@ -606,7 +613,7 @@ Developers can use muscle memory.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
-| M2: OCI bundle generation | `todo` | M1 | |
+| M2: OCI bundle generation | `in_progress` | M1 | `bundle.rs` now lowers image `USER` into OCI `process.user`, and `vm.rs` stop now honors image `StopSignal`. Remaining M2 work: service resources, port-manager auto-assignment, and Linux-host verification for non-default user/signal paths |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
@@ -659,6 +666,9 @@ Before M5, keep verification split across four lanes:
   - `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`
   - `NEOVEX_KRUN_SMOKE_CONMON=$(command -v conmon)`
   - `NEOVEX_KRUN_SMOKE_BUILDAH=$(command -v buildah)`
+- The next Linux promotion should cover a non-root image `USER` and a
+  non-default image `STOPSIGNAL` on a real host so the new M2 lowering path is
+  proven beyond unit tests.
 - The next meaningful phase is M2/M3. The readiness gap (OCI `"running"` !=
   service-ready) is the highest-priority follow-on.
 
@@ -808,3 +818,15 @@ ss -tlnp | grep 15432                                 # should be empty
   `SandboxStatus::Ready` before the guest service binds its TSI port (one
   initial TCP connection refused observed in both smoke tests). This must be
   addressed in M3 with a proper startup probe.
+- 2026-04-12: Started M2 bundle-generation follow-on work. `bundle.rs` now
+  resolves image `USER` into OCI `process.user` values during config
+  generation, supporting numeric `uid[:gid]`, named-user lookup through the
+  mounted rootfs `/etc/passwd`, and the numeric-only fallback to gid `0` when
+  `/etc/passwd` is absent. `vm.rs` stop now uses the image-configured
+  `StopSignal` when present instead of always sending `TERM`. Added unit
+  coverage for numeric and named user lowering, missing-user rejection,
+  numeric-user fallback without `/etc/passwd`, bundle rendering of lowered
+  uid/gid, and stop-signal selection. Verification evidence:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  `cargo test -p neovex-sandbox` (30 pass).
