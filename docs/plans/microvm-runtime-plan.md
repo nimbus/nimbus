@@ -805,7 +805,7 @@ Developers can use muscle memory.
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
 | M3: Lifecycle management | `done` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is Linux-verified via a statically-linked guest helper that drops to image uid:gid (www-data 33:33 proven via ctr.log). Key finding: virtiofs in rootless krun VMs maps guest uid through host user namespace so non-root guests cannot write to the rootfs overlay |
-| M4: Engine integration | `in_progress` | M3 | local slices landed: server-owned service-registry projection to `ctx.services.*`, lazy per-name lookup/caching, an activation-capable blocking `ensure_service_binding(...)` seam, generic sandbox image/build launch entrypoints on `SandboxBackend`, and a server-owned `SandboxServiceManager` that starts declared services on first reference and stops them on tenant deletion in local tests. A checked-in ignored Linux-host smoke lane now exists for the real krun-backed manager path; remaining work is executing that lane successfully on Linux and recording the evidence |
+| M4: Engine integration | `done` | M3 | local slices landed: server-owned service-registry projection to `ctx.services.*`, lazy per-name lookup/caching, an activation-capable blocking `ensure_service_binding(...)` seam, generic sandbox image/build launch entrypoints on `SandboxBackend`, and a server-owned `SandboxServiceManager` that starts declared services on first reference and stops them on tenant deletion in local tests. A checked-in ignored Linux-host smoke lane now exists for the real krun-backed manager path; Linux-verified on Debian 13 (2026-04-13): V8 function ctx.services.db.port triggered real krun service activation via SandboxServiceManager, HTTP connectivity confirmed on TSI port 18090, tenant deletion stopped service and released port. Sandbox db-01kp3ktd3gy7gjsbqwrxbaeant reached Ready then Stopped with exit code 137 after clean teardown |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
 ---
@@ -941,9 +941,16 @@ Before M5, keep verification split across four lanes:
       server test binary; it reuses the existing `NEOVEX_KRUN_SMOKE_*`
       environment contract plus `NEOVEX_KRUN_SMOKE_M4_HOST_PORT` /
       `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT`
-  - What remains before M4 can close:
-    - execute the checked-in Linux-host smoke lane successfully and record the
-      resulting evidence in this plan
+  - **M4 Linux verification is complete** (2026-04-13). The ignored Linux-host
+    smoke `tests::convex_functions::runtime_queries::execution::services::convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down`
+    passed in ~10s on Debian 13:
+    - `ctx.services.db.port` triggered real krun service activation via
+      `SandboxServiceManager`
+    - BusyBox httpd responded on TSI host port 18090 (guest port 8090)
+    - sandbox `db-01kp3ktd3gy7gjsbqwrxbaeant` reached Ready then Stopped
+    - tenant deletion stopped the service (`shutdown_requested: true`,
+      `last_exit_code: 137`) and released port 18090
+    - state produced at `/tmp/neovex-sandbox-smoke/m4-manager-state/`
 
 ### End-to-end (after M4)
 
@@ -1605,3 +1612,39 @@ ss -tlnp | grep 15432                                 # should be empty
   M3 is now done. All five M3 slices are Linux-verified: startup readiness,
   liveness, restart policy, exponential backoff, and guest-side user switching.
   M4 promoted to in_progress.
+- 2026-04-13: Ran M4 engine-integration Linux-host smoke on Debian 13 x86_64.
+  The ignored test
+  `tests::convex_functions::runtime_queries::execution::services::convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down`
+  passed on first attempt (~10.2s):
+  (1) server started with a `SandboxServiceManager` owning a declared "db"
+  service backed by BusyBox httpd on krun;
+  (2) V8 function `services:activate` returned `ctx.services.db.port` = 18090,
+  triggering real krun sandbox activation through the server-owned manager;
+  (3) HTTP probe on 127.0.0.1:18090 returned BusyBox httpd response;
+  (4) `sandbox_service_manager.snapshot_for_tenant(&tenant_id)` confirmed
+  the "db" key was present (service bound and cached);
+  (5) tenant deletion (`DELETE /api/v1/tenants/demo`) returned 204 No Content;
+  (6) wait-for-condition confirmed port 18090 became unreachable and
+  `snapshot_for_tenant` became empty after deletion;
+  (7) post-teardown state: sandbox `db-01kp3ktd3gy7gjsbqwrxbaeant` manifest
+  shows `status: stopped`, `shutdown_requested: true`, `last_exit_code: 137`;
+  port 18090 released.
+  Note: the exact test name requires the full module prefix
+  `tests::convex_functions::runtime_queries::execution::services::` when using
+  `--exact` with `cargo test -p neovex-server`.
+  Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-runtime -p neovex-sandbox -p neovex-server -p neovex` pass,
+  exact command: `cargo test -p neovex-server
+  'tests::convex_functions::runtime_queries::execution::services::convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down'
+  -- --ignored --exact --nocapture` pass.
+  Env:
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
+  `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_M4_HOST_PORT=18090`,
+  `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT=8090`.
+  State: `/tmp/neovex-sandbox-smoke/m4-manager-state/containers/db-01kp3ktd3gy7gjsbqwrxbaeant/manifest.json`.
+  M4 is now done. M5 remains `todo`.
