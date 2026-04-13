@@ -22,7 +22,9 @@ guest_port="${NEOVEX_KRUN_SMOKE_M5_GUEST_PORT:-8091}"
 export NEOVEX_KRUN_SMOKE_M5_HOST_PORT="${host_port}"
 export NEOVEX_KRUN_SMOKE_M5_GUEST_PORT="${guest_port}"
 
+control_root="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m5-compose-control"
 log_root="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m5-compose-serve-verification"
+rm -rf "${control_root}" "${log_root}"
 mkdir -p "${log_root}"
 
 smoke_log="${log_root}/compose-serve.log"
@@ -44,10 +46,21 @@ cargo test \
   --test-threads=1 \
   2>&1 | tee "${smoke_log}"
 
+project_root="$(grep '^M5_PROJECT_ROOT=' "${smoke_log}" | tail -1 | cut -d= -f2-)"
+project_key="$(grep '^M5_PROJECT_KEY=' "${smoke_log}" | tail -1 | cut -d= -f2-)"
+
+if [[ -z "${project_root}" || -z "${project_key}" ]]; then
+  echo "failed to extract M5 project identity from ${smoke_log}" >&2
+  exit 1
+fi
+
 {
   printf 'm5.compose_serve.log=%s\n' "${smoke_log}"
   printf 'm5.compose_serve.host_port=%s\n' "${host_port}"
   printf 'm5.compose_serve.guest_port=%s\n' "${guest_port}"
+  printf 'm5.compose_serve.control_root=%s\n' "${control_root}"
+  printf 'm5.compose_serve.project_root=%s\n' "${project_root}"
+  printf 'm5.compose_serve.project_key=%s\n' "${project_key}"
   printf 'm5.compose_serve.exact_test=tests::convex_runtime_query_starts_real_krun_service_from_compose_file_and_tears_it_down\n'
 } > "${summary_file}"
 

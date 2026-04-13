@@ -771,7 +771,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     use neovex::{
-        RuntimeBundle, RuntimeServiceRegistry, build_router_with_convex_and_sandbox_service_manager,
+        RuntimeBundle, SandboxCatalog, build_router_with_convex_and_sandbox_service_manager,
     };
     #[cfg(target_os = "linux")]
     #[cfg(target_os = "linux")]
@@ -1169,6 +1169,11 @@ mod tests {
         let control_data_dir = base_dir.join("m5-compose-control");
         let context = load_compose_project_context(&compose_path, &control_data_dir)
             .expect("compose project context should load");
+        println!(
+            "M5_PROJECT_ROOT={}",
+            context.control_plane.project_root.display()
+        );
+        println!("M5_PROJECT_KEY={}", context.control_plane.project_key);
         let mut config = context.control_plane.krun_backend_config();
         config.launch_mode = KrunLaunchMode::Execute;
         if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
@@ -1223,7 +1228,7 @@ mod tests {
         );
         assert!(
             sandbox_service_manager
-                .snapshot_for_tenant(&tenant_id)
+                .sandboxes_for_tenant(&tenant_id)
                 .contains_key("db"),
             "compose-backed manager should expose the declared db binding"
         );
@@ -1239,7 +1244,7 @@ mod tests {
                     .await
                     .is_err()
                     && sandbox_service_manager
-                        .snapshot_for_tenant(&tenant_id)
+                        .sandboxes_for_tenant(&tenant_id)
                         .is_empty()
             },
         )

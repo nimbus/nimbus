@@ -9,7 +9,7 @@ mod protocol;
 mod router;
 mod sandbox;
 mod service_manager;
-pub mod service_registry;
+mod service_registry;
 mod state;
 mod ws;
 

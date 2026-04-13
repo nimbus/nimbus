@@ -10,7 +10,7 @@ use neovex_sandbox::{PublishedEndpoint, PublishedEndpointProtocol, SandboxHandle
 
 use crate::sandbox::SandboxCatalog;
 
-pub trait RuntimeServiceRegistry: Send + Sync + 'static {
+pub(crate) trait RuntimeServiceRegistry: Send + Sync + 'static {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices;
 
     fn resolve_service_binding(
