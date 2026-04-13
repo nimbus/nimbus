@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,6 +14,7 @@ use super::buildah::{
 use super::bundle::{KrunBundleLayout, KrunBundleOptions, write_bundle_config};
 use super::command::CommandSpec;
 use super::conmon::{KrunConmonConfig, KrunConmonLaunchPlan, KrunConmonLayout, build_launch_plan};
+use super::port_manager::PortManager;
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::endpoint::PublishedEndpoint;
 use crate::error::{Result, SandboxError};
@@ -22,6 +24,8 @@ use crate::spec::SandboxSpec;
 const DEFAULT_RUNTIME_PATH: &str = "/usr/libexec/neovex/crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
 const DEFAULT_BUILDAH_PATH: &str = "buildah";
+const DEFAULT_PUBLISHED_PORT_START: u16 = 15_000;
+const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
 
@@ -40,6 +44,7 @@ pub struct KrunSandboxBackendConfig {
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
     pub use_buildah_unshare: bool,
+    pub published_port_range: RangeInclusive<u16>,
     pub launch_mode: KrunLaunchMode,
     pub log_level: String,
     pub start_timeout: Duration,
@@ -66,6 +71,7 @@ impl Default for KrunSandboxBackendConfig {
             runtime_path: PathBuf::from(DEFAULT_RUNTIME_PATH),
             buildah_path: PathBuf::from(DEFAULT_BUILDAH_PATH),
             use_buildah_unshare: true,
+            published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             launch_mode: KrunLaunchMode::Execute,
             log_level: "debug".to_owned(),
             start_timeout: Duration::from_secs(DEFAULT_START_TIMEOUT_SECS),
@@ -118,6 +124,10 @@ impl KrunSandboxBackend {
     }
 
     fn finish_start(&self, launch_plan: KrunLaunchPlan) -> Result<SandboxHandle> {
+        let mut manifest = launch_plan.manifest;
+        self.materialize_auto_port_bindings(&mut manifest)?;
+        let launch_plan = KrunLaunchPlan { manifest };
+
         match self.config.launch_mode {
             KrunLaunchMode::PlanOnly => {
                 let mut manifest = launch_plan.manifest.clone();
@@ -376,6 +386,34 @@ impl KrunSandboxBackend {
                 .cleanup_container(&container.container_name)?;
         }
         Ok(())
+    }
+
+    fn materialize_auto_port_bindings(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
+        let auto_bindings = self.port_manager().allocate_missing_bindings(
+            &manifest.spec.port_bindings,
+            &manifest.image_metadata.exposed_ports,
+        )?;
+        if auto_bindings.is_empty() {
+            return Ok(());
+        }
+
+        manifest.spec.port_bindings.extend(auto_bindings);
+        manifest.handle.published_endpoints = published_endpoints(&manifest.spec);
+        write_bundle_config(
+            &manifest.bundle_layout,
+            &hostname_for(&manifest.spec),
+            &manifest.spec,
+            &KrunBundleOptions {
+                process_user: manifest.image_metadata.user.clone(),
+            },
+        )
+    }
+
+    fn port_manager(&self) -> PortManager {
+        PortManager::new(
+            self.config.state_root.clone(),
+            self.config.published_port_range.clone(),
+        )
     }
 
     fn execute_start(&self, launch_plan: &KrunLaunchPlan) -> Result<SandboxHandle> {
@@ -1183,6 +1221,76 @@ mod tests {
     }
 
     #[test]
+    fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
+
+        let mut config = KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        );
+        config.buildah_path = buildah_path;
+        config.use_buildah_unshare = false;
+        config.published_port_range = 15000..=15001;
+
+        let backend = KrunSandboxBackend::new(config);
+
+        let first = block_on(backend.start_from_image(
+            sparse_image_spec("first"),
+            "postgres:16".to_owned(),
+            OciProcessOverrides::default(),
+        ))
+        .expect("first plan-only image-backed start should succeed");
+        let first_inspected = block_on(backend.inspect(&first.id))
+            .expect("inspect should succeed")
+            .expect("first sandbox should be persisted");
+        assert_eq!(first_inspected.published_endpoints.len(), 1);
+        assert_eq!(first_inspected.published_endpoints[0].address.port(), 15000);
+
+        let second = block_on(backend.start_from_image(
+            sparse_image_spec("second"),
+            "postgres:16".to_owned(),
+            OciProcessOverrides::default(),
+        ))
+        .expect("second plan-only image-backed start should succeed");
+        let second_inspected = block_on(backend.inspect(&second.id))
+            .expect("inspect should succeed")
+            .expect("second sandbox should be persisted");
+        assert_eq!(second_inspected.published_endpoints.len(), 1);
+        assert_eq!(
+            second_inspected.published_endpoints[0].address.port(),
+            15001
+        );
+
+        block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
+
+        let third = block_on(backend.start_from_image(
+            sparse_image_spec("third"),
+            "postgres:16".to_owned(),
+            OciProcessOverrides::default(),
+        ))
+        .expect("third plan-only image-backed start should succeed");
+        let third_inspected = block_on(backend.inspect(&third.id))
+            .expect("inspect should succeed")
+            .expect("third sandbox should be persisted");
+        assert_eq!(third_inspected.published_endpoints.len(), 1);
+        assert_eq!(third_inspected.published_endpoints[0].address.port(), 15000);
+
+        let third_bundle = fs::read_to_string(
+            temp_dir
+                .path()
+                .join("bundles")
+                .join(third.id.as_str())
+                .join("config.json"),
+        )
+        .expect("third bundle config should be readable");
+        assert!(
+            third_bundle.contains("\"krun.port_map\": \"15000:5432\""),
+            "auto-assigned bindings should rewrite the krun port map annotation"
+        );
+    }
+
+    #[test]
     fn configured_stop_signal_prefers_image_metadata_and_falls_back_to_term() {
         assert_eq!(
             configured_stop_signal(&sample_image_metadata().with_stop_signal("SIGQUIT")),
@@ -1211,6 +1319,16 @@ mod tests {
             SandboxPortBinding::tcp("postgres", 15432, 5432),
             SandboxPortBinding::tcp("health", 18080, 8080),
         ])
+    }
+
+    fn sparse_image_spec(name: &str) -> SandboxSpec {
+        SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            name,
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new(PathBuf::new()),
+            SandboxProcessSpec::new(Vec::<String>::new()),
+        )
     }
 
     fn sample_launch_defaults() -> OciImageLaunchDefaults {
