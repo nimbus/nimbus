@@ -102,16 +102,16 @@ supports the same conclusion from source.
   Linux proof: BusyBox httpd killed by PID → sandbox degrades to `NotReady`
   with empty endpoints and unreachable port → httpd restarts → sandbox
   recovers to `Ready` with endpoints and HTTP connectivity restored.
-- The first restart-policy slice is now implemented locally. `SandboxSpec`
-  carries a generic `SandboxLifecycleSpec` with `SandboxRestartPolicy`, krun
-  manifests persist `restart_count`, and execute-mode `inspect()` now performs
-  an inspect-driven restart for crashed sandboxes when policy allows it. The
-  current restart slice is intentionally narrow: `Never`, `OnFailure`, and
-  `Always` are supported with bounded restart counts, but exponential backoff
-  and background workers are still deferred. Local unit coverage proves restart
-  policy decisions, and a new ignored Linux smoke
-  (`krun_backend_m3_restart_policy_restarts_failed_vm`) is checked in for host
-  verification.
+- The restart-policy slice is now Linux-verified. `SandboxSpec` carries a
+  generic `SandboxLifecycleSpec` with `SandboxRestartPolicy`, krun manifests
+  persist `restart_count`, and execute-mode `inspect()` performs inspect-driven
+  restart for crashed sandboxes when policy allows it. Linux proof (2026-04-13):
+  a BusyBox sandbox with `OnFailure { max_restarts: 1 }` exits with code 42
+  on first boot, is automatically restarted by the backend, reaches `Ready`
+  on port 18087 on second boot, with `restart_count: 1` and
+  `last_exit_code: 42` recorded in the manifest. `Never`, `OnFailure`, and
+  `Always` are supported with bounded restart counts; exponential backoff and
+  background workers are deferred.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -154,16 +154,13 @@ supports the same conclusion from source.
   process name is `busybox` not `httpd`; the test now uses PID-based killing
   (`httpd -f & HTTPD_PID=$!; ... kill $HTTPD_PID`). The port allocator treats
   `NotReady` sandboxes as active so degraded-but-running VMs do not leak their
-  host-port reservations. Remaining M3 work: restart policy and guest-side
-  user switching.
-- The first restart-policy slice is now implemented locally: the generic
-  sandbox API exposes `SandboxRestartPolicy` through `SandboxLifecycleSpec`,
-  and krun restarts crashed sandboxes during `inspect()` when policy allows it.
-  The current scope is bounded and explicit: restart is inspect-driven, restart
-  counts are persisted in the manifest, and the relaunch path performs a runtime
-  delete before recreate so the same sandbox identity can come back cleanly.
-  Linux-host proof is still outstanding. Exponential backoff remains a follow-on
-  refinement after the basic restart path is proven on a real host.
+  host-port reservations.
+- The restart-policy slice is now Linux-verified: inspect-driven restart
+  for crashed sandboxes works end-to-end on Debian 13. A sandbox with
+  `OnFailure { max_restarts: 1 }` that exits 42 on first boot is automatically
+  restarted and reaches `Ready` on port 18087. Manifest records
+  `restart_count: 1` and `last_exit_code: 42`. Remaining M3 work: guest-side
+  user switching and exponential backoff refinement.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -705,7 +702,7 @@ Developers can use muscle memory.
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
-| M3: Lifecycle management | `in_progress` | M2 | Probes, shutdown, restart. Startup-readiness and liveness are Linux-verified. The next local slice is restart policy: generic `SandboxLifecycleSpec` / `SandboxRestartPolicy`, inspect-driven krun restart, persisted `restart_count`, and an ignored Linux smoke for crash-then-recover restart. Guest-side user switching remains after restart verification |
+| M3: Lifecycle management | `in_progress` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), and restart policy (OnFailure crash-then-recover) are all Linux-verified. Remaining M3 work: guest-side user switching, exponential backoff refinement |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
@@ -1194,3 +1191,33 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo test -p neovex-sandbox` (48 pass).
   This restart slice is ready for Linux-host promotion. Exponential backoff
   and guest-side user switching remain after the basic restart path is proven.
+- 2026-04-13: Ran M3 restart-policy Linux-host verification on Debian 13 x86_64.
+  The smoke test `krun_backend_m3_restart_policy_restarts_failed_vm` passed on
+  both runs (~6.6s each):
+  (1) first boot: guest script increments a marker file to `1` and exits with
+  code 42;
+  (2) backend detects the crash via inspect-driven status check, restart policy
+  `OnFailure { max_restarts: 1 }` permits one restart;
+  (3) backend performs `crun delete` then relaunches via `conmon -> crun create
+  -> crun start`;
+  (4) second boot: guest script increments marker to `2` and starts httpd on
+  port 8087;
+  (5) sandbox reaches `Ready` with 1 published endpoint on host port 18087;
+  (6) HTTP probe on 127.0.0.1:18087 returns BusyBox httpd response;
+  (7) manifest records `restart_count: 1`, `last_exit_code: 42`,
+  `status: "ready"`;
+  (8) marker file in rootfs confirms 2 boots.
+  All 48 unit tests pass. Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (48 pass),
+  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  krun_backend_m3_restart_policy_restarts_failed_vm
+  -- --ignored --exact --test-threads=1` pass.
+  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  M3 restart-policy slice is now Linux-verified. Remaining M3 work: guest-side
+  user switching and exponential backoff refinement.
