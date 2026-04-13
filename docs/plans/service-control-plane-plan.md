@@ -12,7 +12,7 @@ control-root layout, and lifecycle command semantics for
 
 ## Status
 
-- **Status:** `in_progress`
+- **Status:** `done`
 - **Primary owner:** this plan
 - **Activation gate:** met on 2026-04-13 after:
   - `microvm-runtime-plan.md` M4 reached `done`
@@ -277,7 +277,7 @@ backend remains authoritative for current runtime state.
 | SCP2: backend-owned summary/lookup seams | `done` | `KrunSandboxStateView` landed in `crates/neovex-sandbox/src/backends/krun/state.rs` with project listing, inspect-by-service identity, and log-path lookup over manifest-backed krun state |
 | SCP3: lifecycle commands | `done` | `config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps` now exist locally; `down` resolves one current target per service identity instead of fanning out across raw manifest history |
 | SCP4: CLI/server ownership unification | `done` | main server path plus explicit lifecycle commands now share `ComposeProjectContext`, project-scoped backend roots, and the `SandboxServiceCatalog` lowering bridge without a duplicate lifecycle database |
-| SCP5: end-to-end proof and operator docs | `in_progress` | Initial Debian 13 proof was recorded on 2026-04-13, but post-review hardening found the checked-in recovery helper could validate stale manifests/logs from the shared workdir and could miss orphaned conmon/crun processes by grepping the host port instead of sandbox identity. The helper now targets the exact current-run project root and sandbox ids; rerun on Linux is required before calling SCP5 closed again |
+| SCP5: end-to-end proof and operator docs | `done` | Hardened helpers from `81cf133` re-verified on Debian 13 (2026-04-13). Compose-serve helper clears control root before run, records exact project_root/project_key. Recovery drill validates exact current-run project root, manifest sandbox ids, ctr/oci log paths, orphan detection by sandbox identity. All checks passed: project_key=`smoke-app-cf079a18bd54`, sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`, status=stopped, shutdown_requested=True, exit_code=137, no leaked ports, no orphan processes, ctr+oci logs persist |
 
 ---
 
@@ -477,3 +477,30 @@ are true:
   `find ... | head -1`. Because the hardened recovery helper has not been
   rerun on Linux yet, SCP5 remains `in_progress` pending one more Linux-host
   verification pass.
+- 2026-04-13: Re-verified SCP5 on Debian 13 x86_64 using hardened helpers from
+  commit `81cf133`. Fixed one additional issue: the compose-serve helper's grep
+  for `M5_PROJECT_ROOT=` used a `^` anchor that failed because cargo's
+  `--nocapture` test harness prefixes test output on the same line; changed to
+  `grep -o 'M5_PROJECT_ROOT=[^ ]*'` to extract mid-line markers reliably.
+  Commands run:
+  1. `cargo fmt --all --check` — passed
+  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
+  3. `cargo test -p neovex-bin` — 39 passed, 1 ignored
+  4. `bash scripts/verify-microvm-m5-compose-serve-helper.sh` — passed (~6.9s)
+  5. `bash scripts/verify-microvm-m5-recovery-drill-helper.sh` — all checks passed
+  Evidence:
+  - project_key: `smoke-app-cf079a18bd54`
+  - project_root: `/tmp/neovex-sandbox-smoke/m5-compose-control/services/projects/smoke-app-cf079a18bd54`
+  - sandbox_id: `db-01kp3yamn6rb2dtwbk0wn1t8tz`
+  - manifest.status: stopped
+  - manifest.shutdown_requested: True
+  - manifest.last_exit_code: 137
+  - port.18091.released: ok
+  - orphan.processes: ok (none)
+  - logs.ctr.persists: ok (1/1)
+  - logs.oci.persists: ok (1/1)
+  - project.layout: ok
+  - compose-serve log: `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/compose-serve.log`
+  - compose-serve summary: `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/summary.txt`
+  - recovery-drill summary: `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`
+  SCP5 is now `done`.
