@@ -30,7 +30,8 @@ supports the same conclusion from source.
   - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
     baseline that owns the canonical sandbox crate naming and the server-facing
     seam this plan must consume
-  - `docs/plans/service-control-plane-plan.md` — completed companion plan for
+  - `docs/plans/archive/service-control-plane-plan.md` — completed companion
+    plan for
     the Compose-backed service control plane: project identity, control-root
     layout, backend-owned lifecycle state, and `neovex service ...` command
     semantics
@@ -172,8 +173,8 @@ supports the same conclusion from source.
   declared `db` service starts exactly once through a fake backend, waits for
   readiness, returns port `15432`, remains visible in later snapshots, and is
   stopped when the tenant is deleted through the HTTP API.
-- M5 is now in progress under the active service-control-plane plan. In
-  `neovex-bin`, the `service/compose.rs` adapter parses `compose.yaml`,
+- M5 is complete under `service-control-plane-plan.md`. In `neovex-bin`, the
+  `service/compose.rs` adapter parses `compose.yaml`,
   resolves image/build source, env + env_file, ports, restart policy, and
   CPU/memory limits into a typed service plan, validates lowerable
   `command`/`entrypoint`/`working_dir`/`user` process overrides, validates
@@ -185,7 +186,8 @@ supports the same conclusion from source.
   CLI now exposes `config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps`
   through the same project/control-root derivation plus the same
   `SandboxServiceCatalog` lowering bridge used by `--compose-file`.
-  Local proof (2026-04-13): the bin crate tests validate image- and
+  Local proof plus Linux-host closeout (2026-04-13): the bin crate tests
+  validate image- and
   build-backed services, env-file merging, ignored-field warnings,
   invalid-memory errors, lowerable process override translation,
   lifecycle-duration validation, catalog lowering, CLI parsing, helper
@@ -296,18 +298,17 @@ supports the same conclusion from source.
   alignment before start, and reuses active handles once a service has been
   activated. Local proof covers manager-level activation, router-level
   `ctx.services` startup, and tenant-delete stop/cleanup with a fake backend.
-  Remaining M4 work is Linux-host end-to-end proof with a real krun-backed
-  service under the manager.
-- The first M5 slice is now implemented and locally verified: `neovex-bin`
-  owns the Compose translation and CLI seam instead of pushing YAML parsing
-  into `neovex-sandbox` or `neovex-server`. `neovex service config` validates
-  the supported Compose subset and prints a resolved service plan, while
-  `--services` lists service names only. That validation now reaches down into
-  the actual launch seam for lowerable process overrides: Compose
-  `command`, `entrypoint`, `working_dir`, and `user` are translated into
-  `SandboxImageProcessOverrides`, and the sandbox layer now honors explicit
-  `user` overrides over image USER metadata. Compose `restart` and
-  `stop_grace_period` now validate against the generic
+  Linux-host end-to-end proof with a real krun-backed service under the
+  manager is complete.
+- M5 is now complete: `neovex-bin` owns the Compose translation and CLI seam
+  instead of pushing YAML parsing into `neovex-sandbox` or `neovex-server`.
+  `neovex service config` validates the supported Compose subset and prints a
+  resolved service plan, while `--services` lists service names only. That
+  validation now reaches down into the actual launch seam for lowerable
+  process overrides: Compose `command`, `entrypoint`, `working_dir`, and
+  `user` are translated into `SandboxImageProcessOverrides`, and the sandbox
+  layer now honors explicit `user` overrides over image USER metadata.
+  Compose `restart` and `stop_grace_period` now validate against the generic
   `SandboxLifecycleSpec` seam, and krun stop now honors per-sandbox lifecycle
   timeout overrides before falling back to the backend default. The same
   adapter now lowers validated services into a typed declared-service catalog
@@ -318,10 +319,10 @@ supports the same conclusion from source.
   registry seam without additional glue. Fractional
   `deploy.resources.limits.cpus` currently round up to whole guest vCPU counts
   with an explicit warning because krun only accepts whole vCPU counts today.
-  The follow-on service-control-plane plan now owns the full Compose-backed
+  The completed service-control-plane plan now owns the full Compose-backed
   service control plane: typed persisted-state lookup plus `service up`,
   `service down`, `service list`, `service inspect`, `service logs`, and
-  `service ps`. Remaining M5 work is Linux-host end-to-end verification of the
+  `service ps`, along with Linux-host end-to-end verification of the
   compose-backed serve path plus recovery-drill/operator evidence.
 - Upstream source review confirmed libkrun's built-in guest init does **not**
   parse or apply OCI `user`; it only consumes env, args/Cmd, WorkingDir/Cwd,
@@ -1010,40 +1011,27 @@ Before M5, keep verification split across four lanes:
     - tenant deletion stopped the service (`shutdown_requested: true`,
       `last_exit_code: 137`) and released port 18090
     - state produced at `/tmp/neovex-sandbox-smoke/m4-manager-state/`
-- **M5 is now in progress** (2026-04-13). The first local developer-experience
-  slice is `neovex service config` in `neovex-bin`:
-  - `cargo check -p neovex-bin`
-  - `cargo test -p neovex-bin`
-  - `cargo test -p neovex-sandbox configured_stop_timeout_prefers_sandbox_lifecycle_and_falls_back_to_backend_default -- --exact`
+- **M5 is complete** (2026-04-13). The developer-experience and service-control
+  closeout now lives in `service-control-plane-plan.md`, and the Linux-host
+  verification there is complete:
   - `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex`
-  - `bash -n scripts/verify-microvm-m5-compose-serve-helper.sh`
-  - What this proves locally:
-    - `neovex service config` parses a supported Compose subset and prints a
-      resolved YAML service plan
-    - `neovex service config --services` lists service names only
-    - image-backed and build-backed services both resolve
-    - `env_file` merges before inline `environment`
-    - lowerable Compose process overrides now validate against the real
-      sandbox launch seam, including explicit `user` override support
-    - lowerable Compose lifecycle overrides now validate against the real
-      sandbox lifecycle seam, including `stop_grace_period`
-    - the resolved Compose plan lowers into a typed `SandboxServiceCatalog`
-      bridge for the server-owned manager seam
-    - the main binary accepts `--compose-file` and can construct the
-      compose-backed manager/catalog serve path at compile time
-    - a checked-in Linux helper now exists for the exact compose-backed serve
-      smoke lane
-    - ignored fields produce warnings instead of hard errors
-    - invalid memory values fail with actionable messages
-    - fractional CPU limits round up with an explicit warning
-    - explicit `service up` / `service down` now share the same Compose
-      lowering, deterministic project identity, and backend-owned lifecycle
-      state model as `--compose-file`
-  - What remains before M5 can close:
-    - run the checked-in Linux end-to-end helper for the compose-backed serve
-      path and record the evidence
-    - add Linux-host recovery-drill evidence for restart, orphan discovery,
-      and log persistence under the service-control-plane plan
+  - `cargo test -p neovex-bin`
+  - `bash scripts/verify-microvm-m5-compose-serve-helper.sh`
+  - `bash scripts/verify-microvm-m5-recovery-drill-helper.sh`
+  - Verified outcomes:
+    - `neovex service config` parses the supported Compose subset and lowers it
+      into the typed `SandboxServiceCatalog` bridge
+    - `service up` / `service down` / `service list` / `service inspect` /
+      `service logs` / `service ps` share the same project identity and
+      backend-owned state model as `--compose-file`
+    - the Compose-backed serve path is Linux-verified end to end
+    - recovery-drill/operator evidence is recorded with persisted manifests,
+      log paths, released ports, and no orphan processes
+  - Evidence captured on Debian 13:
+    - project_key=`smoke-app-cf079a18bd54`
+    - sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`
+    - status=`stopped`, `shutdown_requested=True`, `exit_code=137`
+    - no leaked ports, no orphan processes, ctr+oci logs persist
 
 ### End-to-end (after M4)
 

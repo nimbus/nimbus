@@ -96,7 +96,7 @@ What not to copy literally:
 - This plan supersedes the completed deterministic harness pass in
   `docs/plans/archive/deterministic-test-and-harness-hardening-plan.md`.
 - This plan is separate from:
-  `docs/plans/convex-demos-compatibility-plan.md`,
+  `docs/plans/archive/convex-demos-compatibility-plan.md`,
   `docs/plans/encryption-at-rest-plan.md`,
   `docs/plans/v8-locker-fork-plan.md`,
   `docs/plans/layered-admission-control-plan.md`,

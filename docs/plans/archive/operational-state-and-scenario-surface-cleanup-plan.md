@@ -63,7 +63,7 @@ readable Rust, and easier debugging and feature work.
 - This plan is separate from
   `docs/plans/layered-admission-control-plan.md`,
   `docs/plans/encryption-at-rest-plan.md`,
-  `docs/plans/convex-demos-compatibility-plan.md`,
+  `docs/plans/archive/convex-demos-compatibility-plan.md`,
   and `docs/plans/v8-locker-fork-plan.md`.
 
 ---

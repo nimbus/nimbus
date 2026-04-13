@@ -113,7 +113,7 @@ its own redb-backed, runtime-hosting, reactive-database architecture.
 - Use `docs/plans/README.md` as the owning plan index.
 - This plan is separate from:
   `docs/plans/v8-locker-fork-plan.md`,
-  `docs/plans/convex-demos-compatibility-plan.md`,
+  `docs/plans/archive/convex-demos-compatibility-plan.md`,
   `docs/plans/encryption-at-rest-plan.md`,
   `docs/plans/layered-admission-control-plan.md`,
   `docs/plans/pluggable-storage-backend-plan.md`,

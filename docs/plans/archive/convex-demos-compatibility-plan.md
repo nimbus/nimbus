@@ -1,5 +1,20 @@
 # Plan: Convex Demos Compatibility
 
+## Status
+
+Completed and archived on 2026-04-13.
+
+Archived after the planned compatibility surface landed: WebSocket constructor
+injection, string refs, `anyApi`, the served browser bundle, context type
+aliases, the repo-owned Node demo, the plain HTML demo variant, and the
+external `convex-demos` overlay runner.
+
+Archive-time verification:
+
+- `npm run convex:test`
+- `npm run test:differential --workspace convex -- --neovex-only`
+- `npm run convex:build`
+
 ## Scope
 
 This repo already has a substantial Convex compatibility baseline:

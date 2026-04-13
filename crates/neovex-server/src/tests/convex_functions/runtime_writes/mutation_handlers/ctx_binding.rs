@@ -99,12 +99,30 @@ export {};
     assert_eq!(body["ctx"], json!(true));
     assert!(body["value"].as_str().is_some());
 
+    let second_response = api
+        .convex_named_mutation(
+            "demo",
+            "messages:send",
+            json!({ "author": "Ada", "body": "Again" }),
+        )
+        .await;
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_body = second_response
+        .json::<serde_json::Value>()
+        .await
+        .expect("second ctx mutation host-binding response should parse");
+    assert_eq!(second_body["ctx"], json!(true));
+    assert!(second_body["value"].as_str().is_some());
+
     let listed = api.list_documents("demo", "messages").await;
     assert_eq!(listed.status(), StatusCode::OK);
     let listed_body = listed
         .json::<serde_json::Value>()
         .await
         .expect("inserted documents should parse");
+    assert_eq!(listed_body["data"].as_array().map(Vec::len), Some(2));
     assert_eq!(listed_body["data"][0]["author"], json!("Ada"));
     assert_eq!(listed_body["data"][0]["body"], json!("Hello"));
+    assert_eq!(listed_body["data"][1]["author"], json!("Ada"));
+    assert_eq!(listed_body["data"][1]["body"], json!("Again"));
 }

@@ -16,10 +16,12 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 
 ## Status
 
-- **Status:** `in_progress`
+- **Status:** `done`
 - **Primary owner:** this plan
 - **Activation gate:** met on 2026-04-11 when the krun-backed microVM workstream
   moved from naming and seam cleanup into concrete VMM infrastructure
+- **Completion gate:** met on 2026-04-13 when V1 through V3 all reached `done`
+  with real Linux-host verification evidence recorded in this plan
 - **Related plans:**
   - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
     baseline that owns the canonical `neovex-sandbox` crate naming and the
@@ -34,8 +36,8 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
 
 ## Current Assessed State
 
-- `docs/plans/vmm-infrastructure-plan.md` is now the active control plane for
-  the krun-backed VMM foundation workstream.
+- This archived file is the completed control plane and baseline for the
+  krun-backed VMM foundation workstream.
 - The naming and crate-boundary prerequisite is complete in
   `docs/plans/archive/runtime-sandbox-architecture-plan.md`: `neovex-sandbox`
   is the canonical sandbox seam and `neovex-server` owns the first
@@ -323,8 +325,9 @@ This plan produces the VMM foundation that `microvm-runtime-plan.md` builds on.
   confirms the VM survives a neovex-process restart while conmon remains alive.
   The repo-owned test and runbook now exist; the missing step is executing that
   path on Linux and writing the resulting evidence back into this plan.
-- `docs/plans/microvm-runtime-plan.md` remains deferred and should not be used
-  as the live progress ledger while this plan is still working through V1-V3.
+- `microvm-runtime-plan.md` was the follow-on consumer and should not be
+  treated as the live progress ledger for the historical V1-V3 execution in
+  this archived file.
 
 ## Current Review Findings
 
@@ -511,7 +514,7 @@ Source of truth:
 ### Suggested autonomous prompt
 
 ```text
-Use docs/plans/vmm-infrastructure-plan.md as the control plane. Reread
+Use docs/plans/archive/vmm-infrastructure-plan.md as the control plane. Reread
 Current Assessed State, Current Review Findings, Feature Preservation Matrix,
 Control Plane Rules, Verification Contract, Roadmap Status Ledger,
 Implementation Checkpoints, Dependency Graph, Recommended Delivery Order, and
@@ -980,7 +983,7 @@ When the Linux host hits a pure environment issue:
 ### Suggested Linux Host Prompt
 
 ```text
-Use docs/plans/vmm-infrastructure-plan.md as the control plane on the Linux
+Use docs/plans/archive/vmm-infrastructure-plan.md as the control plane on the Linux
 host. Reread Current Assessed State, Current Review Findings, Control Plane
 Rules, the Parallel Linux Host Validation Queue (`LH1`-`LH6`), Verification
 Contract, Implementation Checkpoints, and Execution Log, then inspect the
@@ -1390,7 +1393,7 @@ best available substitute evidence in `Execution Log` before stopping.
   binary and the verified patch source.
 - `V3` depends on `V2` because the Rust backend should wrap a proven host-level
   subprocess/VMM model, not invent it in parallel.
-- `docs/plans/microvm-runtime-plan.md` Phase `M1` depends on `V3`.
+- `microvm-runtime-plan.md` Phase `M1` depends on `V3`.
 - `docs/plans/distribution-plan.md` stays deferred until the microVM runtime
   plan reaches the bundle/boot activation gate it documents.
 
@@ -1402,7 +1405,7 @@ best available substitute evidence in `Execution Log` before stopping.
 3. Finish `V2` manual conmon -> patched-crun -> krun integration on supported hosts
 4. Start `V3` `neovex-sandbox` backend implementation slices
 5. Only after `V3`, promote the next relevant slice from
-   `docs/plans/microvm-runtime-plan.md`
+   `microvm-runtime-plan.md`
 
 ## Implementation Checkpoints
 

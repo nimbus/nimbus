@@ -20,10 +20,11 @@ layout, and lifecycle command semantics for
     - `containers/podman`
     - `containers/podman-compose`
 - **Related plans:**
-  - `docs/plans/microvm-runtime-plan.md` — owns the krun microVM backend,
+  - `docs/plans/archive/microvm-runtime-plan.md` — owns the krun microVM
+    backend,
     lifecycle probes, runtime integration, and the already-landed first M5
     Compose translation slice
-  - `docs/plans/vmm-infrastructure-plan.md` — owns the patched-crun,
+  - `docs/plans/archive/vmm-infrastructure-plan.md` — owns the patched-crun,
     conmon, and host-integration baseline
   - `docs/plans/distribution-plan.md` — owns macOS machine-VM delivery and
     packaging shape

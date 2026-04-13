@@ -9,8 +9,9 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/plans/README.md`
 - `docs/plans/wasmtime-backend-plan.md`
-- `docs/plans/vmm-infrastructure-plan.md`
-- `docs/plans/microvm-runtime-plan.md`
+- `docs/reference/microvm-service-baseline.md`
+- `docs/plans/archive/vmm-infrastructure-plan.md`
+- `docs/plans/archive/microvm-runtime-plan.md`
 - `crates/neovex-runtime/src/lib.rs`
 - `crates/neovex-runtime/src/limits.rs`
 - `crates/neovex-runtime/src/backends/mod.rs`
@@ -50,9 +51,10 @@ architecture so later backend work stays readable and maintainable.
 
 - `docs/plans/wasmtime-backend-plan.md` is the deferred consumer for the
   execution-backend seam this plan clarifies.
-- `docs/plans/vmm-infrastructure-plan.md` and
-  `docs/plans/microvm-runtime-plan.md` are the deferred consumers for the
-  sandbox-orchestration seam this plan clarifies.
+- `docs/reference/microvm-service-baseline.md` is the stable summary of the
+  sandbox-orchestration seam this plan helped clarify; the archived
+  `vmm-infrastructure-plan.md` and `microvm-runtime-plan.md` hold the detailed
+  historical execution record.
 - `docs/plans/distribution-plan.md` should follow the crate and package naming
   settled here rather than inventing its own execution/sandbox terminology.
 - `docs/plans/layered-admission-control-plan.md` remains separate. This plan

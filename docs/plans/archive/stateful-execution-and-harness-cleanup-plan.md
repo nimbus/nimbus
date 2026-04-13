@@ -57,7 +57,7 @@ placement, and production code that is easier to extend safely.
   `docs/plans/v8-locker-fork-plan.md`,
   `docs/plans/warm-module-pool-plan.md`,
   `docs/plans/encryption-at-rest-plan.md`,
-  `docs/plans/convex-demos-compatibility-plan.md`,
+  `docs/plans/archive/convex-demos-compatibility-plan.md`,
   and `docs/plans/layered-admission-control-plan.md`.
 - If work turns into Locker-fork feature development, upstream/fork swap work,
   warm execution design, or admission-control redesign, stop and move to the

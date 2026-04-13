@@ -9,7 +9,7 @@ use crate::executor::SharedInvocationPermit;
 use crate::host::{HostCallOperation, HostCallRequest};
 
 use super::super::payloads::RuntimeHostCallEnvelope;
-use super::super::state::{RuntimeCancellationState, RuntimeHostState};
+use super::super::state::{InstalledRuntimeHostBridge, RuntimeCancellationState};
 
 struct HostCallPermitLease {
     permit: SharedInvocationPermit,
@@ -50,10 +50,10 @@ pub(super) async fn op_neovex_async_host_call<T>(
 where
     T: Serialize + Send + 'static,
 {
-    let (host_state, cancel_handle, cancellation_signal, permit) = {
+    let (host_bridge, cancel_handle, cancellation_signal, permit) = {
         let state = state.borrow();
         (
-            state.borrow::<RuntimeHostState>().clone(),
+            state.borrow::<InstalledRuntimeHostBridge>().slot.current(),
             state
                 .borrow::<RuntimeCancellationState>()
                 .cancel_handle
@@ -65,8 +65,7 @@ where
     let mut permit_lease = HostCallPermitLease::new(permit);
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    let host_call = host_state
-        .bridge
+    let host_call = host_bridge
         .call_async(
             HostCallRequest {
                 operation,
@@ -109,11 +108,10 @@ pub(super) fn op_neovex_sync_host_call<T>(
 where
     T: Serialize,
 {
-    let host_state = state.borrow::<RuntimeHostState>().clone();
+    let host_bridge = state.borrow::<InstalledRuntimeHostBridge>().slot.current();
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    let value = host_state
-        .bridge
+    let value = host_bridge
         .call(HostCallRequest {
             operation,
             payload: payload_value,

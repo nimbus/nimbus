@@ -3,8 +3,10 @@
 Manual Linux-host smoke path for the first Rust `neovex-sandbox` krun backend
 slice.
 
-Use this after the VMM foundation (`docs/plans/vmm-infrastructure-plan.md`
-`V1` and `V2`) is complete on a supported Linux host.
+Use this after the VMM foundation recorded in
+`docs/plans/archive/vmm-infrastructure-plan.md` is complete on a supported
+Linux host, or when rerunning the historical krun smoke lane for regression
+comparison.
 
 ## Purpose
 
@@ -61,8 +63,9 @@ cargo test -p neovex-sandbox krun_backend_smoke_boots_http_service_and_survives_
 
 ## Write-back contract
 
-When this succeeds, record the following in
-`docs/plans/vmm-infrastructure-plan.md`:
+When this succeeds, record the following alongside the current task and compare
+against the original closeout evidence in
+`docs/plans/archive/vmm-infrastructure-plan.md`:
 
 - exact `cargo test` command
 - concrete `NEOVEX_KRUN_SMOKE_WORKDIR` path
