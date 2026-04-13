@@ -1,11 +1,19 @@
 # CLI Reference
 
 Neovex serves HTTP/WebSocket traffic by default and also exposes service
-management subcommands:
+management subcommands.
+
+Current shipped CLI shape:
 
 ```bash
 neovex [flags]
 ```
+
+That flag-driven root command is the current server-start path. An explicit
+`neovex serve` subcommand is part of the intended command taxonomy, but it is
+not implemented in the current binary yet.
+
+Current shipped service-management commands:
 
 ```bash
 neovex service config [--file compose.yaml] [--services]
@@ -44,6 +52,17 @@ For local development from source:
 ```bash
 cargo run -p neovex-bin -- [flags]
 ```
+
+Target command taxonomy:
+
+- `neovex [flags]`
+  current shipped server startup path
+- `neovex serve`
+  intended future explicit server-start verb
+- `neovex service ...`
+  shipped managed-service lifecycle namespace
+- `neovex machine ...`
+  intended future macOS machine lifecycle namespace
 
 ## Core Flags
 
@@ -125,16 +144,23 @@ When no subcommand is provided, Neovex starts the server. On startup, it:
   built-in community defaults
 
 When `--compose-file` is present, Neovex validates the Compose file through the
-same M5 adapter used by `neovex service config`, lowers it into a typed
+same adapter used by `neovex service config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
 manager. With `--convex-app-dir`, `ctx.services.*` can activate those declared
 services on first use. The explicit `neovex service up/down/...` commands share
 that same Compose lowering, deterministic project identity, and project-scoped
 backend root instead of inventing a second lifecycle control plane.
 
+This is why `serve` and `service` are not the same concept:
+
+- server startup owns the Neovex API surface itself: HTTP, WebSocket,
+  Convex-compatible routes, runtime execution, and `ctx.services.*` activation
+- `service` commands manage declared backing workloads that Neovex may start,
+  stop, inspect, or log
+
 ## Service Commands
 
-The current M5 service-control-plane slice exposes Compose validation plus
+The current landed service-control surface exposes Compose validation plus
 explicit lifecycle control:
 
 | Command | Meaning |
@@ -166,7 +192,7 @@ Current scope:
   service manager and the explicit `service up` launch path
 - lowers `ports`, restart policy, and CPU/memory limits into the resolved plan
 - preserves `depends_on`, `healthcheck`, `volumes`, labels, and `x-neovex`
-  metadata for follow-on M5 lifecycle commands and recovery drills
+  metadata for lifecycle commands and recovery drills
 - warns on ignored fields such as `networks`, `privileged`, and `logging`
 - resolves lifecycle commands against backend-owned persisted krun manifests and
   conmon logs under the project-scoped `control_data_dir`, not a separate
@@ -175,13 +201,8 @@ Current scope:
   and uses that tenant by default for `service up` / `service down` /
   `service list` / `service inspect` / `service logs` / `service ps`
 
-Remaining M5 gap:
-
-- Linux-host end-to-end compose-backed serve proof and recovery-drill evidence
-  remain tracked under
-  [service-control-plane-plan](../plans/service-control-plane-plan.md)
-
 Related references:
 
+- [MicroVM and service-control baseline](microvm-service-baseline.md)
 - [HTTP and WebSocket API](http-api.md)
 - [Convex compatibility](../convex/compatibility.md)
