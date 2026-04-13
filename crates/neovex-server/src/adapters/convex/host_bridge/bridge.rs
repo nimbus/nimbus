@@ -1,5 +1,6 @@
 use super::*;
 use crate::execution::host_state::RuntimeHostState;
+use crate::service_registry::RuntimeServiceRegistry;
 
 #[derive(Clone)]
 pub(in crate::adapters::convex) struct ConvexHostBridge {
@@ -7,6 +8,8 @@ pub(in crate::adapters::convex) struct ConvexHostBridge {
     pub(in crate::adapters::convex) registry: Arc<ConvexRegistry>,
     pub(in crate::adapters::convex) tenant_id: TenantId,
     pub(in crate::adapters::convex) auth: Option<InvocationAuth>,
+    pub(in crate::adapters::convex) services: neovex_runtime::InvocationServices,
+    pub(in crate::adapters::convex) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(in crate::adapters::convex) principal: neovex_core::PrincipalContext,
     pub(in crate::adapters::convex) execution_unit:
         Option<Arc<neovex_engine::MutationExecutionUnit>>,
@@ -21,6 +24,8 @@ impl ConvexHostBridge {
         registry: Arc<ConvexRegistry>,
         tenant_id: TenantId,
         auth: Option<InvocationAuth>,
+        services: neovex_runtime::InvocationServices,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
         principal: neovex_core::PrincipalContext,
         server_request_id: Option<String>,
     ) -> Self {
@@ -29,6 +34,8 @@ impl ConvexHostBridge {
             registry,
             tenant_id,
             auth,
+            services,
+            runtime_service_registry,
             principal,
             server_request_id,
             InvocationKind::Query,
@@ -41,6 +48,8 @@ impl ConvexHostBridge {
         registry: Arc<ConvexRegistry>,
         tenant_id: TenantId,
         auth: Option<InvocationAuth>,
+        services: neovex_runtime::InvocationServices,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
         principal: neovex_core::PrincipalContext,
         server_request_id: Option<String>,
         invocation_kind: InvocationKind,
@@ -57,6 +66,8 @@ impl ConvexHostBridge {
             registry,
             tenant_id,
             auth,
+            services,
+            runtime_service_registry,
             principal,
             execution_unit,
             state: Arc::new(RuntimeHostState::new(

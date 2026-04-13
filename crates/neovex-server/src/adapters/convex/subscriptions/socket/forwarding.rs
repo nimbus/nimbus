@@ -33,6 +33,7 @@ pub(super) async fn run_subscription_forwarder(
     transforms: Arc<RwLock<ConvexSubscriptionTransforms>>,
     service: Arc<neovex_engine::Service>,
     registry: Arc<ConvexRegistry>,
+    runtime_service_registry: Arc<dyn crate::service_registry::RuntimeServiceRegistry>,
     tenant_id: TenantId,
     runtime_cancellation: HostCallCancellation,
 ) {
@@ -50,6 +51,7 @@ pub(super) async fn run_subscription_forwarder(
                 match apply_subscription_transform(
                     &service,
                     &registry,
+                    &runtime_service_registry,
                     &tenant_id,
                     &transforms,
                     &runtime_cancellation,

@@ -1,10 +1,12 @@
 use super::invoke::invoke_named_convex_function_with_trace_async_cancellable;
 use super::*;
+use crate::service_registry::RuntimeServiceRegistry;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
+    runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
     tenant_id: &TenantId,
     name: &str,
     args: &Value,
@@ -22,6 +24,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
     let (value, read_set) = invoke_named_convex_function_with_trace_async_cancellable(
         service,
         registry,
+        runtime_service_registry,
         tenant_id,
         InvocationRequest {
             kind: kind.clone(),
@@ -30,6 +33,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
             page_size,
             cursor: cursor.clone(),
             auth: auth.clone(),
+            services: runtime_service_registry.snapshot_for_tenant(tenant_id),
         },
         cancellation,
         server_request_id,
@@ -46,6 +50,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
                     name: name.to_string(),
                     args: args.clone(),
                     auth,
+                    services: runtime_service_registry.snapshot_for_tenant(tenant_id),
                     read_set: Some(read_set),
                     last_value: Some(last_value),
                 },
@@ -66,6 +71,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
                         .expect("paginated runtime bootstrap should carry page size"),
                     cursor,
                     auth,
+                    services: runtime_service_registry.snapshot_for_tenant(tenant_id),
                     read_set: Some(read_set),
                     last_value: Some(last_value),
                 },

@@ -48,6 +48,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -106,6 +107,7 @@ async fn runtime_requires_bundle_contract() {
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -157,6 +159,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -211,6 +214,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -259,6 +263,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -298,6 +303,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     let first = runtime

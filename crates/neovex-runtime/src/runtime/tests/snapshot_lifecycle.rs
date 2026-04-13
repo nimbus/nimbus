@@ -32,6 +32,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
     let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
         &request,
@@ -148,6 +149,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
     let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
         &request,
@@ -277,6 +279,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             };
             let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
                 &request,
@@ -429,6 +432,7 @@ export {};
                     page_size: None,
                     cursor: None,
                     auth: None,
+                    services: Default::default(),
                 },
             )
             .await

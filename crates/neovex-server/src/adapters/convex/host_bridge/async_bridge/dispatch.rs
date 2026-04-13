@@ -53,6 +53,7 @@ impl ConvexHostOperationDispatch for HostCallOperation {
             Self::CtxSchedulerRunAfter => bridge.invoke_ctx_scheduler_run_after(payload),
             Self::CtxSchedulerRunAt => bridge.invoke_ctx_scheduler_run_at(payload),
             Self::CtxSchedulerCancel => bridge.invoke_ctx_scheduler_cancel(payload),
+            Self::CtxServiceLookup => bridge.invoke_ctx_service_lookup(payload),
             Self::CtxRuntimeEnterNestedCall => bridge.invoke_ctx_runtime_enter_nested_call(payload),
         }
     }
@@ -101,6 +102,10 @@ impl ConvexHostOperationDispatch for HostCallOperation {
             }
             Self::CtxSchedulerCancel => {
                 bridge.invoke_ctx_scheduler_cancel_cancellable(payload, cancellation)
+            }
+            Self::CtxServiceLookup => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                bridge.invoke_ctx_service_lookup(payload)
             }
             Self::CtxDbQueryStart => {
                 ensure_runtime_host_not_cancelled(cancellation)?;
@@ -231,6 +236,10 @@ impl ConvexHostOperationDispatch for HostCallOperation {
                 bridge
                     .invoke_ctx_scheduler_cancel_async_cancellable(payload, cancellation)
                     .await
+            }
+            Self::CtxServiceLookup => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                bridge.invoke_ctx_service_lookup(payload)
             }
             Self::CtxDbQueryStart => {
                 ensure_runtime_host_not_cancelled(cancellation)?;

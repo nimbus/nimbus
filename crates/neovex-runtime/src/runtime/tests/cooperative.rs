@@ -84,6 +84,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
     let host = Arc::new(DeferredAsyncHost::default());
     let runtime_owner =
@@ -253,6 +254,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
     let runtime_owner = NeovexRuntime::with_policy(
         Arc::new(AsyncEchoHost),
@@ -356,6 +358,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
     let mut limits = cooperative_warm_pool_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
@@ -495,6 +498,7 @@ export {};
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     };
 
     for &pool_kind in &[

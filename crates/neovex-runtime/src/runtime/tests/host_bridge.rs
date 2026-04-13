@@ -32,6 +32,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -134,6 +135,7 @@ export {};
                     },
                     false,
                 )),
+                services: Default::default(),
             },
         )
         .await
@@ -164,6 +166,219 @@ export {};
                 "updatedAt": "1710000000",
                 "role": "admin"
             }
+        })
+    );
+}
+
+#[tokio::test]
+async fn runtime_exposes_service_bindings_from_invocation_request() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  return {
+    db: ctx.services.db,
+    metrics: ctx.services.metrics,
+    names: Object.keys(ctx.services).sort(),
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "services:describe".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: serde_json::from_value(serde_json::json!({
+                    "db": {
+                        "host": "127.0.0.1",
+                        "port": 15432,
+                        "protocol": "tcp",
+                        "endpoints": {
+                            "postgres": {
+                                "host": "127.0.0.1",
+                                "port": 15432,
+                                "protocol": "tcp"
+                            },
+                            "health": {
+                                "host": "127.0.0.1",
+                                "port": 18080,
+                                "protocol": "http"
+                            }
+                        }
+                    },
+                    "metrics": {
+                        "host": "127.0.0.1",
+                        "port": 19090,
+                        "protocol": "http"
+                    }
+                }))
+                .expect("service bindings should deserialize"),
+            },
+        )
+        .await
+        .expect("runtime should expose request service bindings");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "db": {
+                "host": "127.0.0.1",
+                "port": 15432,
+                "protocol": "tcp",
+                "endpoints": {
+                    "health": {
+                        "host": "127.0.0.1",
+                        "port": 18080,
+                        "protocol": "http"
+                    },
+                    "postgres": {
+                        "host": "127.0.0.1",
+                        "port": 15432,
+                        "protocol": "tcp"
+                    }
+                }
+            },
+            "metrics": {
+                "host": "127.0.0.1",
+                "port": 19090,
+                "protocol": "http",
+                "endpoints": {}
+            },
+            "names": ["db", "metrics"],
+        })
+    );
+}
+
+#[tokio::test]
+async fn runtime_lazily_looks_up_missing_service_bindings_and_caches_them() {
+    #[derive(Default)]
+    struct LazyServiceLookupHost {
+        calls: std::sync::Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl HostBridge for LazyServiceLookupHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            self.calls
+                .lock()
+                .expect("lazy service lookup host lock should not be poisoned")
+                .push(request.clone());
+            match request.operation {
+                HostCallOperation::CtxServiceLookup => Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "host": "127.0.0.1",
+                        "port": 15432,
+                        "protocol": "tcp",
+                        "endpoints": {
+                            "postgres": {
+                                "host": "127.0.0.1",
+                                "port": 15432,
+                                "protocol": "tcp"
+                            }
+                        }
+                    },
+                })),
+                other => Err(NeovexRuntimeError::Contract(format!(
+                    "unexpected sync host op during lazy service lookup test: {other}"
+                ))),
+            }
+        }
+    }
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  const namesBefore = Object.keys(ctx.services).sort();
+  const first = ctx.services.db;
+  const second = ctx.services.db;
+  return {
+    namesBefore,
+    namesAfter: Object.keys(ctx.services).sort(),
+    sameReference: first === second,
+    db: second,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(LazyServiceLookupHost::default());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "services:lazy".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("runtime should lazily resolve missing service bindings");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "namesBefore": [],
+            "namesAfter": ["db"],
+            "sameReference": true,
+            "db": {
+                "host": "127.0.0.1",
+                "port": 15432,
+                "protocol": "tcp",
+                "endpoints": {
+                    "postgres": {
+                        "host": "127.0.0.1",
+                        "port": 15432,
+                        "protocol": "tcp"
+                    }
+                }
+            }
+        })
+    );
+
+    let calls = host
+        .calls
+        .lock()
+        .expect("lazy service lookup host lock should not be poisoned")
+        .clone();
+    assert_eq!(calls.len(), 1, "missing service should be resolved once");
+    assert_eq!(calls[0].operation, HostCallOperation::CtxServiceLookup);
+    assert_eq!(
+        calls[0].payload,
+        serde_json::json!({
+            "service_name": "db",
+            "session_id": "session-1",
         })
     );
 }
@@ -206,6 +421,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -276,6 +492,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -376,6 +593,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -456,6 +674,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -514,6 +733,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await
@@ -583,6 +803,7 @@ export {};
                 page_size: None,
                 cursor: None,
                 auth: None,
+                services: Default::default(),
             },
         )
         .await

@@ -10,14 +10,13 @@ use std::time::{Duration, Instant};
 use futures::executor::block_on;
 
 use neovex_core::TenantId;
-use neovex_sandbox::backends::krun::buildah::OciProcessOverrides;
 use neovex_sandbox::backends::krun::{
     KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
 };
 use neovex_sandbox::{
     PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxFilesystemSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
-    SandboxSpec, SandboxStatus,
+    SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxPortBinding, SandboxProcessSpec,
+    SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
 };
 
 #[test]
@@ -155,7 +154,7 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
         guest_port,
     ));
 
-    let overrides = OciProcessOverrides {
+    let overrides = SandboxImageProcessOverrides {
         cmd: Some(vec![
             "/bin/busybox".into(),
             "httpd".into(),
@@ -166,9 +165,13 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
         ..Default::default()
     };
 
-    let handle =
-        block_on(backend.start_from_image(spec, "docker://busybox:latest".to_owned(), overrides))
-            .expect("image-backed krun start should succeed");
+    let handle = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(spec, "docker://busybox:latest")
+                .with_process_overrides(overrides),
+        ),
+    )
+    .expect("image-backed krun start should succeed");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
@@ -284,7 +287,7 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         guest_port,
     ));
 
-    let overrides = OciProcessOverrides {
+    let overrides = SandboxImageProcessOverrides {
         cmd: Some(vec![
             "/bin/busybox".into(),
             "httpd".into(),
@@ -295,11 +298,12 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         ..Default::default()
     };
 
-    let handle = block_on(backend.start_from_image(
-        spec,
-        "localhost/neovex-m2-fixture:latest".to_owned(),
-        overrides,
-    ))
+    let handle = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(spec, "localhost/neovex-m2-fixture:latest")
+                .with_process_overrides(overrides),
+        ),
+    )
     .expect("image-backed start with non-root user should succeed");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
@@ -479,7 +483,7 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
         // No .with_port_binding() — the backend should auto-assign from EXPOSE.
     };
 
-    let overrides = OciProcessOverrides {
+    let overrides = SandboxImageProcessOverrides {
         cmd: Some(vec![
             "/bin/busybox".into(),
             "httpd".into(),
@@ -491,11 +495,15 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     };
 
     // --- Sandbox A ---
-    let handle_a = block_on(backend.start_from_image(
-        make_spec("autoport-a"),
-        "localhost/neovex-autoport:latest".to_owned(),
-        overrides.clone(),
-    ))
+    let handle_a = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(
+                make_spec("autoport-a"),
+                "localhost/neovex-autoport:latest",
+            )
+            .with_process_overrides(overrides.clone()),
+        ),
+    )
     .expect("sandbox A should start");
     let cleanup_a = CleanupGuard::new(backend.clone(), handle_a.id.clone());
 
@@ -522,11 +530,15 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox A HTTP connectivity on port {port_a}: OK");
 
     // --- Sandbox B ---
-    let handle_b = block_on(backend.start_from_image(
-        make_spec("autoport-b"),
-        "localhost/neovex-autoport:latest".to_owned(),
-        overrides.clone(),
-    ))
+    let handle_b = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(
+                make_spec("autoport-b"),
+                "localhost/neovex-autoport:latest",
+            )
+            .with_process_overrides(overrides.clone()),
+        ),
+    )
     .expect("sandbox B should start");
     let cleanup_b = CleanupGuard::new(backend.clone(), handle_b.id.clone());
 
@@ -553,11 +565,15 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox A stopped, port {port_a} should be released");
 
     // --- Sandbox C: should reuse A's released port ---
-    let handle_c = block_on(backend.start_from_image(
-        make_spec("autoport-c"),
-        "localhost/neovex-autoport:latest".to_owned(),
-        overrides,
-    ))
+    let handle_c = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(
+                make_spec("autoport-c"),
+                "localhost/neovex-autoport:latest",
+            )
+            .with_process_overrides(overrides),
+        ),
+    )
     .expect("sandbox C should start");
     let cleanup_c = CleanupGuard::new(backend.clone(), handle_c.id.clone());
 
@@ -733,7 +749,7 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
         guest_port,
     ));
 
-    let overrides = OciProcessOverrides {
+    let overrides = SandboxImageProcessOverrides {
         cmd: Some(vec![
             "/bin/busybox".into(),
             "httpd".into(),
@@ -744,9 +760,13 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
         ..Default::default()
     };
 
-    let handle =
-        block_on(backend.start_from_image(spec, "docker://busybox:latest".to_owned(), overrides))
-            .expect("image-backed resource-limits sandbox should start");
+    let handle = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(spec, "docker://busybox:latest")
+                .with_process_overrides(overrides),
+        ),
+    )
+    .expect("image-backed resource-limits sandbox should start");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
@@ -1269,7 +1289,7 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         guest_port,
     ));
 
-    let overrides = OciProcessOverrides {
+    let overrides = SandboxImageProcessOverrides {
         cmd: Some(vec![
             "/bin/busybox".into(),
             "sh".into(),
@@ -1279,11 +1299,12 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         ..Default::default()
     };
 
-    let handle = block_on(backend.start_from_image(
-        spec,
-        "localhost/neovex-m3-user-fixture:latest".to_owned(),
-        overrides,
-    ))
+    let handle = block_on(
+        backend.start_from_image(
+            SandboxImageLaunchSpec::new(spec, "localhost/neovex-m3-user-fixture:latest")
+                .with_process_overrides(overrides),
+        ),
+    )
     .expect("guest-user-switch image-backed start should succeed");
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 

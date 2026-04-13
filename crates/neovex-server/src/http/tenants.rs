@@ -38,6 +38,9 @@ pub(crate) async fn delete_tenant(
 ) -> Result<StatusCode, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
+    state
+        .runtime_service_registry()
+        .teardown_tenant(&tenant_id)?;
     service.delete_tenant_async(tenant_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

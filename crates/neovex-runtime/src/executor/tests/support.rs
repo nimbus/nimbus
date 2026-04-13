@@ -467,6 +467,7 @@ pub(super) fn test_request(function_name: &str) -> InvocationRequest {
         page_size: None,
         cursor: None,
         auth: None,
+        services: Default::default(),
     }
 }
 

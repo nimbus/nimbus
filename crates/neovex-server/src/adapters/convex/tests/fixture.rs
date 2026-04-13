@@ -1,4 +1,5 @@
 use super::*;
+use crate::service_registry::SandboxCatalogRuntimeServiceRegistry;
 
 pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
 -> (TempDir, Arc<Service>, TenantId, ConvexHostBridge) {
@@ -14,6 +15,10 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         registry,
         tenant_id.clone(),
         None,
+        Default::default(),
+        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+            crate::EmptySandboxCatalog,
+        ))),
         neovex_core::PrincipalContext::anonymous(),
         None,
     );

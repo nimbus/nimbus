@@ -12,7 +12,7 @@ use ulid::Ulid;
 
 use super::buildah::{
     BuildahCli, BuildahContainer, ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
-    OciProcessOverrides, PreparedImageLaunch,
+    PreparedImageLaunch,
 };
 use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
 use super::command::CommandSpec;
@@ -22,7 +22,10 @@ use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
-use crate::spec::{SandboxRestartPolicy, SandboxSpec};
+use crate::spec::{
+    SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
+    SandboxRestartPolicy, SandboxSpec,
+};
 
 const DEFAULT_RUNTIME_PATH: &str = "/usr/libexec/neovex/crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -111,30 +114,22 @@ impl KrunSandboxBackend {
         self.finish_start(launch_plan)
     }
 
-    fn start_from_image_sync(
-        &self,
-        spec: SandboxSpec,
-        image_reference: String,
-        overrides: OciProcessOverrides,
-    ) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start_from_image(&spec, &image_reference, &overrides)?;
+    fn start_from_image_sync(&self, launch: SandboxImageLaunchSpec) -> Result<SandboxHandle> {
+        let launch_plan = self.plan_start_from_image(
+            &launch.spec,
+            &launch.image_reference,
+            &launch.process_overrides,
+        )?;
         self.finish_start(launch_plan)
     }
 
-    fn start_from_build_sync(
-        &self,
-        spec: SandboxSpec,
-        image_name: String,
-        dockerfile_path: PathBuf,
-        context_path: PathBuf,
-        overrides: OciProcessOverrides,
-    ) -> Result<SandboxHandle> {
+    fn start_from_build_sync(&self, launch: SandboxBuildLaunchSpec) -> Result<SandboxHandle> {
         let launch_plan = self.plan_start_from_build(
-            &spec,
-            &image_name,
-            &dockerfile_path,
-            &context_path,
-            &overrides,
+            &launch.spec,
+            &launch.image_name,
+            &launch.dockerfile_path,
+            &launch.context_path,
+            &launch.process_overrides,
         )?;
         self.finish_start(launch_plan)
     }
@@ -211,7 +206,7 @@ impl KrunSandboxBackend {
         &self,
         spec: &SandboxSpec,
         image_reference: &str,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
         let prepared_launch = self.prepare_image_launch(&sandbox_id, image_reference, overrides)?;
@@ -224,7 +219,7 @@ impl KrunSandboxBackend {
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
         let prepared_launch = self.prepare_built_image_launch(
@@ -237,34 +232,14 @@ impl KrunSandboxBackend {
         self.plan_start_with_prepared_launch(spec, &sandbox_id, prepared_launch)
     }
 
-    pub fn start_from_image(
-        &self,
-        spec: SandboxSpec,
-        image_reference: String,
-        overrides: OciProcessOverrides,
-    ) -> SandboxFuture<SandboxHandle> {
+    pub fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
         let backend = self.clone();
-        Box::pin(async move { backend.start_from_image_sync(spec, image_reference, overrides) })
+        Box::pin(async move { backend.start_from_image_sync(launch) })
     }
 
-    pub fn start_from_build(
-        &self,
-        spec: SandboxSpec,
-        image_name: String,
-        dockerfile_path: PathBuf,
-        context_path: PathBuf,
-        overrides: OciProcessOverrides,
-    ) -> SandboxFuture<SandboxHandle> {
+    pub fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
         let backend = self.clone();
-        Box::pin(async move {
-            backend.start_from_build_sync(
-                spec,
-                image_name,
-                dockerfile_path,
-                context_path,
-                overrides,
-            )
-        })
+        Box::pin(async move { backend.start_from_build_sync(launch) })
     }
 
     #[cfg(test)]
@@ -388,7 +363,7 @@ impl KrunSandboxBackend {
         &self,
         sandbox_id: &SandboxId,
         image_reference: &str,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedImageLaunch> {
         self.buildah_cli().prepare_image_launch(
             &buildah_container_name(sandbox_id),
@@ -403,7 +378,7 @@ impl KrunSandboxBackend {
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-        overrides: &OciProcessOverrides,
+        overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedImageLaunch> {
         self.buildah_cli().prepare_built_image_launch(
             image_name,
@@ -686,6 +661,16 @@ impl SandboxBackend for KrunSandboxBackend {
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let backend = self.clone();
         Box::pin(async move { backend.start_sync(spec) })
+    }
+
+    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
+        let backend = self.clone();
+        Box::pin(async move { backend.start_from_image_sync(launch) })
+    }
+
+    fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
+        let backend = self.clone();
+        Box::pin(async move { backend.start_from_build_sync(launch) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
@@ -1422,13 +1407,13 @@ mod tests {
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
         ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
-        OciProcessOverrides,
     };
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::instance::SandboxStatus;
     use crate::spec::{
-        SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
-        SandboxRestartPolicy, SandboxSpec,
+        SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
+        SandboxImageProcessOverrides, SandboxPortBinding, SandboxProcessSpec,
+        SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec,
     };
 
     #[test]
@@ -1457,6 +1442,86 @@ mod tests {
             .expect("inspect after stop should succeed")
             .expect("stopped sandbox should still have a manifest");
         assert_eq!(stopped.status, crate::instance::SandboxStatus::Stopped);
+    }
+
+    #[test]
+    fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
+        let mut config = KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        );
+        config.buildah_path = buildah_path;
+        config.use_buildah_unshare = false;
+        let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
+
+        let handle = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
+            sparse_image_spec("image-trait"),
+            "postgres:16",
+        )))
+        .expect("plan-only image-backed start should succeed through the trait");
+
+        assert_eq!(handle.backend, SandboxBackendKind::Krun);
+        assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
+
+        let inspected = block_on(backend.inspect(&handle.id))
+            .expect("inspect should succeed")
+            .expect("plan-only image-backed sandbox should persist a manifest");
+        assert_eq!(inspected.id, handle.id);
+    }
+
+    #[test]
+    fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let (buildah_path, log_path) = write_fake_buildah_script(&temp_dir);
+        let workspace = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("workspace directory should exist");
+        let dockerfile_path = workspace.join("Dockerfile");
+        fs::write(&dockerfile_path, "FROM busybox\n").expect("dockerfile should be written");
+
+        let mut config = KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        );
+        config.buildah_path = buildah_path;
+        config.use_buildah_unshare = false;
+        let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
+
+        let handle = block_on(backend.start_from_build(SandboxBuildLaunchSpec::new(
+            sparse_image_spec("build-trait"),
+            "neovex-api",
+            &dockerfile_path,
+            &workspace,
+        )))
+        .expect("plan-only build-backed start should succeed through the trait");
+
+        assert_eq!(handle.backend, SandboxBackendKind::Krun);
+        assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
+
+        let inspected = block_on(backend.inspect(&handle.id))
+            .expect("inspect should succeed")
+            .expect("plan-only build-backed sandbox should persist a manifest");
+        assert_eq!(inspected.id, handle.id);
+
+        let log = fs::read_to_string(log_path).expect("fake buildah log should be readable");
+        let lines: Vec<_> = log.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                format!(
+                    "bud -t neovex-api -f {} {}",
+                    dockerfile_path.display(),
+                    workspace.display()
+                ),
+                format!(
+                    "from --name {}-image localhost/neovex-api",
+                    handle.id.as_str()
+                ),
+                format!("mount {}-image", handle.id.as_str()),
+                format!("inspect --type container {}-image", handle.id.as_str()),
+            ]
+        );
     }
 
     #[test]
@@ -1729,11 +1794,12 @@ mod tests {
         )
         .with_port_binding(SandboxPortBinding::tcp("http", 18080, 8080));
 
-        let handle = block_on(backend.start_from_image(
-            spec,
-            "postgres:16".to_owned(),
-            OciProcessOverrides::default(),
-        ))
+        let handle = block_on(
+            backend.start_from_image(
+                SandboxImageLaunchSpec::new(spec, "postgres:16")
+                    .with_process_overrides(SandboxImageProcessOverrides::default()),
+            ),
+        )
         .expect("plan-only image-backed start should succeed");
 
         let manifest_path = temp_dir
@@ -1792,7 +1858,11 @@ mod tests {
         );
 
         let launch_plan = backend
-            .plan_start_from_image(&spec, "postgres:16", &OciProcessOverrides::default())
+            .plan_start_from_image(
+                &spec,
+                "postgres:16",
+                &SandboxImageProcessOverrides::default(),
+            )
             .expect("image-backed plan should succeed");
 
         let script = launch_plan
@@ -1831,11 +1901,10 @@ mod tests {
 
         let backend = KrunSandboxBackend::new(config);
 
-        let first = block_on(backend.start_from_image(
+        let first = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("first"),
-            "postgres:16".to_owned(),
-            OciProcessOverrides::default(),
-        ))
+            "postgres:16",
+        )))
         .expect("first plan-only image-backed start should succeed");
         let first_inspected = block_on(backend.inspect(&first.id))
             .expect("inspect should succeed")
@@ -1843,11 +1912,10 @@ mod tests {
         assert_eq!(first_inspected.published_endpoints.len(), 1);
         assert_eq!(first_inspected.published_endpoints[0].address.port(), 15000);
 
-        let second = block_on(backend.start_from_image(
+        let second = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("second"),
-            "postgres:16".to_owned(),
-            OciProcessOverrides::default(),
-        ))
+            "postgres:16",
+        )))
         .expect("second plan-only image-backed start should succeed");
         let second_inspected = block_on(backend.inspect(&second.id))
             .expect("inspect should succeed")
@@ -1860,11 +1928,10 @@ mod tests {
 
         block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
 
-        let third = block_on(backend.start_from_image(
+        let third = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("third"),
-            "postgres:16".to_owned(),
-            OciProcessOverrides::default(),
-        ))
+            "postgres:16",
+        )))
         .expect("third plan-only image-backed start should succeed");
         let third_inspected = block_on(backend.inspect(&third.id))
             .expect("inspect should succeed")

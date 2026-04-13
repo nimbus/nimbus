@@ -11,46 +11,46 @@ use tracing::warn;
 
 use crate::adapters::convex::ConvexRegistry;
 use crate::license::LicenseState;
-use crate::sandbox::SandboxCatalog;
+use crate::service_registry::RuntimeServiceRegistry;
 
 /// Shared application state.
 pub(crate) struct AppState {
     pub(crate) service: Arc<Service>,
     pub(crate) convex_registry: Option<Arc<ConvexRegistry>>,
     pub(crate) license_state: Arc<LicenseState>,
-    pub(crate) sandbox_catalog: Arc<dyn SandboxCatalog>,
+    pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
 }
 
 impl AppState {
-    pub(crate) fn with_license_state_and_sandbox_catalog(
+    pub(crate) fn with_license_state_and_runtime_service_registry(
         service: Arc<Service>,
         license_state: LicenseState,
-        sandbox_catalog: Arc<dyn SandboxCatalog>,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     ) -> Self {
         Self {
             service,
             convex_registry: None,
             license_state: Arc::new(license_state),
-            sandbox_catalog,
+            runtime_service_registry,
         }
     }
 
-    pub(crate) fn with_convex_registry_and_license_state_and_sandbox_catalog(
+    pub(crate) fn with_convex_registry_and_license_state_and_runtime_service_registry(
         service: Arc<Service>,
         convex_registry: ConvexRegistry,
         license_state: LicenseState,
-        sandbox_catalog: Arc<dyn SandboxCatalog>,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     ) -> Self {
         Self {
             service,
             convex_registry: Some(Arc::new(convex_registry)),
             license_state: Arc::new(license_state),
-            sandbox_catalog,
+            runtime_service_registry,
         }
     }
 
-    pub(crate) fn sandbox_catalog(&self) -> Arc<dyn SandboxCatalog> {
-        self.sandbox_catalog.clone()
+    pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
+        self.runtime_service_registry.clone()
     }
 }
 

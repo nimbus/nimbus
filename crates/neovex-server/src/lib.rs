@@ -8,6 +8,8 @@ mod owned_tasks;
 mod protocol;
 mod router;
 mod sandbox;
+mod service_manager;
+mod service_registry;
 mod state;
 mod ws;
 
@@ -24,10 +26,16 @@ pub use license::{
 pub use router::{
     build_router, build_router_with_convex, build_router_with_convex_and_license,
     build_router_with_convex_and_license_and_sandbox_catalog,
-    build_router_with_convex_and_sandbox_catalog, build_router_with_license,
+    build_router_with_convex_and_license_and_sandbox_service_manager,
+    build_router_with_convex_and_sandbox_catalog,
+    build_router_with_convex_and_sandbox_service_manager, build_router_with_license,
     build_router_with_license_and_sandbox_catalog, build_router_with_sandbox_catalog,
 };
-pub use sandbox::{EmptySandboxCatalog, SandboxCatalog};
+pub use sandbox::{
+    EmptySandboxCatalog, EmptySandboxServiceCatalog, SandboxCatalog, SandboxServiceCatalog,
+    SandboxServiceLaunch,
+};
+pub use service_manager::SandboxServiceManager;
 
 /// Runs the Neovex HTTP/WebSocket server on an existing listener.
 pub async fn serve(

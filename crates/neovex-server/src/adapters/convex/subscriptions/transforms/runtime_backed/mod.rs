@@ -7,6 +7,7 @@ use serde_json::Value;
 use super::super::types::{ConvexSubscriptionTransform, ConvexSubscriptionTransforms};
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::convex::execution::ConvexSubscriptionEvent;
+use crate::service_registry::RuntimeServiceRegistry;
 
 mod builtins;
 mod reeval;
@@ -15,6 +16,7 @@ mod selection;
 pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_transform(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,
+    runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
     tenant_id: &TenantId,
     transforms: &RwLock<ConvexSubscriptionTransforms>,
     runtime_cancellation: &HostCallCancellation,
@@ -25,6 +27,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
     let context = reeval::RuntimeTransformContext::new(
         service,
         registry,
+        runtime_service_registry,
         tenant_id,
         transforms,
         runtime_cancellation,
@@ -40,6 +43,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
             name,
             args,
             auth,
+            services,
             read_set,
             last_value,
         } => {
@@ -49,6 +53,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
                     name,
                     args,
                     auth,
+                    services,
                     read_set,
                     last_value,
                 },
@@ -61,6 +66,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
             page_size,
             cursor,
             auth,
+            services,
             read_set,
             last_value,
         } => {
@@ -72,6 +78,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_trans
                     page_size,
                     cursor,
                     auth,
+                    services,
                     read_set,
                     last_value,
                 },

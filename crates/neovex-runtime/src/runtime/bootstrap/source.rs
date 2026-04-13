@@ -243,6 +243,144 @@ async function __neovexRunNamedFunction(
 let __neovexNextSessionId = 1;
 let __neovexInvocationGeneration = 0;
 
+function __neovexCloneServiceEndpoint(endpoint) {
+  if (endpoint === null || typeof endpoint !== "object") {
+    return null;
+  }
+  if (typeof endpoint.host !== "string" || endpoint.host.length === 0) {
+    return null;
+  }
+  if (!Number.isInteger(endpoint.port)) {
+    return null;
+  }
+  const protocol =
+    typeof endpoint.protocol === "string" && endpoint.protocol.length > 0
+      ? endpoint.protocol
+      : "tcp";
+  return Object.freeze({
+    host: endpoint.host,
+    port: endpoint.port,
+    protocol,
+  });
+}
+
+function __neovexCloneServiceBinding(binding) {
+  if (binding === null || typeof binding !== "object") {
+    return null;
+  }
+  if (typeof binding.host !== "string" || binding.host.length === 0) {
+    return null;
+  }
+  if (!Number.isInteger(binding.port)) {
+    return null;
+  }
+  const endpoints = Object.create(null);
+  if (binding.endpoints !== null && typeof binding.endpoints === "object") {
+    for (const [endpointName, endpoint] of Object.entries(binding.endpoints)) {
+      const clonedEndpoint = __neovexCloneServiceEndpoint(endpoint);
+      if (clonedEndpoint !== null) {
+        endpoints[endpointName] = clonedEndpoint;
+      }
+    }
+  }
+  const protocol =
+    typeof binding.protocol === "string" && binding.protocol.length > 0
+      ? binding.protocol
+      : "tcp";
+  return Object.freeze({
+    host: binding.host,
+    port: binding.port,
+    protocol,
+    endpoints: Object.freeze(endpoints),
+  });
+}
+
+function __neovexCreateServiceBindings(services) {
+  const clonedServices = Object.create(null);
+  if (services === null || typeof services !== "object") {
+    return clonedServices;
+  }
+  for (const [serviceName, binding] of Object.entries(services)) {
+    const clonedBinding = __neovexCloneServiceBinding(binding);
+    if (clonedBinding !== null) {
+      clonedServices[serviceName] = clonedBinding;
+    }
+  }
+  return clonedServices;
+}
+
+function __neovexCreateServiceRegistry(guardStale, syncHostValue, services) {
+  const cache = __neovexCreateServiceBindings(services);
+  const hasOwn = (property) =>
+    Object.prototype.hasOwnProperty.call(cache, property);
+
+  return new Proxy(Object.create(null), {
+    get(_target, property) {
+      guardStale();
+      if (typeof property !== "string") {
+        return undefined;
+      }
+      if (hasOwn(property)) {
+        return cache[property];
+      }
+      const lookedUpBinding = __neovexCloneServiceBinding(
+        syncHostValue("op_neovex_ctx_service_lookup", {
+          service_name: property,
+        }),
+      );
+      if (lookedUpBinding !== null) {
+        cache[property] = lookedUpBinding;
+        return lookedUpBinding;
+      }
+      return undefined;
+    },
+    has(_target, property) {
+      guardStale();
+      if (typeof property !== "string") {
+        return false;
+      }
+      return hasOwn(property);
+    },
+    ownKeys() {
+      guardStale();
+      return Reflect.ownKeys(cache);
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      guardStale();
+      if (typeof property !== "string" || !hasOwn(property)) {
+        return undefined;
+      }
+      return {
+        value: cache[property],
+        enumerable: true,
+        configurable: true,
+        writable: false,
+      };
+    },
+    set() {
+      return false;
+    },
+    defineProperty() {
+      return false;
+    },
+    deleteProperty() {
+      return false;
+    },
+    getPrototypeOf() {
+      return null;
+    },
+    setPrototypeOf() {
+      return false;
+    },
+    isExtensible() {
+      return true;
+    },
+    preventExtensions() {
+      return false;
+    },
+  });
+}
+
 globalThis.__neovexCreateContext = function(options = {}) {
   const myGeneration = __neovexInvocationGeneration;
 
@@ -277,6 +415,13 @@ globalThis.__neovexCreateContext = function(options = {}) {
       ? requestAuth.verified_identity
       : null;
   const throwOnMissingIdentity = requestAuth?.throw_on_missing_identity === true;
+  const services =
+    options.request !== null &&
+    typeof options.request === "object" &&
+    options.request.services !== null &&
+    typeof options.request.services === "object"
+      ? options.request.services
+      : null;
 
   const syncHostValue = (opName, payload) => {
     guardStale();
@@ -317,6 +462,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
         return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
       },
     }),
+    services: __neovexCreateServiceRegistry(guardStale, syncHostValue, services),
     db: {
       async get(tableOrId, maybeId) {
         guardStale();

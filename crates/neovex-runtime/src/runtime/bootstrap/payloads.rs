@@ -144,6 +144,13 @@ pub(super) struct RuntimeAsyncSchedulerCancelPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct RuntimeSyncServiceLookupPayload {
+    pub(super) service_name: String,
+    #[serde(default)]
+    pub(super) session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RuntimeAsyncFunctionCallPayload {
     pub(super) name: String,
     pub(super) visibility: String,

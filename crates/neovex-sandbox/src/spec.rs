@@ -35,6 +35,47 @@ impl SandboxFilesystemSpec {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxImageProcessOverrides {
+    pub entrypoint: Option<Vec<String>>,
+    pub cmd: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+impl SandboxImageProcessOverrides {
+    pub fn with_entrypoint(
+        mut self,
+        entrypoint: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.entrypoint = Some(entrypoint.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_cmd(mut self, cmd: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.cmd = Some(cmd.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_env(mut self, env: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.env = env.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
+    pub fn with_terminal(mut self, terminal: bool) -> Self {
+        self.terminal = terminal;
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxProcessSpec {
     pub args: Vec<String>,
@@ -74,6 +115,67 @@ impl SandboxProcessSpec {
 
     pub fn uses_default_cwd(&self) -> bool {
         self.cwd == PathBuf::from("/")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxImageLaunchSpec {
+    pub spec: SandboxSpec,
+    pub image_reference: String,
+    #[serde(default)]
+    pub process_overrides: SandboxImageProcessOverrides,
+}
+
+impl SandboxImageLaunchSpec {
+    pub fn new(spec: SandboxSpec, image_reference: impl Into<String>) -> Self {
+        Self {
+            spec,
+            image_reference: image_reference.into(),
+            process_overrides: SandboxImageProcessOverrides::default(),
+        }
+    }
+
+    pub fn with_process_overrides(
+        mut self,
+        process_overrides: SandboxImageProcessOverrides,
+    ) -> Self {
+        self.process_overrides = process_overrides;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxBuildLaunchSpec {
+    pub spec: SandboxSpec,
+    pub image_name: String,
+    pub dockerfile_path: PathBuf,
+    pub context_path: PathBuf,
+    #[serde(default)]
+    pub process_overrides: SandboxImageProcessOverrides,
+}
+
+impl SandboxBuildLaunchSpec {
+    pub fn new(
+        spec: SandboxSpec,
+        image_name: impl Into<String>,
+        dockerfile_path: impl Into<PathBuf>,
+        context_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            spec,
+            image_name: image_name.into(),
+            dockerfile_path: dockerfile_path.into(),
+            context_path: context_path.into(),
+            process_overrides: SandboxImageProcessOverrides::default(),
+        }
+    }
+
+    pub fn with_process_overrides(
+        mut self,
+        process_overrides: SandboxImageProcessOverrides,
+    ) -> Self {
+        self.process_overrides = process_overrides;
+        self
     }
 }
 

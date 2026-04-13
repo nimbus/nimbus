@@ -3,6 +3,7 @@ mod async_query;
 mod nested_runtime;
 mod shared;
 mod sync_query_builder;
+mod sync_services;
 
 use self::async_effects::{
     op_neovex_ctx_action, op_neovex_ctx_db_delete, op_neovex_ctx_db_insert, op_neovex_ctx_db_patch,
@@ -22,6 +23,7 @@ use self::sync_query_builder::{
     op_neovex_ctx_query_filter, op_neovex_ctx_query_order, op_neovex_ctx_query_start,
     op_neovex_ctx_query_with_index,
 };
+use self::sync_services::op_neovex_ctx_service_lookup;
 use crate::backends::v8::embedder::{Extension, extension};
 
 extension!(
@@ -48,6 +50,7 @@ extension!(
         op_neovex_ctx_scheduler_run_after,
         op_neovex_ctx_scheduler_run_at,
         op_neovex_ctx_scheduler_cancel,
+        op_neovex_ctx_service_lookup,
         op_neovex_ctx_runtime_enter_nested_call,
         op_neovex_ctx_run_query,
         op_neovex_ctx_run_mutation,

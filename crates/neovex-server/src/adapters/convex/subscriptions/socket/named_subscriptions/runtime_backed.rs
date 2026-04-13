@@ -34,6 +34,7 @@ pub(super) async fn handle_runtime_named_subscription(
         match bootstrap_runtime_named_subscription_async(
             &service,
             &registry,
+            &ctx.state.runtime_service_registry(),
             &tenant_id_for_worker,
             &name_for_worker,
             &args_for_worker,
@@ -176,6 +177,7 @@ mod tests {
                         name: "messages:maybeByAuthor".to_string(),
                         args: json!({"author": "Ada"}),
                         auth: None,
+                        services: Default::default(),
                         read_set: None,
                         last_value: Some(Arc::new(json!({"runtime": true, "value": []}))),
                     },

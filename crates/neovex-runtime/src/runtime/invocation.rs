@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -33,6 +35,34 @@ pub struct InvocationRequest {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<InvocationAuth>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub services: InvocationServices,
+}
+
+pub type InvocationServices = BTreeMap<String, InvocationServiceBinding>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvocationServiceProtocol {
+    Tcp,
+    Http,
+    Https,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvocationServiceBinding {
+    pub host: String,
+    pub port: u16,
+    pub protocol: InvocationServiceProtocol,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub endpoints: BTreeMap<String, InvocationServiceEndpoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvocationServiceEndpoint {
+    pub host: String,
+    pub port: u16,
+    pub protocol: InvocationServiceProtocol,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

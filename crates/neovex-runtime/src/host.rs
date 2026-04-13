@@ -36,6 +36,7 @@ pub enum HostCallOperation {
     CtxSchedulerRunAfter,
     CtxSchedulerRunAt,
     CtxSchedulerCancel,
+    CtxServiceLookup,
     CtxRuntimeEnterNestedCall,
 }
 
@@ -66,6 +67,7 @@ impl HostCallOperation {
             Self::CtxSchedulerRunAfter => "ctx_scheduler_run_after",
             Self::CtxSchedulerRunAt => "ctx_scheduler_run_at",
             Self::CtxSchedulerCancel => "ctx_scheduler_cancel",
+            Self::CtxServiceLookup => "ctx_service_lookup",
             Self::CtxRuntimeEnterNestedCall => "ctx_runtime_enter_nested_call",
         }
     }
