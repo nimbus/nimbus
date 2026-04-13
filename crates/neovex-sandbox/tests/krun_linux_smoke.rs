@@ -915,13 +915,16 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
     }
 
     let backend = KrunSandboxBackend::new(config);
+    // Use foreground httpd as a background job so we can kill it by PID.
+    // BusyBox's `killall httpd` does not reliably find the process inside a
+    // krun VM because the process name is `busybox` not `httpd`.
     let liveness_script = format!(
-        "/bin/busybox httpd -p {guest_port}; \
+        "/bin/busybox httpd -f -p {guest_port} & \
+         HTTPD_PID=$!; \
          sleep 2; \
-         /bin/busybox killall httpd; \
-         sleep 2; \
-         /bin/busybox httpd -p {guest_port}; \
-         sleep 20"
+         kill $HTTPD_PID; \
+         sleep 3; \
+         /bin/busybox httpd -f -p {guest_port}"
     );
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
