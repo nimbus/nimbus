@@ -89,9 +89,11 @@ supports the same conclusion from source.
   published endpoints, prefers HTTP endpoints over raw TCP when both exist,
   keeps the sandbox in `Starting` until the probe succeeds, and hides
   execute-mode published endpoints until readiness passes. Local unit coverage
-  now proves HTTP probe success, probe-target selection, failure-to-starting
-  fallback, and endpoint gating. Linux-host promotion for this M3 slice is
-  still outstanding.
+  proves HTTP probe success, probe-target selection, failure-to-starting
+  fallback, and endpoint gating. Linux-host verification (2026-04-13) confirmed
+  a delayed-start BusyBox httpd sandbox correctly reports `Starting` with empty
+  `published_endpoints` during boot, transitions to `Ready` with endpoints
+  published only after the guest answers on TSI port 18085.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -118,10 +120,12 @@ supports the same conclusion from source.
   sandboxes confirmed `/.krun_vm.json` materialization (`cpus:2, ram_mib:256`),
   OCI `linux.resources.memory.limit = 268435456`, and TSI HTTP connectivity
   under the resource-limited VM on Debian 13. M2 is complete.
-- The first M3 startup-readiness gate is now implemented locally: execute-mode
-  sandboxes remain `Starting` until a real endpoint probe succeeds, and
-  execute-mode published endpoints stay hidden until then. Linux-host proof for
-  that gate, plus broader liveness/restart behavior, remains outstanding.
+- The first M3 startup-readiness gate is now Linux-verified: execute-mode
+  sandboxes remain `Starting` with hidden `published_endpoints` until a real
+  endpoint probe succeeds, then transition to `Ready` with endpoints published.
+  Proven on Debian 13 with a delayed-start BusyBox httpd (2s sleep before
+  service bind). Remaining M3 work: liveness probes, restart policy, and
+  guest-side user switching.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -728,11 +732,14 @@ Before M5, keep verification split across four lanes:
   gate in `vm.rs`: execute-mode sandboxes stay `Starting` until a host-side
   probe reaches the published endpoint, and execute-mode endpoints remain hidden
   until that probe succeeds.
-- The next Linux promotion should prove that gate on a real host by extending
-  the ignored smoke lane so:
-  - the sandbox initially remains `Starting`
-  - published endpoints stay empty while the guest is still booting
-  - status transitions to `Ready` only after the guest answers on TSI
+- **M3 startup-readiness gate Linux-verified** (2026-04-13): the
+  `krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints` smoke
+  test passes on Debian 13. A delayed-start BusyBox httpd sandbox initially
+  reports `Starting` with empty `published_endpoints`, then transitions to
+  `Ready` with endpoints published only after the guest answers on TSI port
+  18085. All 7 ignored smoke tests pass with no regressions (~60s total).
+- The next M3 items are liveness probes, restart policy, and guest-side user
+  switching.
 
 ### End-to-end (after M4)
 
@@ -1035,3 +1042,28 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo test -p neovex-sandbox` (43 pass).
   This closes the first local M3 readiness gap but still needs Linux-host smoke
   promotion before the plan can claim end-to-end proof for the new startup gate.
+- 2026-04-13: Ran M3 startup-readiness gate Linux-host verification on Debian 13
+  x86_64. The ignored smoke test
+  `krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints` passed
+  on the first attempt in ~7.9s:
+  (1) `start()` returned `SandboxStatus::Starting` with empty
+  `published_endpoints` — confirmed the gate holds;
+  (2) during the 2s delay (busybox `sleep 2` before httpd starts), `inspect()`
+  reported `Starting` with hidden endpoints — confirmed the probe doesn't
+  short-circuit;
+  (3) after the guest httpd bound port 8085, `inspect()` transitioned to
+  `SandboxStatus::Ready` with 1 published endpoint on host port 18085;
+  (4) HTTP probe on 127.0.0.1:18085 returned BusyBox httpd response.
+  Full regression run of all 7 ignored smoke tests passed in ~60s with no
+  regressions. Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (43 pass),
+  `cargo test -p neovex-sandbox --test krun_linux_smoke krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints -- --ignored --exact --test-threads=1` pass.
+  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  M3 startup-readiness gate is now Linux-verified. Remaining M3 work: liveness
+  probes, restart policy, guest-side user switching.
