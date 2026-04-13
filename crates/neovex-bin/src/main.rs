@@ -20,7 +20,7 @@ use crate::service::{
 #[cfg(all(test, target_os = "linux"))]
 use crate::service::load_compose_project_context;
 #[cfg(all(test, target_os = "linux"))]
-use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig};
+use neovex_sandbox::backends::krun::{KrunLaunchMode, KrunSandboxBackend};
 
 const DEFAULT_DATA_DIR: &str = "./data";
 const CONFIG_FILE_ENV: &str = "NEOVEX_CONFIG";
@@ -770,7 +770,10 @@ mod tests {
     use std::time::Instant;
 
     #[cfg(target_os = "linux")]
-    use neovex::{RuntimeBundle, build_router_with_convex_and_sandbox_service_manager};
+    use neovex::{
+        RuntimeBundle, RuntimeServiceRegistry, build_router_with_convex_and_sandbox_service_manager,
+    };
+    #[cfg(target_os = "linux")]
     #[cfg(target_os = "linux")]
     use neovex_testing::{
         HttpApiFixture, ServerFixture, ServiceFixture,
