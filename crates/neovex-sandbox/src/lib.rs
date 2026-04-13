@@ -19,6 +19,6 @@ pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use spec::{
-    SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
-    SandboxSpec,
+    SandboxFilesystemSpec, SandboxLifecycleSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec,
 };

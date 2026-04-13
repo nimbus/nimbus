@@ -138,6 +138,24 @@ impl SandboxResourceLimits {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxRestartPolicy {
+    #[default]
+    Never,
+    OnFailure {
+        max_restarts: u32,
+    },
+    Always {
+        max_restarts: u32,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxLifecycleSpec {
+    pub restart_policy: SandboxRestartPolicy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxSpec {
     pub tenant_id: TenantId,
@@ -146,6 +164,8 @@ pub struct SandboxSpec {
     pub filesystem: SandboxFilesystemSpec,
     pub process: SandboxProcessSpec,
     pub resources: SandboxResourceLimits,
+    #[serde(default)]
+    pub lifecycle: SandboxLifecycleSpec,
     pub port_bindings: Vec<SandboxPortBinding>,
 }
 
@@ -164,12 +184,23 @@ impl SandboxSpec {
             filesystem,
             process,
             resources: SandboxResourceLimits::default(),
+            lifecycle: SandboxLifecycleSpec::default(),
             port_bindings: Vec::new(),
         }
     }
 
     pub fn with_resource_limits(mut self, resources: SandboxResourceLimits) -> Self {
         self.resources = resources;
+        self
+    }
+
+    pub fn with_lifecycle(mut self, lifecycle: SandboxLifecycleSpec) -> Self {
+        self.lifecycle = lifecycle;
+        self
+    }
+
+    pub fn with_restart_policy(mut self, restart_policy: SandboxRestartPolicy) -> Self {
+        self.lifecycle.restart_policy = restart_policy;
         self
     }
 

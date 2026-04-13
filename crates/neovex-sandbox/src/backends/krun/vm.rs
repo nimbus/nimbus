@@ -22,7 +22,7 @@ use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
-use crate::spec::SandboxSpec;
+use crate::spec::{SandboxRestartPolicy, SandboxSpec};
 
 const DEFAULT_RUNTIME_PATH: &str = "/usr/libexec/neovex/crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -156,7 +156,13 @@ impl KrunSandboxBackend {
 
         manifest.status = match self.config.launch_mode {
             KrunLaunchMode::PlanOnly => manifest.status,
-            KrunLaunchMode::Execute => self.detect_runtime_status(&manifest)?,
+            KrunLaunchMode::Execute => {
+                if self.maybe_restart_after_exit(&mut manifest)? {
+                    manifest.status
+                } else {
+                    self.detect_runtime_status(&manifest)?
+                }
+            }
         };
         manifest.handle.status = manifest.status;
         manifest.handle.published_endpoints =
@@ -354,6 +360,7 @@ impl KrunSandboxBackend {
             conmon_layout,
             conmon_launch,
             last_exit_code: None,
+            restart_count: 0,
             launch_mode: self.config.launch_mode,
             shutdown_requested: false,
             status: SandboxStatus::Starting,
@@ -474,20 +481,8 @@ impl KrunSandboxBackend {
 
     fn execute_start(&self, launch_plan: &KrunLaunchPlan) -> Result<SandboxHandle> {
         ensure_linux_host()?;
-        spawn_background(&launch_plan.manifest.conmon_launch.create_command)?;
-        let runtime_state = wait_for_runtime_state(
-            &launch_plan.manifest.conmon_launch.state_command,
-            self.config.start_timeout,
-        )?;
-        if runtime_state != "running" {
-            run_status_checked(&launch_plan.manifest.conmon_launch.start_command)?;
-        }
-
         let mut manifest = launch_plan.manifest.clone();
-        manifest.shutdown_requested = false;
-        manifest.last_exit_code = None;
-        synchronize_handle_status(&mut manifest, SandboxStatus::Starting);
-        self.write_manifest(&manifest)?;
+        self.launch_manifest(&mut manifest, true)?;
         Ok(manifest.handle)
     }
 
@@ -548,6 +543,58 @@ impl KrunSandboxBackend {
             None if manifest.conmon_layout.pidfile.exists() => Ok(SandboxStatus::Starting),
             None => Ok(manifest.status),
         }
+    }
+
+    fn maybe_restart_after_exit(&self, manifest: &mut KrunSandboxManifest) -> Result<bool> {
+        if manifest.shutdown_requested || !manifest.conmon_layout.exit_status_file.exists() {
+            return Ok(false);
+        }
+
+        let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
+        if !restart_policy_allows_restart(
+            manifest.spec.lifecycle.restart_policy,
+            exit_code,
+            manifest.restart_count,
+        ) {
+            return Ok(false);
+        }
+
+        manifest.last_exit_code = Some(exit_code);
+        manifest.restart_count += 1;
+        self.reset_runtime_for_restart(manifest)?;
+        self.launch_manifest(manifest, false)?;
+        Ok(true)
+    }
+
+    fn launch_manifest(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        clear_last_exit_code: bool,
+    ) -> Result<()> {
+        ensure_linux_host()?;
+        spawn_background(&manifest.conmon_launch.create_command)?;
+        let runtime_state = wait_for_runtime_state(
+            &manifest.conmon_launch.state_command,
+            self.config.start_timeout,
+        )?;
+        if runtime_state != "running" {
+            run_status_checked(&manifest.conmon_launch.start_command)?;
+        }
+
+        manifest.shutdown_requested = false;
+        if clear_last_exit_code {
+            manifest.last_exit_code = None;
+        }
+        synchronize_handle_status(manifest, SandboxStatus::Starting);
+        self.write_manifest(manifest)
+    }
+
+    fn reset_runtime_for_restart(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        run_status_checked(&manifest.conmon_launch.delete_command)?;
+        remove_if_exists(&manifest.conmon_layout.exit_status_file)?;
+        remove_if_exists(&manifest.conmon_layout.pidfile)?;
+        remove_if_exists(&manifest.conmon_layout.conmon_pidfile)?;
+        Ok(())
     }
 
     fn read_manifest(&self, id: &SandboxId) -> Result<Option<KrunSandboxManifest>> {
@@ -640,6 +687,8 @@ struct KrunSandboxManifest {
     conmon_layout: KrunConmonLayout,
     conmon_launch: KrunConmonLaunchPlan,
     last_exit_code: Option<i32>,
+    #[serde(default)]
+    restart_count: u32,
     launch_mode: KrunLaunchMode,
     shutdown_requested: bool,
     status: SandboxStatus,
@@ -657,6 +706,7 @@ struct KrunResolvedLaunchSpec {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 struct KrunImageMetadata {
     user: Option<String>,
     stop_signal: Option<String>,
@@ -732,6 +782,20 @@ fn configured_stop_signal(image_metadata: &KrunImageMetadata) -> String {
         .filter(|signal| !signal.is_empty())
         .unwrap_or("TERM")
         .to_owned()
+}
+
+fn restart_policy_allows_restart(
+    policy: SandboxRestartPolicy,
+    exit_code: i32,
+    restart_count: u32,
+) -> bool {
+    match policy {
+        SandboxRestartPolicy::Never => false,
+        SandboxRestartPolicy::OnFailure { max_restarts } => {
+            exit_code != 0 && restart_count < max_restarts
+        }
+        SandboxRestartPolicy::Always { max_restarts } => restart_count < max_restarts,
+    }
 }
 
 fn desired_krun_vm_config(spec: &SandboxSpec) -> Result<Option<KrunVmConfig>> {
@@ -990,6 +1054,19 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+fn remove_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    std::fs::remove_file(path).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to remove stale runtime artifact {}: {error}",
+            path.display()
+        ),
+    })
+}
+
 fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {
     spec.port_bindings
         .iter()
@@ -1174,8 +1251,8 @@ mod tests {
     use super::{
         KrunImageMetadata, KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
         KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, desired_krun_vm_config,
-        krun_vm_config_path, probe_target_ready, readiness_probe_target, running_status, slugify,
-        visible_published_endpoints,
+        krun_vm_config_path, probe_target_ready, readiness_probe_target,
+        restart_policy_allows_restart, running_status, slugify, visible_published_endpoints,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
     use crate::backends::krun::buildah::{
@@ -1186,7 +1263,7 @@ mod tests {
     use crate::instance::SandboxStatus;
     use crate::spec::{
         SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
-        SandboxSpec,
+        SandboxRestartPolicy, SandboxSpec,
     };
 
     #[test]
@@ -1809,6 +1886,119 @@ mod tests {
         );
     }
 
+    #[test]
+    fn restart_policy_allows_expected_restart_shapes() {
+        assert!(
+            !restart_policy_allows_restart(SandboxRestartPolicy::Never, 42, 0),
+            "never policy should not restart"
+        );
+        assert!(
+            restart_policy_allows_restart(
+                SandboxRestartPolicy::OnFailure { max_restarts: 1 },
+                42,
+                0
+            ),
+            "on-failure should restart non-zero exits within budget"
+        );
+        assert!(
+            !restart_policy_allows_restart(
+                SandboxRestartPolicy::OnFailure { max_restarts: 1 },
+                0,
+                0
+            ),
+            "on-failure should not restart clean exits"
+        );
+        assert!(
+            !restart_policy_allows_restart(SandboxRestartPolicy::Always { max_restarts: 1 }, 42, 1),
+            "restart budget should cap repeated restarts"
+        );
+    }
+
+    #[test]
+    fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
+        let manifest: KrunSandboxManifest = serde_json::from_value(json!({
+            "handle": {
+                "id": "sandbox-01",
+                "name": "legacy",
+                "backend": "krun",
+                "status": "starting",
+                "published_endpoints": [],
+            },
+            "spec": {
+                "tenant_id": "tenant",
+                "name": "legacy",
+                "backend": "krun",
+                "filesystem": {
+                    "rootfs": "/srv/rootfs",
+                    "readonly": false,
+                },
+                "process": {
+                    "args": ["/bin/service"],
+                    "env": ["PATH=/usr/bin"],
+                    "cwd": "/",
+                    "terminal": false,
+                },
+                "resources": {
+                    "cpu_count": null,
+                    "memory_limit_bytes": null,
+                },
+                "port_bindings": [],
+            },
+            "image_metadata": {},
+            "buildah_container": null,
+            "bundle_layout": {
+                "bundle_dir": "/tmp/bundle",
+                "config_path": "/tmp/bundle/config.json",
+            },
+            "conmon_layout": {
+                "state_root": "/tmp/state",
+                "container_state_dir": "/tmp/state/containers/sandbox-01",
+                "exit_dir": "/tmp/state/exits",
+                "persist_dir": "/tmp/state/persist/sandbox-01",
+                "ctr_log": "/tmp/state/containers/sandbox-01/ctr.log",
+                "oci_log": "/tmp/state/containers/sandbox-01/oci.log",
+                "pidfile": "/tmp/state/containers/sandbox-01/pidfile",
+                "conmon_pidfile": "/tmp/state/containers/sandbox-01/conmon.pid",
+                "exit_status_file": "/tmp/state/exits/sandbox-01",
+                "manifest_path": "/tmp/state/containers/sandbox-01/manifest.json",
+            },
+            "conmon_launch": {
+                "create_command": {
+                    "program": "/usr/bin/conmon",
+                    "args": [],
+                },
+                "state_command": {
+                    "program": "/usr/libexec/neovex/crun",
+                    "args": ["state", "sandbox-01"],
+                },
+                "start_command": {
+                    "program": "/usr/libexec/neovex/crun",
+                    "args": ["start", "sandbox-01"],
+                },
+            },
+            "last_exit_code": null,
+            "launch_mode": "execute",
+            "shutdown_requested": false,
+            "status": "starting",
+        }))
+        .expect("legacy manifest should deserialize with new defaults");
+
+        assert_eq!(manifest.restart_count, 0);
+        assert_eq!(
+            manifest.spec.lifecycle.restart_policy,
+            SandboxRestartPolicy::Never
+        );
+        assert!(
+            manifest
+                .conmon_launch
+                .delete_command
+                .program
+                .as_os_str()
+                .is_empty(),
+            "legacy manifests should default the delete command instead of failing to deserialize"
+        );
+    }
+
     fn sample_spec() -> SandboxSpec {
         sample_spec_with_rootfs(Path::new("/srv/rootfs"))
     }
@@ -1898,8 +2088,10 @@ mod tests {
                 create_command: super::CommandSpec::new("/bin/true"),
                 state_command: super::CommandSpec::new("/bin/true"),
                 start_command: super::CommandSpec::new("/bin/true"),
+                delete_command: super::CommandSpec::new("/bin/true"),
             },
             last_exit_code: None,
+            restart_count: 0,
             launch_mode,
             shutdown_requested: false,
             status: SandboxStatus::Starting,

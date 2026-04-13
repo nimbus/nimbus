@@ -62,6 +62,8 @@ pub(crate) struct KrunConmonLaunchPlan {
     pub create_command: CommandSpec,
     pub state_command: CommandSpec,
     pub start_command: CommandSpec,
+    #[serde(default)]
+    pub delete_command: CommandSpec,
 }
 
 pub(crate) fn build_launch_plan(
@@ -114,6 +116,10 @@ pub(crate) fn build_launch_plan(
     let start_command = CommandSpec::new(config.runtime_path.clone())
         .arg("start")
         .arg(sandbox_id.as_str().to_owned());
+    let delete_command = CommandSpec::new(config.runtime_path.clone())
+        .arg("delete")
+        .arg("--force")
+        .arg(sandbox_id.as_str().to_owned());
 
     let buildah =
         BuildahCli::new(config.buildah_path.clone()).with_unshare(config.use_buildah_unshare);
@@ -143,6 +149,11 @@ pub(crate) fn build_launch_plan(
             start_command
         } else {
             buildah.maybe_wrap(start_command)
+        },
+        delete_command: if buildah_container_name.is_some() {
+            delete_command
+        } else {
+            buildah.maybe_wrap(delete_command)
         },
     }
 }

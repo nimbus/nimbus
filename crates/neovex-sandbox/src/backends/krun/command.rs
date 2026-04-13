@@ -3,7 +3,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandSpec {
     pub program: PathBuf,
     pub args: Vec<String>,

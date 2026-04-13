@@ -16,7 +16,8 @@ use neovex_sandbox::backends::krun::{
 };
 use neovex_sandbox::{
     PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxFilesystemSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec, SandboxStatus,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
+    SandboxSpec, SandboxStatus,
 };
 
 #[test]
@@ -985,6 +986,104 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
 
     block_on(backend.stop(&handle.id)).expect("stop should succeed");
     cleanup_guard.disarm();
+}
+
+/// M3 verification: prove an execute-mode sandbox with restart policy
+/// `OnFailure { max_restarts: 1 }` is restarted after a failed first boot and
+/// eventually reaches `Ready` on the second boot.
+#[test]
+#[ignore = "requires a Linux host with KVM, conmon, and a mounted rootfs"]
+fn krun_backend_m3_restart_policy_restarts_failed_vm() {
+    let rootfs = env_path("NEOVEX_KRUN_SMOKE_ROOTFS");
+    let host_port: u16 = 18087;
+    let guest_port: u16 = 8087;
+
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("m3-restart-bundles");
+    let state_root = base_dir.join("m3-restart-state");
+    let restart_marker_host = rootfs.join(".neovex-m3-restart-count-18087");
+    let _ = std::fs::remove_file(&restart_marker_host);
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root.clone();
+    config.state_root = state_root.clone();
+    config.launch_mode = KrunLaunchMode::Execute;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    let backend = KrunSandboxBackend::new(config);
+    let restart_marker_guest = "/.neovex-m3-restart-count-18087";
+    let restart_script = format!(
+        "COUNT=0; \
+         if [ -f {restart_marker_guest} ]; then COUNT=$(cat {restart_marker_guest}); fi; \
+         COUNT=$((COUNT + 1)); \
+         echo $COUNT > {restart_marker_guest}; \
+         if [ \"$COUNT\" -eq 1 ]; then exit 42; fi; \
+         exec /bin/busybox httpd -f -p {guest_port}"
+    );
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        "m3-restart-policy",
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new(rootfs),
+        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &restart_script]),
+    )
+    .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 })
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        PublishedEndpointProtocol::Http,
+        host_port,
+        guest_port,
+    ));
+
+    let handle = block_on(backend.start(spec)).expect("restart-policy sandbox should start");
+    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+
+    let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
+    assert_eq!(ready_handle.status, SandboxStatus::Ready);
+    assert_eq!(ready_handle.published_endpoints.len(), 1);
+    assert_eq!(
+        ready_handle.published_endpoints[0].address.port(),
+        host_port
+    );
+
+    let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        http_response.starts_with("HTTP/1.") || http_response.contains("404"),
+        "expected HTTP response after restart-policy recovery, got: {http_response}"
+    );
+
+    let restart_marker_text = std::fs::read_to_string(&restart_marker_host)
+        .expect("restart marker should be written in the rootfs");
+    assert_eq!(
+        restart_marker_text.trim(),
+        "2",
+        "guest should have booted twice: initial failure, then restarted success"
+    );
+
+    let manifest_path = state_root
+        .join("containers")
+        .join(handle.id.as_str())
+        .join("manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("manifest should be readable after restart"),
+    )
+    .expect("manifest should be valid JSON after restart");
+    assert_eq!(manifest["restart_count"].as_u64(), Some(1));
+    assert_eq!(manifest["last_exit_code"].as_i64(), Some(42));
+    assert_eq!(manifest["status"].as_str(), Some("ready"));
+
+    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    cleanup_guard.disarm();
+    let _ = std::fs::remove_file(&restart_marker_host);
 }
 
 fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
