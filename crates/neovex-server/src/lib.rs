@@ -54,6 +54,21 @@ pub async fn serve_with_license(
     axum::serve(listener, build_router_with_license(service, license_state)).await
 }
 
+/// Runs the Neovex HTTP/WebSocket server on an existing listener with an
+/// explicit license state and sandbox catalog.
+pub async fn serve_with_license_and_sandbox_catalog(
+    listener: tokio::net::TcpListener,
+    service: Arc<Service>,
+    license_state: LicenseState,
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> std::io::Result<()> {
+    axum::serve(
+        listener,
+        build_router_with_license_and_sandbox_catalog(service, license_state, sandbox_catalog),
+    )
+    .await
+}
+
 /// Runs the Neovex HTTP/WebSocket server on an existing listener with Convex support.
 pub async fn serve_with_convex(
     listener: tokio::net::TcpListener,
@@ -79,6 +94,28 @@ pub async fn serve_with_convex_and_license(
     axum::serve(
         listener,
         build_router_with_convex_and_license(service, convex_registry, license_state),
+    )
+    .await
+}
+
+/// Runs the Neovex HTTP/WebSocket server on an existing listener with Convex
+/// support, an explicit license state, and a server-owned sandbox service
+/// manager.
+pub async fn serve_with_convex_and_license_and_sandbox_service_manager(
+    listener: tokio::net::TcpListener,
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    license_state: LicenseState,
+    sandbox_service_manager: Arc<SandboxServiceManager>,
+) -> std::io::Result<()> {
+    axum::serve(
+        listener,
+        build_router_with_convex_and_license_and_sandbox_service_manager(
+            service,
+            convex_registry,
+            license_state,
+            sandbox_service_manager,
+        ),
     )
     .await
 }

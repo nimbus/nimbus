@@ -17,8 +17,17 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 neovex = { path = "../neovex" }
+neovex-sandbox = { path = "../neovex-sandbox" }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+shell-words.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+neovex-testing = { path = "../neovex-testing" }
+reqwest.workspace = true
