@@ -885,6 +885,105 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     cleanup_guard.disarm();
 }
 
+/// M3 verification: prove execute-mode sandboxes degrade to `NotReady` when a
+/// previously-ready guest service stops answering, then recover to `Ready` when
+/// the same guest starts answering again without a VM restart.
+#[test]
+#[ignore = "requires a Linux host with KVM, conmon, and a mounted rootfs"]
+fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
+    let rootfs = env_path("NEOVEX_KRUN_SMOKE_ROOTFS");
+    let host_port: u16 = 18086;
+    let guest_port: u16 = 8086;
+
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("m3-liveness-bundles");
+    let state_root = base_dir.join("m3-liveness-state");
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root;
+    config.state_root = state_root;
+    config.launch_mode = KrunLaunchMode::Execute;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    let backend = KrunSandboxBackend::new(config);
+    let liveness_script = format!(
+        "/bin/busybox httpd -p {guest_port}; \
+         sleep 2; \
+         /bin/busybox killall httpd; \
+         sleep 2; \
+         /bin/busybox httpd -p {guest_port}; \
+         sleep 20"
+    );
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        "m3-liveness-gate",
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new(rootfs),
+        SandboxProcessSpec::new(["/bin/busybox", "sh", "-c", &liveness_script]),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        PublishedEndpointProtocol::Http,
+        host_port,
+        guest_port,
+    ));
+
+    let handle = block_on(backend.start(spec)).expect("liveness-gated sandbox should start");
+    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+
+    let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
+    assert_eq!(ready_handle.status, SandboxStatus::Ready);
+    assert_eq!(ready_handle.published_endpoints.len(), 1);
+    assert_eq!(
+        ready_handle.published_endpoints[0].address.port(),
+        host_port
+    );
+
+    let initial_http = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        initial_http.starts_with("HTTP/1.") || initial_http.contains("404"),
+        "expected initial HTTP response before liveness regression, got: {initial_http}"
+    );
+
+    let not_ready_handle = wait_for_status(
+        &backend,
+        &handle.id,
+        SandboxStatus::NotReady,
+        Duration::from_secs(15),
+    );
+    assert!(
+        not_ready_handle.published_endpoints.is_empty(),
+        "execute-mode sandboxes should withdraw published endpoints when liveness probes fail"
+    );
+    wait_for_http_unreachable(host_port, Duration::from_secs(5));
+
+    let recovered_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
+    assert_eq!(recovered_handle.status, SandboxStatus::Ready);
+    assert_eq!(recovered_handle.published_endpoints.len(), 1);
+    assert_eq!(
+        recovered_handle.published_endpoints[0].address.port(),
+        host_port
+    );
+
+    let recovered_http = wait_for_http_response(host_port, Duration::from_secs(15));
+    assert!(
+        recovered_http.starts_with("HTTP/1.") || recovered_http.contains("404"),
+        "expected HTTP response after liveness recovery, got: {recovered_http}"
+    );
+
+    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    cleanup_guard.disarm();
+}
+
 fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
     let status = std::process::Command::new(program)
         .args(args)
@@ -962,17 +1061,26 @@ fn wait_for_ready(
     id: &neovex_sandbox::SandboxId,
     timeout: Duration,
 ) -> neovex_sandbox::SandboxHandle {
+    wait_for_status(backend, id, SandboxStatus::Ready, timeout)
+}
+
+fn wait_for_status(
+    backend: &KrunSandboxBackend,
+    id: &neovex_sandbox::SandboxId,
+    expected: SandboxStatus,
+    timeout: Duration,
+) -> neovex_sandbox::SandboxHandle {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if let Some(handle) = block_on(backend.inspect(id)).expect("inspect should succeed") {
-            if handle.status == SandboxStatus::Ready {
+            if handle.status == expected {
                 return handle;
             }
         }
         thread::sleep(Duration::from_millis(250));
     }
 
-    panic!("sandbox did not become ready within {:?}", timeout);
+    panic!("sandbox did not reach {expected:?} within {:?}", timeout);
 }
 
 fn wait_for_http_response(port: u16, timeout: Duration) -> String {
@@ -1007,6 +1115,38 @@ fn wait_for_http_response(port: u16, timeout: Duration) -> String {
 
     panic!(
         "guest service did not answer HTTP on port {port} within {:?}",
+        timeout
+    );
+}
+
+fn wait_for_http_unreachable(port: u16, timeout: Duration) {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        match TcpStream::connect_timeout(&addr, Duration::from_secs(1)) {
+            Ok(mut stream) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                if stream
+                    .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                    .is_err()
+                {
+                    return;
+                }
+
+                let mut response = [0u8; 256];
+                match stream.read(&mut response) {
+                    Ok(0) => return,
+                    Err(_) => return,
+                    Ok(_) => {}
+                }
+            }
+            Err(_) => return,
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    panic!(
+        "guest service on port {port} remained reachable for {:?}",
         timeout
     );
 }

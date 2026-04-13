@@ -27,6 +27,7 @@ impl std::fmt::Display for SandboxId {
 pub enum SandboxStatus {
     Starting,
     Ready,
+    NotReady,
     Stopping,
     Stopped,
     Failed,

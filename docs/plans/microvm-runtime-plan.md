@@ -94,6 +94,15 @@ supports the same conclusion from source.
   a delayed-start BusyBox httpd sandbox correctly reports `Starting` with empty
   `published_endpoints` during boot, transitions to `Ready` with endpoints
   published only after the guest answers on TSI port 18085.
+- The next M3 liveness slice is now implemented locally: `SandboxStatus`
+  includes a generic `NotReady` state, execute-mode krun sandboxes regress
+  from `Ready` to `NotReady` when their readiness/liveness probe starts
+  failing after startup, and recover back to `Ready` once the probe succeeds
+  again. Execute-mode `published_endpoints` stay withdrawn for both `Starting`
+  and `NotReady`. Local unit coverage proves `Ready -> NotReady -> Ready`
+  transitions, and a new ignored Linux smoke
+  (`krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart`)
+  is checked in for host verification.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -126,6 +135,13 @@ supports the same conclusion from source.
   Proven on Debian 13 with a delayed-start BusyBox httpd (2s sleep before
   service bind). Remaining M3 work: liveness probes, restart policy, and
   guest-side user switching.
+- The first M3 liveness state slice is now implemented locally: the generic
+  sandbox API has a `NotReady` state, and krun uses it when a previously-ready
+  sandbox keeps running but stops answering its published probe target. This is
+  intentionally inspect-driven for now; restart policy and background probe
+  workers remain separate follow-on scope. The port allocator now also treats
+  `NotReady` sandboxes as active so degraded-but-running VMs do not leak their
+  host-port reservations. Linux-host proof is still outstanding.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -667,7 +683,7 @@ Developers can use muscle memory.
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
-| M3: Lifecycle management | `in_progress` | M2 | Probes, shutdown, restart. Readiness gap is the highest-priority item: OCI `"running"` does not mean the guest service is accepting connections |
+| M3: Lifecycle management | `in_progress` | M2 | Probes, shutdown, restart. Startup-readiness is Linux-verified. Local liveness slice landed next: generic `SandboxStatus::NotReady`, `Ready -> NotReady -> Ready` probe transitions, and an ignored Linux smoke for degradation/recovery without VM restart. Restart policy and guest-side user switching remain after liveness verification |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
@@ -738,8 +754,17 @@ Before M5, keep verification split across four lanes:
   reports `Starting` with empty `published_endpoints`, then transitions to
   `Ready` with endpoints published only after the guest answers on TSI port
   18085. All 7 ignored smoke tests pass with no regressions (~60s total).
-- The next M3 items are liveness probes, restart policy, and guest-side user
-  switching.
+- The next active M3 item is liveness degradation/recovery. The checked-in
+  ignored smoke is
+  `krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart`:
+  - it starts a BusyBox guest that serves HTTP, stops serving while PID 1 stays
+    alive, then serves again on the same guest port
+  - Linux proof should confirm `Ready -> NotReady -> Ready`
+  - `published_endpoints` should be present only in the two `Ready` windows
+  - HTTP on host port 18086 should succeed, fail during the regression window,
+    then succeed again after recovery
+- After liveness is Linux-verified, the remaining M3 items are restart policy
+  and guest-side user switching.
 
 ### End-to-end (after M4)
 
@@ -1067,3 +1092,26 @@ ss -tlnp | grep 15432                                 # should be empty
   `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 startup-readiness gate is now Linux-verified. Remaining M3 work: liveness
   probes, restart policy, guest-side user switching.
+- 2026-04-12: Landed the next local M3 lifecycle slice on the macOS workspace.
+  `crates/neovex-sandbox/src/instance.rs` now exposes a generic
+  `SandboxStatus::NotReady` state, and
+  `crates/neovex-sandbox/src/backends/krun/vm.rs` now uses that state when an
+  execute-mode sandbox has already proven readiness once but later stops
+  answering its endpoint-derived probe. This gives krun a clean
+  `Ready -> NotReady -> Ready` lifecycle without conflating a degraded running
+  sandbox with either `Starting` or `Failed`, and execute-mode
+  `published_endpoints` remain withdrawn whenever status is not `Ready`.
+  Added unit coverage for:
+  - degrading a previously ready sandbox to `NotReady` on probe failure
+  - recovering a `NotReady` sandbox back to `Ready` when the probe succeeds
+  - keeping execute-mode endpoints hidden in the `NotReady` state
+  - keeping `NotReady` sandboxes' host ports reserved in the port manager
+  Added a new ignored Linux smoke test,
+  `krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart`,
+  that scripts a BusyBox guest through `Ready -> NotReady -> Ready` without
+  killing the VM. Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (46 pass).
+  This local liveness slice is ready for Linux-host promotion; restart policy
+  and guest-side user switching remain after that proof.
