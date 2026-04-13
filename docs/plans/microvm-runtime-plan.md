@@ -94,15 +94,14 @@ supports the same conclusion from source.
   a delayed-start BusyBox httpd sandbox correctly reports `Starting` with empty
   `published_endpoints` during boot, transitions to `Ready` with endpoints
   published only after the guest answers on TSI port 18085.
-- The next M3 liveness slice is now implemented locally: `SandboxStatus`
-  includes a generic `NotReady` state, execute-mode krun sandboxes regress
-  from `Ready` to `NotReady` when their readiness/liveness probe starts
-  failing after startup, and recover back to `Ready` once the probe succeeds
-  again. Execute-mode `published_endpoints` stay withdrawn for both `Starting`
-  and `NotReady`. Local unit coverage proves `Ready -> NotReady -> Ready`
-  transitions, and a new ignored Linux smoke
-  (`krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart`)
-  is checked in for host verification.
+- The M3 liveness slice is now Linux-verified: `SandboxStatus` includes a
+  generic `NotReady` state, execute-mode krun sandboxes regress from `Ready` to
+  `NotReady` when their readiness/liveness probe starts failing after startup,
+  and recover back to `Ready` once the probe succeeds again. Execute-mode
+  `published_endpoints` stay withdrawn for both `Starting` and `NotReady`.
+  Linux proof: BusyBox httpd killed by PID → sandbox degrades to `NotReady`
+  with empty endpoints and unreachable port → httpd restarts → sandbox
+  recovers to `Ready` with endpoints and HTTP connectivity restored.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -133,15 +132,20 @@ supports the same conclusion from source.
   sandboxes remain `Starting` with hidden `published_endpoints` until a real
   endpoint probe succeeds, then transition to `Ready` with endpoints published.
   Proven on Debian 13 with a delayed-start BusyBox httpd (2s sleep before
-  service bind). Remaining M3 work: liveness probes, restart policy, and
-  guest-side user switching.
-- The first M3 liveness state slice is now implemented locally: the generic
-  sandbox API has a `NotReady` state, and krun uses it when a previously-ready
-  sandbox keeps running but stops answering its published probe target. This is
-  intentionally inspect-driven for now; restart policy and background probe
-  workers remain separate follow-on scope. The port allocator now also treats
+  service bind).
+- The M3 liveness state slice is now Linux-verified: the generic sandbox API
+  has a `NotReady` state, and krun uses it when a previously-ready sandbox
+  keeps running but stops answering its published probe target. Linux proof
+  (2026-04-13): a BusyBox httpd sandbox that kills httpd by PID, then restarts
+  it, correctly transitions `Ready → NotReady → Ready` without a VM restart.
+  During `NotReady`, published endpoints are withdrawn and the host port becomes
+  unreachable. After recovery, endpoints reappear and HTTP connectivity returns.
+  Key fix: BusyBox `killall httpd` does not work inside krun VMs because the
+  process name is `busybox` not `httpd`; the test now uses PID-based killing
+  (`httpd -f & HTTPD_PID=$!; ... kill $HTTPD_PID`). The port allocator treats
   `NotReady` sandboxes as active so degraded-but-running VMs do not leak their
-  host-port reservations. Linux-host proof is still outstanding.
+  host-port reservations. Remaining M3 work: restart policy and guest-side
+  user switching.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -1115,3 +1119,34 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo test -p neovex-sandbox` (46 pass).
   This local liveness slice is ready for Linux-host promotion; restart policy
   and guest-side user switching remain after that proof.
+- 2026-04-13: Ran M3 liveness probe Linux-host verification on Debian 13 x86_64.
+  Initial run: test timed out waiting for `NotReady` because BusyBox `killall httpd`
+  does not work inside krun VMs — the process name is `busybox`, not `httpd`.
+  Fix: updated the test script to use PID-based killing:
+  `/bin/busybox httpd -f -p 8086 & HTTPD_PID=$!; sleep 2; kill $HTTPD_PID; sleep 3;
+  /bin/busybox httpd -f -p 8086`. Manual verification confirmed the service-down
+  window: HTTP responds at T=1-2s, fails at T=3-4s, recovers at T=5s+.
+  After fix, the smoke test
+  `krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart`
+  passed in ~13.9s:
+  (1) sandbox reached `Ready` with 1 published endpoint on port 18086;
+  (2) HTTP confirmed on port 18086 during initial Ready window;
+  (3) sandbox transitioned to `NotReady` after httpd was killed — published
+  endpoints withdrawn, port 18086 unreachable;
+  (4) sandbox recovered to `Ready` after httpd restarted — endpoints reappeared,
+  HTTP connectivity restored on port 18086;
+  (5) stop succeeded normally.
+  All 46 unit tests pass. Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (46 pass),
+  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart
+  -- --ignored --exact --test-threads=1` pass.
+  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
+  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
+  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
+  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  M3 liveness probe slice is now Linux-verified. Remaining M3 work: restart
+  policy and guest-side user switching.
