@@ -4,27 +4,20 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/convex-demos-compatibility-plan.md`
-  - execution plan for closing the remaining Convex demo and compatibility gaps
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via the
     retained redb embedded provider
+- `docs/plans/macos-machine-support-plan.md`
+  - canonical execution plan for the Podman-aligned macOS developer-machine
+    architecture: one Linux guest VM, standard guest containers, `neovex machine ...`,
+    host-local control channel, and real-host verification
 
-## Current implementation baselines
+## Stable implementation baselines
 
-- `docs/plans/microvm-runtime-plan.md`
-  - completed control plane for the krun-backed microVM runtime: buildah
-    integration, OCI bundle generation, lifecycle probes, engine integration
-    (`ctx.services.*`), and developer-facing service workflows
-- `docs/plans/service-control-plane-plan.md`
-  - completed Compose-backed service control-plane baseline: project identity,
-    control-root layout, backend-owned lifecycle state, and `neovex service
-    ...` architecture and command wiring
-- `docs/plans/vmm-infrastructure-plan.md`
-  - completed foundation baseline for the krun-backed microVM runtime: pinned
-    crun patch artifact, system dependency contract, Linux/macOS verification
-    evidence, and the subprocess orchestration seam the active microVM runtime
-    plan now consumes
+- `docs/reference/microvm-service-baseline.md`
+  - concise current baseline for the landed krun-backed microVM runtime,
+    service activation, Compose-backed `neovex service ...` surface, and the
+    Linux-versus-macOS platform model
 
 ## Deferred design and experiment plans
 
@@ -33,7 +26,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
     (macOS via krunkit/libkrun), binary tarballs, container images, cloud
     VM images (AWS AMI, GCP). Channel 4 covers the macOS machine VM
-    architecture (krunkit, guest image, vsock, virtiofs, gvproxy)
+    architecture (krunkit, guest image, control channel, virtiofs, gvproxy)
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary
@@ -104,20 +97,42 @@ completed plans unless explicitly asked to review historical work.
   - completed execution-runtime versus sandbox-orchestration cleanup baseline;
     records the settled `neovex-runtime` versus `neovex-sandbox` naming and
     seam decisions that deferred runtime and sandbox plans build on
+- `docs/plans/archive/vmm-infrastructure-plan.md`
+  - completed patched-crun and host-validation execution record for the
+    krun-backed VMM foundation
+- `docs/plans/archive/microvm-runtime-plan.md`
+  - completed execution record for the krun-backed microVM runtime:
+    buildah/image integration, lifecycle probes, engine integration, and
+    developer-facing service workflows
+- `docs/plans/archive/service-control-plane-plan.md`
+  - completed execution record for the Compose-backed service control plane:
+    project identity, control-root layout, backend-owned lifecycle state, and
+    `neovex service ...` command wiring
+- `docs/plans/archive/convex-demos-compatibility-plan.md`
+  - completed Convex compatibility and demo baseline; records the landed
+    browser/client ergonomics, repo-owned demo variants, served browser bundle,
+    and external `convex-demos` overlay workflow
 
 ## How To Use This Folder
 
 - Start with the plan that owns your workstream.
+- For the landed krun-backed microVM and service-control architecture, start
+  with `docs/reference/microvm-service-baseline.md` rather than opening the
+  archived plans first.
+- For the current macOS developer-machine workstream, open
+  `docs/plans/macos-machine-support-plan.md` after the baseline.
 - Do not resume a plan from `docs/plans/archive/` unless you were explicitly
   asked to review historical work.
 - If no active plan owns the work, promote or author a new active plan instead
   of reviving a completed archived one.
-- For Convex demo and compatibility work, start with
-  `convex-demos-compatibility-plan.md`.
+- The Convex demo and compatibility plan is complete and archived at
+  `archive/convex-demos-compatibility-plan.md`; use it for historical review
+  of the landed compatibility baseline, then promote a new active plan before
+  resuming further Convex compat work.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
-- For Compose-backed service lifecycle architecture and the remaining
-  `neovex service ...` control-plane baseline or follow-on work, start with
-  `service-control-plane-plan.md`.
+- For Compose-backed service lifecycle follow-on work, start with
+  `docs/reference/microvm-service-baseline.md`, then promote or author a new
+  active plan if the task is larger than a small focused change.
 - The execution-runtime versus sandbox-orchestration cleanup plan is complete
   and archived at `archive/runtime-sandbox-architecture-plan.md`. Use it to
   understand the landed `neovex-runtime` versus `neovex-sandbox` split, then

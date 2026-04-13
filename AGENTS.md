@@ -32,30 +32,40 @@ Use the repo docs for architecture and behavior details:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- For the current krun-backed microVM and service-control workstream, go
-  directly to `docs/plans/microvm-runtime-plan.md` after the three docs above,
-  then open `docs/plans/service-control-plane-plan.md` if the task touches
-  Compose-backed `neovex service ...` workflows. Those plans are the durable
-  control planes and completion records for the landed krun-backed runtime and
-  its service-control layer.
+- For the landed krun-backed microVM and service-control architecture, go
+  directly to `docs/reference/microvm-service-baseline.md` after the three
+  docs above. Open the archived plans only when a task needs historical
+  execution detail or exact closeout evidence.
+- For the current macOS developer-machine workstream, open
+  `docs/plans/macos-machine-support-plan.md` after the microVM baseline.
+  That plan is the current active execution control plane; resume the earliest
+  `MAC*` item that is not `done`, or continue any item already marked
+  `in_progress`, before starting new macOS scope.
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
-- For the current krun-backed microVM and service-control workstream, open
-  `docs/plans/microvm-runtime-plan.md` immediately after those three docs, and
-  open `docs/plans/service-control-plane-plan.md` as well when the task
-  touches Compose-backed lifecycle commands or project/control-root behavior,
-  instead of spending time rediscovering ownership through chat history.
-- Before changing code for this workstream, reread the microVM plan's
-  `Current Assessed State`, `Current Review Findings`,
-  `Phase Status Ledger`, `Verification Contract`, and `Execution Log`, plus
-  the service-control plan's `Current Assessed State`, `Roadmap Status Ledger`,
-  `Verification Contract`, and `Execution Log` when that layer is in scope.
-- Treat the roadmap plus the current git worktree as progress state. Do not rely on chat history to remember where work stopped.
-- If an item is already `in_progress` or the worktree is dirty, reconcile and resume that work before starting a new roadmap item.
-- Checkpoint roadmap state before stopping, handing off, or any likely context loss. Do not assume you will get an explicit compaction warning.
+- For the current krun-backed microVM and service-control architecture, open
+  `docs/reference/microvm-service-baseline.md` immediately after those three
+  docs. Only load the archived plans if the task genuinely needs historical
+  verification detail or phase-by-phase context.
+- For macOS developer-machine work, open
+  `docs/plans/macos-machine-support-plan.md` after the microVM baseline and
+  reread its `Current Assessed State`, `Current Review Findings`,
+  `Feature Preservation Matrix`, `Control Plan Rules`,
+  `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log`
+  before changing code.
+- For that workstream, treat the macOS plan plus the current git worktree as
+  the durable progress state between compactions. After each meaningful work
+  burst, update the plan ledger and execution log in the same change set.
+- Treat the current git worktree plus the owning active plan, when there is
+  one, as progress state. Do not rely on chat history to remember where work
+  stopped.
+- If an active roadmap item is already `in_progress` or the worktree is dirty,
+  reconcile and resume that work before starting a new roadmap item.
+- Checkpoint active roadmap state before stopping, handing off, or any likely
+  context loss. Do not assume you will get an explicit compaction warning.
 - Load one roadmap item at a time plus only the immediately relevant code, tests, and docs.
 
 ### Workspace layout

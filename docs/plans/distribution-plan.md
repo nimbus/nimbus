@@ -9,11 +9,15 @@ target platforms and package channels.
 
 - **Status:** `deferred`
 - **Primary owner:** this plan
-- **Activation gate:** promote when `microvm-runtime-plan.md` Phase M2 is
-  complete (neovex can generate OCI bundles and boot VMs)
+- **Activation gate:** met on 2026-04-13 when the microVM service baseline
+  reached `done`; this plan remains deferred until packaging work is promoted
 - **Related plans:**
-  - `vmm-infrastructure-plan.md` — Linux VMM stack (patched crun, system deps)
-  - `microvm-runtime-plan.md` — OCI runtime (buildah, lifecycle, engine integration)
+  - `docs/reference/microvm-service-baseline.md` — current landed runtime and
+    service-control baseline
+  - `docs/plans/macos-machine-support-plan.md` — active execution plan for the
+    macOS developer-machine architecture and implementation
+  - `docs/plans/archive/vmm-infrastructure-plan.md` — historical VMM
+    foundation execution record with Linux/macOS validation evidence
 
 ## Control Plan Rules
 
@@ -140,7 +144,8 @@ Description: crun OCI runtime with krun TSI port mapping (patched for neovex)
 ```
 
 Built from upstream crun release tarball + build-time patch (see
-`vmm-infrastructure-plan.md`). Installs to `/usr/libexec/neovex/crun`. Does
+`docs/plans/archive/vmm-infrastructure-plan.md`). Installs to
+`/usr/libexec/neovex/crun`. Does
 NOT conflict with or replace the system `crun` — neovex invokes it via
 `conmon -r /usr/libexec/neovex/crun`. System Podman/CRI-O continue using
 the distro `crun` undisturbed.
@@ -214,12 +219,14 @@ macOS (Apple Silicon, M1+, macOS 14+)
         ├── neovex machine init / start / stop
         │     └── krunkit (libkrun / Hypervisor.framework)
         │           ├── virtiofs (host ↔ guest file sharing)
-        │           ├── vsock (host ↔ guest API forwarding)
-        │           └── virtio-net (guest networking)
+        │           ├── virtio-net (guest networking via gvproxy)
+        │           └── vsock devices (ready signal + first-boot ignition)
         │
-        ├── gvproxy (networking + port forwarding, connected via vsock)
+        ├── gvproxy
+        │     ├── guest networking + published localhost ports
+        │     └── forwarded guest API/control socket
         │
-        └── neovex serve (proxied to Linux guest via vsock)
+        └── neovex serve (proxied to Linux guest via a host-local control channel)
               │
               └── Linux guest VM (Fedora CoreOS + neovex deps)
                     │
@@ -393,12 +400,15 @@ macOS guest should follow that same standard-container pattern.
 
 #### Communication
 
-- **API forwarding:** vsock — krunkit exposes a vsock port as a Unix
-  socket on macOS. The neovex CLI connects to it transparently.
+- **API/control channel:** host-local forwarded socket — the macOS host
+  should talk to the guest Neovex API through a host-local control socket or
+  equivalent forwarded channel. Podman's current source uses `gvproxy` plus
+  SSH-backed guest-socket forwarding as the reference model; do not describe
+  the default API path as raw `vsock` forwarding.
 - **File sharing:** virtiofs — developer project directories shared into
   the VM (default: home directory, same as Podman).
 - **Port forwarding:** gvproxy forwards ports from macOS localhost to the
-  guest VM via vsock. Same as Podman's port forwarding on macOS.
+  guest VM. Same as Podman's port forwarding model on macOS.
 
 #### Homebrew formula
 
@@ -615,7 +625,8 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 **Scope:**
 - Build neovex macOS CLI for `aarch64-apple-darwin`
 - Create Homebrew formula depending on krunkit; bundle gvproxy
-- `neovex machine init/start/stop`: spawn krunkit with virtiofs, vsock, net
+- `neovex machine init/start/stop`: spawn krunkit with virtiofs,
+  virtio-net/gvproxy, and any required machine-level ready/bootstrap devices
 - Graceful shutdown via krunkit REST API
 
 **Acceptance criteria:**
@@ -642,13 +653,16 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 **Goal:** `neovex serve` on macOS is transparent — same as Linux.
 
 **Scope:**
-- vsock API forwarding: krunkit exposes vsock as Unix socket on macOS
-- `neovex serve` on macOS auto-starts machine, proxies via vsock
+- host-local control socket/channel for the guest Neovex API
+- `neovex serve` on macOS auto-starts the machine and proxies through that
+  control channel
 - gvproxy port forwarding: services accessible from macOS localhost
+- machine-level readiness, guest Neovex readiness, and guest service readiness
+  remain distinct probe stages
 
 **Acceptance criteria:**
 - `neovex serve` on macOS starts machine and proxies transparently
-- WebSocket subscriptions work through the vsock proxy
+- WebSocket subscriptions work through the macOS guest-control proxy
 - postgres:16 service accessible at `localhost:5432` from macOS
 
 ### Phase D5: Cloud VM Images
@@ -676,7 +690,7 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 | D3: COPR (Fedora) | `todo` | D1 | COPR build service |
 | D4a: Homebrew + krunkit | `todo` | D1 | Apple Silicon, macOS 14+ |
 | D4b: Guest VM image | `todo` | D4a | OCI artifact, Fedora CoreOS + neovex deps |
-| D4c: API + port forwarding | `todo` | D4b | vsock proxy, gvproxy |
+| D4c: API + port forwarding | `todo` | D4b | host-local control channel, gvproxy, layered probes |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 
 ---
