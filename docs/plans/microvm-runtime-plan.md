@@ -112,6 +112,13 @@ supports the same conclusion from source.
   `last_exit_code: 42` recorded in the manifest. `Never`, `OnFailure`, and
   `Always` are supported with bounded restart counts; exponential backoff and
   background workers are deferred.
+- The next restart refinement is now implemented locally: repeated restarts no
+  longer relaunch immediately. krun persists `next_restart_at_millis` in the
+  manifest, computes a capped exponential delay (1s, 2s, 4s, ... up to 60s),
+  and keeps the sandbox in `Starting` until the backoff deadline passes. Local
+  unit coverage proves the capped delay schedule, and a new ignored Linux smoke
+  (`krun_backend_m3_restart_backoff_delays_repeated_restarts`) is checked in
+  for host verification.
 - The sandbox seam is now generic and stable enough to continue iterating here:
   `SandboxSpec` carries filesystem, process, resources, and port bindings
   without leaking krun nouns into the public API.
@@ -161,6 +168,11 @@ supports the same conclusion from source.
   restarted and reaches `Ready` on port 18087. Manifest records
   `restart_count: 1` and `last_exit_code: 42`. Remaining M3 work: guest-side
   user switching and exponential backoff refinement.
+- The exponential-backoff refinement is now implemented locally: the backend no
+  longer retries repeated crash loops immediately. Pending restarts remain in
+  `Starting` until the manifest-backed backoff deadline expires, then relaunch
+  through the existing inspect-driven restart path. Linux-host proof is still
+  outstanding. Guest-side user switching remains the other unfinished M3 item.
 - macOS remains a packaging and development surface only: the active runtime
   plan should continue targeting Linux microVMs while keeping the API shape
   portable to the machine-VM delivery path described in `distribution-plan.md`.
@@ -702,7 +714,7 @@ Developers can use muscle memory.
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
-| M3: Lifecycle management | `in_progress` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), and restart policy (OnFailure crash-then-recover) are all Linux-verified. Remaining M3 work: guest-side user switching, exponential backoff refinement |
+| M3: Lifecycle management | `in_progress` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), and basic restart policy (OnFailure crash-then-recover) are Linux-verified. The next local slice is exponential restart backoff: manifest-backed restart deadlines plus a Linux smoke for two crashes before success. Guest-side user switching remains after that proof |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
 
@@ -763,8 +775,9 @@ Before M5, keep verification split across four lanes:
   - image-backed: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
     `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18084
   - Logs at `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
-- M3 is now the active phase. Startup-readiness and liveness are both
-  Linux-verified. The next active M3 item is restart policy.
+- M3 is now the active phase. Startup-readiness, liveness, and basic restart
+  policy are Linux-verified. The next active M3 item is restart backoff
+  refinement.
 - **M3 startup-readiness gate Linux-verified** (2026-04-13): the
   `krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints` smoke
   test passes on Debian 13. A delayed-start BusyBox httpd sandbox initially
@@ -777,14 +790,22 @@ Before M5, keep verification split across four lanes:
   degrades `Ready -> NotReady` with empty endpoints and an unreachable host
   port, then recovers `NotReady -> Ready` without a VM restart once httpd comes
   back.
-- The next active M3 item is restart policy. The checked-in ignored smoke is
-  `krun_backend_m3_restart_policy_restarts_failed_vm`:
-  - it configures `SandboxRestartPolicy::OnFailure { max_restarts: 1 }`
-  - the first guest boot exits 42 before becoming ready
-  - Linux proof should confirm the backend restarts the sandbox on `inspect()`
-  - the restarted boot should reach `Ready` on host port 18087
-  - manifest evidence should show `restart_count == 1` and `last_exit_code == 42`
-- After restart policy is Linux-verified, the remaining M3 item is guest-side
+- **M3 restart-policy gate Linux-verified** (2026-04-13): the
+  `krun_backend_m3_restart_policy_restarts_failed_vm` smoke test passes on
+  Debian 13. A sandbox with `OnFailure { max_restarts: 1 }` exits 42 on first
+  boot, is restarted by the backend, and reaches `Ready` on host port 18087
+  with `restart_count == 1` and `last_exit_code == 42` recorded in the
+  manifest.
+- The next active M3 item is restart backoff refinement. The checked-in ignored
+  smoke is `krun_backend_m3_restart_backoff_delays_repeated_restarts`:
+  - it configures `SandboxRestartPolicy::OnFailure { max_restarts: 2 }`
+  - the first two boots exit 42 before becoming ready
+  - Linux proof should confirm the backend waits through visible backoff before
+    the third successful boot
+  - the third boot should reach `Ready` on host port 18088
+  - marker evidence should show three boots total
+  - manifest evidence should show `restart_count == 2` and `last_exit_code == 42`
+- After restart backoff is Linux-verified, the remaining M3 item is guest-side
   user switching.
 
 ### End-to-end (after M4)
@@ -1221,3 +1242,20 @@ ss -tlnp | grep 15432                                 # should be empty
   `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 restart-policy slice is now Linux-verified. Remaining M3 work: guest-side
   user switching and exponential backoff refinement.
+- 2026-04-13: Landed the next local M3 restart refinement on the macOS
+  workspace: exponential backoff. `crates/neovex-sandbox/src/backends/krun/vm.rs`
+  now persists `next_restart_at_millis` in the manifest, computes a capped
+  restart delay of 1s, 2s, 4s, ... up to 60s, and keeps crashing sandboxes in
+  `Starting` until the scheduled retry time is reached. The relaunch still
+  flows through the existing inspect-driven restart path; this slice only
+  removes immediate crash-loop retries. Added local unit coverage for capped
+  delay growth and kept the legacy manifest compatibility path green for the new
+  manifest field. Added a new ignored Linux smoke test,
+  `krun_backend_m3_restart_backoff_delays_repeated_restarts`, that forces two
+  failed boots before a third successful HTTP boot on port 18088 and verifies
+  the restart marker plus manifest restart count. Verification:
+  `cargo fmt --all --check` pass,
+  `cargo check -p neovex-sandbox -p neovex` pass,
+  `cargo test -p neovex-sandbox` (49 pass).
+  This backoff slice is ready for Linux-host promotion. Guest-side user
+  switching remains after that proof.
