@@ -4,7 +4,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,6 +32,8 @@ const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
+const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
+const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
 const KRUN_VM_CONFIG_FILENAME: &str = ".krun_vm.json";
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 
@@ -361,6 +363,7 @@ impl KrunSandboxBackend {
             conmon_launch,
             last_exit_code: None,
             restart_count: 0,
+            next_restart_at_millis: None,
             launch_mode: self.config.launch_mode,
             shutdown_requested: false,
             status: SandboxStatus::Starting,
@@ -489,6 +492,7 @@ impl KrunSandboxBackend {
     fn execute_stop(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
         if manifest.conmon_layout.exit_status_file.exists() {
             manifest.shutdown_requested = true;
+            manifest.next_restart_at_millis = None;
             manifest.last_exit_code =
                 Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
             synchronize_handle_status(manifest, SandboxStatus::Stopped);
@@ -496,6 +500,7 @@ impl KrunSandboxBackend {
         }
 
         manifest.shutdown_requested = true;
+        manifest.next_restart_at_millis = None;
         let pid = read_pid(&manifest.conmon_layout.pidfile)?;
         let stop_signal = configured_stop_signal(&manifest.image_metadata);
         signal_process(&stop_signal, pid)?;
@@ -560,7 +565,17 @@ impl KrunSandboxBackend {
         }
 
         manifest.last_exit_code = Some(exit_code);
+        let now_millis = now_millis()?;
+        let next_restart_at_millis = manifest.next_restart_at_millis.get_or_insert_with(|| {
+            now_millis.saturating_add(restart_backoff_delay(manifest.restart_count).as_millis() as u64)
+        });
+        if now_millis < *next_restart_at_millis {
+            synchronize_handle_status(manifest, SandboxStatus::Starting);
+            return Ok(true);
+        }
+
         manifest.restart_count += 1;
+        manifest.next_restart_at_millis = None;
         self.reset_runtime_for_restart(manifest)?;
         self.launch_manifest(manifest, false)?;
         Ok(true)
@@ -582,6 +597,7 @@ impl KrunSandboxBackend {
         }
 
         manifest.shutdown_requested = false;
+        manifest.next_restart_at_millis = None;
         if clear_last_exit_code {
             manifest.last_exit_code = None;
         }
@@ -689,6 +705,8 @@ struct KrunSandboxManifest {
     last_exit_code: Option<i32>,
     #[serde(default)]
     restart_count: u32,
+    #[serde(default)]
+    next_restart_at_millis: Option<u64>,
     launch_mode: KrunLaunchMode,
     shutdown_requested: bool,
     status: SandboxStatus,
@@ -796,6 +814,25 @@ fn restart_policy_allows_restart(
         }
         SandboxRestartPolicy::Always { max_restarts } => restart_count < max_restarts,
     }
+}
+
+fn restart_backoff_delay(restart_count: u32) -> Duration {
+    let initial = u128::from(DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS);
+    let max = u128::from(DEFAULT_RESTART_BACKOFF_MAX_MILLIS);
+    let multiplier = 1_u128 << restart_count.min(31);
+    let millis = initial.saturating_mul(multiplier).min(max);
+    Duration::from_millis(millis as u64)
+}
+
+fn now_millis() -> Result<u64> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!("system clock is before unix epoch: {error}"),
+        })?;
+    u64::try_from(elapsed.as_millis()).map_err(|_| SandboxError::OperationFailed {
+        message: "system clock milliseconds exceed supported range".to_owned(),
+    })
 }
 
 fn desired_krun_vm_config(spec: &SandboxSpec) -> Result<Option<KrunVmConfig>> {
@@ -1251,7 +1288,7 @@ mod tests {
     use super::{
         KrunImageMetadata, KrunLaunchMode, KrunSandboxBackend, KrunSandboxBackendConfig,
         KrunSandboxManifest, ReadinessProbeTarget, configured_stop_signal, desired_krun_vm_config,
-        krun_vm_config_path, probe_target_ready, readiness_probe_target,
+        krun_vm_config_path, probe_target_ready, readiness_probe_target, restart_backoff_delay,
         restart_policy_allows_restart, running_status, slugify, visible_published_endpoints,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
@@ -1915,6 +1952,15 @@ mod tests {
     }
 
     #[test]
+    fn restart_backoff_delay_grows_and_caps() {
+        assert_eq!(restart_backoff_delay(0), Duration::from_secs(1));
+        assert_eq!(restart_backoff_delay(1), Duration::from_secs(2));
+        assert_eq!(restart_backoff_delay(2), Duration::from_secs(4));
+        assert_eq!(restart_backoff_delay(6), Duration::from_secs(60));
+        assert_eq!(restart_backoff_delay(12), Duration::from_secs(60));
+    }
+
+    #[test]
     fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
         let manifest: KrunSandboxManifest = serde_json::from_value(json!({
             "handle": {
@@ -2092,6 +2138,7 @@ mod tests {
             },
             last_exit_code: None,
             restart_count: 0,
+            next_restart_at_millis: None,
             launch_mode,
             shutdown_requested: false,
             status: SandboxStatus::Starting,
