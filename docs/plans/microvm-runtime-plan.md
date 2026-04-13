@@ -20,7 +20,7 @@ supports the same conclusion from source.
 
 ## Status
 
-- **Status:** `in_progress`
+- **Status:** `done`
 - **Primary owner:** this plan
 - **Activation gate:** met on 2026-04-12 after
   `vmm-infrastructure-plan.md` reached V3 closeout on a real Linux host and
@@ -30,8 +30,8 @@ supports the same conclusion from source.
   - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
     baseline that owns the canonical sandbox crate naming and the server-facing
     seam this plan must consume
-  - `docs/plans/service-control-plane-plan.md` — active owner of the remaining
-    M5 service-control-plane architecture: project identity, control-root
+  - `docs/plans/service-control-plane-plan.md` — completed companion plan for
+    the Compose-backed service control plane: project identity, control-root
     layout, backend-owned lifecycle state, and `neovex service ...` command
     semantics
   - `vmm-infrastructure-plan.md` — completed VMM foundation (crun fork,
@@ -106,6 +106,11 @@ supports the same conclusion from source.
   Linux proof: BusyBox httpd killed by PID → sandbox degrades to `NotReady`
   with empty endpoints and unreachable port → httpd restarts → sandbox
   recovers to `Ready` with endpoints and HTTP connectivity restored.
+- The companion `service-control-plane-plan.md` is now complete. Project-
+  scoped control roots, backend-owned persisted-state discovery, explicit
+  `neovex service ...` commands, and the compose-backed main serve path are
+  all implemented and Linux-verified, so M5 is closed rather than awaiting
+  further lifecycle wiring.
 - The restart-policy slice is now Linux-verified. `SandboxSpec` carries a
   generic `SandboxLifecycleSpec` with `SandboxRestartPolicy`, krun manifests
   persist `restart_count`, and execute-mode `inspect()` performs inspect-driven
@@ -272,11 +277,11 @@ supports the same conclusion from source.
   manifests/logs under a project-scoped control root. Do not add a second
   CLI-owned project state file; if richer operator UX is needed, add a
   backend-owned summary/inspect seam over the persisted sandbox state.
-- The remaining M5 architectural work now has its own active owner:
+- The M5 service-control architecture was split into its own companion plan:
   `service-control-plane-plan.md`. This microVM plan still owns the krun
   backend, server/runtime integration, and end-to-end Compose-backed runtime
-  verification, but the service CLI/control-root architecture should no longer
-  be rediscovered from this plan alone.
+  verification baseline, but the service CLI/control-root architecture should
+  no longer be rediscovered from this plan alone.
 - The generic sandbox API now has a cleaner multi-source launch boundary:
   `SandboxSpec` stays the common resolved runtime intent, while image/build
   source data lives in `SandboxImageLaunchSpec` / `SandboxBuildLaunchSpec`.
@@ -892,19 +897,6 @@ Developers can use muscle memory.
    service's IP. With TSI, services connect via `localhost:port`. How do we
    handle service names in connection strings (e.g., `DATABASE_URL=postgres://db:5432`)?
    Options: rewrite env vars, inject /etc/hosts, or require explicit ports.
-7. **Service activation semantics:** The server-owned `SandboxServiceManager`
-   now proves that `ctx.services.<name>` can start a declared sandbox on first
-   reference through the blocking `ensure_service_binding(...)` seam, and the
-   HTTP tenant-delete route proves manager-owned sandboxes are stopped on
-   teardown. M5 now also has a real source for declared services outside tests
-   via `neovex service config`. Podman source review resolves the ownership
-   half of this question: Compose-derived plans should not become a second
-   durable CLI state store. The remaining work is operational:
-   wiring lifecycle commands onto backend-owned persisted sandbox state,
-   choosing deterministic project/tenant scoping, and proving the
-   compose-backed main serve path end to end without reintroducing
-   server/CLI ownership confusion.
-
 ---
 
 ## Verification Contract
@@ -1905,3 +1897,17 @@ ss -tlnp | grep 15432                                 # should be empty
     recovery-drill summary at
     `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`
   M5 is now `done`.
+- 2026-04-13: Post-closeout helper hardening removed the remaining cargo-output
+  parsing seam from the M5 compose-backed smoke. The ignored Linux smoke in
+  `crates/neovex-bin/src/main.rs` now writes machine-readable project metadata
+  to `NEOVEX_KRUN_SMOKE_M5_METADATA_FILE` when requested, and
+  `scripts/verify-microvm-m5-compose-serve-helper.sh` now reads
+  `${log_root}/metadata.json` for `project_root` / `project_key` instead of
+  scraping those values from test stdout. Local verification only:
+  1. `cargo fmt --all --check` — passed
+  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
+  3. `cargo test -p neovex-bin service:: -- --nocapture` — passed
+  4. `bash -n scripts/verify-microvm-m5-compose-serve-helper.sh` — passed
+  5. `bash -n scripts/verify-microvm-m5-recovery-drill-helper.sh` — passed
+  This did not change the recorded Debian 13 Linux evidence; it hardened the
+  helper-to-test metadata handoff against cargo output formatting drift.

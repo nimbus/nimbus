@@ -9,14 +9,17 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for per-tenant encryption at rest via the
     retained redb embedded provider
+
+## Current implementation baselines
+
 - `docs/plans/microvm-runtime-plan.md`
-  - active execution plan for the krun-backed microVM runtime: buildah
+  - completed control plane for the krun-backed microVM runtime: buildah
     integration, OCI bundle generation, lifecycle probes, engine integration
     (`ctx.services.*`), and developer-facing service workflows
 - `docs/plans/service-control-plane-plan.md`
-  - active execution plan for the Compose-backed service control plane:
-    project identity, control-root layout, backend-owned lifecycle state,
-    and the remaining `neovex service ...` architecture and command wiring
+  - completed Compose-backed service control-plane baseline: project identity,
+    control-root layout, backend-owned lifecycle state, and `neovex service
+    ...` architecture and command wiring
 - `docs/plans/vmm-infrastructure-plan.md`
   - completed foundation baseline for the krun-backed microVM runtime: pinned
     crun patch artifact, system dependency contract, Linux/macOS verification
@@ -113,7 +116,7 @@ completed plans unless explicitly asked to review historical work.
   `convex-demos-compatibility-plan.md`.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - For Compose-backed service lifecycle architecture and the remaining
-  `neovex service ...` control-plane work, start with
+  `neovex service ...` control-plane baseline or follow-on work, start with
   `service-control-plane-plan.md`.
 - The execution-runtime versus sandbox-orchestration cleanup plan is complete
   and archived at `archive/runtime-sandbox-architecture-plan.md`. Use it to

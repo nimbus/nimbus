@@ -3,9 +3,9 @@
 Canonical plan for Neovex's developer and operator service control plane for
 Compose-declared sandbox-backed services.
 
-Builds on `microvm-runtime-plan.md` M1 through M4 and takes ownership of the
-remaining M5 architectural work: project identity, durable state ownership,
-control-root layout, and lifecycle command semantics for
+Builds on `microvm-runtime-plan.md` M1 through M4 and records the completed M5
+architectural work: project identity, durable state ownership, control-root
+layout, and lifecycle command semantics for
 `neovex service ...`.
 
 ---
@@ -32,7 +32,7 @@ control-root layout, and lifecycle command semantics for
 
 ## Why This Needs Its Own Plan
 
-The remaining M5 work is no longer just "add more CLI commands." It now has
+The M5 service-control work was no longer just "add more CLI commands." It had
 its own architectural questions:
 
 - what is the durable source of truth for service lifecycle state?
@@ -80,10 +80,11 @@ phase inside the broader microVM runtime plan.
   stops the active sandbox through the generic backend `stop()` seam. If the
   resolved service identity is already terminal, `down` returns
   `already_stopped`.
-- The remaining gap is now end-to-end proof and operator evidence, not control
-  plane ownership. Linux-host compose-backed verification and recovery drills
-  still need to be recorded back into this plan and
-  `microvm-runtime-plan.md`.
+- Linux-host compose-backed verification and recovery drills are now recorded
+  both here and back in `microvm-runtime-plan.md`. Post-closeout helper
+  hardening also replaced cargo-stdout scraping with an explicit metadata-file
+  handoff so the compose-serve helper consumes machine-readable project
+  identity instead of test-output formatting.
 
 ---
 
@@ -277,7 +278,7 @@ backend remains authoritative for current runtime state.
 | SCP2: backend-owned summary/lookup seams | `done` | `KrunSandboxStateView` landed in `crates/neovex-sandbox/src/backends/krun/state.rs` with project listing, inspect-by-service identity, and log-path lookup over manifest-backed krun state |
 | SCP3: lifecycle commands | `done` | `config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps` now exist locally; `down` resolves one current target per service identity instead of fanning out across raw manifest history |
 | SCP4: CLI/server ownership unification | `done` | main server path plus explicit lifecycle commands now share `ComposeProjectContext`, project-scoped backend roots, and the `SandboxServiceCatalog` lowering bridge without a duplicate lifecycle database |
-| SCP5: end-to-end proof and operator docs | `done` | Hardened helpers from `81cf133` re-verified on Debian 13 (2026-04-13). Compose-serve helper clears control root before run, records exact project_root/project_key. Recovery drill validates exact current-run project root, manifest sandbox ids, ctr/oci log paths, orphan detection by sandbox identity. All checks passed: project_key=`smoke-app-cf079a18bd54`, sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`, status=stopped, shutdown_requested=True, exit_code=137, no leaked ports, no orphan processes, ctr+oci logs persist |
+| SCP5: end-to-end proof and operator docs | `done` | Hardened helpers from `81cf133` re-verified on Debian 13 (2026-04-13). Compose-serve helper clears control root before run, records exact project_root/project_key, and now prefers a machine-readable metadata-file handoff over stdout scraping. Recovery drill validates exact current-run project root, manifest sandbox ids, ctr/oci log paths, orphan detection by sandbox identity. All checks passed: project_key=`smoke-app-cf079a18bd54`, sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`, status=stopped, shutdown_requested=True, exit_code=137, no leaked ports, no orphan processes, ctr+oci logs persist |
 
 ---
 
@@ -504,3 +505,17 @@ are true:
   - compose-serve summary: `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/summary.txt`
   - recovery-drill summary: `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`
   SCP5 is now `done`.
+- 2026-04-13: Post-closeout helper hardening removed the remaining stdout-
+  parsing seam from SCP5. The compose-backed ignored smoke in
+  `crates/neovex-bin/src/main.rs` now writes machine-readable project metadata
+  to `NEOVEX_KRUN_SMOKE_M5_METADATA_FILE` when requested, and
+  `scripts/verify-microvm-m5-compose-serve-helper.sh` now reads
+  `${log_root}/metadata.json` instead of scraping `project_root` /
+  `project_key` from cargo output. Local verification only:
+  1. `cargo fmt --all --check` — passed
+  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
+  3. `cargo test -p neovex-bin service:: -- --nocapture` — passed
+  4. `bash -n scripts/verify-microvm-m5-compose-serve-helper.sh` — passed
+  5. `bash -n scripts/verify-microvm-m5-recovery-drill-helper.sh` — passed
+  This did not change the recorded Debian 13 Linux evidence; it hardened the
+  helper-to-test metadata handoff against cargo output formatting drift.
