@@ -1169,6 +1169,21 @@ mod tests {
         let control_data_dir = base_dir.join("m5-compose-control");
         let context = load_compose_project_context(&compose_path, &control_data_dir)
             .expect("compose project context should load");
+        if let Some(metadata_path) = env::var_os("NEOVEX_KRUN_SMOKE_M5_METADATA_FILE") {
+            let metadata_path = PathBuf::from(metadata_path);
+            if let Some(parent) = metadata_path.parent() {
+                fs::create_dir_all(parent).expect("metadata parent should build");
+            }
+            fs::write(
+                &metadata_path,
+                serde_json::to_vec_pretty(&json!({
+                    "project_root": context.control_plane.project_root,
+                    "project_key": context.control_plane.project_key,
+                }))
+                .expect("metadata json should serialize"),
+            )
+            .expect("metadata file should write");
+        }
         println!(
             "M5_PROJECT_ROOT={}",
             context.control_plane.project_root.display()
