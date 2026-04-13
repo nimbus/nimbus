@@ -56,11 +56,18 @@ supports the same conclusion from source.
   spec. It now also exposes backend-local `start_from_image()` /
   `start_from_build()` helpers that connect prepared buildah launches to real
   krun start/stop lifecycle paths.
-- `bundle.rs` now owns the first image-user lowering seam for OCI bundle
-  generation: image `USER` values are resolved into numeric OCI
-  `process.user.uid` / `gid` values, including named-user lookup through the
-  mounted rootfs `/etc/passwd` when needed. The VM stop path now also honors
-  image-configured `StopSignal` values instead of hard-coding `TERM`.
+- `bundle.rs` always sets OCI `process.user` to root (0:0) for krun bundles
+  because the crun VMM process needs `/dev/kvm` access. Image `USER` values
+  are resolved (including named-user lookup in the mounted rootfs `/etc/passwd`)
+  and stored in the sandbox manifest's `image_metadata.user` field for future
+  guest-side application. Linux verification proved that `krun_setuid()`/
+  `krun_setgid()` from libkrun do not work in rootless mode (the host-side
+  user namespace cannot switch to arbitrary UIDs), so guest-side user switching
+  via the guest init is the correct architecture.
+- `vm.rs` stop now honors image-configured `StopSignal` values instead of
+  hard-coding `TERM`. Linux evidence: a `SIGQUIT`-configured image sandbox
+  took ~5.4s to stop (SIGQUIT → 5s timeout → SIGKILL → exit code 137),
+  proving the configured signal is sent first.
 - `vm.rs` currently reports OCI runtime state `"running"` as
   `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
   service readiness: one initial TCP connection was refused before the guest
@@ -71,12 +78,19 @@ supports the same conclusion from source.
 
 ## Current Review Findings
 
-- The first typed buildah translation layer is now proven through a real
-  backend-local image-backed start path, and the first M2 slice now lowers
-  image `USER` into OCI `process.user` plus honors image `StopSignal` during
-  shutdown. The next M2 follow-on is Linux-host verification for those
-  non-default user/signal paths, then the remaining bundle/resource/port-manager
-  work.
+- Image `USER` and `STOPSIGNAL` handling is now verified on Linux. The key
+  architectural finding: krun containers cannot apply the image USER via OCI
+  `process.user` because the VMM needs `/dev/kvm` access (root). And
+  `krun_setuid()`/`krun_setgid()` don't work in rootless mode because the
+  host user namespace can't switch to arbitrary UIDs. The correct path is
+  guest-side user switching via the guest init process (deferred to M3).
+  The image USER is resolved, stored in manifest metadata, and available for
+  guest-side application.
+- The `STOPSIGNAL` path is fully verified: the backend sends the
+  image-configured signal first, waits the stop timeout, then falls back to
+  SIGKILL. This was proven with a custom BusyBox image configured with
+  `STOPSIGNAL SIGQUIT`.
+- The remaining M2 work is resource limits and port-manager auto-assignment.
 - Readiness, startup, and liveness probing remain required follow-on work for
   M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
   but it is not a trustworthy published-endpoint readiness signal.
@@ -613,7 +627,7 @@ Developers can use muscle memory.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
-| M2: OCI bundle generation | `in_progress` | M1 | `bundle.rs` now lowers image `USER` into OCI `process.user`, and `vm.rs` stop now honors image `StopSignal`. Remaining M2 work: service resources, port-manager auto-assignment, and Linux-host verification for non-default user/signal paths |
+| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved to numeric uid:gid and stored in manifest (bundle always uses root for VMM /dev/kvm access), image STOPSIGNAL honored during shutdown (SIGQUIT→timeout→SIGKILL proved with custom image). Key finding: krun_setuid/krun_setgid don't work in rootless mode, guest-side user switching deferred to M3. Remaining M2 work: resource limits and port-manager auto-assignment |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
@@ -830,3 +844,31 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo fmt --all --check`,
   `cargo check -p neovex-sandbox`,
   `cargo test -p neovex-sandbox` (30 pass).
+- 2026-04-13: Ran M2 Linux-host verification for image USER and STOPSIGNAL on
+  Debian 13 x86_64. Created a custom BusyBox image with `USER www-data` and
+  `STOPSIGNAL SIGQUIT` via buildah config/commit. Key findings:
+  (1) krun bundles must always use root for `process.user` because the crun VMM
+  needs `/dev/kvm` access. Setting uid:33 in the OCI config crashes with
+  `Error creating the Kvm object: Error(13)` — confirmed this also affects
+  Podman (`podman --runtime /usr/libexec/neovex/crun run --rm --annotation
+  run.oci.handler=krun localhost/user-test:latest /bin/busybox id` → same crash).
+  (2) Attempted a crun patch using `krun_setuid()`/`krun_setgid()` libkrun APIs
+  to defer user switching to after VMM init, but these fail in rootless mode with
+  `Failed to set gid 33` because the host user namespace cannot switch to
+  arbitrary UIDs. The correct architecture is guest-side user switching via the
+  guest init process.
+  (3) Updated `bundle.rs` to always emit `ProcessUser::ROOT` for krun bundles
+  and removed the dead `resolve_process_user` host-side code. The image USER is
+  still resolved by `buildah.rs` and stored in `image_metadata.user` in the
+  manifest.
+  (4) The STOPSIGNAL path works correctly: a sandbox with `SIGQUIT` configured
+  took ~5.4s to stop (SIGQUIT sent first → 5s stop_timeout → SIGKILL fallback),
+  exit code 137. Manifest records `stop_signal: SIGQUIT` and
+  `shutdown_requested: true`.
+  (5) Added `krun_backend_m2_user_and_stop_signal_lowering` ignored smoke test
+  and updated `build-neovex-crun.sh` to apply all patches from `patches/crun/`
+  in sorted order.
+  Verification: `cargo fmt --all --check`, `cargo check -p neovex-sandbox -p neovex`,
+  `cargo test -p neovex-sandbox` (29 pass),
+  `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
+  (3 pass, ~21s total).

@@ -82,15 +82,15 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-patch_file="${repo_root}/patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch"
+patch_dir="${repo_root}/patches/crun"
 
 if [[ ! -d "${source_dir}" ]]; then
   echo "upstream crun source not found: ${source_dir}" >&2
   exit 66
 fi
 
-if [[ ! -f "${patch_file}" ]]; then
-  echo "patch file not found: ${patch_file}" >&2
+if [[ ! -d "${patch_dir}" ]]; then
+  echo "patch directory not found: ${patch_dir}" >&2
   exit 66
 fi
 
@@ -109,7 +109,15 @@ if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1 && ! comm
   exit 69
 fi
 
-bash "${repo_root}/scripts/verify-crun-patch.sh" "${source_dir}"
+# Dry-run all patches to verify they apply cleanly before building.
+for patch_file in "${patch_dir}"/*.patch; do
+  if [[ ! -f "${patch_file}" ]]; then
+    echo "no patch files found in: ${patch_dir}" >&2
+    exit 66
+  fi
+  patch --dry-run -d "${source_dir}" -p1 < "${patch_file}"
+  echo "verified: ${patch_file} applies cleanly to ${source_dir}"
+done
 
 cleanup_build_dir=0
 if [[ -z "${build_dir}" ]]; then
@@ -134,9 +142,12 @@ cp -R "${source_dir}/." "${build_dir}"
 
 echo "build.source=${source_dir}"
 echo "build.dir=${build_dir}"
-echo "build.patch=${patch_file}"
+echo "build.patch_dir=${patch_dir}"
 
-patch -d "${build_dir}" -p1 < "${patch_file}"
+for patch_file in "${patch_dir}"/*.patch; do
+  echo "build.applying=${patch_file}"
+  patch -d "${build_dir}" -p1 < "${patch_file}"
+done
 
 # Ensure pkg-config can find libkrun.  When libkrun is built from source it
 # installs to /usr/local/lib64/pkgconfig by default, which is not on the

@@ -118,13 +118,27 @@ pub(crate) fn build_launch_plan(
         BuildahCli::new(config.buildah_path.clone()).with_unshare(config.use_buildah_unshare);
 
     // For image-backed sandboxes, the conmon create command must run inside the
-    // same buildah unshare session that mounts the rootfs overlay.  The state
-    // and start commands also need the mount alive, so chain the mount prefix
-    // into all three when a buildah container name is present.
+    // same buildah unshare session that mounts the rootfs overlay, because crun
+    // needs the rootfs accessible during the create phase.
+    //
+    // The state and start commands must NOT run inside buildah unshare because
+    // the crun state directory was created by the conmon create session's user
+    // namespace.  A fresh buildah unshare session creates a different UID mapping,
+    // which cannot read or signal the existing container state.  Running them as
+    // the real host user (no unshare) works because crun stores state under the
+    // real user's XDG_RUNTIME_DIR.
     KrunConmonLaunchPlan {
         create_command: buildah.maybe_wrap_with_mount(create_command, buildah_container_name),
-        state_command: buildah.maybe_wrap_with_mount(state_command, buildah_container_name),
-        start_command: buildah.maybe_wrap_with_mount(start_command, buildah_container_name),
+        state_command: if buildah_container_name.is_some() {
+            state_command
+        } else {
+            buildah.maybe_wrap(state_command)
+        },
+        start_command: if buildah_container_name.is_some() {
+            start_command
+        } else {
+            buildah.maybe_wrap(start_command)
+        },
     }
 }
 

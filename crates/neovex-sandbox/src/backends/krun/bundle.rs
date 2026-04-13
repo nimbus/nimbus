@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -89,8 +89,14 @@ pub(crate) fn build_bundle_config(
     }
 
     validate_port_bindings(&spec.port_bindings)?;
-    let process_user =
-        resolve_process_user(&spec.filesystem.rootfs, options.process_user.as_deref())?;
+
+    // krun VMMs always run as root because the crun process needs /dev/kvm access.
+    // The image USER is resolved separately and stored in the sandbox manifest for
+    // guest-side application via the guest init process.  Unlike regular containers
+    // where the host manages user namespace mapping, krun guests have their own
+    // kernel and handle user switching internally.
+    let _configured_user = options.process_user.as_deref();
+    let process_user = ProcessUser::ROOT;
 
     let mut annotations = serde_json::Map::new();
     annotations.insert(
@@ -134,231 +140,6 @@ pub(crate) fn build_bundle_config(
     }))
 }
 
-fn resolve_process_user(rootfs: &Path, configured_user: Option<&str>) -> Result<ProcessUser> {
-    let Some(configured_user) = configured_user
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(ProcessUser::ROOT);
-    };
-
-    let (user_part, group_part) = split_user_spec(configured_user)?;
-    let resolved_user = resolve_user_part(rootfs, configured_user, user_part)?;
-    let gid = match group_part {
-        Some(group_part) => resolve_group_part(rootfs, configured_user, group_part)?,
-        None => default_group_for_user(rootfs, &resolved_user)?,
-    };
-
-    Ok(ProcessUser {
-        uid: resolved_user.uid(),
-        gid,
-    })
-}
-
-fn split_user_spec(configured_user: &str) -> Result<(&str, Option<&str>)> {
-    let mut parts = configured_user.split(':');
-    let user_part = parts.next().unwrap_or_default().trim();
-    let group_part = parts.next().map(str::trim);
-    if parts.next().is_some() {
-        return Err(SandboxError::InvalidSpec {
-            message: format!(
-                "image user {configured_user:?} must be USER or USER:GROUP, not multiple ':' segments"
-            ),
-        });
-    }
-    if user_part.is_empty() {
-        return Err(SandboxError::InvalidSpec {
-            message: format!(
-                "image user {configured_user:?} must include a non-empty user segment"
-            ),
-        });
-    }
-    if matches!(group_part, Some("")) {
-        return Err(SandboxError::InvalidSpec {
-            message: format!(
-                "image user {configured_user:?} must include a non-empty group segment"
-            ),
-        });
-    }
-    Ok((user_part, group_part))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PasswdEntry {
-    name: String,
-    uid: u32,
-    gid: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GroupEntry {
-    name: String,
-    gid: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ResolvedUser {
-    Numeric(u32),
-    Passwd(PasswdEntry),
-}
-
-impl ResolvedUser {
-    fn uid(&self) -> u32 {
-        match self {
-            Self::Numeric(uid) => *uid,
-            Self::Passwd(entry) => entry.uid,
-        }
-    }
-}
-
-fn resolve_user_part(
-    rootfs: &Path,
-    configured_user: &str,
-    user_part: &str,
-) -> Result<ResolvedUser> {
-    if let Ok(uid) = user_part.parse::<u32>() {
-        return Ok(ResolvedUser::Numeric(uid));
-    }
-
-    let entry = read_passwd_entries(rootfs)?
-        .into_iter()
-        .find(|entry| entry.name == user_part)
-        .ok_or_else(|| SandboxError::InvalidSpec {
-            message: format!(
-                "image user {configured_user:?} references user {user_part:?} that was not found in {}/etc/passwd",
-                rootfs.display()
-            ),
-        })?;
-    Ok(ResolvedUser::Passwd(entry))
-}
-
-fn resolve_group_part(rootfs: &Path, configured_user: &str, group_part: &str) -> Result<u32> {
-    if let Ok(gid) = group_part.parse::<u32>() {
-        return Ok(gid);
-    }
-
-    read_group_entries(rootfs)?
-        .into_iter()
-        .find(|entry| entry.name == group_part)
-        .map(|entry| entry.gid)
-        .ok_or_else(|| SandboxError::InvalidSpec {
-            message: format!(
-                "image user {configured_user:?} references group {group_part:?} that was not found in {}/etc/group",
-                rootfs.display()
-            ),
-        })
-}
-
-fn default_group_for_user(rootfs: &Path, user: &ResolvedUser) -> Result<u32> {
-    match user {
-        ResolvedUser::Passwd(entry) => Ok(entry.gid),
-        ResolvedUser::Numeric(uid) => Ok(read_passwd_entries_if_present(rootfs)?
-            .and_then(|entries| entries.into_iter().find(|entry| entry.uid == *uid))
-            .map(|entry| entry.gid)
-            .unwrap_or(0)),
-    }
-}
-
-fn read_passwd_entries(rootfs: &Path) -> Result<Vec<PasswdEntry>> {
-    let passwd_path = rootfs.join("etc/passwd");
-    let contents =
-        std::fs::read_to_string(&passwd_path).map_err(|error| SandboxError::InvalidSpec {
-            message: format!(
-                "failed to read image passwd database {}: {error}",
-                passwd_path.display()
-            ),
-        })?;
-
-    contents
-        .lines()
-        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
-        .map(parse_passwd_entry)
-        .collect()
-}
-
-fn read_passwd_entries_if_present(rootfs: &Path) -> Result<Option<Vec<PasswdEntry>>> {
-    let passwd_path = rootfs.join("etc/passwd");
-    match std::fs::read_to_string(&passwd_path) {
-        Ok(contents) => contents
-            .lines()
-            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
-            .map(parse_passwd_entry)
-            .collect::<Result<Vec<_>>>()
-            .map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(SandboxError::InvalidSpec {
-            message: format!(
-                "failed to read image passwd database {}: {error}",
-                passwd_path.display()
-            ),
-        }),
-    }
-}
-
-fn read_group_entries(rootfs: &Path) -> Result<Vec<GroupEntry>> {
-    let group_path = rootfs.join("etc/group");
-    let contents =
-        std::fs::read_to_string(&group_path).map_err(|error| SandboxError::InvalidSpec {
-            message: format!(
-                "failed to read image group database {}: {error}",
-                group_path.display()
-            ),
-        })?;
-
-    contents
-        .lines()
-        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
-        .map(parse_group_entry)
-        .collect()
-}
-
-fn parse_passwd_entry(line: &str) -> Result<PasswdEntry> {
-    let fields: Vec<_> = line.split(':').collect();
-    if fields.len() < 4 {
-        return Err(SandboxError::InvalidSpec {
-            message: format!(
-                "invalid passwd entry {line:?}: expected at least 4 colon-delimited fields"
-            ),
-        });
-    }
-
-    Ok(PasswdEntry {
-        name: fields[0].to_owned(),
-        uid: fields[2]
-            .parse::<u32>()
-            .map_err(|error| SandboxError::InvalidSpec {
-                message: format!("invalid passwd uid in entry {line:?}: {error}"),
-            })?,
-        gid: fields[3]
-            .parse::<u32>()
-            .map_err(|error| SandboxError::InvalidSpec {
-                message: format!("invalid passwd gid in entry {line:?}: {error}"),
-            })?,
-    })
-}
-
-fn parse_group_entry(line: &str) -> Result<GroupEntry> {
-    let fields: Vec<_> = line.split(':').collect();
-    if fields.len() < 3 {
-        return Err(SandboxError::InvalidSpec {
-            message: format!(
-                "invalid group entry {line:?}: expected at least 3 colon-delimited fields"
-            ),
-        });
-    }
-
-    Ok(GroupEntry {
-        name: fields[0].to_owned(),
-        gid: fields[2]
-            .parse::<u32>()
-            .map_err(|error| SandboxError::InvalidSpec {
-                message: format!("invalid group gid in entry {line:?}: {error}"),
-            })?,
-    })
-}
-
-/// Standard OCI Linux mounts that `crun spec` would generate.  crun requires
-/// at least a `mounts` block to be present in config.json.
 fn default_linux_mounts() -> Value {
     json!([
         {
@@ -520,7 +301,9 @@ mod tests {
     }
 
     #[test]
-    fn bundle_config_uses_numeric_image_user_from_bundle_options() {
+    fn bundle_config_always_uses_root_user_for_krun_vmm() {
+        // krun VMMs always run as root because the crun process needs /dev/kvm.
+        // Image USER is stored in the manifest for guest-side application.
         let spec = sample_spec();
         let config = build_bundle_config(
             "neovex-db",
@@ -529,14 +312,20 @@ mod tests {
                 process_user: Some("1001:1002".to_owned()),
             },
         )
-        .expect("bundle config should lower a numeric image user");
+        .expect("bundle config should build even with non-root configured user");
 
-        assert_eq!(config["process"]["user"]["uid"], 1001);
-        assert_eq!(config["process"]["user"]["gid"], 1002);
+        assert_eq!(
+            config["process"]["user"]["uid"], 0,
+            "krun bundle must use root uid for VMM access to /dev/kvm"
+        );
+        assert_eq!(
+            config["process"]["user"]["gid"], 0,
+            "krun bundle must use root gid for VMM access to /dev/kvm"
+        );
     }
 
     #[test]
-    fn bundle_config_resolves_named_image_user_from_rootfs_passwd() {
+    fn bundle_config_uses_root_even_when_named_user_configured() {
         let temp_dir = TempDir::new().expect("temporary directory should be created");
         let rootfs = temp_dir.path().join("rootfs");
         fs::create_dir_all(rootfs.join("etc")).expect("rootfs etc directory should exist");
@@ -554,38 +343,14 @@ mod tests {
                 process_user: Some("postgres".to_owned()),
             },
         )
-        .expect("bundle config should resolve a named image user from /etc/passwd");
+        .expect("bundle config should build with named user configured");
 
-        assert_eq!(config["process"]["user"]["uid"], 26);
-        assert_eq!(config["process"]["user"]["gid"], 27);
+        assert_eq!(config["process"]["user"]["uid"], 0);
+        assert_eq!(config["process"]["user"]["gid"], 0);
     }
 
     #[test]
-    fn bundle_config_rejects_unknown_named_image_user() {
-        let temp_dir = TempDir::new().expect("temporary directory should be created");
-        let rootfs = temp_dir.path().join("rootfs");
-        fs::create_dir_all(rootfs.join("etc")).expect("rootfs etc directory should exist");
-        fs::write(rootfs.join("etc/passwd"), "root:x:0:0:root:/root:/bin/sh\n")
-            .expect("passwd file should be written");
-
-        let spec = sample_spec_with_rootfs(&rootfs);
-        let error = build_bundle_config(
-            "neovex-db",
-            &spec,
-            &KrunBundleOptions {
-                process_user: Some("postgres".to_owned()),
-            },
-        )
-        .expect_err("unknown named image users should be rejected");
-
-        assert!(
-            error.to_string().contains("was not found"),
-            "expected a missing-user error, got: {error}"
-        );
-    }
-
-    #[test]
-    fn bundle_config_defaults_numeric_image_user_group_to_root_when_passwd_is_absent() {
+    fn bundle_config_uses_root_when_no_passwd_available() {
         let temp_dir = TempDir::new().expect("temporary directory should be created");
         let rootfs = temp_dir.path().join("rootfs");
         fs::create_dir_all(rootfs.join("etc")).expect("rootfs etc directory should exist");
@@ -598,9 +363,9 @@ mod tests {
                 process_user: Some("1234".to_owned()),
             },
         )
-        .expect("numeric image users should not require /etc/passwd");
+        .expect("bundle config should build with numeric user without /etc/passwd");
 
-        assert_eq!(config["process"]["user"]["uid"], 1234);
+        assert_eq!(config["process"]["user"]["uid"], 0);
         assert_eq!(config["process"]["user"]["gid"], 0);
     }
 
