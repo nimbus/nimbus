@@ -403,6 +403,189 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     cleanup_guard.disarm();
 }
 
+/// M2 verification: prove that image EXPOSE ports are auto-assigned from the
+/// backend-owned port range when the generic spec has no explicit bindings.
+///
+/// Creates a custom image with `EXPOSE 8080/tcp`, then:
+///   1. starts sandbox A with no explicit port bindings
+///   2. verifies it gets an auto-assigned host port from 15000+
+///   3. starts sandbox B — verifies it gets a different host port
+///   4. stops sandbox A — verifies its port is released
+///   5. starts sandbox C — verifies it reuses sandbox A's released port
+#[test]
+#[ignore = "requires a Linux host with KVM, buildah, conmon, and network access"]
+fn krun_backend_m2_auto_port_assignment_and_reuse() {
+    let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
+    let bundle_root = base_dir.join("autoport-bundles");
+    let state_root = base_dir.join("autoport-state");
+
+    let mut config = KrunSandboxBackendConfig::default();
+    config.bundle_root = bundle_root.clone();
+    config.state_root = state_root.clone();
+    config.launch_mode = KrunLaunchMode::Execute;
+    config.published_port_range = 15100..=15105;
+
+    if let Some(runtime_path) = env::var_os("NEOVEX_KRUN_SMOKE_RUNTIME") {
+        config.runtime_path = runtime_path.into();
+    }
+    if let Some(conmon_path) = env::var_os("NEOVEX_KRUN_SMOKE_CONMON") {
+        config.conmon_path = conmon_path.into();
+    }
+    if let Some(buildah_path) = env::var_os("NEOVEX_KRUN_SMOKE_BUILDAH") {
+        config.buildah_path = buildah_path.into();
+    }
+
+    // Build a custom image with EXPOSE 8080/tcp.
+    let buildah = env::var("NEOVEX_KRUN_SMOKE_BUILDAH").unwrap_or("buildah".into());
+    run_host_command(&buildah, &["rm", "autoport-fixture"], true);
+    run_host_command(
+        &buildah,
+        &[
+            "from",
+            "--name",
+            "autoport-fixture",
+            "docker://busybox:latest",
+        ],
+        false,
+    );
+    run_host_command(
+        &buildah,
+        &["config", "--port", "8080/tcp", "autoport-fixture"],
+        false,
+    );
+    run_host_command(
+        &buildah,
+        &[
+            "commit",
+            "autoport-fixture",
+            "localhost/neovex-autoport:latest",
+        ],
+        false,
+    );
+    run_host_command(&buildah, &["rm", "autoport-fixture"], true);
+
+    let backend = KrunSandboxBackend::new(config.clone());
+
+    // Helper: create a sparse spec with NO port bindings.
+    let make_spec = |name: &str| {
+        SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            name,
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new(""),
+            SandboxProcessSpec::new(Vec::<String>::new()),
+        )
+        // No .with_port_binding() — the backend should auto-assign from EXPOSE.
+    };
+
+    let overrides = OciProcessOverrides {
+        cmd: Some(vec![
+            "/bin/busybox".into(),
+            "httpd".into(),
+            "-f".into(),
+            "-p".into(),
+            "8080".into(),
+        ]),
+        ..Default::default()
+    };
+
+    // --- Sandbox A ---
+    let handle_a = block_on(backend.start_from_image(
+        make_spec("autoport-a"),
+        "localhost/neovex-autoport:latest".to_owned(),
+        overrides.clone(),
+    ))
+    .expect("sandbox A should start");
+    let cleanup_a = CleanupGuard::new(backend.clone(), handle_a.id.clone());
+
+    let ready_a = wait_for_ready(&backend, &handle_a.id, Duration::from_secs(30));
+    assert_eq!(ready_a.status, SandboxStatus::Ready);
+
+    assert!(
+        !ready_a.published_endpoints.is_empty(),
+        "sandbox A should have auto-assigned published endpoints"
+    );
+    let port_a = ready_a.published_endpoints[0].address.port();
+    eprintln!("sandbox A auto-assigned host port: {port_a}");
+    assert!(
+        (15100..=15105).contains(&port_a),
+        "auto-assigned port should be in configured range, got: {port_a}"
+    );
+
+    // Verify HTTP connectivity on the auto-assigned port.
+    let http_a = wait_for_http_response(port_a, Duration::from_secs(15));
+    assert!(
+        http_a.starts_with("HTTP/1.") || http_a.contains("404"),
+        "sandbox A should respond via auto-assigned port {port_a}: {http_a}"
+    );
+    eprintln!("sandbox A HTTP connectivity on port {port_a}: OK");
+
+    // --- Sandbox B ---
+    let handle_b = block_on(backend.start_from_image(
+        make_spec("autoport-b"),
+        "localhost/neovex-autoport:latest".to_owned(),
+        overrides.clone(),
+    ))
+    .expect("sandbox B should start");
+    let cleanup_b = CleanupGuard::new(backend.clone(), handle_b.id.clone());
+
+    let ready_b = wait_for_ready(&backend, &handle_b.id, Duration::from_secs(30));
+    assert_eq!(ready_b.status, SandboxStatus::Ready);
+
+    let port_b = ready_b.published_endpoints[0].address.port();
+    eprintln!("sandbox B auto-assigned host port: {port_b}");
+    assert_ne!(
+        port_a, port_b,
+        "sandboxes A and B should get distinct host ports"
+    );
+
+    let http_b = wait_for_http_response(port_b, Duration::from_secs(15));
+    assert!(
+        http_b.starts_with("HTTP/1.") || http_b.contains("404"),
+        "sandbox B should respond via auto-assigned port {port_b}: {http_b}"
+    );
+    eprintln!("sandbox B HTTP connectivity on port {port_b}: OK");
+
+    // --- Stop A, verify port release ---
+    block_on(backend.stop(&handle_a.id)).expect("stop A should succeed");
+    cleanup_a.disarm();
+    eprintln!("sandbox A stopped, port {port_a} should be released");
+
+    // --- Sandbox C: should reuse A's released port ---
+    let handle_c = block_on(backend.start_from_image(
+        make_spec("autoport-c"),
+        "localhost/neovex-autoport:latest".to_owned(),
+        overrides,
+    ))
+    .expect("sandbox C should start");
+    let cleanup_c = CleanupGuard::new(backend.clone(), handle_c.id.clone());
+
+    let ready_c = wait_for_ready(&backend, &handle_c.id, Duration::from_secs(30));
+    assert_eq!(ready_c.status, SandboxStatus::Ready);
+
+    let port_c = ready_c.published_endpoints[0].address.port();
+    eprintln!("sandbox C auto-assigned host port: {port_c}");
+    assert_eq!(
+        port_a, port_c,
+        "sandbox C should reuse sandbox A's released port {port_a}, got: {port_c}"
+    );
+
+    let http_c = wait_for_http_response(port_c, Duration::from_secs(15));
+    assert!(
+        http_c.starts_with("HTTP/1.") || http_c.contains("404"),
+        "sandbox C should respond via reused port {port_c}: {http_c}"
+    );
+    eprintln!("sandbox C HTTP connectivity on reused port {port_c}: OK");
+
+    // Clean up B and C
+    block_on(backend.stop(&handle_b.id)).expect("stop B should succeed");
+    cleanup_b.disarm();
+    block_on(backend.stop(&handle_c.id)).expect("stop C should succeed");
+    cleanup_c.disarm();
+
+    eprintln!("auto-port-assignment: all 3 sandboxes verified, port reuse confirmed");
+}
+
 fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
     let status = std::process::Command::new(program)
         .args(args)
