@@ -68,6 +68,13 @@ supports the same conclusion from source.
   hard-coding `TERM`. Linux evidence: a `SIGQUIT`-configured image sandbox
   took ~5.4s to stop (SIGQUIT → 5s timeout → SIGKILL → exit code 137),
   proving the configured signal is sent first.
+- `port_manager.rs` now owns the first backend-local host-port auto-assignment
+  seam. When an image exposes TCP ports and the generic `SandboxSpec` does not
+  bind them explicitly, the krun backend now allocates host ports from a
+  backend-owned range, materializes generic `SandboxPortBinding`s, rewrites the
+  bundle `krun.port_map`, and publishes those endpoints through the generic
+  sandbox handle. Current verification is unit/plan-only only; Linux-host proof
+  for auto-assigned ports remains outstanding.
 - `vm.rs` currently reports OCI runtime state `"running"` as
   `SandboxStatus::Ready`. Linux smoke evidence proved that is too early for
   service readiness: one initial TCP connection was refused before the guest
@@ -90,7 +97,8 @@ supports the same conclusion from source.
   image-configured signal first, waits the stop timeout, then falls back to
   SIGKILL. This was proven with a custom BusyBox image configured with
   `STOPSIGNAL SIGQUIT`.
-- The remaining M2 work is resource limits and port-manager auto-assignment.
+- The remaining M2 work is resource limits plus Linux-host verification for
+  auto-assigned ports from image `EXPOSE` metadata.
 - Readiness, startup, and liveness probing remain required follow-on work for
   M3. The current V3 backend state mapping is acceptable as a bootstrap seam,
   but it is not a trustworthy published-endpoint readiness signal.
@@ -627,7 +635,7 @@ Developers can use muscle memory.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | M1: buildah integration | `done` | V3 from vmm-infrastructure-plan | `BuildahCli` with typed pull/build/mount/inspect/cleanup, image-backed `start_from_image()`/`start_from_build()` helpers, and Linux-host image-backed smoke test all passing on Debian 13. Three issues fixed during Linux verification: (1) `OciImageConfig` null-field deserialization (many OCI fields are `null` not absent), (2) empty `process.cwd` in bundle config when image has no `WorkingDir`, (3) buildah overlay mount not persisting across `buildah unshare` sessions (fixed by chaining mount inside the conmon create/state/start sessions) |
-| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved to numeric uid:gid and stored in manifest (bundle always uses root for VMM /dev/kvm access), image STOPSIGNAL honored during shutdown (SIGQUIT→timeout→SIGKILL proved with custom image). Key finding: krun_setuid/krun_setgid don't work in rootless mode, guest-side user switching deferred to M3. Remaining M2 work: resource limits and port-manager auto-assignment |
+| M2: OCI bundle generation | `in_progress` | M1 | Linux-verified: image USER resolved to numeric uid:gid and stored in manifest (bundle always uses root for VMM /dev/kvm access), image STOPSIGNAL honored during shutdown (SIGQUIT→timeout→SIGKILL proved with custom image). Backend-local `PortManager` now auto-assigns generic host port bindings from image `EXPOSE` metadata in unit/plan-only tests. Key finding: krun_setuid/krun_setgid don't work in rootless mode, guest-side user switching deferred to M3. Remaining M2 work: resource limits and Linux-host verification for auto-assigned ports |
 | M3: Lifecycle management | `todo` | M2 | Probes, shutdown, restart |
 | M4: Engine integration | `todo` | M3 | server-owned service registry + V8 access |
 | M5: Developer experience | `todo` | M4 | follow-on translation/CLI layer after core runtime verification |
@@ -683,6 +691,9 @@ Before M5, keep verification split across four lanes:
 - The next Linux promotion should cover a non-root image `USER` and a
   non-default image `STOPSIGNAL` on a real host so the new M2 lowering path is
   proven beyond unit tests.
+- The next Linux promotion should also verify an image-backed sandbox that omits
+  explicit port bindings and instead relies on image `EXPOSE` metadata plus the
+  backend-local auto-assigned host-port range.
 - The next meaningful phase is M2/M3. The readiness gap (OCI `"running"` !=
   service-ready) is the highest-priority follow-on.
 
@@ -872,3 +883,18 @@ ss -tlnp | grep 15432                                 # should be empty
   `cargo test -p neovex-sandbox` (29 pass),
   `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
   (3 pass, ~21s total).
+- 2026-04-13: Started the next M2 slice for host-port auto-assignment. Added
+  backend-local `port_manager.rs` that scans active manifests under
+  `state_root/containers/`, leases host ports from the default backend-owned
+  range `15000..=16000`, skips guest ports that already have explicit generic
+  bindings, ignores non-TCP `EXPOSE` metadata, and reuses ports after a sandbox
+  is stopped. `vm.rs` now materializes missing generic `SandboxPortBinding`s
+  from image `EXPOSE` metadata during start, updates the sandbox handle's
+  published endpoints, and rewrites the bundle `krun.port_map` annotation to
+  match the leased host ports. Added unit coverage for range allocation and
+  stopped-manifest reuse in `port_manager.rs` plus a plan-only integration test
+  proving image-backed starts auto-assign `5432/tcp`, allocate unique ports
+  across two live sandboxes, and reuse a released port after stop.
+  Verification: `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox`,
+  `cargo test -p neovex-sandbox` (32 pass).
