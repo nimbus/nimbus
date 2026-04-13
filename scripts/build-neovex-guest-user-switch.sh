@@ -12,9 +12,12 @@ binary_name="neovex-guest-user-switch"
 
 cd "$repo_root"
 
-cargo rustc -p neovex-sandbox --bin "$binary_name" --release -- -C target-feature=+crt-static
+# Build a fully static binary using musl so it runs inside any guest rootfs
+# (BusyBox, Alpine, Debian, etc.) without glibc dependency.
+target="x86_64-unknown-linux-musl"
+cargo build -p neovex-sandbox --bin "$binary_name" --release --target "$target" >&2
 
-binary_path="$repo_root/target/release/$binary_name"
+binary_path="$repo_root/target/$target/release/$binary_name"
 if [[ ! -x "$binary_path" ]]; then
   echo "expected helper binary at $binary_path" >&2
   exit 1
@@ -23,7 +26,7 @@ fi
 mkdir -p "$output_root"
 install -m 0755 "$binary_path" "$output_root/$binary_name"
 
-if ldd "$output_root/$binary_name" 2>&1 | grep -q "not a dynamic executable"; then
+if ldd "$output_root/$binary_name" 2>&1 | grep -qE "not a dynamic executable|statically linked"; then
   printf '%s\n' "$output_root"
   exit 0
 fi

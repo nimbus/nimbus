@@ -1247,10 +1247,12 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
     run_host_command(&buildah, &["rm", "m3-user-fixture"], true);
 
     let backend = KrunSandboxBackend::new(config.clone());
-    let guest_port_str = guest_port.to_string();
+    // Print uid/gid to stderr so conmon captures them in ctr.log.  Writing files
+    // inside the guest rootfs fails because virtiofs maps the guest uid through
+    // the host user namespace — uid 33 cannot write to the overlay.
     let guest_script = format!(
-        "id -u > /.neovex-m3-user-uid; \
-         id -g > /.neovex-m3-user-gid; \
+        "echo NEOVEX_UID=$(id -u) >&2; \
+         echo NEOVEX_GID=$(id -g) >&2; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
     let spec = SandboxSpec::new(
@@ -1299,11 +1301,37 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         "expected HTTP response from guest-user-switch sandbox, got: {http_response}"
     );
 
-    let container_name = read_manifest_buildah_container_name(&state_root, &handle.id);
-    let uid_text = read_buildah_rootfs_file(&buildah, &container_name, ".neovex-m3-user-uid");
-    let gid_text = read_buildah_rootfs_file(&buildah, &container_name, ".neovex-m3-user-gid");
-    assert_eq!(uid_text.trim(), "33");
-    assert_eq!(gid_text.trim(), "33");
+    // Read uid/gid from the conmon container log captured by --full-attach.
+    // Writing files inside the guest rootfs fails because virtiofs maps the
+    // guest uid through the host user namespace — uid 33 cannot write to the
+    // overlay from inside the VM.
+    let ctr_log_path = state_root
+        .join("containers")
+        .join(handle.id.as_str())
+        .join("ctr.log");
+    let ctr_log = std::fs::read_to_string(&ctr_log_path)
+        .unwrap_or_else(|_| panic!("ctr.log should be readable at {}", ctr_log_path.display()));
+    let uid_line = ctr_log
+        .lines()
+        .find(|line| line.contains("NEOVEX_UID="))
+        .expect("ctr.log should contain NEOVEX_UID=");
+    let gid_line = ctr_log
+        .lines()
+        .find(|line| line.contains("NEOVEX_GID="))
+        .expect("ctr.log should contain NEOVEX_GID=");
+    let uid_value = uid_line
+        .split("NEOVEX_UID=")
+        .nth(1)
+        .expect("NEOVEX_UID= should have a value")
+        .trim();
+    let gid_value = gid_line
+        .split("NEOVEX_GID=")
+        .nth(1)
+        .expect("NEOVEX_GID= should have a value")
+        .trim();
+    eprintln!("guest uid={uid_value}, gid={gid_value}");
+    assert_eq!(uid_value, "33", "guest should run as www-data uid 33");
+    assert_eq!(gid_value, "33", "guest should run as www-data gid 33");
 
     let bundle_config_path = bundle_root.join(handle.id.as_str()).join("config.json");
     let bundle_config: serde_json::Value =
