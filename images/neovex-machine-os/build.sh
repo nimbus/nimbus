@@ -149,7 +149,7 @@ if command -v rpm-ostree >/dev/null 2>&1; then
 else
   echo "rpm-ostree not found on host; composing via container"
   rpm_ostree_image="${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}"
-  podman run --rm --privileged \
+  podman run --rm --privileged --pull=always \
     --security-opt label=disable \
     -v /var/lib/containers/storage:/var/lib/containers/storage \
     -v "${output_dir}:${output_dir}" \

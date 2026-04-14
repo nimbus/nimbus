@@ -195,9 +195,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/image-cache
-          key: container-images-arm64-${{ hashFiles('images/neovex-machine-os/Containerfile.COREOS', 'images/neovex-machine-os/build-common.sh', 'images/rpm-ostree/Containerfile') }}
+          key: fcos-image-arm64-${{ hashFiles('images/neovex-machine-os/Containerfile.COREOS', 'images/neovex-machine-os/build-common.sh') }}
           restore-keys: |
-            container-images-arm64-
+            fcos-image-arm64-
 
       - name: Load cached container images
         run: |
@@ -268,13 +268,12 @@ jobs:
             "${BUILD_OUTPUT_DIR}" \
             "${HELPER_CHECKOUT_DIR}"
 
-      - name: Save container images to cache
+      - name: Save CoreOS image to cache
         if: steps.image-cache.outputs.cache-hit != 'true'
         run: |
           cache_dir="${RUNNER_TEMP}/image-cache"
           mkdir -p "${cache_dir}"
           sudo podman save -o "${cache_dir}/fcos-stable.tar" quay.io/fedora/fedora-coreos:stable
-          sudo podman save -o "${cache_dir}/rpm-ostree.tar" "${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}"
           sudo chown -R "$(id -u):$(id -g)" "${cache_dir}"
 
       - name: Package raw-disk OCI layout
