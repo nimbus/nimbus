@@ -149,23 +149,24 @@ if command -v rpm-ostree >/dev/null 2>&1; then
 else
   echo "rpm-ostree not found on host; composing via container"
   rpm_ostree_image="${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}"
-  podman run --rm --privileged --pull=always \
+  chunked_digest="$(podman run --rm --privileged --pull=always \
     --security-opt label=disable \
-    --security-opt seccomp=unconfined \
     -v /var/lib/containers/storage:/var/lib/containers/storage \
-    -v "${output_dir}:${output_dir}" \
     "${rpm_ostree_image}" \
     bash -c "
-      echo '--- runtime diagnostics ---'
-      echo \"PATH=\${PATH}\"
-      ls -la /usr/bin/osbuild 2>&1 || true
-      /usr/bin/osbuild --version 2>&1 || true
-      echo '--- end diagnostics ---'
       rpm-ostree compose build-chunked-oci \
         --bootc \
         --from '${image_name}' \
-        --output 'oci-archive:${oci_archive_path}'
-    "
+        --output 'oci-archive:/dev/null' 2>&1 \
+      | tee /dev/stderr \
+      | sed -n 's/^Pushed digest: //p'
+    ")" || true
+  if [[ -z "${chunked_digest}" ]]; then
+    echo "rpm-ostree compose did not produce a digest" >&2
+    exit 1
+  fi
+  echo "Exporting chunked image ${chunked_digest} to oci-archive"
+  skopeo copy "containers-storage:${chunked_digest}" "oci-archive:${oci_archive_path}"
 fi
 
 if [[ -n "${custom_coreos_disk_images}" ]]; then
