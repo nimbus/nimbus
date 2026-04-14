@@ -22,7 +22,6 @@ grep -F 'netavark' "${recipe_dir}/build-common.sh" >/dev/null
 grep -F 'aardvark-dns' "${recipe_dir}/build-common.sh" >/dev/null
 grep -F 'openssh-server' "${recipe_dir}/build-common.sh" >/dev/null
 grep -F 'socat' "${recipe_dir}/build-common.sh" >/dev/null
-grep -F 'uidmap' "${recipe_dir}/build-common.sh" >/dev/null
 grep -F 'dnf remove -y moby-engine containerd runc toolbox docker-cli' "${recipe_dir}/build-common.sh" >/dev/null
 
 grep -F '{guest_neovex_bin}' "${bootstrap_dir}/neovex.service.tmpl" >/dev/null
