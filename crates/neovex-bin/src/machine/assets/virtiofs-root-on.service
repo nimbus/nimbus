@@ -1,0 +1,11 @@
+[Unit]
+Description=Set / back to immutable after mounts are done
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/chattr +i /
+
+[Install]
+WantedBy=local-fs.target

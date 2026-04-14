@@ -59,6 +59,16 @@ macOS host
 Neovex does not add a second host-side orchestration path on macOS, and it
 does not rely on nested per-service microVMs there for v1.
 
+Important current gap:
+
+- the workspace now carries a generic backend-selection seam (`Container` plus
+  `Krun`) and Compose/control-plane carry-through for backend choice
+- but the executable sandbox implementation still executes only `krun` today
+- the current binary now rejects container-only or mixed-backend project-wide
+  Compose operations explicitly instead of silently routing them through krun
+- so the macOS developer target still needs a real guest-side standard
+  container backend before the Podman-aligned macOS flow can be complete
+
 ## Transport And Probe Semantics
 
 - **Linux production data plane:** service traffic crosses the service-VM
@@ -139,13 +149,16 @@ service in the guest is still `Starting` or `NotReady`.
 
 ## Operator Surface
 
-Neovex currently exposes two service-related operator paths:
+Neovex currently exposes three operator paths relevant to services and macOS
+developer machines:
 
 - `neovex --compose-file ./compose.yaml`
   starts the server with a declared service catalog available for
   request-time activation through `ctx.services.*`
 - `neovex service ...`
   manages those services explicitly through the same backend-owned state model
+- `neovex machine ...`
+  owns the shipped macOS machine CLI and persisted machine-state foundation
 
 Supported CLI commands today:
 
@@ -156,6 +169,12 @@ Supported CLI commands today:
 - `neovex service inspect`
 - `neovex service logs`
 - `neovex service ps`
+- `neovex machine init`
+- `neovex machine start`
+- `neovex machine stop`
+- `neovex machine status`
+- `neovex machine ssh`
+- `neovex machine rm`
 
 Server startup is still flag-driven today: `neovex [flags]` starts the server
 when no subcommand is provided. `service` is the managed-service namespace.
@@ -167,6 +186,11 @@ The intended future command taxonomy is:
 
 Until `serve` is implemented as an explicit subcommand, docs should describe it
 as target CLI taxonomy rather than shipped behavior.
+
+The current `machine` surface includes the CLI/state-model foundation plus the
+first direct `krunkit` + `gvproxy` host-manager seam. Guest image/bootstrap
+completion, host-local control plumbing, and transparent developer UX remain
+owned by the active macOS machine-support plan.
 
 ## Key References
 

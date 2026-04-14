@@ -1,0 +1,9 @@
+ARG FCOS_BASE_IMAGE=quay.io/fedora/fedora-coreos:stable
+FROM ${FCOS_BASE_IMAGE}
+
+RUN --mount=type=bind,source=/build-common.sh,target=/run/build-common.sh,z \
+    /run/build-common.sh && ostree container commit
+
+COPY neovex /usr/local/bin/neovex
+
+RUN chmod 0755 /usr/local/bin/neovex && ostree container commit

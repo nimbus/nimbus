@@ -229,9 +229,14 @@ impl ComposeServicePlan {
             .transpose()?;
         let labels = parse_string_map(raw.labels, &format!("services.{service_name}.labels"))?;
         let volumes = resolve_volume_mounts(raw.volumes);
+        let backend = raw
+            .x_neovex
+            .as_ref()
+            .and_then(|extensions| extensions.backend)
+            .unwrap_or(SandboxBackendKind::Krun);
 
         Ok(Self {
-            backend: SandboxBackendKind::Krun,
+            backend,
             source,
             process,
             ports,
@@ -617,6 +622,8 @@ pub(crate) struct ComposeVolumeMountPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ComposeNeovexPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) backend: Option<SandboxBackendKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) idle_timeout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1616,6 +1623,36 @@ services:
                 .any(|warning| warning.contains("logging")),
             "expected logging warning, got {:?}",
             db.warnings
+        );
+    }
+
+    #[test]
+    fn compose_project_allows_backend_selection_through_x_neovex() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let compose = write_compose_fixture(
+            &tempdir,
+            "compose.yaml",
+            r#"
+services:
+  api:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+
+        let project = ComposeProjectPlan::load(&compose).expect("compose file should resolve");
+        let api = project
+            .services
+            .get("api")
+            .expect("api service should exist");
+
+        assert_eq!(api.backend, SandboxBackendKind::Container);
+        assert_eq!(
+            api.x_neovex
+                .as_ref()
+                .and_then(|extensions| extensions.backend),
+            Some(SandboxBackendKind::Container)
         );
     }
 

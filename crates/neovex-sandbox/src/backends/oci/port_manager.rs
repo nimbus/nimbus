@@ -162,7 +162,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::PortManager;
-    use crate::backends::krun::buildah::{OciExposedPort, OciExposedPortProtocol};
+    use crate::backends::oci::buildah::{OciExposedPort, OciExposedPortProtocol};
     use crate::instance::SandboxStatus;
     use crate::spec::SandboxPortBinding;
 

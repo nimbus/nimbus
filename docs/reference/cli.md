@@ -43,6 +43,32 @@ neovex service logs <service> [--file compose.yaml] [--tenant <tenant-id>] [--fo
 neovex service ps <service> [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
+Current shipped machine commands:
+
+```bash
+neovex machine init [--cpus N] [--memory-mib N] [--disk-gib N] [--image SOURCE] [--ssh-identity PATH] [--ignition-file PATH] [--efi-store PATH] [--volume HOST:GUEST]
+```
+
+```bash
+neovex machine start
+```
+
+```bash
+neovex machine stop
+```
+
+```bash
+neovex machine status
+```
+
+```bash
+neovex machine ssh [COMMAND...]
+```
+
+```bash
+neovex machine rm
+```
+
 ```bash
 neovex --compose-file ./compose.yaml [--convex-app-dir ./app]
 ```
@@ -62,7 +88,7 @@ Target command taxonomy:
 - `neovex service ...`
   shipped managed-service lifecycle namespace
 - `neovex machine ...`
-  intended future macOS machine lifecycle namespace
+  shipped macOS machine lifecycle namespace
 
 ## Core Flags
 
@@ -158,6 +184,16 @@ This is why `serve` and `service` are not the same concept:
 - `service` commands manage declared backing workloads that Neovex may start,
   stop, inspect, or log
 
+`machine` is a third concept:
+
+- `machine` commands manage the macOS Linux-guest envelope that Neovex will use
+  for developer workflows on Apple Silicon
+- the shipped MAC2 surface owns persisted machine config, typed path layout,
+  CLI/state-model wiring, and the initial direct `krunkit` + `gvproxy`
+  machine-manager seam
+- guest-image/bootstrap completion and transparent developer UX remain owned by
+  the active macOS machine-support plan
+
 ## Service Commands
 
 The current landed service-control surface exposes Compose validation plus
@@ -197,9 +233,57 @@ Current scope:
 - resolves lifecycle commands against backend-owned persisted krun manifests and
   conmon logs under the project-scoped `control_data_dir`, not a separate
   CLI-owned service database
+- rejects container-only or mixed-backend project-wide Compose operations
+  explicitly until the guest-side container backend lands
 - derives a deterministic local project tenant id from the Compose project key,
   and uses that tenant by default for `service up` / `service down` /
   `service list` / `service inspect` / `service logs` / `service ps`
+
+## Machine Commands
+
+The current landed machine surface is the MAC2 CLI-and-state-model foundation:
+
+| Command | Meaning |
+| --- | --- |
+| `neovex machine init` | write the default machine config and state files, create the typed config/state/runtime roots, and record future guest resource settings |
+| `neovex machine start` | launch `krunkit` + `gvproxy`, wait for machine-ready plus guest SSH reachability, and report guest machine-API reachability separately |
+| `neovex machine stop` | stop the current machine helpers, including stale-helper recovery, and persist the stopped machine state |
+| `neovex machine status` | print the current machine config, lifecycle state, derived runtime/socket/log paths, the configured machine-API forwarding contract, and guest machine-API reachability |
+| `neovex machine ssh [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running |
+| `neovex machine rm` | remove the persisted machine config, state, and short runtime-root layout when the machine is not running |
+
+Current scope:
+
+- records a typed XDG-style config root and state root for the default machine
+- records a short `/tmp/neovex/...` runtime root with typed socket, pid,
+  and log paths
+- persists the machine provider, typed guest image source, guest SSH user,
+  guest resources, and future virtiofs volume mappings
+- defaults that guest image source to a published raw-disk OCI reference
+  (`docker://ghcr.io/agentstation/neovex-machine-os:stable`) instead of
+  assuming macOS will build the guest image locally; versioned GHCR tags stay
+  the release truth, while `stable` is the default consumption alias
+- auto-generates a Neovex-owned Ignition file when no explicit
+  `--ignition-file` override is configured, carrying the machine ready signal,
+  guest `neovex.socket` plus `neovex.service`, and virtiofs mount-unit wiring
+  into the guest
+- auto-materializes published raw-disk OCI machine-image references plus
+  `http(s)` image sources into the reserved machine-state raw disk path, with
+  OCI layer selection based on linux/arch plus `disktype=raw`, digest
+  verification, gzip/zstd decompression for OCI blobs, and gzip decompression
+  for direct URL downloads
+- launches direct `krunkit` + `gvproxy` orchestration on macOS and waits for
+  the machine-ready signal plus guest SSH reachability before reporting the
+  machine manager as ready
+- keeps guest machine-API readiness separate from machine readiness, so a
+  booted guest with a missing guest `neovex` binary does not get misreported
+  as a working control plane
+- renders the configured machine-API forwarding contract plus socket
+  existence and actual API reachability separately, so host helpers, machine
+  readiness, and guest control readiness do not get collapsed into one status
+  bit
+- leaves guest-image packaging, the guest machine-API executable, and the OCI
+  build/publish lane to the remaining MAC4 work
 
 Related references:
 

@@ -1,0 +1,291 @@
+name: neovex machine-os
+
+on:
+  pull_request:
+    paths:
+      - "crates/neovex-bin/src/machine/**"
+      - "images/neovex-machine-os/**"
+      - "scripts/build-neovex-machine-os.sh"
+      - "scripts/package-neovex-machine-os-oci.sh"
+      - "scripts/publish-neovex-machine-os.sh"
+      - "scripts/resolve-custom-coreos-disk-images.sh"
+      - "scripts/verify-custom-coreos-disk-images-resolver-helper.sh"
+      - "scripts/verify-neovex-machine-os-build-helper.sh"
+      - "scripts/verify-neovex-machine-os-oci-layout-helper.sh"
+      - "scripts/verify-neovex-machine-os-publish-helper.sh"
+      - "scripts/verify-neovex-machine-os-recipe.sh"
+      - "Makefile"
+      - "docs/plans/macos-machine-support-plan.md"
+      - "docs/plans/distribution-plan.md"
+      - "docs/reference/cli.md"
+      - ".github/workflows/neovex-machine-os.yml"
+  push:
+    branches:
+      - main
+    tags:
+      - "machine-os/v*"
+    paths:
+      - "crates/neovex-bin/src/machine/**"
+      - "images/neovex-machine-os/**"
+      - "scripts/build-neovex-machine-os.sh"
+      - "scripts/package-neovex-machine-os-oci.sh"
+      - "scripts/publish-neovex-machine-os.sh"
+      - "scripts/resolve-custom-coreos-disk-images.sh"
+      - "scripts/verify-custom-coreos-disk-images-resolver-helper.sh"
+      - "scripts/verify-neovex-machine-os-build-helper.sh"
+      - "scripts/verify-neovex-machine-os-oci-layout-helper.sh"
+      - "scripts/verify-neovex-machine-os-publish-helper.sh"
+      - "scripts/verify-neovex-machine-os-recipe.sh"
+      - "Makefile"
+      - "docs/plans/macos-machine-support-plan.md"
+      - "docs/plans/distribution-plan.md"
+      - "docs/reference/cli.md"
+      - ".github/workflows/neovex-machine-os.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push the packaged raw-disk OCI artifact to GHCR"
+        required: true
+        default: false
+        type: boolean
+      image_reference:
+        description: "Immutable destination image reference for the packaged machine artifact"
+        required: true
+        default: "docker://ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev"
+        type: string
+      publish_stable_alias:
+        description: "Also publish the stable alias for this machine artifact"
+        required: true
+        default: false
+        type: boolean
+      publish_latest_alias:
+        description: "Also publish the latest alias for this machine artifact"
+        required: true
+        default: false
+        type: boolean
+      additional_reference:
+        description: "Optional additional destination image reference"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-contract:
+    name: Verify machine-os contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: machine-os-contract
+          cache-on-failure: "true"
+
+      - name: Verify helper syntax and help entrypoints
+        run: |
+          bash -n scripts/build-neovex-machine-os.sh
+          bash -n scripts/package-neovex-machine-os-oci.sh
+          bash -n scripts/publish-neovex-machine-os.sh
+          bash -n scripts/resolve-custom-coreos-disk-images.sh
+          bash -n scripts/verify-custom-coreos-disk-images-resolver-helper.sh
+          bash -n scripts/verify-neovex-machine-os-build-helper.sh
+          bash -n scripts/verify-neovex-machine-os-oci-layout-helper.sh
+          bash -n scripts/verify-neovex-machine-os-publish-helper.sh
+          bash -n scripts/verify-neovex-machine-os-recipe.sh
+          bash scripts/build-neovex-machine-os.sh --help
+          bash scripts/package-neovex-machine-os-oci.sh --help
+          bash scripts/publish-neovex-machine-os.sh --help
+          bash scripts/resolve-custom-coreos-disk-images.sh --help
+
+      - name: Verify deterministic helper lanes
+        run: |
+          bash scripts/verify-neovex-machine-os-recipe.sh
+          bash scripts/verify-neovex-machine-os-build-helper.sh
+          bash scripts/verify-neovex-machine-os-oci-layout-helper.sh
+          bash scripts/verify-neovex-machine-os-publish-helper.sh
+          bash scripts/verify-custom-coreos-disk-images-resolver-helper.sh
+
+      - name: Check machine crate compilation
+        run: cargo check -p neovex-bin
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  build-arm64:
+    name: Build machine-os (linux arm64)
+    needs: verify-contract
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/machine-os/v')
+    runs-on:
+      - self-hosted
+      - linux
+      - arm64
+      - neovex-machine-os
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      BUILD_OUTPUT_DIR: ${{ runner.temp }}/neovex-machine-os
+      HELPER_CHECKOUT_DIR: ${{ runner.temp }}/custom-coreos-disk-images
+      LAYOUT_DIR: ${{ runner.temp }}/neovex-machine-os-layout
+      RELEASE_DIR: ${{ runner.temp }}/neovex-machine-os-release
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: machine-os-arm64
+          cache-on-failure: "true"
+
+      - name: Verify build-host requirements
+        run: |
+          command -v sudo
+          command -v git
+          command -v podman
+          command -v rpm-ostree
+          command -v gzip
+          command -v sha256sum
+          command -v skopeo
+          sudo -n true
+
+      - name: Validate release-reference policy
+        id: release-policy
+        run: |
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+            image_reference="${{ inputs.image_reference }}"
+            publish="${{ inputs.publish }}"
+            publish_stable_alias="${{ inputs.publish_stable_alias }}"
+            publish_latest_alias="${{ inputs.publish_latest_alias }}"
+          else
+            tag_name="${GITHUB_REF_NAME#machine-os/}"
+            image_reference="docker://ghcr.io/agentstation/neovex-machine-os:${tag_name}"
+            publish='true'
+            publish_stable_alias='true'
+            publish_latest_alias='false'
+          fi
+
+          if [[ ! "${image_reference}" =~ ^docker://ghcr\.io/agentstation/neovex-machine-os: ]]; then
+            echo "image_reference must target docker://ghcr.io/agentstation/neovex-machine-os:<tag>" >&2
+            exit 1
+          fi
+          if [[ "${publish}" == 'true' && "${image_reference}" =~ :dev$ ]]; then
+            echo "refusing to publish the dev tag; choose an immutable version tag such as v0.1.0" >&2
+            exit 1
+          fi
+          if [[ "${publish}" == 'true' && ! "${image_reference}" =~ :v[0-9] ]]; then
+            echo "publishes must use an immutable version tag such as v0.1.0" >&2
+            exit 1
+          fi
+          if [[ "${publish}" == 'true' && "${image_reference}" =~ :(stable|latest)$ ]]; then
+            echo "publishes must target an immutable version tag, not ${image_reference##*:}" >&2
+            exit 1
+          fi
+
+          {
+            echo "image_reference=${image_reference}"
+            echo "publish=${publish}"
+            echo "publish_stable_alias=${publish_stable_alias}"
+            echo "publish_latest_alias=${publish_latest_alias}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build Fedora CoreOS guest image
+        run: |
+          sudo bash scripts/build-neovex-machine-os.sh \
+            --cargo-profile release \
+            --output-dir "${BUILD_OUTPUT_DIR}" \
+            --fetch-custom-coreos-disk-images "${HELPER_CHECKOUT_DIR}"
+          sudo chown -R "$(id -u):$(id -g)" \
+            "${BUILD_OUTPUT_DIR}" \
+            "${HELPER_CHECKOUT_DIR}"
+
+      - name: Package raw-disk OCI layout
+        run: |
+          bash scripts/package-neovex-machine-os-oci.sh \
+            --build-output-dir "${BUILD_OUTPUT_DIR}" \
+            --image-reference "${{ steps.release-policy.outputs.image_reference }}" \
+            --layout-dir "${LAYOUT_DIR}" \
+            --arch arm64
+
+      - name: Publish packaged OCI artifact
+        if: steps.release-policy.outputs.publish == 'true'
+        env:
+          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
+          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ github.token }}
+        run: |
+          publish_args=(
+            --layout-dir "${LAYOUT_DIR}"
+            --build-output-dir "${BUILD_OUTPUT_DIR}"
+            --image-reference "${{ steps.release-policy.outputs.image_reference }}"
+            --release-dir "${RELEASE_DIR}"
+          )
+          if [[ "${{ steps.release-policy.outputs.publish_stable_alias }}" == 'true' ]]; then
+            publish_args+=(--additional-reference "docker://ghcr.io/agentstation/neovex-machine-os:stable")
+          fi
+          if [[ "${{ steps.release-policy.outputs.publish_latest_alias }}" == 'true' ]]; then
+            publish_args+=(--additional-reference "docker://ghcr.io/agentstation/neovex-machine-os:latest")
+          fi
+          if [[ -n "${{ inputs.additional_reference }}" ]]; then
+            publish_args+=(--additional-reference "${{ inputs.additional_reference }}")
+          fi
+          bash scripts/publish-neovex-machine-os.sh "${publish_args[@]}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: neovex-machine-os-arm64
+          if-no-files-found: error
+          path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/summary.txt
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.ociarchive
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.raw.gz
+            ${{ env.LAYOUT_DIR }}/summary.txt
+            ${{ env.LAYOUT_DIR }}/index.json
+
+      - name: Upload publish bundle
+        if: steps.release-policy.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: neovex-machine-os-arm64-publish
+          if-no-files-found: error
+          path: |
+            ${{ env.RELEASE_DIR }}/publish-summary.txt
+            ${{ env.RELEASE_DIR }}/checksums.txt

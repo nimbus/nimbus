@@ -91,16 +91,6 @@ impl BuildahCli {
             .arg(inner_cmd)
     }
 
-    /// Like `maybe_wrap`, but chains a `buildah mount` prefix inside the
-    /// `buildah unshare` session when a container name is provided.
-    pub fn maybe_wrap_with_mount(
-        &self,
-        command: CommandSpec,
-        container_name: Option<&str>,
-    ) -> CommandSpec {
-        self.maybe_wrap_with_mount_prelude(command, container_name, &[])
-    }
-
     pub fn maybe_wrap_with_mount_prelude(
         &self,
         command: CommandSpec,
@@ -934,7 +924,7 @@ mod tests {
         BuildahCli, OciExposedPort, OciExposedPortProtocol, OciImageConfig, OciImageLaunchDefaults,
         parse_inspect_output,
     };
-    use crate::backends::krun::command::CommandSpec;
+    use crate::backends::oci::command::CommandSpec;
     use crate::spec::SandboxImageProcessOverrides;
 
     #[test]

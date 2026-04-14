@@ -7,7 +7,7 @@ use super::command::CommandSpec;
 use crate::instance::SandboxId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct KrunConmonLayout {
+pub(crate) struct OciConmonLayout {
     pub state_root: PathBuf,
     pub container_state_dir: PathBuf,
     pub exit_dir: PathBuf,
@@ -20,7 +20,7 @@ pub(crate) struct KrunConmonLayout {
     pub manifest_path: PathBuf,
 }
 
-impl KrunConmonLayout {
+impl OciConmonLayout {
     pub(crate) fn new(state_root: impl Into<PathBuf>, sandbox_id: &SandboxId) -> Self {
         let state_root = state_root.into();
         let container_state_dir = state_root.join("containers").join(sandbox_id.as_str());
@@ -49,7 +49,7 @@ impl KrunConmonLayout {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct KrunConmonConfig {
+pub(crate) struct OciConmonConfig {
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
@@ -58,7 +58,7 @@ pub(crate) struct KrunConmonConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct KrunConmonLaunchPlan {
+pub(crate) struct OciConmonLaunchPlan {
     pub create_command: CommandSpec,
     pub state_command: CommandSpec,
     pub start_command: CommandSpec,
@@ -67,14 +67,14 @@ pub(crate) struct KrunConmonLaunchPlan {
 }
 
 pub(crate) fn build_launch_plan(
-    config: &KrunConmonConfig,
-    layout: &KrunConmonLayout,
+    config: &OciConmonConfig,
+    layout: &OciConmonLayout,
     sandbox_id: &SandboxId,
     sandbox_name: &str,
     bundle_dir: &Path,
     buildah_container_name: Option<&str>,
     create_prelude: &[String],
-) -> KrunConmonLaunchPlan {
+) -> OciConmonLaunchPlan {
     let create_command = CommandSpec::new(config.conmon_path.clone()).args([
         "--api-version".to_owned(),
         "1".to_owned(),
@@ -134,7 +134,7 @@ pub(crate) fn build_launch_plan(
     // which cannot read or signal the existing container state.  Running them as
     // the real host user (no unshare) works because crun stores state under the
     // real user's XDG_RUNTIME_DIR.
-    KrunConmonLaunchPlan {
+    OciConmonLaunchPlan {
         create_command: buildah.maybe_wrap_with_mount_prelude(
             create_command,
             buildah_container_name,
@@ -162,14 +162,14 @@ pub(crate) fn build_launch_plan(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{KrunConmonConfig, KrunConmonLayout, build_launch_plan};
+    use super::{OciConmonConfig, OciConmonLayout, build_launch_plan};
     use crate::instance::SandboxId;
 
     #[test]
     fn conmon_launch_plan_uses_private_runtime_and_buildah_unshare() {
         let sandbox_id = SandboxId::new("db-01");
-        let layout = KrunConmonLayout::new("/tmp/neovex-sandbox-state", &sandbox_id);
-        let config = KrunConmonConfig {
+        let layout = OciConmonLayout::new("/tmp/neovex-sandbox-state", &sandbox_id);
+        let config = OciConmonConfig {
             conmon_path: Path::new("/usr/bin/conmon").into(),
             runtime_path: Path::new("/usr/libexec/neovex/crun").into(),
             buildah_path: Path::new("/usr/bin/buildah").into(),
@@ -212,8 +212,8 @@ mod tests {
     #[test]
     fn conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes() {
         let sandbox_id = SandboxId::new("db-02");
-        let layout = KrunConmonLayout::new("/tmp/neovex-sandbox-state", &sandbox_id);
-        let config = KrunConmonConfig {
+        let layout = OciConmonLayout::new("/tmp/neovex-sandbox-state", &sandbox_id);
+        let config = OciConmonConfig {
             conmon_path: Path::new("/usr/bin/conmon").into(),
             runtime_path: Path::new("/usr/libexec/neovex/crun").into(),
             buildah_path: Path::new("/usr/bin/buildah").into(),

@@ -10,15 +10,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ulid::Ulid;
 
-use super::buildah::{
+use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
+use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+use crate::backends::oci::buildah::{
     BuildahCli, BuildahContainer, ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
     PreparedImageLaunch,
 };
-use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
-use super::command::CommandSpec;
-use super::conmon::{KrunConmonConfig, KrunConmonLaunchPlan, KrunConmonLayout, build_launch_plan};
-use super::port_manager::PortManager;
-use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+use crate::backends::oci::command::CommandSpec;
+use crate::backends::oci::conmon::{
+    OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
+};
+use crate::backends::oci::port_manager::PortManager;
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -306,7 +308,7 @@ impl KrunSandboxBackend {
             },
         )?;
 
-        let conmon_layout = KrunConmonLayout::new(&self.config.state_root, &sandbox_id);
+        let conmon_layout = OciConmonLayout::new(&self.config.state_root, &sandbox_id);
         conmon_layout
             .ensure_directories()
             .map_err(|error| SandboxError::OperationFailed {
@@ -317,7 +319,7 @@ impl KrunSandboxBackend {
             })?;
 
         let conmon_launch = build_launch_plan(
-            &KrunConmonConfig {
+            &OciConmonConfig {
                 conmon_path: self.config.conmon_path.clone(),
                 runtime_path: self.config.runtime_path.clone(),
                 buildah_path: self.config.buildah_path.clone(),
@@ -701,8 +703,8 @@ struct KrunSandboxManifest {
     image_metadata: KrunImageMetadata,
     buildah_container: Option<BuildahContainer>,
     bundle_layout: KrunBundleLayout,
-    conmon_layout: KrunConmonLayout,
-    conmon_launch: KrunConmonLaunchPlan,
+    conmon_layout: OciConmonLayout,
+    conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
     #[serde(default)]
     restart_count: u32,
@@ -1412,7 +1414,7 @@ mod tests {
         running_status, slugify, visible_published_endpoints,
     };
     use crate::backend::{SandboxBackend, SandboxBackendKind};
-    use crate::backends::krun::buildah::{
+    use crate::backends::oci::buildah::{
         ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
     };
     use crate::endpoint::PublishedEndpointProtocol;
@@ -2390,11 +2392,11 @@ mod tests {
             image_metadata: KrunImageMetadata::default(),
             buildah_container: None,
             bundle_layout: super::KrunBundleLayout::new("/tmp/bundle"),
-            conmon_layout: super::KrunConmonLayout::new(
+            conmon_layout: super::OciConmonLayout::new(
                 "/tmp/state",
                 &crate::instance::SandboxId::new("sandbox-01"),
             ),
-            conmon_launch: super::KrunConmonLaunchPlan {
+            conmon_launch: super::OciConmonLaunchPlan {
                 create_command: super::CommandSpec::new("/bin/true"),
                 state_command: super::CommandSpec::new("/bin/true"),
                 start_command: super::CommandSpec::new("/bin/true"),
