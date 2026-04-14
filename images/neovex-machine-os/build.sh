@@ -151,13 +151,21 @@ else
   rpm_ostree_image="${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}"
   podman run --rm --privileged --pull=always \
     --security-opt label=disable \
+    --security-opt seccomp=unconfined \
     -v /var/lib/containers/storage:/var/lib/containers/storage \
     -v "${output_dir}:${output_dir}" \
     "${rpm_ostree_image}" \
-    rpm-ostree compose build-chunked-oci \
-      --bootc \
-      --from "${image_name}" \
-      --output "oci-archive:${oci_archive_path}"
+    bash -c "
+      echo '--- runtime diagnostics ---'
+      echo \"PATH=\${PATH}\"
+      ls -la /usr/bin/osbuild 2>&1 || true
+      /usr/bin/osbuild --version 2>&1 || true
+      echo '--- end diagnostics ---'
+      rpm-ostree compose build-chunked-oci \
+        --bootc \
+        --from '${image_name}' \
+        --output 'oci-archive:${oci_archive_path}'
+    "
 fi
 
 if [[ -n "${custom_coreos_disk_images}" ]]; then
