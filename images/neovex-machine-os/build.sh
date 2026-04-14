@@ -143,7 +143,6 @@ compressed_raw_disk_sha256="<not-built>"
 
 if command -v rpm-ostree >/dev/null 2>&1; then
   rpm-ostree compose build-chunked-oci \
-    --bootc \
     --from "${image_name}" \
     --output "oci-archive:${oci_archive_path}"
 else
