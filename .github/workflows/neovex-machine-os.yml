@@ -230,10 +230,13 @@ jobs:
             echo "publish_latest_alias=${publish_latest_alias}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Build neovex binary
+        run: cargo build --release -p neovex-bin
+
       - name: Build Fedora CoreOS guest image
         run: |
           sudo bash scripts/build-neovex-machine-os.sh \
-            --cargo-profile release \
+            --neovex-binary "${GITHUB_WORKSPACE}/target/release/neovex" \
             --output-dir "${BUILD_OUTPUT_DIR}" \
             --fetch-custom-coreos-disk-images "${HELPER_CHECKOUT_DIR}"
           sudo chown -R "$(id -u):$(id -g)" \
