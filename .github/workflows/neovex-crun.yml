@@ -87,11 +87,10 @@ jobs:
             "${RUNNER_TEMP}/neovex-crun-output" \
             "${RUNNER_TEMP}/neovex-crun-build"
 
-      - name: Download pinned crun source
+      - name: Clone pinned crun source with submodules
         run: |
-          curl -fsSL -o "${RUNNER_TEMP}/crun.tar.gz" \
-            "https://github.com/containers/crun/archive/refs/tags/${CRUN_VERSION}.tar.gz"
-          tar xzf "${RUNNER_TEMP}/crun.tar.gz" -C "${CRUN_SOURCE_DIR}" --strip-components=1
+          git clone --depth 1 --branch "${CRUN_VERSION}" --recurse-submodules \
+            https://github.com/containers/crun.git "${CRUN_SOURCE_DIR}"
 
       - name: Restore Fedora container image cache
         id: image-cache
