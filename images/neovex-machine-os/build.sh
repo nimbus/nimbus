@@ -143,6 +143,7 @@ podman run --rm --privileged \
   -v "${script_dir}/bootc-image-builder.toml:/config.toml:ro" \
   "${bib_image}" \
   --type raw \
+  --rootfs ext4 \
   --local \
   --config /config.toml \
   "${image_name}"
