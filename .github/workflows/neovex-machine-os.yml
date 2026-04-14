@@ -147,15 +147,23 @@ jobs:
       contents: read
       packages: write
 
-    env:
-      BUILD_OUTPUT_DIR: ${{ runner.temp }}/neovex-machine-os
-      HELPER_CHECKOUT_DIR: ${{ runner.temp }}/custom-coreos-disk-images
-      LAYOUT_DIR: ${{ runner.temp }}/neovex-machine-os-layout
-      RELEASE_DIR: ${{ runner.temp }}/neovex-machine-os-release
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Initialize build directories
+        run: |
+          {
+            echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/neovex-machine-os"
+            echo "HELPER_CHECKOUT_DIR=${RUNNER_TEMP}/custom-coreos-disk-images"
+            echo "LAYOUT_DIR=${RUNNER_TEMP}/neovex-machine-os-layout"
+            echo "RELEASE_DIR=${RUNNER_TEMP}/neovex-machine-os-release"
+          } >> "${GITHUB_ENV}"
+          mkdir -p \
+            "${RUNNER_TEMP}/neovex-machine-os" \
+            "${RUNNER_TEMP}/custom-coreos-disk-images" \
+            "${RUNNER_TEMP}/neovex-machine-os-layout" \
+            "${RUNNER_TEMP}/neovex-machine-os-release"
 
       - name: Configure googlesource credentials
         if: env.GOOGLESOURCE_COOKIE != ''

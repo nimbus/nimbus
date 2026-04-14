@@ -839,6 +839,8 @@ This plan does not cover:
 - `cargo fmt --all --check`
 - focused `cargo check` for touched crates
 - targeted tests for the touched CLI, machine-manager, or guest/bootstrap seam
+- `actionlint .github/workflows/neovex-machine-os.yml` when the machine-image
+  workflow changes
 - plan ledger and execution-log update in the same change set
 
 ### Required real-host verification lanes
@@ -1835,3 +1837,19 @@ Acceptance criteria:
   on top. Durable conclusion: the release control plane is now a normal git
   tag push. Verification: repo review of
   `.github/workflows/neovex-machine-os.yml`; `cargo fmt --all --check`.
+- 2026-04-13: Validated that first tagged release path against GitHub's live
+  workflow API and found a workflow-evaluation failure before any jobs were
+  created. The concrete root cause matched local `actionlint` output: the
+  `build-arm64` job used `${{ runner.temp }}` inside job-level `env`, but the
+  `runner` context is not available there. The workflow now initializes those
+  paths in a dedicated shell step via `${RUNNER_TEMP}` and the repo now carries
+  `.github/actionlint.yaml` so the custom `neovex-machine-os` self-hosted
+  runner label is treated as intentional instead of an unknown-label warning.
+  Durable conclusion: remote machine-image failures now point at real runner or
+  build issues instead of a pre-job workflow-definition bug. Verification:
+  `actionlint .github/workflows/neovex-machine-os.yml`; `ruby -e 'require
+  "yaml"; YAML.load_file(".github/workflows/neovex-machine-os.yml")'`; `cargo
+  fmt --all --check`; `curl -sS
+  'https://api.github.com/repos/agentstation/neovex/actions/workflows/neovex-machine-os.yml/runs?event=push&per_page=5'
+  | jq '{total_count, runs: [.workflow_runs[] | {id, head_sha, status,
+  conclusion, html_url}]}'`.
