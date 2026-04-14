@@ -1693,7 +1693,7 @@ services:
             control_data_dir: temp_dir.path().join("machine-control"),
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
-            service_backend: Some(Arc::new(StubMachineApiSandboxBackend::default())),
+            service_backend: Some(Arc::new(StubMachineApiSandboxBackend)),
             machine_port_forwarder: None,
         };
         write_fake_runtime_binaries(temp_dir.path());
