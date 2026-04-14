@@ -143,6 +143,7 @@ compressed_raw_disk_sha256="<not-built>"
 
 if command -v rpm-ostree >/dev/null 2>&1; then
   rpm-ostree compose build-chunked-oci \
+    --bootc \
     --from "${image_name}" \
     --output "oci-archive:${oci_archive_path}"
 else
@@ -153,10 +154,10 @@ else
     -v /var/lib/containers/storage:/var/lib/containers/storage \
     -v "${output_dir}:${output_dir}" \
     "${rpm_ostree_image}" \
-    bash -c "command -v osbuild && osbuild --version && \
-      rpm-ostree compose build-chunked-oci \
-        --from '${image_name}' \
-        --output 'oci-archive:${oci_archive_path}'"
+    rpm-ostree compose build-chunked-oci \
+      --bootc \
+      --from "${image_name}" \
+      --output "oci-archive:${oci_archive_path}"
 fi
 
 if [[ -n "${custom_coreos_disk_images}" ]]; then
