@@ -141,6 +141,7 @@ jobs:
                 systemd-devel \
                 yajl-devel
 
+              git config --global --add safe.directory /work/build
               bash scripts/verify-crun-patch.sh /work/crun-src
               bash scripts/build-neovex-crun.sh \
                 --source /work/crun-src \
@@ -150,8 +151,8 @@ jobs:
               echo "--- version check ---"
               /work/output/crun --version
 
-              version_line="$(/work/output/crun --version | head -n1)"
-              if [[ "${version_line}" != *"+LIBKRUN"* ]]; then
+              version_output="$(/work/output/crun --version)"
+              if [[ "${version_output}" != *"+LIBKRUN"* ]]; then
                 echo "ERROR: built crun binary does not have +LIBKRUN support" >&2
                 exit 1
               fi
