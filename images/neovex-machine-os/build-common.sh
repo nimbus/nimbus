@@ -35,8 +35,7 @@ dnf install --best -y \
   netavark \
   openssh-server \
   procps-ng \
-  socat \
-  uidmap
+  socat
 
 dnf remove -y moby-engine containerd runc toolbox docker-cli || true
 
