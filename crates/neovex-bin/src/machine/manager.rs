@@ -1206,6 +1206,7 @@ async fn pull_oci_artifact_to_cache(
     drop(output);
 
     verify_downloaded_oci_blob(&download_path, &layer_descriptor)?;
+    check_build_attestation(&reference, &layer_descriptor.digest);
     fs::rename(&download_path, &cache_path).map_err(|error| {
         Error::Internal(format!(
             "failed to persist machine guest OCI artifact cache {}: {error}",
@@ -1422,6 +1423,76 @@ fn verify_downloaded_oci_blob(path: &Path, layer: &RegistryLayerDescriptor) -> R
         )));
     }
     Ok(())
+}
+
+/// Query the GitHub Attestations API for a signed build provenance attestation
+/// matching the downloaded artifact digest. This verifies that the artifact was
+/// produced by a trusted GitHub Actions workflow. Advisory only — logs the
+/// result but does not block the download.
+fn check_build_attestation(reference: &str, subject_digest: &str) {
+    let stripped = strip_docker_reference_prefix(reference);
+    let Some(repo_path) = extract_ghcr_repo_path(&stripped) else {
+        return;
+    };
+
+    let url = format!("https://api.github.com/repos/{repo_path}/attestations/{subject_digest}");
+
+    let result = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .and_then(|client| {
+            client
+                .get(&url)
+                .header("Accept", "application/json")
+                .header("User-Agent", "neovex-machine-manager")
+                .send()
+        });
+
+    match result {
+        Ok(response) if response.status().is_success() => {
+            if let Ok(body) = response.json::<serde_json::Value>() {
+                let count = body
+                    .get("attestations")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    eprintln!("verified: {count} build attestation(s) found for {subject_digest}");
+                } else {
+                    eprintln!("warning: no build attestations found for {subject_digest}");
+                }
+            }
+        }
+        Ok(response) => {
+            eprintln!(
+                "warning: attestation lookup returned HTTP {}: {reference}",
+                response.status()
+            );
+        }
+        Err(error) => {
+            eprintln!("warning: attestation lookup failed: {error}");
+        }
+    }
+}
+
+/// Extract the GitHub repository path (owner/repo) from a ghcr.io image
+/// reference. Returns None for non-GHCR references.
+fn extract_ghcr_repo_path(reference: &str) -> Option<String> {
+    let without_host = reference.strip_prefix("ghcr.io/")?;
+    let without_tag = without_host
+        .split_once('@')
+        .map(|(r, _)| r)
+        .unwrap_or(without_host);
+    let without_tag = without_tag
+        .split_once(':')
+        .map(|(r, _)| r)
+        .unwrap_or(without_tag);
+    let parts: Vec<&str> = without_tag.splitn(3, '/').collect();
+    if parts.len() >= 2 {
+        Some(format!("{}/{}", parts[0], parts[1]))
+    } else {
+        None
+    }
 }
 
 fn compute_sha256(path: &Path) -> Result<String, Error> {
