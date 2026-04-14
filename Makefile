@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime verify-crun-patch check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-linux-vmm-validation-bundle-helper build-neovex-crun prepare-krun-bundle verify-krun-bundle-helper verify-neovex-crun-fedora-userspace prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -106,10 +106,7 @@ verify-harness-repro:
 	@test -n "$(CASE)" || (echo "set CASE=<named-seed-case>" && exit 1)
 	bash scripts/verification-harness.sh repro "$(SURFACE)" "$(MODE)" "$(CASE)"
 
-# Verify the checked-in neovex crun patch applies to a local upstream source checkout
-verify-crun-patch:
-	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
-	bash scripts/verify-crun-patch.sh "$(CRUN_SRC)"
+# crun patch/build/verify targets moved to agentstation/neovex-crun
 
 # Check whether the current host is ready for Linux krun/conmon validation work
 check-vmm-host:
@@ -157,11 +154,6 @@ prepare-linux-vmm-validation-bundle:
 	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
 	bash scripts/prepare-linux-vmm-validation-bundle.sh --crun-source "$(CRUN_SRC)" $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(STAGE_DIR),--stage-dir "$(STAGE_DIR)",) $(if $(STAGE_BINARY),--stage-binary "$(STAGE_BINARY)",) $(if $(INSTALL_PATH),--install-path "$(INSTALL_PATH)",) $(if $(SYSTEM_RUNTIME),--system-runtime "$(SYSTEM_RUNTIME)",) $(if $(BUNDLE_DIR),--bundle-dir "$(BUNDLE_DIR)",) $(if $(IMAGE),--image "$(IMAGE)",) $(if $(BUILDAH_NAME),--buildah-name "$(BUILDAH_NAME)",) $(if $(HOST_PORT),--host-port "$(HOST_PORT)",) $(if $(GUEST_PORT),--guest-port "$(GUEST_PORT)",) $(if $(DIRECT_STATE_ROOT),--direct-state-root "$(DIRECT_STATE_ROOT)",) $(if $(DIRECT_CONTAINER_ID),--direct-container-id "$(DIRECT_CONTAINER_ID)",) $(if $(CONMON_STATE_ROOT),--conmon-state-root "$(CONMON_STATE_ROOT)",) $(if $(CONMON),--conmon "$(CONMON)",) $(if $(CONMON_NAME),--conmon-name "$(CONMON_NAME)",) $(if $(PROBE_HOST),--probe-host "$(PROBE_HOST)",) $(if $(PROBE_PATH),--probe-path "$(PROBE_PATH)",)
 
-# Build and optionally install the patched private neovex crun binary
-build-neovex-crun:
-	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
-	bash scripts/build-neovex-crun.sh --source "$(CRUN_SRC)" $(if $(OUTPUT),--output "$(OUTPUT)",) $(if $(INSTALL_PATH),--install-path "$(INSTALL_PATH)",) $(if $(SUDO_INSTALL),--sudo-install,)
-
 # Prepare a krun OCI bundle config with the correct annotations and port mapping shape
 prepare-krun-bundle:
 	@test -n "$(BUNDLE_DIR)" || (echo "set BUNDLE_DIR=/absolute/path/to/bundle-dir" && exit 1)
@@ -173,11 +165,6 @@ prepare-krun-bundle:
 # Verify the krun bundle helper against a checked-in config fixture
 verify-krun-bundle-helper:
 	bash scripts/verify-krun-bundle-helper.sh
-
-# Validate the patch + Linux userspace build helper inside a disposable Fedora container
-verify-neovex-crun-fedora-userspace:
-	@test -n "$(CRUN_SRC)" || (echo "set CRUN_SRC=/absolute/path/to/crun-source" && exit 1)
-	bash scripts/verify-neovex-crun-fedora-userspace.sh --crun-source "$(CRUN_SRC)" $(if $(IMAGE),--image "$(IMAGE)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(WORK_DIR),--work-dir "$(WORK_DIR)",)
 
 # Prepare a deterministic direct private-runtime krun drill layout for Linux host execution
 prepare-direct-krun-drill:
