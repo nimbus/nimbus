@@ -134,6 +134,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out repository
@@ -294,6 +296,15 @@ jobs:
             publish_args+=(--additional-reference "${{ inputs.additional_reference }}")
           fi
           bash scripts/publish-neovex-machine-os.sh "${publish_args[@]}"
+
+      - name: Attest build provenance
+        if: steps.release-policy.outputs.publish == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.ociarchive
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.raw.gz
+            ${{ env.RELEASE_DIR }}/checksums.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
