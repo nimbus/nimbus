@@ -388,14 +388,26 @@ Provider-selection note:
 
 #### Guest VM image
 
-**Base:** Fedora CoreOS (aarch64) — same as Podman machine.
-**Custom layer:** rpm-ostree overlay adding neovex + all Linux deps
-(neovex, neovex-crun, conmon, buildah, libkrun, libkrunfw, catatonit,
-passt, uidmap, fuse-overlayfs, containers-common).
+**Base:** Fedora bootc 42 (aarch64).
+**Custom layer:** neovex + all Linux deps (neovex, neovex-crun, conmon,
+buildah, libkrun, libkrunfw, catatonit, passt, fuse-overlayfs,
+containers-common).
+**Build:** `podman build` → `podman save --format oci-archive` →
+`bootc-image-builder --type raw --rootfs ext4` → gzip.
 **Distribution:** raw-disk OCI artifact at
 `ghcr.io/agentstation/neovex-machine-os`, with `disktype=raw` manifest
 selection for the bootable guest disk.
 Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
+
+**Repo split:** The guest image source (`images/neovex-machine-os/`,
+`.github/workflows/neovex-machine-os.yml`) currently lives in the neovex
+monorepo. Once the build/publish contract stabilizes, split to
+`agentstation/neovex-machine-os` — mirroring Podman's
+`containers/podman` + `containers/podman-machine-os` model. This gives
+clean attestation semantics: `agentstation/neovex` attests the host
+binary/CLI/server, `agentstation/neovex-machine-os` attests the guest
+image. Consumers reference the image by GHCR reference, so the split is
+transparent.
 
 The Podman machine-os source is also a useful negative reference here: its
 guest image build script installs plain container tooling (`crun`, `podman`,
@@ -659,7 +671,7 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 **Goal:** Custom machine image with neovex + all deps pre-installed.
 
 **Scope:**
-- Build Fedora CoreOS image with neovex + all Linux VMM deps
+- Build Fedora bootc 42 image with neovex + all Linux deps
 - Publish as raw-disk OCI artifact at `ghcr.io/agentstation/neovex-machine-os`
 - Publish immutable version tags first, then attach moving aliases such as
   `stable` and optionally `latest`
@@ -667,6 +679,10 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 - Ignition provisioning: SSH keys, neovex systemd unit, virtiofs mounts
 - Dedicated Linux ARM64 GitHub Actions runner lane; macOS consumes the
   published artifact, it does not build the guest image locally
+- **Repo split (future):** once the build/publish contract stabilizes, move
+  guest image source to `agentstation/neovex-machine-os` (mirrors Podman's
+  `containers/podman-machine-os` split). Gives clean attestation: neovex
+  repo attests host binaries, machine-os repo attests guest image.
 
 **Acceptance criteria:**
 - `neovex machine init` downloads the custom image
