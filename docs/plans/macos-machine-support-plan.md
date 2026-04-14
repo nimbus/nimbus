@@ -1853,3 +1853,20 @@ Acceptance criteria:
   'https://api.github.com/repos/agentstation/neovex/actions/workflows/neovex-machine-os.yml/runs?event=push&per_page=5'
   | jq '{total_count, runs: [.workflow_runs[] | {id, head_sha, status,
   conclusion, html_url}]}'`.
+- 2026-04-13: The next live hosted verifier reached the deterministic recipe
+  lane and exposed a second concrete portability issue. The failing command was
+  `bash scripts/verify-neovex-machine-os-recipe.sh`, and the exact error was
+  `/tmp/.../custom-coreos-disk-images.sh: 2: set: Illegal option -o pipefail`.
+  Root cause: `images/neovex-machine-os/build.sh` invoked the pinned upstream
+  `custom-coreos-disk-images.sh` helper via `sh`, but the upstream helper is
+  Bash-specific (`#!/usr/bin/bash`, `set -euo pipefail`, Bash arrays). Neovex
+  now invokes the helper with `bash`, which is a deliberate portability
+  improvement over Podman's Fedora-shaped `sh` call and matches the helper's
+  real contract on Ubuntu-hosted verification lanes. Durable conclusion: the
+  recipe now follows the helper's actual shell contract, so future failures in
+  that lane should reflect the helper itself or the build inputs, not distro
+  differences in `/bin/sh`. Verification:
+  `bash scripts/verify-neovex-machine-os-recipe.sh`;
+  `actionlint .github/workflows/neovex-machine-os.yml`;
+  `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/neovex-machine-os.yml")'`;
+  `cargo fmt --all --check`.

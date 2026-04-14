@@ -92,6 +92,11 @@ bash scripts/resolve-custom-coreos-disk-images.sh \
   --checkout-dir /tmp/neovex-machine-os-helper
 ```
 
+Neovex invokes that helper with `bash`, not `sh`. The pinned upstream helper
+is Bash-specific (`#!/usr/bin/bash`, `set -euo pipefail`, associative arrays),
+so this keeps the build lane portable across Linux hosts where `/bin/sh` is
+not Bash.
+
 Repo-owned entrypoints for that packaging/publish lane:
 
 ```bash
