@@ -976,7 +976,7 @@ fn snapshot_process_rows(
 fn parse_process_rows(stdout: &str, pid_set: &BTreeSet<u32>) -> Vec<ServiceProcessRow> {
     let mut rows = stdout
         .lines()
-        .filter_map(|line| parse_process_row(line))
+        .filter_map(parse_process_row)
         .filter(|row| pid_set.contains(&row.pid))
         .collect::<Vec<_>>();
     rows.sort_by_key(|row| (row.ppid, row.pid));

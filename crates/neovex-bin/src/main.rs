@@ -192,7 +192,7 @@ struct ServeCommand {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    Serve(ServeCommand),
+    Serve(Box<ServeCommand>),
     Machine(MachineCommand),
     Service(ServiceCommand),
 }
@@ -370,7 +370,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve(command) => run_serve_command(command).await?,
+        Command::Serve(command) => run_serve_command(*command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
         }
@@ -857,7 +857,7 @@ mod tests {
         let Command::Serve(command) = cli.command else {
             panic!("serve subcommand should parse");
         };
-        command
+        *command
     }
 
     #[test]

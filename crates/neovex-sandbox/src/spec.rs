@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -121,7 +121,7 @@ impl SandboxProcessSpec {
     }
 
     pub fn uses_default_cwd(&self) -> bool {
-        self.cwd == PathBuf::from("/")
+        self.cwd == Path::new("/")
     }
 }
 

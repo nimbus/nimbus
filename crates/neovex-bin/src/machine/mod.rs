@@ -315,17 +315,17 @@ fn run_machine_rm(_command: MachineRmCommand, roots: &MachineRootLayout) -> Resu
     let config = read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)?;
     let state = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)?;
 
-    if let Some(state) = state.as_ref() {
-        if matches!(
+    if let Some(state) = state.as_ref()
+        && matches!(
             state.lifecycle,
             MachineLifecycle::Starting | MachineLifecycle::Running
-        ) {
-            return Err(Error::Conflict(format!(
-                "machine '{}' is {} and cannot be removed safely",
-                DEFAULT_MACHINE_NAME,
-                state.lifecycle.as_str()
-            )));
-        }
+        )
+    {
+        return Err(Error::Conflict(format!(
+            "machine '{}' is {} and cannot be removed safely",
+            DEFAULT_MACHINE_NAME,
+            state.lifecycle.as_str()
+        )));
     }
 
     remove_dir_if_exists(&paths.config_dir)?;
@@ -1414,6 +1414,14 @@ mod tests {
     #[test]
     fn machine_start_reports_oci_materialization_failure_for_unreachable_registry_image() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
+        let krunkit_stub = temp_dir.path().join("krunkit");
+        let gvproxy_stub = temp_dir.path().join("gvproxy");
+        std::fs::write(&krunkit_stub, "#!/bin/sh\n").expect("krunkit stub should write");
+        std::fs::write(&gvproxy_stub, "#!/bin/sh\n").expect("gvproxy stub should write");
+        unsafe {
+            std::env::set_var("NEOVEX_MACHINE_KRUNKIT", &krunkit_stub);
+            std::env::set_var("NEOVEX_MACHINE_GVPROXY", &gvproxy_stub);
+        }
         let layout = MachineRootLayout::new(
             temp_dir.path().join("config"),
             temp_dir.path().join("state"),
@@ -1444,6 +1452,11 @@ mod tests {
             &layout,
         )
         .expect_err("machine start should surface OCI pull failure");
+
+        unsafe {
+            std::env::remove_var("NEOVEX_MACHINE_KRUNKIT");
+            std::env::remove_var("NEOVEX_MACHINE_GVPROXY");
+        }
 
         assert!(
             error

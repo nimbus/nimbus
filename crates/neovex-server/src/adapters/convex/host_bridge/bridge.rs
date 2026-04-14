@@ -43,6 +43,7 @@ impl ConvexHostBridge {
         .expect("default convex host bridge should build")
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::adapters::convex) fn new_with_invocation_kind(
         service: Arc<neovex_engine::Service>,
         registry: Arc<ConvexRegistry>,

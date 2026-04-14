@@ -241,14 +241,14 @@ fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
         });
     }
 
-    if let Some(memory_limit_bytes) = resources.memory_limit_bytes {
-        if memory_limit_bytes < MIN_MEMORY_LIMIT_BYTES {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "krun sandbox memory_limit_bytes must be at least {MIN_MEMORY_LIMIT_BYTES} bytes"
-                ),
-            });
-        }
+    if let Some(memory_limit_bytes) = resources.memory_limit_bytes
+        && memory_limit_bytes < MIN_MEMORY_LIMIT_BYTES
+    {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "krun sandbox memory_limit_bytes must be at least {MIN_MEMORY_LIMIT_BYTES} bytes"
+            ),
+        });
     }
 
     if resources.cpu_count.is_some() && resources.memory_limit_bytes.is_none() {

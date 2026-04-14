@@ -31,7 +31,7 @@ impl CommandSpec {
         self
     }
 
-    pub fn to_command(&self) -> Command {
+    pub fn as_command(&self) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.args);
         command
