@@ -1870,3 +1870,19 @@ Acceptance criteria:
   `actionlint .github/workflows/neovex-machine-os.yml`;
   `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/neovex-machine-os.yml")'`;
   `cargo fmt --all --check`.
+- 2026-04-13: Published that helper-contract fix as commit `2099c85` and
+  pushed a fresh release tag `machine-os/v0.1.2`. GitHub workflow evidence now
+  shows the hosted verifier succeeding on both `main` and the tag-triggered
+  lane: run `24378430670` completed `Verify machine-os contract` successfully
+  on `main`, and tag run `24378451538` completed the same verifier successfully
+  before queuing `Build machine-os (linux arm64)` as job `71196867362`. Durable
+  conclusion: the machine-image control plane is now past workflow-definition
+  bugs and hosted verifier portability gaps; the next real blocker, if any,
+  will come from the self-hosted ARM64 builder or the actual FCOS image build /
+  publish path. Verification: `curl -sS
+  'https://api.github.com/repos/agentstation/neovex/actions/runs/24378430670/jobs?per_page=20'
+  | jq '{run_id: 24378430670, total_count, jobs: [.jobs[] | {name, status,
+  conclusion, started_at, completed_at, html_url}]}'`; `curl -sS
+  'https://api.github.com/repos/agentstation/neovex/actions/runs/24378451538/jobs?per_page=20'
+  | jq '{run_id: 24378451538, total_count, jobs: [.jobs[] | {name, status,
+  conclusion, started_at, completed_at, html_url}]}'`.
