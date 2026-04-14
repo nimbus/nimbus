@@ -1,35 +1,4 @@
 # Patched crun CI Build & Distribution
-
-## Compact prompt
-
-Use this when running `/compact` before starting the work:
-
-```
-Preserve: building a GitHub Actions workflow for neovex-patched crun
-(crun 1.27 + TSI port mapping patch). Build chain: libkrunfw 5.3.0 →
-libkrun 1.17.4 → crun 1.27 + patch. Use Fedora container (libkrun-devel
-in repos). Matrix: amd64 + arm64. Existing scripts: build-neovex-crun.sh,
-verify-crun-patch.sh, verify-neovex-crun-fedora-userspace.sh. Existing
-verify-only CI: verify-neovex-crun-patch.yml (has bug: pins crun 1.22,
-should be 1.27). Need new workflow neovex-crun.yml with verify → build →
-publish jobs. Publish on crun/v* tags with attestation. Reference
-machine-os workflow for patterns. Read docs/prompts/patched-crun-ci-build.md
-for full context.
-```
-
----
-
-## Session prompt
-
-Paste this after compact finishes:
-
-```
-Read docs/prompts/patched-crun-ci-build.md then implement the patched crun
-CI build workflow. Start by reading the reference files listed at the bottom
-of that doc. Do research if needed to verify Fedora 43 repos have
-libkrun-devel for both x86_64 and aarch64 before writing the workflow.
-```
-
 ---
 
 ## Full context
