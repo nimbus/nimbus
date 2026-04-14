@@ -93,7 +93,7 @@ Verified upstream Podman installer boundary from source:
 |----------|------------|-------------------|-----------|
 | Linux x86_64 (bare metal) | Native (KVM) | Hardware-isolated microVMs | **Yes** (primary) |
 | Linux x86_64 (cloud VM) | Native (nested KVM) | Hardware-isolated microVMs | **Yes** |
-| Linux aarch64 | Native (KVM) | Hardware-isolated microVMs | **Future** |
+| Linux aarch64 | Native (KVM) | Hardware-isolated microVMs | **Partial** (neovex-crun CI, machine-os CI) |
 | macOS aarch64 (Apple Silicon, M1+) | Machine VM (krunkit) | Containers (same as Podman) | **Future** (dev) |
 | macOS x86_64 (Intel) | Not supported | — | **No** |
 | Windows | WSL2 | TBD | **Future** |
@@ -137,7 +137,7 @@ Description: Reactive document database with microVM runtime
 
 ```
 Package: neovex-crun
-Version: 1.19+neovex1
+Version: 1.27+neovex1
 Architecture: amd64
 Depends: libkrun (>= 1.17), libkrunfw, libcap2, libseccomp2, libyajl2
 Description: crun OCI runtime with krun TSI port mapping (patched for neovex)
@@ -576,16 +576,32 @@ build {
 
 ### Phase D1: CI Build Pipeline
 
-**Goal:** Automated builds of neovex and neovex-crun for Linux x86_64.
+**Goal:** Automated builds of neovex and neovex-crun for Linux x86_64 and
+aarch64.
 
 **Scope:**
 - GitHub Actions workflow: build neovex (cargo build --release)
-- GitHub Actions workflow: build neovex-crun (download upstream tarball, apply patch, autotools)
-- GitHub Releases: upload binaries as release assets
+- GitHub Actions workflow: build neovex-crun (clone upstream crun at pinned
+  tag inside Fedora 43 container with `libkrun-devel` from repos, apply
+  patch, autotools `--with-libkrun`)
+- Matrix: amd64 (`ubuntu-latest`) + arm64 (`ubuntu-24.04-arm`)
+- GitHub Releases: upload binaries as release assets with attestation
 - Tarball (Channel 5): neovex + crun + README
 
+**neovex-crun CI status:** `done` — `.github/workflows/neovex-crun.yml`
+implements verify → build (matrix amd64+arm64) → publish (on `crun/v*` tags
+with `actions/attest@v4` provenance). Build runs inside `fedora:43`
+containers where `libkrun-devel` is available from repos (no source build
+needed). Triggered on push to main (path-filtered), `crun/v*` tags, and
+`workflow_dispatch`.
+
+**neovex binary CI status:** `todo`
+
 **Acceptance criteria:**
-- `git tag v0.1.0 && git push --tags` triggers build
+- `git tag crun/v1.27 && git push --tags` triggers neovex-crun build and
+  publishes `neovex-crun-linux-amd64` + `neovex-crun-linux-arm64` with
+  checksums and attestation
+- `git tag v0.1.0 && git push --tags` triggers neovex build
 - Release assets include: `neovex-linux-amd64.tar.gz`
 - Tarball includes both binaries + install instructions
 
@@ -695,11 +711,11 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| D1: CI build pipeline | `todo` | Neovex compiles | GitHub Actions |
+| D1: CI build pipeline | `in_progress` | Neovex compiles | neovex-crun done (amd64+arm64), neovex binary todo |
 | D2: Apt repo (Debian/Ubuntu) | `todo` | D1 | cargo-deb or nfpm |
 | D3: COPR (Fedora) | `todo` | D1 | COPR build service |
 | D4a: Homebrew + krunkit | `todo` | D1 | Apple Silicon, macOS 14+ |
-| D4b: Guest VM image | `todo` | D4a | Raw-disk OCI artifact, Fedora CoreOS + neovex deps |
+| D4b: Guest VM image | `in_progress` | D4a | machine-os CI live on arm64, publishes to GHCR on `machine-os/v*` tags |
 | D4c: API + port forwarding | `todo` | D4b | host-local control channel, gvproxy, layered probes |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 
@@ -719,3 +735,5 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 | 2026-04-12 | D4a prep | `documented` | Added two more source-backed macOS implementation rules to Channel 4. First, the plan now records the source-reference split explicitly: Podman core machine code is the canonical reference for helper resolution, socket wiring, and ready-state behavior, while Podman Desktop is a secondary reference for installer UX and operator flow. Second, Channel 4 now owns a short-runtime-dir policy for macOS instead of inheriting Darwin's long default `TMPDIR` subtree. The current Podman/libkrun repro on this host produced a derived `...-gvproxy.sock-krun.sock` path of 104 characters under `/var/folders/.../T/podman`, which matches the `InvalidAddress(ENAMETOOLONG)` failure we captured, while the same layout under `/tmp/podman` dropped to 60 characters and cleared that socket-path startup blocker. A later live readiness bundle showed that this is necessary but not sufficient on the current host: the short-root machine still failed with SSH handshake resets and guest Ignition/emergency-mode failure. | upstream source: `https://github.com/containers/podman/blob/main/pkg/machine/libkrun/stubber.go`; `https://github.com/containers/podman/blob/main/pkg/machine/apple/apple.go`; `https://github.com/podman-desktop/podman-desktop/blob/main/extensions/podman/packages/extension/src/helpers/krunkit-helper.ts`; `https://github.com/podman-desktop/podman-desktop/blob/main/website/docs/podman/creating-a-podman-machine.md`; local helper evidence via `bash scripts/check-podman-machine-socket-paths.sh --machine neovex-libkrun-users-only --tmp-root /var/folders/kw/d608x5pn4cq73rz78ztl92cw0000gn/T/podman`; `bash scripts/check-podman-machine-socket-paths.sh --machine neovex-libkrun-users-only --tmp-root /tmp/podman`; `TMPDIR=/tmp bash scripts/validate-podman-machine-readiness.sh --machine neovex-libkrun-users-only --connection neovex-libkrun-users-only --provider libkrun --tmp-root /tmp/podman --output-dir /tmp/neovex-libkrun-users-only-readiness`; `cargo fmt --all --check` | Keep D4a Podman-aligned, require a short runtime dir by default, and move the next macOS investigation toward guest-image / Ignition readiness rather than more socket-path tuning |
 | 2026-04-12 | D4a prep | `documented` | Ran the comparison experiment that narrows the remaining macOS risk considerably. A brand-new disposable short-root machine, `neovex-libkrun-sr-fresh`, created with the same `libkrun` provider and the same `/Users` virtiofs mount, reached full readiness on this host: `podman machine start` exited successfully, the readiness bundle reported both connection-targeted `podman info --debug` and `podman machine ssh` as `ok`, and the guest log reached `sshd.service`, `ready.service`, and successful Ignition application. That means Channel 4's short-runtime-dir rule is not just theoretical, and it also means the older `neovex-libkrun-users-only` failure is most likely stale/corrupted machine state rather than a universal short-root libkrun problem on this Mac. | local host validation via `TMPDIR=/tmp CONTAINERS_MACHINE_PROVIDER=libkrun podman machine init --cpus 2 --memory 2048 --disk-size 20 -v /Users:/Users neovex-libkrun-sr-fresh`; `TMPDIR=/tmp CONTAINERS_MACHINE_PROVIDER=libkrun podman machine start neovex-libkrun-sr-fresh`; `TMPDIR=/tmp bash scripts/validate-podman-machine-readiness.sh --machine neovex-libkrun-sr-fresh --connection neovex-libkrun-sr-fresh --provider libkrun --tmp-root /tmp/podman --output-dir /tmp/neovex-libkrun-sr-fresh-readiness`; `tail -n 60 /tmp/podman/neovex-libkrun-sr-fresh.log`; `TMPDIR=/tmp CONTAINERS_MACHINE_PROVIDER=libkrun podman machine stop neovex-libkrun-sr-fresh`; `TMPDIR=/tmp CONTAINERS_MACHINE_PROVIDER=libkrun podman machine rm -f neovex-libkrun-sr-fresh`; `cargo fmt --all --check` | Keep D4a aligned with the proven fresh-machine recipe: short runtime dir by default, and a clean recreate/reset path when an existing machine shows stale-state boot corruption |
 | 2026-04-12 | D4a prep | `documented` | Promoted that recreate/reset guidance from narrative advice into a checked-in operator path and validated it against the real long-lived machine on this Mac. The repo now owns `scripts/recreate-podman-machine.sh`, `scripts/verify-podman-machine-recreate-helper.sh`, `make recreate-podman-machine`, and `make verify-podman-machine-recreate-helper`, so Channel 4 has a durable Podman-aligned repair entrypoint instead of ad hoc shell history. A live run at `/tmp/neovex-libkrun-users-only-recreate` first preserved the stale-state failure under `pre-diagnostics/summary.txt` (`podman info --debug` failed and the API/gvproxy sockets were missing), then removed and recreated `neovex-libkrun-users-only` under the same `/tmp/podman` short-root contract and returned `result ready info=ok ssh=ok` in `readiness/summary.txt`. | `bash -n scripts/recreate-podman-machine.sh`; `bash -n scripts/verify-podman-machine-recreate-helper.sh`; `bash scripts/verify-podman-machine-recreate-helper.sh`; `make verify-podman-machine-recreate-helper`; `bash scripts/recreate-podman-machine.sh --machine neovex-libkrun-users-only --connection neovex-libkrun-users-only --provider libkrun --tmp-root /tmp/podman --output-dir /tmp/neovex-libkrun-users-only-recreate --cpus 2 --memory 2048 --disk-size 20 --volume /Users:/Users`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/summary.txt`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/pre-diagnostics/summary.txt`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/readiness/summary.txt`; `cargo fmt --all --check` | Keep Channel 4 aligned with the proven short-root recreate path: prefer the checked-in helper when a macOS machine wedges, and treat the recreated `users-only` result as stronger local evidence than the earlier stale-state failure |
+| 2026-04-14 | D4b | `done` | Machine-os CI workflow (`.github/workflows/neovex-machine-os.yml`) migrated from self-hosted ARM64 runners to GitHub-hosted `ubuntu-24.04-arm`. Pipeline switched from rpm-ostree + custom-coreos-disk-images to `podman save --format oci-archive` + `bootc-image-builder`. Base image changed from Fedora CoreOS to `fedora-bootc:42`. Publishes raw-disk OCI artifact to GHCR on `machine-os/v*` tags with `actions/attest@v4` provenance. Consumer-side attestation verification added to `manager.rs`. | CI run green on `ubuntu-24.04-arm`; `actions/attest@v4` provenance attached; machine manager queries GitHub Attestations API after SHA256 verification | D4b acceptance criteria met: versioned GHCR reference, digest/provenance, dedicated ARM64 build lane |
+| 2026-04-14 | D1 | `in_progress` | neovex-crun CI workflow (`.github/workflows/neovex-crun.yml`) implemented and verified green. Three jobs: verify (patch syntax + help entrypoints on `ubuntu-latest`), build (matrix amd64 on `ubuntu-latest` + arm64 on `ubuntu-24.04-arm`, inside `fedora:43` containers with `libkrun-devel` from repos), publish (on `crun/v*` tags with `actions/attest@v4` provenance + GitHub Release). Fixed existing `verify-neovex-crun-patch.yml` CRUN_VERSION from 1.22 to 1.27. Linux aarch64 platform support partially unlocked via both machine-os and neovex-crun CI. | CI run `24417536553` green: verify success, build amd64 success, build arm64 success, publish skipped (no tag) | neovex binary CI workflow still needed to complete D1; then `crun/v*` tag push to validate publish job end-to-end |
