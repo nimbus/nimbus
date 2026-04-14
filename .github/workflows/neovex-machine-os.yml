@@ -190,6 +190,25 @@ jobs:
           command -v skopeo
           sudo -n true
 
+      - name: Restore container image cache
+        id: image-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/image-cache
+          key: container-images-arm64-${{ hashFiles('images/neovex-machine-os/Containerfile.COREOS', 'images/neovex-machine-os/build-common.sh', 'images/rpm-ostree/Containerfile') }}
+          restore-keys: |
+            container-images-arm64-
+
+      - name: Load cached container images
+        run: |
+          cache_dir="${RUNNER_TEMP}/image-cache"
+          for archive in "${cache_dir}"/*.tar; do
+            if [[ -f "${archive}" ]]; then
+              echo "Loading $(basename "${archive}")..."
+              sudo podman load -i "${archive}"
+            fi
+          done
+
       - name: Validate release-reference policy
         id: release-policy
         run: |
@@ -230,8 +249,14 @@ jobs:
             echo "publish_latest_alias=${publish_latest_alias}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Build neovex binary
-        run: cargo build --release -p neovex-bin
+      - name: Build neovex binary and pull base images
+        run: |
+          cargo build --release -p neovex-bin &
+          cargo_pid=$!
+          sudo podman pull quay.io/fedora/fedora-coreos:stable &
+          sudo podman pull "${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}" &
+          wait "${cargo_pid}"
+          wait
 
       - name: Build Fedora CoreOS guest image
         run: |
@@ -242,6 +267,15 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" \
             "${BUILD_OUTPUT_DIR}" \
             "${HELPER_CHECKOUT_DIR}"
+
+      - name: Save container images to cache
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          cache_dir="${RUNNER_TEMP}/image-cache"
+          mkdir -p "${cache_dir}"
+          sudo podman save -o "${cache_dir}/fcos-stable.tar" quay.io/fedora/fedora-coreos:stable
+          sudo podman save -o "${cache_dir}/rpm-ostree.tar" "${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}"
+          sudo chown -R "$(id -u):$(id -g)" "${cache_dir}"
 
       - name: Package raw-disk OCI layout
         run: |
