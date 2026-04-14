@@ -12,7 +12,6 @@ bash -n "${recipe_dir}/build-common.sh"
 
 grep -F 'FROM ${FCOS_BASE_IMAGE}' "${recipe_dir}/Containerfile.COREOS" >/dev/null
 grep -F 'COPY neovex /usr/local/bin/neovex' "${recipe_dir}/Containerfile.COREOS" >/dev/null
-grep -F 'ostree container commit' "${recipe_dir}/Containerfile.COREOS" >/dev/null
 
 grep -F 'crun' "${recipe_dir}/build-common.sh" >/dev/null
 grep -F 'conmon' "${recipe_dir}/build-common.sh" >/dev/null

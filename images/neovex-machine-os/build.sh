@@ -55,7 +55,7 @@ sha256_hex() {
 neovex_binary=""
 output_dir=""
 image_name="localhost/neovex-machine-os:dev"
-fcos_base_image="quay.io/fedora/fedora-coreos:stable"
+fcos_base_image="quay.io/fedora/fedora-bootc:42"
 context_dir=""
 
 while [[ $# -gt 0 ]]; do
@@ -143,7 +143,6 @@ podman run --rm --privileged \
   -v "${script_dir}/bootc-image-builder.toml:/config.toml:ro" \
   "${bib_image}" \
   --type raw \
-  --rootfs xfs \
   --local \
   --config /config.toml \
   "${image_name}"

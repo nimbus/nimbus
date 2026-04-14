@@ -185,9 +185,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/image-cache
-          key: fcos-image-arm64-${{ hashFiles('images/neovex-machine-os/Containerfile.COREOS', 'images/neovex-machine-os/build-common.sh') }}
+          key: base-image-arm64-${{ hashFiles('images/neovex-machine-os/Containerfile.COREOS', 'images/neovex-machine-os/build-common.sh') }}
           restore-keys: |
-            fcos-image-arm64-
+            base-image-arm64-
 
       - name: Load cached container images
         run: |
@@ -243,7 +243,7 @@ jobs:
         run: |
           cargo build --release -p neovex-bin &
           cargo_pid=$!
-          sudo podman pull quay.io/fedora/fedora-coreos:stable &
+          sudo podman pull quay.io/fedora/fedora-bootc:42 &
           sudo podman pull quay.io/centos-bootc/bootc-image-builder:latest &
           wait "${cargo_pid}"
           wait
@@ -261,7 +261,7 @@ jobs:
         run: |
           cache_dir="${RUNNER_TEMP}/image-cache"
           mkdir -p "${cache_dir}"
-          sudo podman save -o "${cache_dir}/fcos-stable.tar" quay.io/fedora/fedora-coreos:stable
+          sudo podman save -o "${cache_dir}/bootc-base.tar" quay.io/fedora/fedora-bootc:42
           sudo chown -R "$(id -u):$(id -g)" "${cache_dir}"
 
       - name: Package raw-disk OCI layout
