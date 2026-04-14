@@ -63,7 +63,7 @@ jobs:
     name: Patch applies to pinned upstream crun
     runs-on: ubuntu-latest
     env:
-      CRUN_VERSION: "1.22"
+      CRUN_VERSION: "1.27"
 
     steps:
       - name: Check out repository
