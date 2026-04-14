@@ -18,6 +18,8 @@ target platforms and package channels.
     macOS developer-machine architecture and implementation
   - `docs/plans/archive/vmm-infrastructure-plan.md` — historical VMM
     foundation execution record with Linux/macOS validation evidence
+  - `docs/plans/install-script-plan.md` — execution plan for Channel 1
+    install script (`curl | sh`)
 
 ## Control Plan Rules
 

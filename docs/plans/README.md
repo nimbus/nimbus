@@ -19,6 +19,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     service activation, Compose-backed `neovex service ...` surface, and the
     Linux-versus-macOS platform model
 
+- `docs/plans/install-script-plan.md`
+  - canonical execution plan for the neovex install script (Channel 1):
+    `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
+    macOS (Apple Silicon). Covers platform detection, dependency
+    installation, binary download, checksum verification, post-install
+    verification helper, and the libkrun gap on Debian/Ubuntu.
+
 ## Deferred design and experiment plans
 
 - `docs/plans/distribution-plan.md`
