@@ -98,6 +98,7 @@ EOF
 
 chmod +x "${bin_dir}/podman" "${bin_dir}/ps" "${bin_dir}/system_profiler"
 
+NEOVEX_DIAGNOSTICS_TEST_UNAME=Darwin \
 bash "${repo_root}/scripts/collect-podman-machine-diagnostics.sh" \
   --machine testvm \
   --provider libkrun \
