@@ -153,7 +153,7 @@ if [[ -n "${custom_coreos_disk_images}" ]]; then
   fi
   (
     cd "${output_dir}"
-    sh "${custom_coreos_disk_images}" \
+    bash "${custom_coreos_disk_images}" \
       --platforms applehv \
       --ociarchive "${oci_archive_path}" \
       --osname fedora-coreos \
