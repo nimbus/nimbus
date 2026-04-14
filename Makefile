@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime verify-crun-patch check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-os-recipe verify-neovex-machine-os-build-helper verify-neovex-machine-os-oci-layout-helper verify-neovex-machine-os-publish-helper verify-custom-coreos-disk-images-resolver-helper build-neovex-machine-os package-neovex-machine-os-oci publish-neovex-machine-os verify-linux-vmm-validation-bundle-helper build-neovex-crun prepare-krun-bundle verify-krun-bundle-helper verify-neovex-crun-fedora-userspace prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime verify-crun-patch check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-linux-vmm-validation-bundle-helper build-neovex-crun prepare-krun-bundle verify-krun-bundle-helper verify-neovex-crun-fedora-userspace prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -224,37 +224,7 @@ verify-neovex-machine-recreate-helper:
 verify-neovex-machine-guest-proof-helper:
 	bash scripts/verify-neovex-machine-guest-proof-helper.sh
 
-# Verify the checked-in Neovex machine-os recipe and bootstrap assets
-verify-neovex-machine-os-recipe:
-	bash scripts/verify-neovex-machine-os-recipe.sh
-
-# Build the Neovex machine-os artifact on a Linux host or CI runner
-build-neovex-machine-os:
-	bash scripts/build-neovex-machine-os.sh $(if $(NEOVEX_BINARY),--neovex-binary "$(NEOVEX_BINARY)",) $(if $(CARGO_PROFILE),--cargo-profile "$(CARGO_PROFILE)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(IMAGE_NAME),--image-name "$(IMAGE_NAME)",) $(if $(FCOS_BASE_IMAGE),--fcos-base-image "$(FCOS_BASE_IMAGE)",) $(if $(CONTEXT_DIR),--context-dir "$(CONTEXT_DIR)",) $(if $(CUSTOM_COREOS_DISK_IMAGES),--custom-coreos-disk-images "$(CUSTOM_COREOS_DISK_IMAGES)",) $(if $(FETCH_CUSTOM_COREOS_DISK_IMAGES),--fetch-custom-coreos-disk-images "$(FETCH_CUSTOM_COREOS_DISK_IMAGES)",)
-
-# Package the Neovex machine raw disk into the OCI layout shape the macOS manager consumes
-package-neovex-machine-os-oci:
-	bash scripts/package-neovex-machine-os-oci.sh $(if $(BUILD_OUTPUT_DIR),--build-output-dir "$(BUILD_OUTPUT_DIR)",) $(if $(SUMMARY_FILE),--summary-file "$(SUMMARY_FILE)",) $(if $(RAW_DISK),--raw-disk "$(RAW_DISK)",) $(if $(LAYOUT_DIR),--layout-dir "$(LAYOUT_DIR)",) $(if $(IMAGE_REFERENCE),--image-reference "$(IMAGE_REFERENCE)",) $(if $(REF_NAME),--ref-name "$(REF_NAME)",) $(if $(ARCH),--arch "$(ARCH)",) $(if $(OS),--os "$(OS)",)
-
-# Publish the packaged Neovex machine OCI layout to a registry and optionally stage release assets
-publish-neovex-machine-os:
-	bash scripts/publish-neovex-machine-os.sh $(if $(LAYOUT_DIR),--layout-dir "$(LAYOUT_DIR)",) $(if $(LAYOUT_SUMMARY),--layout-summary "$(LAYOUT_SUMMARY)",) $(if $(BUILD_OUTPUT_DIR),--build-output-dir "$(BUILD_OUTPUT_DIR)",) $(if $(IMAGE_REFERENCE),--image-reference "$(IMAGE_REFERENCE)",) $(if $(ADDITIONAL_REFERENCE),--additional-reference "$(ADDITIONAL_REFERENCE)",) $(if $(RELEASE_DIR),--release-dir "$(RELEASE_DIR)",) $(if $(LAYOUT_REF_NAME),--layout-ref-name "$(LAYOUT_REF_NAME)",)
-
-# Verify the Neovex machine-os build wrapper against deterministic fake tools
-verify-neovex-machine-os-build-helper:
-	bash scripts/verify-neovex-machine-os-build-helper.sh
-
-# Verify the Neovex machine raw-disk OCI layout helper against deterministic fake artifacts
-verify-neovex-machine-os-oci-layout-helper:
-	bash scripts/verify-neovex-machine-os-oci-layout-helper.sh
-
-# Verify the Neovex machine OCI publish wrapper against deterministic fake artifacts
-verify-neovex-machine-os-publish-helper:
-	bash scripts/verify-neovex-machine-os-publish-helper.sh
-
-# Verify the pinned custom-coreos-disk-images resolver against deterministic fake git output
-verify-custom-coreos-disk-images-resolver-helper:
-	bash scripts/verify-custom-coreos-disk-images-resolver-helper.sh
+# machine-os build/package/publish targets moved to agentstation/neovex-machine-os
 
 # Verify the Linux-host LH1-LH6 command-bundle generator against deterministic fake inputs
 verify-linux-vmm-validation-bundle-helper:
