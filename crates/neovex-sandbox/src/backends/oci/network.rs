@@ -119,9 +119,9 @@ pub(crate) fn create_persistent_network_namespace(path: &Path) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;
-        return Err(SandboxError::BackendUnavailable {
+        Err(SandboxError::BackendUnavailable {
             message: "persistent OCI network namespaces require Linux".to_owned(),
-        });
+        })
     }
 
     #[cfg(target_os = "linux")]
@@ -184,7 +184,7 @@ pub(crate) fn remove_persistent_network_namespace(path: &Path) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -296,6 +296,7 @@ pub(crate) fn unexpose_machine_ports(
     request_machine_port_forwarding(config, "unexpose", port_bindings)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_netavark(
     action: &str,
     layout: &OciNetworkLayout,

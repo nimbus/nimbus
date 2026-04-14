@@ -79,7 +79,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
     let result = match invoke_named_convex_function_with_trace_async_cancellable(
         context.service,
         context.registry,
-        &context.runtime_service_registry,
+        context.runtime_service_registry,
         context.tenant_id,
         InvocationRequest {
             kind: InvocationKind::Query,
@@ -133,7 +133,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
     let result = match invoke_named_convex_function_with_trace_async_cancellable(
         context.service,
         context.registry,
-        &context.runtime_service_registry,
+        context.runtime_service_registry,
         context.tenant_id,
         InvocationRequest {
             kind: InvocationKind::PaginatedQuery,

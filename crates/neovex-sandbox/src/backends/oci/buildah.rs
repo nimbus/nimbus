@@ -106,7 +106,11 @@ impl BuildahCli {
         }
     }
 
-    pub fn from_image_command(&self, container_name: &str, image_reference: &str) -> CommandSpec {
+    pub fn create_from_image_command(
+        &self,
+        container_name: &str,
+        image_reference: &str,
+    ) -> CommandSpec {
         CommandSpec::new(self.path.clone())
             .arg("from")
             .arg("--name")
@@ -157,7 +161,7 @@ impl BuildahCli {
 
     pub fn pull(&self, container_name: &str, image_reference: &str) -> Result<BuildahContainer> {
         self.run_checked(
-            &self.from_image_command(container_name, image_reference),
+            &self.create_from_image_command(container_name, image_reference),
             false,
             "create a working container from an image",
         )?;
@@ -324,7 +328,7 @@ impl BuildahCli {
         let wrapped = buildah.wrap_unshare_with_mount(container_name, &cat_command);
         let output =
             wrapped
-                .to_command()
+                .as_command()
                 .output()
                 .map_err(|error| SandboxError::OperationFailed {
                     message: format!(
@@ -404,7 +408,7 @@ impl BuildahCli {
             command.clone()
         };
         command
-            .to_command()
+            .as_command()
             .output()
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!(
@@ -623,10 +627,11 @@ fn resolve_user_from_content(
 fn find_passwd_entry_by_name(passwd_content: &str, name: &str) -> Option<(u32, u32)> {
     for line in passwd_content.lines() {
         let fields: Vec<&str> = line.split(':').collect();
-        if fields.len() >= 4 && fields[0] == name {
-            if let (Ok(uid), Ok(gid)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>()) {
-                return Some((uid, gid));
-            }
+        if fields.len() >= 4
+            && fields[0] == name
+            && let (Ok(uid), Ok(gid)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>())
+        {
+            return Some((uid, gid));
         }
     }
     None
@@ -635,12 +640,11 @@ fn find_passwd_entry_by_name(passwd_content: &str, name: &str) -> Option<(u32, u
 fn find_passwd_gid_by_uid(passwd_content: &str, uid: u32) -> Option<u32> {
     for line in passwd_content.lines() {
         let fields: Vec<&str> = line.split(':').collect();
-        if fields.len() >= 4 {
-            if let Ok(entry_uid) = fields[2].parse::<u32>() {
-                if entry_uid == uid {
-                    return fields[3].parse::<u32>().ok();
-                }
-            }
+        if fields.len() >= 4
+            && let Ok(entry_uid) = fields[2].parse::<u32>()
+            && entry_uid == uid
+        {
+            return fields[3].parse::<u32>().ok();
         }
     }
     None

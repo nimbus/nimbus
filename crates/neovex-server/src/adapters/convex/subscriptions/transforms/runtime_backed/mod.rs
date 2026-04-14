@@ -13,6 +13,7 @@ mod builtins;
 mod reeval;
 mod selection;
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_transform(
     service: &Arc<neovex_engine::Service>,
     registry: &Arc<ConvexRegistry>,

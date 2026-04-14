@@ -27,6 +27,7 @@ pub(super) async fn unsubscribe_active_subscriptions(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_subscription_forwarder(
     subscription_rx: mpsc::Receiver<SubscriptionUpdate>,
     outbound_tx: mpsc::Sender<ServerMessage>,

@@ -81,11 +81,12 @@ impl KrunSandboxBackendConfig {
     }
 
     pub fn plan_only(bundle_root: impl Into<PathBuf>, state_root: impl Into<PathBuf>) -> Self {
-        let mut config = Self::default();
-        config.bundle_root = bundle_root.into();
-        config.state_root = state_root.into();
-        config.launch_mode = KrunLaunchMode::PlanOnly;
-        config
+        Self {
+            bundle_root: bundle_root.into(),
+            state_root: state_root.into(),
+            launch_mode: KrunLaunchMode::PlanOnly,
+            ..Self::default()
+        }
     }
 }
 
@@ -308,7 +309,7 @@ impl KrunSandboxBackend {
             },
         )?;
 
-        let conmon_layout = OciConmonLayout::new(&self.config.state_root, &sandbox_id);
+        let conmon_layout = OciConmonLayout::new(&self.config.state_root, sandbox_id);
         conmon_layout
             .ensure_directories()
             .map_err(|error| SandboxError::OperationFailed {
@@ -327,7 +328,7 @@ impl KrunSandboxBackend {
                 log_level: self.config.log_level.clone(),
             },
             &conmon_layout,
-            &sandbox_id,
+            sandbox_id,
             &spec.name,
             &bundle_layout.bundle_dir,
             buildah_container
@@ -788,8 +789,6 @@ fn slugify(name: &str) -> String {
     for character in name.chars() {
         if character.is_ascii_alphanumeric() {
             slug.push(character.to_ascii_lowercase());
-        } else if (character == '-' || character == '_') && !slug.ends_with('-') {
-            slug.push('-');
         } else if !slug.ends_with('-') {
             slug.push('-');
         }
@@ -978,11 +977,11 @@ fn apply_guest_user_switch(
         return Ok(());
     };
 
-    if !spec
+    if spec
         .process
         .args
         .first()
-        .is_some_and(|arg| arg == GUEST_USER_HELPER_GUEST_PATH)
+        .is_none_or(|arg| arg != GUEST_USER_HELPER_GUEST_PATH)
     {
         spec.process
             .args
@@ -1239,7 +1238,7 @@ fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {
 
 fn spawn_background(command: &CommandSpec) -> Result<()> {
     command
-        .to_command()
+        .as_command()
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1255,7 +1254,7 @@ fn spawn_background(command: &CommandSpec) -> Result<()> {
 
 fn run_status_checked(command: &CommandSpec) -> Result<()> {
     let output = command
-        .to_command()
+        .as_command()
         .output()
         .map_err(|error| SandboxError::OperationFailed {
             message: format!(
@@ -1278,7 +1277,7 @@ fn run_status_checked(command: &CommandSpec) -> Result<()> {
 
 fn runtime_state(command: &CommandSpec) -> Result<Option<String>> {
     let output = command
-        .to_command()
+        .as_command()
         .output()
         .map_err(|error| SandboxError::OperationFailed {
             message: format!(
@@ -1300,10 +1299,10 @@ fn runtime_state(command: &CommandSpec) -> Result<Option<String>> {
 fn wait_for_runtime_state(command: &CommandSpec, timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(status) = runtime_state(command)? {
-            if status == "created" || status == "running" {
-                return Ok(status);
-            }
+        if let Some(status) = runtime_state(command)?
+            && (status == "created" || status == "running")
+        {
+            return Ok(status);
         }
         thread::sleep(Duration::from_millis(200));
     }
