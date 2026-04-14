@@ -3,4 +3,4 @@ FROM quay.io/fedora/fedora:${FEDORA_VERSION}
 
 RUN dnf install -y rpm-ostree osbuild && dnf clean all -y && rm -rf /var/cache
 
-RUN which osbuild && osbuild --version && rpm-ostree --version
+RUN command -v osbuild && osbuild --version && rpm-ostree --version

@@ -153,7 +153,7 @@ else
     -v /var/lib/containers/storage:/var/lib/containers/storage \
     -v "${output_dir}:${output_dir}" \
     "${rpm_ostree_image}" \
-    bash -c "echo 'osbuild path:' && which osbuild && osbuild --version && \
+    bash -c "command -v osbuild && osbuild --version && \
       rpm-ostree compose build-chunked-oci \
         --from '${image_name}' \
         --output 'oci-archive:${oci_archive_path}'"
