@@ -15,9 +15,6 @@ Options:
   --image-name <reference>            OCI tag passed through to the image recipe
   --fcos-base-image <reference>       Fedora CoreOS base image passed through to the image recipe
   --context-dir <path>                Reused staging context passed through to the image recipe
-  --custom-coreos-disk-images <path>  Optional raw-disk helper passed through to the image recipe
-  --fetch-custom-coreos-disk-images <dir>
-                                      Clone/update the pinned upstream helper into this checkout dir
   -h, --help                          Show this help
 
 Examples:
@@ -27,8 +24,7 @@ Examples:
 
   sudo bash scripts/build-neovex-machine-os.sh \
     --cargo-profile release \
-    --output-dir /tmp/neovex-machine-os \
-    --fetch-custom-coreos-disk-images /tmp/neovex-machine-os-helper
+    --output-dir /tmp/neovex-machine-os
 EOF
 }
 
@@ -46,8 +42,6 @@ output_dir=""
 image_name=""
 fcos_base_image=""
 context_dir=""
-custom_coreos_disk_images=""
-fetch_custom_coreos_disk_images_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -75,14 +69,6 @@ while [[ $# -gt 0 ]]; do
       context_dir="${2:-}"
       shift 2
       ;;
-    --custom-coreos-disk-images)
-      custom_coreos_disk_images="${2:-}"
-      shift 2
-      ;;
-    --fetch-custom-coreos-disk-images)
-      fetch_custom_coreos_disk_images_dir="${2:-}"
-      shift 2
-      ;;
     -h|--help)
       usage
       exit 0
@@ -105,19 +91,10 @@ require_command bash
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 recipe_script="${repo_root}/images/neovex-machine-os/build.sh"
-resolve_helper_script="${repo_root}/scripts/resolve-custom-coreos-disk-images.sh"
 
 if [[ ! -f "${recipe_script}" ]]; then
   echo "image recipe entrypoint not found: ${recipe_script}" >&2
   exit 66
-fi
-if [[ ! -f "${resolve_helper_script}" ]]; then
-  echo "custom-coreos-disk-images resolver not found: ${resolve_helper_script}" >&2
-  exit 66
-fi
-if [[ -n "${custom_coreos_disk_images}" && -n "${fetch_custom_coreos_disk_images_dir}" ]]; then
-  echo "pass either --custom-coreos-disk-images or --fetch-custom-coreos-disk-images, not both" >&2
-  exit 64
 fi
 
 if [[ -z "${neovex_binary}" ]]; then
@@ -152,14 +129,6 @@ fi
 echo "build.neovex_binary=${neovex_binary}"
 echo "build.recipe=${recipe_script}"
 
-if [[ -n "${fetch_custom_coreos_disk_images_dir}" ]]; then
-  custom_coreos_disk_images="$(
-    bash "${resolve_helper_script}" \
-      --checkout-dir "${fetch_custom_coreos_disk_images_dir}"
-  )"
-  echo "build.custom_coreos_disk_images=${custom_coreos_disk_images}"
-fi
-
 args=(--neovex-binary "${neovex_binary}")
 if [[ -n "${output_dir}" ]]; then
   args+=(--output-dir "${output_dir}")
@@ -172,9 +141,6 @@ if [[ -n "${fcos_base_image}" ]]; then
 fi
 if [[ -n "${context_dir}" ]]; then
   args+=(--context-dir "${context_dir}")
-fi
-if [[ -n "${custom_coreos_disk_images}" ]]; then
-  args+=(--custom-coreos-disk-images "${custom_coreos_disk_images}")
 fi
 
 bash "${recipe_script}" "${args[@]}"

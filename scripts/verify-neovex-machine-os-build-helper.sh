@@ -41,13 +41,11 @@ TMPDIR="${temp_dir}" \
 NEOVEX_MACHINE_OS_BUILD_WRAPPER_TEST_UNAME=Linux \
 bash "${repo_root}/scripts/build-neovex-machine-os.sh" \
   --cargo-profile release \
-  --output-dir /tmp/neovex-machine-os-out \
-  --custom-coreos-disk-images /tmp/custom-coreos-disk-images.sh
+  --output-dir /tmp/neovex-machine-os-out
 
 grep -F -- 'build --release -p neovex-bin' "${temp_dir}/cargo.log" >/dev/null
 grep -F -- '--neovex-binary' "${temp_dir}/recipe.log" >/dev/null
 grep -F -- '--output-dir /tmp/neovex-machine-os-out' "${temp_dir}/recipe.log" >/dev/null
-grep -F -- '--custom-coreos-disk-images /tmp/custom-coreos-disk-images.sh' "${temp_dir}/recipe.log" >/dev/null
 grep -F -- "${repo_root}/target/release/neovex" "${temp_dir}/recipe.log" >/dev/null
 
 printf 'verified neovex machine-os build wrapper\n'
