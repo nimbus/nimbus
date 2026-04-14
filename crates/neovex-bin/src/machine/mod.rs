@@ -28,7 +28,14 @@ use self::manager::{
 use self::protocol::MachineApiCapabilityResponse;
 
 const DEFAULT_MACHINE_NAME: &str = "default";
-const DEFAULT_MACHINE_IMAGE: &str = "docker://ghcr.io/agentstation/neovex-machine-os:stable";
+/// The default machine image reference, derived from the crate version at build time.
+/// neovex v0.0.1 → `docker://ghcr.io/agentstation/neovex-machine-os:v0.0.1`
+fn default_machine_image() -> String {
+    format!(
+        "docker://ghcr.io/agentstation/neovex-machine-os:v{}",
+        env!("CARGO_PKG_VERSION")
+    )
+}
 const DEFAULT_MACHINE_SSH_USER: &str = "core";
 const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/neovex";
 const MACHINE_RUNTIME_ROOT_ENV: &str = "NEOVEX_MACHINE_RUNTIME_ROOT";
@@ -77,7 +84,7 @@ struct MachineInitCommand {
 
     /// Guest image source. Accepts a published OCI reference, an absolute local
     /// raw-disk path, or an http(s) URL override for diagnostics.
-    #[arg(long, default_value = DEFAULT_MACHINE_IMAGE)]
+    #[arg(long, default_value_t = default_machine_image())]
     image: String,
 
     /// Optional SSH identity path used for direct guest debugging on bootable
@@ -981,7 +988,7 @@ mod tests {
 
         match machine.command {
             MachineSubcommand::Init(init) => {
-                assert_eq!(init.image, DEFAULT_MACHINE_IMAGE);
+                assert_eq!(init.image, default_machine_image());
                 assert_eq!(
                     init.image,
                     "docker://ghcr.io/agentstation/neovex-machine-os:stable"
@@ -1137,7 +1144,7 @@ mod tests {
                     cpus: DEFAULT_MACHINE_CPUS,
                     memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
                     disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                    image: DEFAULT_MACHINE_IMAGE.to_owned(),
+                    image: default_machine_image().to_owned(),
                     ssh_identity: None,
                     ignition_file: None,
                     efi_store: None,
@@ -1164,7 +1171,7 @@ mod tests {
         assert_eq!(
             config.guest.image_source,
             MachineImageSource::OciReference {
-                reference: DEFAULT_MACHINE_IMAGE.to_owned(),
+                reference: default_machine_image().to_owned(),
             }
         );
         assert_eq!(config.guest.ssh_user, DEFAULT_MACHINE_SSH_USER);
@@ -1334,7 +1341,7 @@ mod tests {
             name: DEFAULT_MACHINE_NAME.to_owned(),
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
-                image_source: MachineImageSource::parse(DEFAULT_MACHINE_IMAGE)
+                image_source: MachineImageSource::parse(default_machine_image())
                     .expect("default image should parse"),
                 ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
                 ssh_identity_path: Some(PathBuf::from("/tmp/neovex-test-ed25519")),
@@ -1387,7 +1394,7 @@ mod tests {
                     cpus: DEFAULT_MACHINE_CPUS,
                     memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
                     disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                    image: DEFAULT_MACHINE_IMAGE.to_owned(),
+                    image: default_machine_image().to_owned(),
                     ssh_identity: None,
                     ignition_file: None,
                     efi_store: None,

@@ -99,10 +99,24 @@ jobs:
           name: neovex_${{ matrix.os }}_${{ matrix.arch }}
           path: neovex_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
 
+  build-machine-os:
+    name: Build machine-os
+    needs: build
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@main
+    with:
+      neovex_version: ${{ github.ref_name }}
+      publish: true
+      image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, build-machine-os]
     steps:
       - uses: actions/checkout@v6
         with:
