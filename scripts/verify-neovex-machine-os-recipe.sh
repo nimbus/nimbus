@@ -41,22 +41,15 @@ cat >"${fake_bin}/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${TMPDIR}/podman.log"
-exit 0
-EOF
-
-cat >"${fake_bin}/rpm-ostree" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >>"${TMPDIR}/rpm-ostree.log"
-for arg in "$@"; do
-  case "$arg" in
-    oci-archive:*)
-      archive_path="${arg#oci-archive:}"
-      mkdir -p "$(dirname "${archive_path}")"
-      : >"${archive_path}"
-      ;;
-  esac
-done
+# Handle `podman save --format oci-archive -o <path> <image>`
+if [[ "${1:-}" == "save" ]]; then
+  for i in "$@"; do
+    case "${prev:-}" in
+      -o) mkdir -p "$(dirname "$i")"; : >"$i" ;;
+    esac
+    prev="$i"
+  done
+fi
 exit 0
 EOF
 
@@ -70,7 +63,6 @@ EOF
 
 chmod 0755 \
   "${fake_bin}/podman" \
-  "${fake_bin}/rpm-ostree" \
   "${fake_bin}/custom-coreos-disk-images.sh"
 
 neovex_binary="${temp_dir}/neovex"
@@ -94,7 +86,7 @@ test -f "${output_dir}/neovex-machine-os.ociarchive"
 test -f "${output_dir}/neovex-machine-os.raw.gz"
 test -f "${output_dir}/summary.txt"
 grep -F -- '--build-arg FCOS_BASE_IMAGE=' "${temp_dir}/podman.log" >/dev/null
-grep -F -- '--output oci-archive:' "${temp_dir}/rpm-ostree.log" >/dev/null
+grep -F -- 'save --format oci-archive' "${temp_dir}/podman.log" >/dev/null
 grep -F -- '--platforms applehv' "${temp_dir}/custom-coreos-disk-images.log" >/dev/null
 grep -E '^neovex_binary_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
 grep -E '^containerfile_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null

@@ -249,12 +249,11 @@ jobs:
             echo "publish_latest_alias=${publish_latest_alias}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Build neovex binary and pull base images
+      - name: Build neovex binary and pull base image
         run: |
           cargo build --release -p neovex-bin &
           cargo_pid=$!
           sudo podman pull quay.io/fedora/fedora-coreos:stable &
-          sudo podman pull "${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}" &
           wait "${cargo_pid}"
           wait
 
