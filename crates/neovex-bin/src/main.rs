@@ -11,8 +11,10 @@ use neovex::{
 };
 use serde::Deserialize;
 
+mod machine;
 mod service;
 
+use crate::machine::{MachineCommand, run_machine_command};
 use crate::service::{
     ServiceCommand, load_krun_backed_sandbox_service_manager, run_service_command,
 };
@@ -187,6 +189,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Machine(MachineCommand),
     Service(ServiceCommand),
 }
 
@@ -329,6 +332,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service_config = service_persistence_config_from_cli(&cli)?;
     if let Some(command) = cli.command {
         match command {
+            Command::Machine(command) => {
+                run_machine_command(command).await?;
+                return Ok(());
+            }
             Command::Service(command) => {
                 run_service_command(command, &service_config).await?;
                 return Ok(());

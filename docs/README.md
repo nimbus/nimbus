@@ -27,6 +27,9 @@ and where to go next.
 - [Runtime execution architecture rationale](research/runtime-execution-architecture-rationale.md):
   why Neovex embeds V8 via deno_core fork, why the workerd model is not
   pursued, and what future paths exist
+- [macOS host-vs-guest control-plane rationale](research/macos-host-vs-guest-control-plane-rationale.md):
+  why macOS should prefer a guest-resident authoritative Neovex server over a
+  host-resident hybrid control plane for v1
 - [Versioned serving snapshot design note](research/versioned-serving-snapshot-design-note.md):
   implementation-grade north-star for the next server-side read-surface
   promotion after the `SA8` materialized-serving slice

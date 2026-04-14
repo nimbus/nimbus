@@ -298,7 +298,7 @@ systems. Even when Podman enables nested virtualization for some `libkrun`
 machines, that is a machine capability, not the normal container-execution
 model we should target for neovex on macOS.
 
-Source-backed guest-runtime note:
+Source-backed guest-container note:
 - `containers/podman-machine-os` `build.sh` builds the guest from
   `podman-image/Containerfile.COREOS`.
 - `podman-image/build_common.sh` installs `crun`, `crun-wasm`, `podman`,
@@ -311,7 +311,7 @@ Source-backed guest-runtime note:
 #### Runtime directory policy
 
 On macOS, the neovex machine manager should own a short runtime directory such
-as `/tmp/neovex-machine` for sockets, pid files, and transient logs.
+as `/tmp/neovex` for sockets, pid files, and transient logs.
 
 Why:
 - Darwin unix sockets have a 104-byte `sockaddr_un.sun_path` budget including
@@ -390,7 +390,9 @@ Provider-selection note:
 **Custom layer:** rpm-ostree overlay adding neovex + all Linux deps
 (neovex, neovex-crun, conmon, buildah, libkrun, libkrunfw, catatonit,
 passt, uidmap, fuse-overlayfs, containers-common).
-**Distribution:** OCI artifact at `ghcr.io/agentstation/neovex-machine-os`.
+**Distribution:** raw-disk OCI artifact at
+`ghcr.io/agentstation/neovex-machine-os`, with `disktype=raw` manifest
+selection for the bootable guest disk.
 Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
 
 The Podman machine-os source is also a useful negative reference here: its
@@ -640,13 +642,21 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 
 **Scope:**
 - Build Fedora CoreOS image with neovex + all Linux VMM deps
-- Publish as OCI artifact at `ghcr.io/agentstation/neovex-machine-os`
+- Publish as raw-disk OCI artifact at `ghcr.io/agentstation/neovex-machine-os`
+- Publish immutable version tags first, then attach moving aliases such as
+  `stable` and optionally `latest`
 - `neovex machine init` pulls and caches by digest
 - Ignition provisioning: SSH keys, neovex systemd unit, virtiofs mounts
+- Dedicated Linux ARM64 GitHub Actions runner lane; macOS consumes the
+  published artifact, it does not build the guest image locally
 
 **Acceptance criteria:**
 - `neovex machine init` downloads the custom image
+- the published machine image has a versioned GHCR reference plus recorded
+  digest/provenance
 - `neovex serve` runs inside the VM with all deps available
+- a dedicated machine-image release tag such as `machine-os/v0.1.0` can drive
+  the Linux ARM64 build/publish lane
 
 #### Phase D4c: API forwarding + port forwarding
 
@@ -689,7 +699,7 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 | D2: Apt repo (Debian/Ubuntu) | `todo` | D1 | cargo-deb or nfpm |
 | D3: COPR (Fedora) | `todo` | D1 | COPR build service |
 | D4a: Homebrew + krunkit | `todo` | D1 | Apple Silicon, macOS 14+ |
-| D4b: Guest VM image | `todo` | D4a | OCI artifact, Fedora CoreOS + neovex deps |
+| D4b: Guest VM image | `todo` | D4a | Raw-disk OCI artifact, Fedora CoreOS + neovex deps |
 | D4c: API + port forwarding | `todo` | D4b | host-local control channel, gvproxy, layered probes |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 

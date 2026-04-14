@@ -1,0 +1,16 @@
+[Unit]
+Description=Neovex API Service
+Requires=neovex.socket
+After=neovex.socket network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+KillMode=process
+WorkingDirectory={guest_neovex_data_dir}
+ExecStart={guest_neovex_bin} machine api --socket-activation --control-data-dir {guest_neovex_control_dir}
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

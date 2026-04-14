@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use neovex::{
-    Error, SandboxBackend, SandboxHandle, SandboxServiceCatalog, SandboxServiceLaunch,
-    SandboxServiceManager, SandboxStatus, ServicePersistenceConfig, TenantId,
+    Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxServiceCatalog,
+    SandboxServiceLaunch, SandboxServiceManager, SandboxStatus, ServicePersistenceConfig, TenantId,
 };
 use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 use serde::Serialize;
@@ -188,6 +188,11 @@ pub(crate) fn load_krun_backed_sandbox_service_manager(
     control_data_dir: &std::path::Path,
 ) -> Result<SandboxServiceManager, Error> {
     let context = load_compose_project_context(file, control_data_dir)?;
+    require_krun_backend_for_service_operation(
+        &context,
+        None,
+        "load a compose-backed sandbox manager",
+    )?;
     let backend = Arc::new(KrunSandboxBackend::new(
         context.control_plane.krun_backend_config(),
     ));
@@ -273,6 +278,7 @@ fn render_service_list(
     control_data_dir: &Path,
 ) -> Result<String, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
+    require_krun_backend_for_service_operation(&context, None, "service list")?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let summaries = if command.all_tenants {
@@ -310,6 +316,11 @@ fn render_service_inspect(
     control_data_dir: &Path,
 ) -> Result<String, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
+    require_krun_backend_for_service_operation(
+        &context,
+        Some(&command.service),
+        "service inspect",
+    )?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let tenant = command
@@ -348,6 +359,7 @@ async fn service_up_outcomes(
     control_data_dir: &Path,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
+    require_krun_backend_for_service_operation(&context, command.service.as_deref(), "service up")?;
     let tenant = command
         .tenant
         .clone()
@@ -400,6 +412,11 @@ async fn service_down_outcomes(
     control_data_dir: &Path,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
+    require_krun_backend_for_service_operation(
+        &context,
+        command.service.as_deref(),
+        "service down",
+    )?;
     let tenant = command
         .tenant
         .clone()
@@ -440,6 +457,81 @@ fn requested_service_names(
         }
         None => Ok(context.plan.services.keys().cloned().collect()),
     }
+}
+
+fn require_krun_backend_for_service_operation(
+    context: &ComposeProjectContext,
+    requested_service: Option<&str>,
+    operation: &str,
+) -> Result<(), Error> {
+    match requested_service {
+        Some(service_name) => {
+            let service = context.plan.services.get(service_name).ok_or_else(|| {
+                Error::InvalidInput(format!(
+                    "service {} is not declared in compose project {}",
+                    service_name, context.control_plane.project_name
+                ))
+            })?;
+            if service.backend == SandboxBackendKind::Krun {
+                return Ok(());
+            }
+
+            Err(Error::InvalidInput(format!(
+                "service {} in compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
+                service_name,
+                context.control_plane.project_name,
+                sandbox_backend_name(service.backend),
+                operation,
+            )))
+        }
+        None => {
+            let mut services = context.plan.services.iter();
+            let Some((_, first_service)) = services.next() else {
+                return Err(Error::InvalidInput(format!(
+                    "compose project {} does not declare any services",
+                    context.control_plane.project_name
+                )));
+            };
+            let first_backend = first_service.backend;
+            if services.any(|(_, service)| service.backend != first_backend) {
+                return Err(Error::InvalidInput(format!(
+                    "compose project {} mixes sandbox backends across services ({}); neovex {} currently requires one backend family per project-wide operation",
+                    context.control_plane.project_name,
+                    project_backend_assignments(context),
+                    operation,
+                )));
+            }
+            if first_backend == SandboxBackendKind::Krun {
+                return Ok(());
+            }
+
+            Err(Error::InvalidInput(format!(
+                "compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
+                context.control_plane.project_name,
+                sandbox_backend_name(first_backend),
+                operation,
+            )))
+        }
+    }
+}
+
+fn sandbox_backend_name(backend: SandboxBackendKind) -> &'static str {
+    match backend {
+        SandboxBackendKind::Container => "container",
+        SandboxBackendKind::Krun => "krun",
+    }
+}
+
+fn project_backend_assignments(context: &ComposeProjectContext) -> String {
+    context
+        .plan
+        .services
+        .iter()
+        .map(|(service_name, service)| {
+            format!("{service_name}={}", sandbox_backend_name(service.backend))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn resolve_service_down_targets(
@@ -626,6 +718,7 @@ fn resolve_service_ctr_log_path(
     control_data_dir: &Path,
 ) -> Result<PathBuf, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
+    require_krun_backend_for_service_operation(&context, Some(&command.service), "service logs")?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let tenant = command
@@ -649,6 +742,7 @@ fn resolve_service_process_snapshot(
     control_data_dir: &Path,
 ) -> Result<ServiceProcessSnapshot, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
+    require_krun_backend_for_service_operation(&context, Some(&command.service), "service ps")?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let tenant = command
@@ -1421,6 +1515,94 @@ mod tests {
         assert_eq!(stopped_ids.as_slice(), &[active_id.as_str().to_owned()]);
     }
 
+    #[test]
+    fn load_krun_backed_service_manager_rejects_container_only_projects() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let compose_path = write_compose_fixture_with_body(
+            temp_dir.path(),
+            r#"
+name: Demo App
+services:
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+        let control_data_dir = temp_dir.path().join("control");
+
+        let error = match load_krun_backed_sandbox_service_manager(&compose_path, &control_data_dir)
+        {
+            Ok(_) => panic!("container-only project should fail fast"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "invalid input: compose project demo-app selects sandbox backend container, but neovex load a compose-backed sandbox manager only supports the krun backend today"
+        );
+    }
+
+    #[test]
+    fn project_wide_service_operations_reject_mixed_backend_projects() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let compose_path = write_compose_fixture_with_body(
+            temp_dir.path(),
+            r#"
+name: Demo App
+services:
+  api:
+    image: busybox:latest
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+        let control_data_dir = temp_dir.path().join("control");
+        let context = load_compose_project_context(&compose_path, &control_data_dir)
+            .expect("compose project context should load");
+
+        let error = require_krun_backend_for_service_operation(&context, None, "service up")
+            .expect_err("mixed backend project should fail fast");
+
+        assert_eq!(
+            error.to_string(),
+            "invalid input: compose project demo-app mixes sandbox backends across services (api=krun, db=container); neovex service up currently requires one backend family per project-wide operation"
+        );
+    }
+
+    #[test]
+    fn service_scoped_operations_allow_mixed_projects_when_requested_service_is_krun() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let compose_path = write_compose_fixture_with_body(
+            temp_dir.path(),
+            r#"
+name: Demo App
+services:
+  api:
+    image: busybox:latest
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+        let control_data_dir = temp_dir.path().join("control");
+        let context = load_compose_project_context(&compose_path, &control_data_dir)
+            .expect("compose project context should load");
+
+        require_krun_backend_for_service_operation(&context, Some("api"), "service up")
+            .expect("krun service in mixed project should remain allowed");
+
+        let error = require_krun_backend_for_service_operation(&context, Some("db"), "service up")
+            .expect_err("container service should fail fast");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: service db in compose project demo-app selects sandbox backend container, but neovex service up only supports the krun backend today"
+        );
+    }
+
     fn write_compose_fixture(root: &Path) -> PathBuf {
         let compose_path = root.join("compose.yaml");
         fs::write(
@@ -1433,6 +1615,12 @@ services:
 "#,
         )
         .expect("compose fixture should write");
+        compose_path
+    }
+
+    fn write_compose_fixture_with_body(root: &Path, body: &str) -> PathBuf {
+        let compose_path = root.join("compose.yaml");
+        fs::write(&compose_path, body).expect("compose fixture should write");
         compose_path
     }
 

@@ -1,0 +1,10 @@
+[Unit]
+Description=Allow systemd to create mount points on /
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/chattr -i /
+
+[Install]
+WantedBy=local-fs-pre.target

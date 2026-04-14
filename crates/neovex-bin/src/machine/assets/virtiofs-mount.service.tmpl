@@ -1,0 +1,11 @@
+[Unit]
+Description=Mount Neovex virtiofs share {index} at {target}
+
+[Mount]
+What={tag}
+Where={target}
+Type=virtiofs
+Options=context="{virtiofs_selinux_context}"
+
+[Install]
+WantedBy=local-fs.target

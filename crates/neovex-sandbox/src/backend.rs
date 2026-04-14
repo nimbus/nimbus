@@ -12,6 +12,7 @@ pub type SandboxFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'sta
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxBackendKind {
+    Container,
     Krun,
 }
 

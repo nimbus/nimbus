@@ -33,10 +33,11 @@ futures = "0.3"
 hyper = "0.14.32"
 http = "1"
 libsql = { version = "0.9.30", default-features = false, features = ["remote"] }
+libc = "0.2"
 mysql_async = "0.36"
 native-tls = "0.2"
 redb = "2"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
 ring = "0.17"
 rmp = "0.8"
 rmp-serde = "1"

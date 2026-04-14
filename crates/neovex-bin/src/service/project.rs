@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use neovex::{Error, TenantId};
+use neovex::{Error, SandboxBackendKind, TenantId};
 use neovex_sandbox::backends::krun::KrunSandboxBackendConfig;
 use sha2::{Digest, Sha256};
 
@@ -10,6 +10,7 @@ use crate::service::compose::ComposeProjectPlan;
 const SERVICES_CONTROL_ROOT: &str = "services";
 const PROJECTS_CONTROL_ROOT: &str = "projects";
 const BACKENDS_CONTROL_ROOT: &str = "backends";
+const CONTAINER_BACKEND_ROOT: &str = "container";
 const KRUN_BACKEND_ROOT: &str = "krun";
 const LOCAL_SERVICE_TENANT_PREFIX: &str = "svc";
 const PROJECT_KEY_HASH_HEX_LEN: usize = 12;
@@ -80,14 +81,25 @@ impl ComposeProjectControlPlane {
         })
     }
 
-    pub(crate) fn krun_backend_root(&self) -> PathBuf {
+    pub(crate) fn backend_root(&self, backend: SandboxBackendKind) -> PathBuf {
         self.project_root
             .join(BACKENDS_CONTROL_ROOT)
-            .join(KRUN_BACKEND_ROOT)
+            .join(backend_root_name(backend))
+    }
+
+    pub(crate) fn krun_backend_root(&self) -> PathBuf {
+        self.backend_root(SandboxBackendKind::Krun)
     }
 
     pub(crate) fn krun_backend_config(&self) -> KrunSandboxBackendConfig {
         KrunSandboxBackendConfig::under_root(self.krun_backend_root())
+    }
+}
+
+fn backend_root_name(backend: SandboxBackendKind) -> &'static str {
+    match backend {
+        SandboxBackendKind::Container => CONTAINER_BACKEND_ROOT,
+        SandboxBackendKind::Krun => KRUN_BACKEND_ROOT,
     }
 }
 
@@ -166,6 +178,16 @@ services:
                 .project_root
                 .join("backends")
                 .join("krun")
+        );
+        assert_eq!(
+            context
+                .control_plane
+                .backend_root(SandboxBackendKind::Container),
+            context
+                .control_plane
+                .project_root
+                .join("backends")
+                .join("container")
         );
 
         let config = context.control_plane.krun_backend_config();
