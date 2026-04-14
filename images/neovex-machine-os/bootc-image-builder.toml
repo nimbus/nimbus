@@ -1,6 +1,0 @@
-[[customizations.filesystem]]
-mountpoint = "/"
-minsize = "6 GiB"
-
-[customizations.kernel]
-append = "ostree.prepare-root.composefs=0"
