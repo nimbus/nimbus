@@ -1,0 +1,4 @@
+ARG FEDORA_VERSION=41
+FROM quay.io/fedora/fedora:${FEDORA_VERSION}
+
+RUN dnf install -y rpm-ostree && dnf clean all -y && rm -rf /var/cache

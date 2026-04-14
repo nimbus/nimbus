@@ -147,19 +147,19 @@ if command -v rpm-ostree >/dev/null 2>&1; then
     --from "${image_name}" \
     --output "oci-archive:${oci_archive_path}"
 else
-  echo "rpm-ostree not found on host; composing via Fedora container"
+  echo "rpm-ostree not found on host; composing via container"
+  rpm_ostree_image="${NEOVEX_RPM_OSTREE_IMAGE:-ghcr.io/agentstation/rpm-ostree:fedora41}"
   input_archive="$(mktemp --suffix=.ociarchive)"
   podman save --format oci-archive -o "${input_archive}" "${image_name}"
   podman run --rm --privileged \
     --security-opt label=disable \
     -v "${input_archive}:/input.ociarchive:ro" \
     -v "${output_dir}:${output_dir}" \
-    quay.io/fedora/fedora:41 \
-    bash -c "dnf install -y rpm-ostree >/dev/null 2>&1 && \
-      rpm-ostree compose build-chunked-oci \
-        --bootc \
-        --from oci-archive:/input.ociarchive \
-        --output 'oci-archive:${oci_archive_path}'"
+    "${rpm_ostree_image}" \
+    rpm-ostree compose build-chunked-oci \
+      --bootc \
+      --from oci-archive:/input.ociarchive \
+      --output "oci-archive:${oci_archive_path}"
   rm -f "${input_archive}"
 fi
 

@@ -42,8 +42,8 @@ dnf remove -y moby-engine containerd runc toolbox docker-cli || true
 ln -fs /usr/lib/systemd/system/sshd.service \
   /etc/systemd/system/multi-user.target.wants/sshd.service
 
-mkdir -p /usr/local/bin
-chmod 0755 /usr/local/bin /var/lib/neovex /var/lib/neovex/control /var/lib/neovex/data
+install -d -m 0755 /var/usrlocal/bin
+chmod 0755 /var/lib/neovex /var/lib/neovex/control /var/lib/neovex/data
 
 rm -rf /var/cache /usr/share/man
 dnf clean all -y
