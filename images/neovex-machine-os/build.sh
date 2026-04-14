@@ -13,7 +13,6 @@ Options:
   --image-name <reference>              Local OCI tag (default: localhost/neovex-machine-os:dev)
   --fcos-base-image <reference>         Fedora CoreOS base image
   --context-dir <path>                  Reuse a specific staging context instead of mktemp
-  --custom-coreos-disk-images <path>    Optional custom-coreos-disk-images.sh path for raw disk output
   --help                                Show this help
 EOF
 }
@@ -58,7 +57,6 @@ output_dir=""
 image_name="localhost/neovex-machine-os:dev"
 fcos_base_image="quay.io/fedora/fedora-coreos:stable"
 context_dir=""
-custom_coreos_disk_images=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,10 +78,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --context-dir)
       context_dir="${2:?missing context dir}"
-      shift 2
-      ;;
-    --custom-coreos-disk-images)
-      custom_coreos_disk_images="${2:?missing custom-coreos-disk-images path}"
       shift 2
       ;;
     --help)
@@ -136,37 +130,36 @@ podman build \
   --build-arg "FCOS_BASE_IMAGE=${fcos_base_image}"
 
 oci_archive_path="${output_dir}/neovex-machine-os.ociarchive"
-raw_disk_path=""
-compressed_raw_disk_path=""
-raw_disk_sha256="<not-built>"
-compressed_raw_disk_sha256="<not-built>"
 
 podman save --format oci-archive -o "${oci_archive_path}" "${image_name}"
 
-if [[ -n "${custom_coreos_disk_images}" ]]; then
-  if [[ ! -x "${custom_coreos_disk_images}" ]]; then
-    echo "custom-coreos-disk-images helper is not executable at ${custom_coreos_disk_images}" >&2
-    exit 1
-  fi
-  (
-    cd "${output_dir}"
-    bash "${custom_coreos_disk_images}" \
-      --platforms applehv \
-      --ociarchive "${oci_archive_path}" \
-      --osname fedora-coreos \
-      --imgref "ostree-unverified-registry:${image_name}" \
-      --metal-image-size 6144 \
-      --extra-kargs='ostree.prepare-root.composefs=0'
-  )
-  raw_disk_path="$(find "${output_dir}" -maxdepth 1 -type f -name '*.raw' | head -n 1 || true)"
-  if [[ -n "${raw_disk_path}" ]]; then
-    require_command gzip
-    compressed_raw_disk_path="${output_dir}/neovex-machine-os.raw.gz"
-    gzip -c "${raw_disk_path}" >"${compressed_raw_disk_path}"
-    raw_disk_sha256="$(sha256_hex "${raw_disk_path}")"
-    compressed_raw_disk_sha256="$(sha256_hex "${compressed_raw_disk_path}")"
-  fi
+bib_image="${NEOVEX_BIB_IMAGE:-quay.io/centos-bootc/bootc-image-builder:latest}"
+bib_output_dir="$(mktemp -d)"
+
+podman run --rm --privileged \
+  --security-opt label=disable \
+  -v /var/lib/containers/storage:/var/lib/containers/storage \
+  -v "${bib_output_dir}:/output" \
+  -v "${script_dir}/bootc-image-builder.toml:/config.toml:ro" \
+  "${bib_image}" \
+  --type raw \
+  --local \
+  --config /config.toml \
+  "${image_name}"
+
+raw_disk_path="$(find "${bib_output_dir}" -name '*.raw' -type f | head -n 1)"
+if [[ -z "${raw_disk_path}" || ! -f "${raw_disk_path}" ]]; then
+  echo "bootc-image-builder did not produce a raw disk image" >&2
+  ls -laR "${bib_output_dir}" >&2
+  exit 1
 fi
+
+require_command gzip
+compressed_raw_disk_path="${output_dir}/neovex-machine-os.raw.gz"
+gzip -c "${raw_disk_path}" >"${compressed_raw_disk_path}"
+raw_disk_sha256="$(sha256_hex "${raw_disk_path}")"
+compressed_raw_disk_sha256="$(sha256_hex "${compressed_raw_disk_path}")"
+rm -rf "${bib_output_dir}"
 
 neovex_binary_sha256="$(sha256_hex "${neovex_binary}")"
 containerfile_sha256="$(sha256_hex "${script_dir}/Containerfile.COREOS")"
@@ -182,9 +175,8 @@ containerfile_sha256=${containerfile_sha256}
 build_common_sha256=${build_common_sha256}
 oci_archive_path=${oci_archive_path}
 oci_archive_sha256=${oci_archive_sha256}
-raw_disk_path=${raw_disk_path:-<not-built>}
+raw_disk_path=${raw_disk_path}
 raw_disk_sha256=${raw_disk_sha256}
-compressed_raw_disk_path=${compressed_raw_disk_path:-<not-built>}
+compressed_raw_disk_path=${compressed_raw_disk_path}
 compressed_raw_disk_sha256=${compressed_raw_disk_sha256}
-custom_coreos_disk_images=${custom_coreos_disk_images:-<not-run>}
 EOF

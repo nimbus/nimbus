@@ -8,8 +8,6 @@ on:
       - "scripts/build-neovex-machine-os.sh"
       - "scripts/package-neovex-machine-os-oci.sh"
       - "scripts/publish-neovex-machine-os.sh"
-      - "scripts/resolve-custom-coreos-disk-images.sh"
-      - "scripts/verify-custom-coreos-disk-images-resolver-helper.sh"
       - "scripts/verify-neovex-machine-os-build-helper.sh"
       - "scripts/verify-neovex-machine-os-oci-layout-helper.sh"
       - "scripts/verify-neovex-machine-os-publish-helper.sh"
@@ -30,8 +28,6 @@ on:
       - "scripts/build-neovex-machine-os.sh"
       - "scripts/package-neovex-machine-os-oci.sh"
       - "scripts/publish-neovex-machine-os.sh"
-      - "scripts/resolve-custom-coreos-disk-images.sh"
-      - "scripts/verify-custom-coreos-disk-images-resolver-helper.sh"
       - "scripts/verify-neovex-machine-os-build-helper.sh"
       - "scripts/verify-neovex-machine-os-oci-layout-helper.sh"
       - "scripts/verify-neovex-machine-os-publish-helper.sh"
@@ -109,8 +105,6 @@ jobs:
           bash -n scripts/build-neovex-machine-os.sh
           bash -n scripts/package-neovex-machine-os-oci.sh
           bash -n scripts/publish-neovex-machine-os.sh
-          bash -n scripts/resolve-custom-coreos-disk-images.sh
-          bash -n scripts/verify-custom-coreos-disk-images-resolver-helper.sh
           bash -n scripts/verify-neovex-machine-os-build-helper.sh
           bash -n scripts/verify-neovex-machine-os-oci-layout-helper.sh
           bash -n scripts/verify-neovex-machine-os-publish-helper.sh
@@ -118,7 +112,6 @@ jobs:
           bash scripts/build-neovex-machine-os.sh --help
           bash scripts/package-neovex-machine-os-oci.sh --help
           bash scripts/publish-neovex-machine-os.sh --help
-          bash scripts/resolve-custom-coreos-disk-images.sh --help
 
       - name: Verify deterministic helper lanes
         run: |
@@ -126,7 +119,6 @@ jobs:
           bash scripts/verify-neovex-machine-os-build-helper.sh
           bash scripts/verify-neovex-machine-os-oci-layout-helper.sh
           bash scripts/verify-neovex-machine-os-publish-helper.sh
-          bash scripts/verify-custom-coreos-disk-images-resolver-helper.sh
 
       - name: Check machine crate compilation
         run: cargo check -p neovex-bin
@@ -151,13 +143,11 @@ jobs:
         run: |
           {
             echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/neovex-machine-os"
-            echo "HELPER_CHECKOUT_DIR=${RUNNER_TEMP}/custom-coreos-disk-images"
             echo "LAYOUT_DIR=${RUNNER_TEMP}/neovex-machine-os-layout"
             echo "RELEASE_DIR=${RUNNER_TEMP}/neovex-machine-os-release"
           } >> "${GITHUB_ENV}"
           mkdir -p \
             "${RUNNER_TEMP}/neovex-machine-os" \
-            "${RUNNER_TEMP}/custom-coreos-disk-images" \
             "${RUNNER_TEMP}/neovex-machine-os-layout" \
             "${RUNNER_TEMP}/neovex-machine-os-release"
 
@@ -249,11 +239,12 @@ jobs:
             echo "publish_latest_alias=${publish_latest_alias}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Build neovex binary and pull base image
+      - name: Build neovex binary and pull base images
         run: |
           cargo build --release -p neovex-bin &
           cargo_pid=$!
           sudo podman pull quay.io/fedora/fedora-coreos:stable &
+          sudo podman pull quay.io/centos-bootc/bootc-image-builder:latest &
           wait "${cargo_pid}"
           wait
 
@@ -261,11 +252,9 @@ jobs:
         run: |
           sudo bash scripts/build-neovex-machine-os.sh \
             --neovex-binary "${GITHUB_WORKSPACE}/target/release/neovex" \
-            --output-dir "${BUILD_OUTPUT_DIR}" \
-            --fetch-custom-coreos-disk-images "${HELPER_CHECKOUT_DIR}"
+            --output-dir "${BUILD_OUTPUT_DIR}"
           sudo chown -R "$(id -u):$(id -g)" \
-            "${BUILD_OUTPUT_DIR}" \
-            "${HELPER_CHECKOUT_DIR}"
+            "${BUILD_OUTPUT_DIR}"
 
       - name: Save CoreOS image to cache
         if: steps.image-cache.outputs.cache-hit != 'true'

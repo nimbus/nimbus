@@ -32,12 +32,16 @@ grep -F 'VSOCK-CONNECT:2:{ready_vsock_port}' "${bootstrap_dir}/ready.service.tmp
 grep -F '[Mount]' "${bootstrap_dir}/virtiofs-mount.service.tmpl" >/dev/null
 grep -F 'Type=virtiofs' "${bootstrap_dir}/virtiofs-mount.service.tmpl" >/dev/null
 
+test -f "${recipe_dir}/bootc-image-builder.toml"
+grep -F 'minsize' "${recipe_dir}/bootc-image-builder.toml" >/dev/null
+grep -F 'ostree.prepare-root.composefs=0' "${recipe_dir}/bootc-image-builder.toml" >/dev/null
+
 fake_bin="${temp_dir}/bin"
 context_dir="${temp_dir}/context"
 output_dir="${temp_dir}/out"
 mkdir -p "${fake_bin}" "${context_dir}" "${output_dir}"
 
-cat >"${fake_bin}/podman" <<'EOF'
+cat >"${fake_bin}/podman" <<'FAKEOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${TMPDIR}/podman.log"
@@ -50,20 +54,21 @@ if [[ "${1:-}" == "save" ]]; then
     prev="$i"
   done
 fi
+# Handle `podman run ... bootc-image-builder ... --type raw`
+if [[ "${1:-}" == "run" ]]; then
+  for i in "$@"; do
+    if [[ "${prev:-}" == "-v" && "$i" == *:/output ]]; then
+      bib_out="${i%%:*}"
+      mkdir -p "${bib_out}/image"
+      : >"${bib_out}/image/disk.raw"
+    fi
+    prev="$i"
+  done
+fi
 exit 0
-EOF
+FAKEOF
 
-cat >"${fake_bin}/custom-coreos-disk-images.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >>"${TMPDIR}/custom-coreos-disk-images.log"
-: >"${PWD}/fedora-coreos.applehv.raw"
-exit 0
-EOF
-
-chmod 0755 \
-  "${fake_bin}/podman" \
-  "${fake_bin}/custom-coreos-disk-images.sh"
+chmod 0755 "${fake_bin}/podman"
 
 neovex_binary="${temp_dir}/neovex"
 cat >"${neovex_binary}" <<'EOF'
@@ -79,15 +84,15 @@ NEOVEX_MACHINE_OS_BUILD_TEST_UID=0 \
 bash "${recipe_dir}/build.sh" \
   --neovex-binary "${neovex_binary}" \
   --output-dir "${output_dir}" \
-  --context-dir "${context_dir}" \
-  --custom-coreos-disk-images "${fake_bin}/custom-coreos-disk-images.sh"
+  --context-dir "${context_dir}"
 
 test -f "${output_dir}/neovex-machine-os.ociarchive"
 test -f "${output_dir}/neovex-machine-os.raw.gz"
 test -f "${output_dir}/summary.txt"
 grep -F -- '--build-arg FCOS_BASE_IMAGE=' "${temp_dir}/podman.log" >/dev/null
 grep -F -- 'save --format oci-archive' "${temp_dir}/podman.log" >/dev/null
-grep -F -- '--platforms applehv' "${temp_dir}/custom-coreos-disk-images.log" >/dev/null
+grep -F -- 'bootc-image-builder' "${temp_dir}/podman.log" >/dev/null
+grep -F -- '--type raw' "${temp_dir}/podman.log" >/dev/null
 grep -E '^neovex_binary_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
 grep -E '^containerfile_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
 grep -E '^build_common_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
