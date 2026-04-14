@@ -138,11 +138,7 @@ jobs:
     name: Build machine-os (linux arm64)
     needs: verify-contract
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/machine-os/v')
-    runs-on:
-      - self-hosted
-      - linux
-      - arm64
-      - neovex-machine-os
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -189,7 +185,6 @@ jobs:
           command -v sudo
           command -v git
           command -v podman
-          command -v rpm-ostree
           command -v gzip
           command -v sha256sum
           command -v skopeo

@@ -238,6 +238,12 @@ Reviewed against:
   MAC5: shared protocol types for health/capabilities plus a typed unix-socket
   client that can talk to the guest `neovex.sock` once the forwarded host
   socket exists.
+- The repo now also owns the first host-side **forwarded sandbox backend**
+  slice on top of that client. `neovex-bin` now has a
+  `ForwardedMachineApiSandboxBackend`, a typed default-machine API resolver,
+  and a host-backed service-manager loader that can select the forwarded guest
+  machine API for container-backed Compose projects on macOS while keeping the
+  Linux krun manager path intact.
 - The repo now also owns the first typed **service-sandbox** control seam
   across that machine API. The guest daemon no longer stops at health and
   capability discovery: it now has Neovex-owned routes for image-backed start,
@@ -520,7 +526,7 @@ Resulting direction:
 | Sandbox backend selection | generic backend vocabulary exists, but only `krun` executes today | guest must not require krun/KVM | add a guest-side container launch family without regressing Linux |
 | Service networking | krun TSI host:guest ports | host localhost -> gvproxy -> guest container ports | `ctx.services.<name>.port` semantics |
 | Readiness model | server waits for actual service reachability | same layered contract across host and guest | no "running means ready" regression |
-| Compose/service UX | landed `neovex --compose-file ...` and `neovex service ...` | same commands from mac host | one developer-facing workflow |
+| Compose/service UX | landed `neovex serve --compose-file ...` and `neovex service ...` | same commands from mac host | one developer-facing workflow |
 | Host orchestration | direct Linux runtime control | `neovex machine ...` plus host `neovex serve` | host remains the developer-facing authority |
 | Docker compatibility | irrelevant | optional via helper/`DOCKER_HOST` | Neovex must not require claiming `/var/run/docker.sock` |
 
@@ -878,8 +884,8 @@ This plan does not cover:
 | MAC2 | done | Add `neovex machine ...` CLI surface and host-side config/runtime roots | MAC1 |
 | MAC3 | done | Implement direct host machine lifecycle around `krunkit` + `gvproxy` | MAC2 |
 | MAC4 | in_progress | Build the Linux guest image, bootstrap contract, and guest `neovex.sock` machine API plus standard-container launch family | MAC2 |
-| MAC5 | in_progress | Implement the forwarded guest `neovex.sock` to host `<machine>-api.sock` plumbing and published-port plumbing | MAC3, MAC4 |
-| MAC6 | todo | Make host-resident `neovex serve` and `neovex service ...` work transparently from macOS | MAC5 |
+| MAC5 | in_progress | In progress: host-side forwarded sandbox backend/loader landed; live forwarded-socket and published-port proof remain | MAC3, MAC4 |
+| MAC6 | in_progress | In progress: explicit `neovex serve` landed; mac-aware serve/service flow and real host proof remain | MAC5 |
 | MAC7 | todo | Close out packaging, diagnostics, and real-host validation evidence | MAC3, MAC4, MAC5, MAC6 |
 
 ## Implementation Checkpoints
@@ -976,7 +982,8 @@ Acceptance criteria:
 Repo outputs:
 
 - host-local forwarded control socket/proxy implementation
-- host client for the guest machine-API protocol
+- host client plus forwarded sandbox-backend adapter for the guest machine-API protocol
+- host-aware service-manager loader that selects the forwarded guest backend for container-backed Compose projects on macOS
 - published localhost port plumbing
 - focused integration tests around the control channel
 
@@ -1886,3 +1893,68 @@ Acceptance criteria:
   'https://api.github.com/repos/agentstation/neovex/actions/runs/24378451538/jobs?per_page=20'
   | jq '{run_id: 24378451538, total_count, jobs: [.jobs[] | {name, status,
   conclusion, started_at, completed_at, html_url}]}'`.
+- 2026-04-13: Landed the first real host-side forwarded sandbox-backend slice
+  for MAC5 inside `neovex-bin`. The repo now has
+  `crates/neovex-bin/src/machine/backend.rs` with a
+  `ForwardedMachineApiSandboxBackend` that speaks the guest machine API over a
+  typed `MachineApiClient`, maps machine-API failures into sandbox-backend
+  errors, and uses `tokio::task::spawn_blocking` so the synchronous unix-socket
+  client does not block async host execution. `crates/neovex-bin/src/machine/mod.rs`
+  now exposes a typed default-machine API resolver for the real host path, and
+  `crates/neovex-bin/src/service/mod.rs` plus `crates/neovex-bin/src/main.rs`
+  no longer assume every compose-backed server launch is local krun: the host
+  loader now selects krun for krun projects, selects the forwarded guest
+  machine API for container-backed projects on macOS, and fails fast with
+  explicit guest readiness blockers when the forwarded machine API is not yet
+  ready. The new proof lane is repo-owned and deterministic: the
+  `machine::backend::*` tests validate image/build/inspect/stop round-trips and
+  missing-socket error mapping, while the new
+  `service::tests::host_loader_accepts_container_projects_with_ready_forwarded_machine_api_on_macos`
+  and
+  `service::tests::host_loader_reports_machine_api_readiness_blockers_for_container_projects`
+  tests prove the host loader accepts a ready forwarded guest API and surfaces
+  guest blockers without touching the real default-machine state. Durable
+  conclusion: the host now has a real remote sandbox seam for MAC5 and
+  `neovex serve` can stop being hardwired to krun-only manager loading, but
+  MAC5 is still not closed until the live forwarded `<machine>-api.sock` path
+  and macOS localhost published-port proof are captured on a real machine.
+  Verification:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin`.
+- 2026-04-13: Re-checked the live machine-os release lane after that MAC5
+  slice and recorded the still-open MAC4 blocker precisely instead of treating
+  it as unknown. GitHub API evidence for run `24378451538` now shows
+  `Verify machine-os contract` completed successfully as job `71196662456`,
+  while `Build machine-os (linux arm64)` remains queued as job `71196867362`
+  with labels `self-hosted`, `linux`, `arm64`, and `neovex-machine-os` but no
+  runner yet attached. Durable conclusion: MAC4 is still externally blocked on
+  self-hosted ARM64 builder availability, not on the hosted verifier or the
+  checked-in workflow definition. Because the repo now also has the host-side
+  forwarded sandbox backend, the stable reference docs were updated in
+  `docs/reference/microvm-service-baseline.md` and `docs/reference/cli.md` to
+  reflect the new truth: host server startup can select the forwarded guest
+  machine API for container-backed Compose projects on macOS, while the
+  explicit `neovex service ...` lifecycle commands remain krun-shaped until
+  MAC6 lands. Verification: `curl -sS
+  'https://api.github.com/repos/agentstation/neovex/actions/runs/24378451538/jobs?per_page=20'`;
+  `cargo fmt --all --check`.
+- 2026-04-13: Started the first explicit MAC6 CLI-taxonomy slice by making
+  `neovex serve` the shipped server-start verb instead of leaving the
+  authoritative server behind the old flag-driven root path. `crates/neovex-bin/src/main.rs`
+  now parses `Serve(ServeCommand)` explicitly, the server startup/config merge
+  path runs through that typed command, and the old hidden root-start shape was
+  removed rather than preserved as a compatibility alias. The repo follow-
+  through is part of the same change set: `Makefile`, `package.json`,
+  `demos/README.md`, `tests/demos.smoke.md`, `README.new.md`,
+  `docs/reference/cli.md`, and `docs/reference/microvm-service-baseline.md`
+  now point at `neovex serve ...` / `cargo run -p neovex-bin -- serve ...`
+  instead of the older root-flag form, and the active macOS control plane now
+  records MAC6 as honestly `in_progress`. Durable conclusion: the command
+  taxonomy is now explicit and Podman-shaped enough for the remaining macOS DX
+  work, but MAC6 still needs the actual mac-aware host `serve`/`service`
+  machine-readiness flow and real host-local proof on top of the queued MAC4
+  machine image. Verification:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin`.

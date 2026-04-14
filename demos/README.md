@@ -68,7 +68,7 @@ Planned next demos:
 Run the Neovex server:
 
 ```bash
-cargo run -p neovex-bin -- --port 8080
+cargo run -p neovex-bin -- serve --port 8080
 ```
 
 Run the Convex support server for the React demo:

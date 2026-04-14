@@ -9,12 +9,18 @@ use neovex::Error;
 use serde::{Deserialize, Serialize};
 
 mod api;
+mod backend;
 mod bootstrap;
 mod client;
 mod manager;
 mod protocol;
 
-use self::client::MachineApiClient;
+#[cfg(test)]
+pub(crate) use self::api::{
+    MachineApiListenMode, MachineApiState, bind_direct_listener, serve_machine_api,
+};
+pub(crate) use self::backend::ForwardedMachineApiSandboxBackend;
+pub(crate) use self::client::MachineApiClient;
 use self::manager::{
     MACHINE_API_FORWARD_TRANSPORT, MACHINE_API_FORWARD_USER, MachineRuntimeState,
     build_ssh_command, refresh_machine_state, start_machine, stop_machine,
@@ -131,6 +137,35 @@ struct MachineApiCommand {
 pub(crate) async fn run_machine_command(command: MachineCommand) -> Result<(), Error> {
     let roots = MachineRootLayout::resolve()?;
     run_machine_command_with_layout(command, &roots).await
+}
+
+pub(crate) fn require_default_machine_api_client() -> Result<MachineApiClient, Error> {
+    let roots = MachineRootLayout::resolve()?;
+    let (paths, _, state) = load_initialized_machine(&roots)?;
+    if !matches!(state.lifecycle, MachineLifecycle::Running) {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' is {} and its guest machine API is not available; run `neovex machine start` first",
+            DEFAULT_MACHINE_NAME,
+            state.lifecycle.as_str()
+        )));
+    }
+    if !paths.api_socket_path.exists() {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' is running but guest machine API socket {} is missing; run `neovex machine status` or restart the machine",
+            DEFAULT_MACHINE_NAME,
+            paths.api_socket_path.display()
+        )));
+    }
+
+    let client = MachineApiClient::new(paths.api_socket_path.clone());
+    client.health().map_err(|error| {
+        Error::InvalidInput(format!(
+            "machine '{}' guest machine API is not reachable at {}: {error}",
+            DEFAULT_MACHINE_NAME,
+            paths.api_socket_path.display()
+        ))
+    })?;
+    Ok(client)
 }
 
 async fn run_machine_command_with_layout(

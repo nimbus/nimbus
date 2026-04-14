@@ -16,9 +16,9 @@
     "convex:codegen:node": "convex codegen --app demos/convex/node",
     "convex:build": "npm run build --workspaces --if-present",
     "convex:test": "npm run test --workspaces --if-present",
-    "convex:server:node": "cargo run -p neovex-bin -- --port 8080 --convex-app-dir ./demos/convex/node",
-    "convex:server:html": "cargo run -p neovex-bin -- --port 8080 --convex-app-dir ./demos/convex/html",
-    "convex:server:http": "cargo run -p neovex-bin -- --port 8080 --convex-app-dir ./demos/convex/http",
+    "convex:server:node": "cargo run -p neovex-bin -- serve --port 8080 --convex-app-dir ./demos/convex/node",
+    "convex:server:html": "cargo run -p neovex-bin -- serve --port 8080 --convex-app-dir ./demos/convex/html",
+    "convex:server:http": "cargo run -p neovex-bin -- serve --port 8080 --convex-app-dir ./demos/convex/http",
     "convex:demo:node": "npm run demo --workspace convex-node",
     "convex:demo:html": "npm run dev --workspace convex-html",
     "convex:demo:http": "npm run dev --workspace convex-http"

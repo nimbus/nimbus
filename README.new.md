@@ -68,7 +68,7 @@ To build from source, see [build from source](#build-from-source).
 ### Run
 
 ```bash
-neovex --port 8080 --data-dir ./data
+neovex serve --port 8080 --data-dir ./data
 ```
 
 That's it. You now have a backend running on `http://localhost:8080` with document storage, HTTP and WebSocket APIs, scheduled jobs, and a V8 runtime — in a single process, with a single binary, writing to a single directory.

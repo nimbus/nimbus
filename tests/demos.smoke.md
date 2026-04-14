@@ -2,7 +2,7 @@
 
 Manual smoke path for the browser demo:
 
-1. `cargo run -p neovex-bin -- --port 8080`
+1. `cargo run -p neovex-bin -- serve --port 8080`
 2. Open `http://localhost:8080/demos/neovex/html/`
 3. Click `Create tenant`
 4. Click `Install schema`

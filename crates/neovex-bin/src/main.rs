@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use neovex::{
     ConvexRegistry, EmbeddedProviderKind, Error, LicenseState, RuntimeLimits, SandboxCatalog,
     Service, ServicePersistenceConfig, run_scheduler, serve_with_convex_and_license,
@@ -16,7 +16,7 @@ mod service;
 
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::service::{
-    ServiceCommand, load_krun_backed_sandbox_service_manager, run_service_command,
+    ServiceCommand, load_host_backed_sandbox_service_manager, run_service_command,
 };
 
 #[cfg(all(test, target_os = "linux"))]
@@ -51,8 +51,11 @@ const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 #[command(name = "neovex", about = "Reactive document database")]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
+}
 
+#[derive(Debug, Args)]
+struct ServeCommand {
     /// Optional JSON config file. CLI flags override env and file values.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -189,6 +192,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Serve(ServeCommand),
     Machine(MachineCommand),
     Service(ServiceCommand),
 }
@@ -325,23 +329,62 @@ fn default_runtime_max_nested_calls() -> usize {
     RuntimeLimits::default().max_nested_runtime_invocations
 }
 
+fn default_serve_command() -> ServeCommand {
+    ServeCommand {
+        config: None,
+        port: 8080,
+        data_dir: None,
+        control_data_dir: None,
+        tenant_provider: None,
+        libsql_url: None,
+        libsql_auth_token: None,
+        libsql_admin_url: None,
+        libsql_admin_auth_header: None,
+        libsql_metadata_namespace: None,
+        libsql_tenant_namespace_prefix: None,
+        libsql_replica_cache_dir: None,
+        postgres_url: None,
+        postgres_metadata_schema: None,
+        postgres_tenant_schema_prefix: None,
+        postgres_min_connections: None,
+        postgres_max_connections: None,
+        mysql_url: None,
+        mysql_metadata_database: None,
+        mysql_tenant_database_prefix: None,
+        mysql_min_connections: None,
+        mysql_max_connections: None,
+        convex_app_dir: None,
+        compose_file: None,
+        license_file: None,
+        runtime_heap_mb: default_runtime_heap_mb(),
+        runtime_initial_heap_mb: default_runtime_initial_heap_mb(),
+        runtime_timeout_secs: default_runtime_timeout_secs(),
+        runtime_max_instances: default_runtime_max_instances(),
+        runtime_worker_threads: default_runtime_worker_threads(),
+        runtime_max_nested_calls: default_runtime_max_nested_calls(),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-    let service_config = service_persistence_config_from_cli(&cli)?;
-    if let Some(command) = cli.command {
-        match command {
-            Command::Machine(command) => {
-                run_machine_command(command).await?;
-                return Ok(());
-            }
-            Command::Service(command) => {
-                run_service_command(command, &service_config).await?;
-                return Ok(());
-            }
+    match cli.command {
+        Command::Serve(command) => run_serve_command(command).await?,
+        Command::Machine(command) => {
+            run_machine_command(command).await?;
+        }
+        Command::Service(command) => {
+            let service_config =
+                service_persistence_config_from_serve_command(&default_serve_command())?;
+            run_service_command(command, &service_config).await?;
         }
     }
+    Ok(())
+}
+
+async fn run_serve_command(command: ServeCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let service_config = service_persistence_config_from_serve_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_service_config(&service_config).to_path_buf();
     let service = Arc::new(Service::new_with_persistence_config(service_config).await?);
@@ -352,19 +395,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scheduler_handle = tokio::spawn(async move {
         run_scheduler(scheduler_service, shutdown_rx).await;
     });
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", cli.port)).await?;
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", command.port)).await?;
     let runtime_limits = RuntimeLimits {
-        max_heap_mb: cli.runtime_heap_mb,
-        initial_heap_mb: cli.runtime_initial_heap_mb,
-        execution_timeout: Duration::from_secs(cli.runtime_timeout_secs),
-        max_concurrent_runtime_instances: cli.runtime_max_instances,
-        worker_threads: cli.runtime_worker_threads,
-        max_nested_runtime_invocations: cli.runtime_max_nested_calls,
+        max_heap_mb: command.runtime_heap_mb,
+        initial_heap_mb: command.runtime_initial_heap_mb,
+        execution_timeout: Duration::from_secs(command.runtime_timeout_secs),
+        max_concurrent_runtime_instances: command.runtime_max_instances,
+        worker_threads: command.runtime_worker_threads,
+        max_nested_runtime_invocations: command.runtime_max_nested_calls,
         ..RuntimeLimits::default()
     };
-    let license_state = LicenseState::load(cli.license_file.as_deref())?;
+    let license_state = LicenseState::load(command.license_file.as_deref())?;
     let license_snapshot = license_state.snapshot();
-    let convex_registry = cli
+    let convex_registry = command
         .convex_app_dir
         .as_ref()
         .map(|path| {
@@ -372,10 +415,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|registry| registry.with_runtime_limits(runtime_limits.clone()))
         })
         .transpose()?;
-    let sandbox_service_manager = cli
+    let sandbox_service_manager = command
         .compose_file
         .as_deref()
-        .map(|path| load_krun_backed_sandbox_service_manager(path, &compose_control_data_dir))
+        .map(|path| load_host_backed_sandbox_service_manager(path, &compose_control_data_dir))
         .transpose()?;
     let sandbox_service_manager = sandbox_service_manager.map(Arc::new);
 
@@ -423,116 +466,118 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn service_persistence_config_from_cli(cli: &Cli) -> neovex::Result<ServicePersistenceConfig> {
-    let config_path = cli
+fn service_persistence_config_from_serve_command(
+    command: &ServeCommand,
+) -> neovex::Result<ServicePersistenceConfig> {
+    let config_path = command
         .config
         .clone()
         .or_else(|| std::env::var_os(CONFIG_FILE_ENV).map(PathBuf::from));
     let file_config = load_runtime_config_file(config_path.as_deref())?;
     let env = PersistenceEnv::load()?;
-    service_persistence_config_from_sources(cli, &file_config.persistence, &env)
+    service_persistence_config_from_sources(command, &file_config.persistence, &env)
 }
 
 fn service_persistence_config_from_sources(
-    cli: &Cli,
+    command: &ServeCommand,
     file: &PersistenceFileConfig,
     env: &PersistenceEnv,
 ) -> neovex::Result<ServicePersistenceConfig> {
-    let data_dir = cli
+    let data_dir = command
         .data_dir
         .clone()
         .or_else(|| env.data_dir.clone())
         .or_else(|| file.data_dir.clone())
         .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
-    let control_data_dir = cli
+    let control_data_dir = command
         .control_data_dir
         .clone()
         .or_else(|| env.control_data_dir.clone())
         .or_else(|| file.control_data_dir.clone())
         .unwrap_or_else(|| data_dir.clone());
-    let tenant_provider = cli
+    let tenant_provider = command
         .tenant_provider
         .or(env.tenant_provider)
         .or(file.tenant_provider)
         .unwrap_or(CliTenantProvider::Sqlite);
-    let libsql_url = cli
+    let libsql_url = command
         .libsql_url
         .clone()
         .or_else(|| env.libsql_url.clone())
         .or_else(|| file.libsql_url.clone());
-    let libsql_auth_token = cli
+    let libsql_auth_token = command
         .libsql_auth_token
         .clone()
         .or_else(|| env.libsql_auth_token.clone())
         .or_else(|| file.libsql_auth_token.clone());
-    let libsql_admin_url = cli
+    let libsql_admin_url = command
         .libsql_admin_url
         .clone()
         .or_else(|| env.libsql_admin_url.clone())
         .or_else(|| file.libsql_admin_url.clone());
-    let libsql_admin_auth_header = cli
+    let libsql_admin_auth_header = command
         .libsql_admin_auth_header
         .clone()
         .or_else(|| env.libsql_admin_auth_header.clone())
         .or_else(|| file.libsql_admin_auth_header.clone());
-    let libsql_metadata_namespace = cli
+    let libsql_metadata_namespace = command
         .libsql_metadata_namespace
         .clone()
         .or_else(|| env.libsql_metadata_namespace.clone())
         .or_else(|| file.libsql_metadata_namespace.clone());
-    let libsql_tenant_namespace_prefix = cli
+    let libsql_tenant_namespace_prefix = command
         .libsql_tenant_namespace_prefix
         .clone()
         .or_else(|| env.libsql_tenant_namespace_prefix.clone())
         .or_else(|| file.libsql_tenant_namespace_prefix.clone());
-    let libsql_replica_cache_dir = cli
+    let libsql_replica_cache_dir = command
         .libsql_replica_cache_dir
         .clone()
         .or_else(|| env.libsql_replica_cache_dir.clone())
         .or_else(|| file.libsql_replica_cache_dir.clone());
-    let postgres_url = cli
+    let postgres_url = command
         .postgres_url
         .clone()
         .or_else(|| env.postgres_url.clone())
         .or_else(|| file.postgres_url.clone());
-    let postgres_metadata_schema = cli
+    let postgres_metadata_schema = command
         .postgres_metadata_schema
         .clone()
         .or_else(|| env.postgres_metadata_schema.clone())
         .or_else(|| file.postgres_metadata_schema.clone());
-    let postgres_tenant_schema_prefix = cli
+    let postgres_tenant_schema_prefix = command
         .postgres_tenant_schema_prefix
         .clone()
         .or_else(|| env.postgres_tenant_schema_prefix.clone())
         .or_else(|| file.postgres_tenant_schema_prefix.clone());
-    let postgres_min_connections = cli
+    let postgres_min_connections = command
         .postgres_min_connections
         .or(env.postgres_min_connections)
         .or(file.postgres_min_connections);
-    let postgres_max_connections = cli
+    let postgres_max_connections = command
         .postgres_max_connections
         .or(env.postgres_max_connections)
         .or(file.postgres_max_connections);
-    let mysql_url = cli
+    let mysql_url = command
         .mysql_url
         .clone()
         .or_else(|| env.mysql_url.clone())
         .or_else(|| file.mysql_url.clone());
-    let mysql_metadata_database = cli
+    let mysql_metadata_database = command
         .mysql_metadata_database
         .clone()
         .or_else(|| env.mysql_metadata_database.clone())
         .or_else(|| file.mysql_metadata_database.clone());
-    let mysql_tenant_database_prefix = cli
+    let mysql_tenant_database_prefix = command
         .mysql_tenant_database_prefix
         .clone()
         .or_else(|| env.mysql_tenant_database_prefix.clone())
         .or_else(|| file.mysql_tenant_database_prefix.clone());
-    let mysql_min_connections = cli
+    let mysql_min_connections = command
         .mysql_min_connections
         .or(env.mysql_min_connections)
         .or(file.mysql_min_connections);
-    let mysql_max_connections = cli
+    let mysql_max_connections = command
         .mysql_max_connections
         .or(env.mysql_max_connections)
         .or(file.mysql_max_connections);
@@ -803,9 +848,21 @@ mod tests {
         path
     }
 
+    fn parse_serve<I, T>(args: I) -> ServeCommand
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let cli = Cli::parse_from(args);
+        let Command::Serve(command) = cli.command else {
+            panic!("serve subcommand should parse");
+        };
+        command
+    }
+
     #[test]
     fn cli_defaults_to_embedded_sqlite() {
-        let cli = Cli::parse_from(["neovex"]);
+        let cli = parse_serve(["neovex", "serve"]);
         let config = service_persistence_config_from_sources(
             &cli,
             &PersistenceFileConfig::default(),
@@ -819,15 +876,22 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_optional_compose_file_for_declared_services() {
-        let cli = Cli::parse_from(["neovex", "--compose-file", "./compose.dev.yaml"]);
+    fn cli_requires_explicit_serve_subcommand_for_server_flags() {
+        assert!(Cli::try_parse_from(["neovex"]).is_err());
+        assert!(Cli::try_parse_from(["neovex", "--compose-file", "./compose.dev.yaml"]).is_err());
+    }
+
+    #[test]
+    fn cli_parses_serve_command_with_optional_compose_file() {
+        let cli = parse_serve(["neovex", "serve", "--compose-file", "./compose.dev.yaml"]);
         assert_eq!(cli.compose_file, Some(PathBuf::from("./compose.dev.yaml")));
     }
 
     #[test]
     fn cli_builds_postgres_typed_config_with_overrides() {
-        let cli = Cli::parse_from([
+        let cli = parse_serve([
             "neovex",
+            "serve",
             "--tenant-provider",
             "postgres",
             "--control-data-dir",
@@ -882,7 +946,7 @@ mod tests {
 
     #[test]
     fn env_builds_postgres_typed_config_with_generic_resource_name() {
-        let cli = Cli::parse_from(["neovex"]);
+        let cli = parse_serve(["neovex", "serve"]);
         let env = PersistenceEnv {
             tenant_provider: Some(CliTenantProvider::Postgres),
             control_data_dir: Some(PathBuf::from("./control-from-env")),
@@ -912,8 +976,9 @@ mod tests {
 
     #[test]
     fn cli_builds_libsql_replica_typed_config_with_overrides() {
-        let cli = Cli::parse_from([
+        let cli = parse_serve([
             "neovex",
+            "serve",
             "--tenant-provider",
             "libsql-replica",
             "--control-data-dir",
@@ -972,7 +1037,7 @@ mod tests {
 
     #[test]
     fn env_builds_libsql_replica_typed_config_with_generic_resource_name() {
-        let cli = Cli::parse_from(["neovex"]);
+        let cli = parse_serve(["neovex", "serve"]);
         let env = PersistenceEnv {
             tenant_provider: Some(CliTenantProvider::LibsqlReplica),
             control_data_dir: Some(PathBuf::from("./control-from-env")),
@@ -1011,8 +1076,9 @@ mod tests {
 
     #[test]
     fn cli_builds_mysql_typed_config_with_overrides() {
-        let cli = Cli::parse_from([
+        let cli = parse_serve([
             "neovex",
+            "serve",
             "--tenant-provider",
             "mysql",
             "--control-data-dir",
@@ -1067,7 +1133,7 @@ mod tests {
 
     #[test]
     fn env_builds_mysql_typed_config_with_generic_resource_name() {
-        let cli = Cli::parse_from(["neovex"]);
+        let cli = parse_serve(["neovex", "serve"]);
         let env = PersistenceEnv {
             tenant_provider: Some(CliTenantProvider::Mysql),
             control_data_dir: Some(PathBuf::from("./control-from-env")),
@@ -1106,7 +1172,7 @@ mod tests {
   }
 }"#,
         );
-        let cli = Cli::parse_from(["neovex", "--config", path.to_str().unwrap()]);
+        let cli = parse_serve(["neovex", "serve", "--config", path.to_str().unwrap()]);
         let file_config =
             load_runtime_config_file(Some(path.as_path())).expect("config file should load");
 
@@ -1140,8 +1206,9 @@ mod tests {
   }
 }"#,
         );
-        let cli = Cli::parse_from([
+        let cli = parse_serve([
             "neovex",
+            "serve",
             "--config",
             path.to_str().unwrap(),
             "--postgres-max-connections",

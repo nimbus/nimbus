@@ -16,6 +16,10 @@ use neovex::{
 use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 use serde::Serialize;
 
+use crate::machine::{
+    ForwardedMachineApiSandboxBackend, MachineApiClient, require_default_machine_api_client,
+};
+
 mod compose;
 mod project;
 
@@ -183,19 +187,26 @@ pub(crate) fn load_compose_project_context(
     ComposeProjectContext::load(file, control_data_dir)
 }
 
-pub(crate) fn load_krun_backed_sandbox_service_manager(
+pub(crate) fn load_host_backed_sandbox_service_manager(
     file: &std::path::Path,
     control_data_dir: &std::path::Path,
 ) -> Result<SandboxServiceManager, Error> {
-    let context = load_compose_project_context(file, control_data_dir)?;
-    require_krun_backend_for_service_operation(
-        &context,
+    load_host_backed_sandbox_service_manager_for_platform(
+        file,
+        control_data_dir,
+        ServiceHostPlatform::current(),
         None,
-        "load a compose-backed sandbox manager",
-    )?;
-    let backend = Arc::new(KrunSandboxBackend::new(
-        context.control_plane.krun_backend_config(),
-    ));
+    )
+}
+
+fn load_host_backed_sandbox_service_manager_for_platform(
+    file: &std::path::Path,
+    control_data_dir: &std::path::Path,
+    host_platform: ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<SandboxServiceManager, Error> {
+    let context = load_compose_project_context(file, control_data_dir)?;
+    let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
     load_sandbox_service_manager(file, backend)
 }
 
@@ -464,26 +475,45 @@ fn require_krun_backend_for_service_operation(
     requested_service: Option<&str>,
     operation: &str,
 ) -> Result<(), Error> {
+    let backend = required_project_backend(context, requested_service, operation)?;
+    if backend == SandboxBackendKind::Krun {
+        return Ok(());
+    }
+
     match requested_service {
-        Some(service_name) => {
-            let service = context.plan.services.get(service_name).ok_or_else(|| {
+        Some(service_name) => Err(Error::InvalidInput(format!(
+            "service {} in compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
+            service_name,
+            context.control_plane.project_name,
+            sandbox_backend_name(backend),
+            operation,
+        ))),
+        None => Err(Error::InvalidInput(format!(
+            "compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
+            context.control_plane.project_name,
+            sandbox_backend_name(backend),
+            operation,
+        ))),
+    }
+}
+
+fn required_project_backend(
+    context: &ComposeProjectContext,
+    requested_service: Option<&str>,
+    operation: &str,
+) -> Result<SandboxBackendKind, Error> {
+    match requested_service {
+        Some(service_name) => context
+            .plan
+            .services
+            .get(service_name)
+            .map(|service| service.backend)
+            .ok_or_else(|| {
                 Error::InvalidInput(format!(
                     "service {} is not declared in compose project {}",
                     service_name, context.control_plane.project_name
                 ))
-            })?;
-            if service.backend == SandboxBackendKind::Krun {
-                return Ok(());
-            }
-
-            Err(Error::InvalidInput(format!(
-                "service {} in compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
-                service_name,
-                context.control_plane.project_name,
-                sandbox_backend_name(service.backend),
-                operation,
-            )))
-        }
+            }),
         None => {
             let mut services = context.plan.services.iter();
             let Some((_, first_service)) = services.next() else {
@@ -501,18 +531,87 @@ fn require_krun_backend_for_service_operation(
                     operation,
                 )));
             }
-            if first_backend == SandboxBackendKind::Krun {
-                return Ok(());
-            }
-
-            Err(Error::InvalidInput(format!(
-                "compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
-                context.control_plane.project_name,
-                sandbox_backend_name(first_backend),
-                operation,
-            )))
+            Ok(first_backend)
         }
     }
+}
+
+fn load_host_backed_project_backend(
+    context: &ComposeProjectContext,
+    host_platform: ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<Arc<dyn SandboxBackend>, Error> {
+    let backend = required_project_backend(context, None, "load a compose-backed sandbox manager")?;
+    match backend {
+        SandboxBackendKind::Krun => Ok(Arc::new(KrunSandboxBackend::new(
+            context.control_plane.krun_backend_config(),
+        ))),
+        SandboxBackendKind::Container => {
+            load_forwarded_machine_api_backend(context, host_platform, machine_api_client)
+        }
+    }
+}
+
+fn load_forwarded_machine_api_backend(
+    context: &ComposeProjectContext,
+    host_platform: ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<Arc<dyn SandboxBackend>, Error> {
+    match host_platform {
+        ServiceHostPlatform::Macos => {
+            let client = match machine_api_client {
+                Some(client) => client,
+                None => require_default_machine_api_client()?,
+            };
+            validate_forwarded_machine_api_backend(context, &client)?;
+            Ok(Arc::new(ForwardedMachineApiSandboxBackend::new(client)))
+        }
+        ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
+            "compose project {} selects sandbox backend container, but neovex load a compose-backed sandbox manager only supports that backend through the macOS guest machine API today",
+            context.control_plane.project_name
+        ))),
+        ServiceHostPlatform::Other => Err(Error::InvalidInput(format!(
+            "compose project {} selects sandbox backend container, but neovex load a compose-backed sandbox manager does not support the current host platform for forwarded guest execution",
+            context.control_plane.project_name
+        ))),
+    }
+}
+
+fn validate_forwarded_machine_api_backend(
+    context: &ComposeProjectContext,
+    client: &MachineApiClient,
+) -> Result<(), Error> {
+    let capabilities = client.capabilities().map_err(|error| {
+        Error::InvalidInput(format!(
+            "compose project {} selects sandbox backend container, but the default machine API at {} is not reachable: {error}",
+            context.control_plane.project_name,
+            client.socket_path().display()
+        ))
+    })?;
+    if !capabilities
+        .supported_service_backends
+        .contains(&SandboxBackendKind::Container)
+    {
+        return Err(Error::InvalidInput(format!(
+            "compose project {} selects sandbox backend container, but the default machine API at {} does not advertise container backend support",
+            context.control_plane.project_name,
+            client.socket_path().display()
+        )));
+    }
+    if !capabilities.service_execution_ready {
+        let blockers = if capabilities.service_execution_blockers.is_empty() {
+            "guest machine API did not report readiness blockers".to_owned()
+        } else {
+            capabilities.service_execution_blockers.join("; ")
+        };
+        return Err(Error::InvalidInput(format!(
+            "compose project {} selects sandbox backend container, but the default machine API at {} is not ready for container-backed service execution: {}",
+            context.control_plane.project_name,
+            client.socket_path().display(),
+            blockers,
+        )));
+    }
+    Ok(())
 }
 
 fn sandbox_backend_name(backend: SandboxBackendKind) -> &'static str {
@@ -532,6 +631,25 @@ fn project_backend_assignments(context: &ComposeProjectContext) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServiceHostPlatform {
+    Macos,
+    Linux,
+    Other,
+}
+
+impl ServiceHostPlatform {
+    fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(target_os = "linux") {
+            Self::Linux
+        } else {
+            Self::Other
+        }
+    }
 }
 
 fn resolve_service_down_targets(
@@ -966,7 +1084,8 @@ mod tests {
     use std::fs;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use super::*;
     use clap::Parser;
@@ -977,6 +1096,11 @@ mod tests {
     use neovex_sandbox::SandboxFuture;
     use serde_json::json;
     use tempfile::TempDir;
+
+    use crate::machine::{
+        MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
+        serve_machine_api,
+    };
 
     #[derive(Debug, clap::Parser)]
     struct RootCli {
@@ -1516,7 +1640,7 @@ mod tests {
     }
 
     #[test]
-    fn load_krun_backed_service_manager_rejects_container_only_projects() {
+    fn require_krun_backend_rejects_container_only_projects() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let compose_path = write_compose_fixture_with_body(
             temp_dir.path(),
@@ -1530,17 +1654,134 @@ services:
 "#,
         );
         let control_data_dir = temp_dir.path().join("control");
+        let context = load_compose_project_context(&compose_path, &control_data_dir)
+            .expect("compose project context should load");
 
-        let error = match load_krun_backed_sandbox_service_manager(&compose_path, &control_data_dir)
-        {
-            Ok(_) => panic!("container-only project should fail fast"),
-            Err(error) => error,
-        };
+        let error = require_krun_backend_for_service_operation(
+            &context,
+            None,
+            "load a compose-backed sandbox manager",
+        )
+        .expect_err("container-only project should fail fast");
 
         assert_eq!(
             error.to_string(),
             "invalid input: compose project demo-app selects sandbox backend container, but neovex load a compose-backed sandbox manager only supports the krun backend today"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_loader_accepts_container_projects_with_ready_forwarded_machine_api_on_macos() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let compose_path = write_compose_fixture_with_body(
+            temp_dir.path(),
+            r#"
+name: Demo App
+services:
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+        let control_data_dir = temp_dir.path().join("control");
+        let context = load_compose_project_context(&compose_path, &control_data_dir)
+            .expect("compose project context should load");
+        let socket_path = temp_dir.path().join("default-api.sock");
+        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+        let state = MachineApiState {
+            control_data_dir: temp_dir.path().join("machine-control"),
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
+            service_backend: Some(Arc::new(StubMachineApiSandboxBackend::default())),
+            machine_port_forwarder: None,
+        };
+        write_fake_runtime_binaries(temp_dir.path());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve_machine_api(listener, state, async move {
+            let _ = shutdown_rx.await;
+        }));
+        let client = MachineApiClient::new(socket_path.clone());
+
+        wait_for_machine_api_health(&client);
+        let _manager = load_host_backed_sandbox_service_manager_for_platform(
+            &compose_path,
+            &control_data_dir,
+            ServiceHostPlatform::Macos,
+            Some(client.clone()),
+        )
+        .expect("host loader should accept ready container backend");
+        let backend =
+            load_host_backed_project_backend(&context, ServiceHostPlatform::Macos, Some(client))
+                .expect("project backend should load");
+        assert_eq!(backend.kind(), SandboxBackendKind::Container);
+
+        let _ = shutdown_tx.send(());
+        server
+            .await
+            .expect("machine API server task should join")
+            .expect("machine API server should shut down cleanly");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_loader_reports_machine_api_readiness_blockers_for_container_projects() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let compose_path = write_compose_fixture_with_body(
+            temp_dir.path(),
+            r#"
+name: Demo App
+services:
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+        let control_data_dir = temp_dir.path().join("control");
+        let context = load_compose_project_context(&compose_path, &control_data_dir)
+            .expect("compose project context should load");
+        let socket_path = temp_dir.path().join("default-api.sock");
+        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+        let state = MachineApiState {
+            control_data_dir: temp_dir.path().join("machine-control"),
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
+            service_backend: None,
+            machine_port_forwarder: None,
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve_machine_api(listener, state, async move {
+            let _ = shutdown_rx.await;
+        }));
+        let client = MachineApiClient::new(socket_path);
+
+        wait_for_machine_api_health(&client);
+        let error = match load_host_backed_project_backend(
+            &context,
+            ServiceHostPlatform::Macos,
+            Some(client),
+        ) {
+            Ok(_) => panic!("container backend should reject unready machine API"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("not ready for container-backed service execution"),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("guest machine API does not yet expose service lifecycle operations"),
+            "{error}"
+        );
+
+        let _ = shutdown_tx.send(());
+        server
+            .await
+            .expect("machine API server task should join")
+            .expect("machine API server should shut down cleanly");
     }
 
     #[test]
@@ -1622,6 +1863,41 @@ services:
         let compose_path = root.join("compose.yaml");
         fs::write(&compose_path, body).expect("compose fixture should write");
         compose_path
+    }
+
+    fn wait_for_machine_api_health(client: &MachineApiClient) {
+        let start = std::time::Instant::now();
+        loop {
+            match client.health() {
+                Ok(_) => return,
+                Err(_) if start.elapsed() < Duration::from_secs(5) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => panic!("machine API never became reachable: {error}"),
+            }
+        }
+    }
+
+    fn write_fake_runtime_binaries(dir: &Path) {
+        for binary in [
+            "buildah",
+            "conmon",
+            "crun",
+            "netavark",
+            "aardvark-dns",
+            "fuse-overlayfs",
+        ] {
+            let path = dir.join(binary);
+            fs::write(&path, "#!/bin/sh\nexit 0\n").expect("fake runtime binary should write");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                let permissions = fs::Permissions::from_mode(0o755);
+                fs::set_permissions(&path, permissions)
+                    .expect("fake runtime binary should be executable");
+            }
+        }
     }
 
     fn write_manifest(
@@ -1722,6 +1998,39 @@ services:
                     .insert(handle.id.as_str().to_owned(), handle);
             }
             backend
+        }
+    }
+
+    #[derive(Default)]
+    struct StubMachineApiSandboxBackend;
+
+    impl SandboxBackend for StubMachineApiSandboxBackend {
+        fn kind(&self) -> SandboxBackendKind {
+            SandboxBackendKind::Container
+        }
+
+        fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+            let message = format!(
+                "stub machine API backend should not start bare spec {} in service tests",
+                spec.name
+            );
+            Box::pin(async move { Err(neovex::SandboxError::InvalidSpec { message }) })
+        }
+
+        fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
+            self.start(launch.spec)
+        }
+
+        fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
+            self.start(launch.spec)
+        }
+
+        fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+            Box::pin(async move { Ok(None) })
+        }
+
+        fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
+            Box::pin(async move { Ok(()) })
         }
     }
 
