@@ -63,11 +63,17 @@ Important current gap:
 
 - the workspace now carries a generic backend-selection seam (`Container` plus
   `Krun`) and Compose/control-plane carry-through for backend choice
-- but the executable sandbox implementation still executes only `krun` today
-- the current binary now rejects container-only or mixed-backend project-wide
-  Compose operations explicitly instead of silently routing them through krun
-- so the macOS developer target still needs a real guest-side standard
-  container backend before the Podman-aligned macOS flow can be complete
+- Linux production execution still runs through the landed krun backend
+- the host server startup path can now select a forwarded guest machine-API
+  backend for container-backed Compose projects on macOS when the guest
+  machine API advertises `service_execution_ready`
+- the explicit `neovex service ...` lifecycle commands are still krun-shaped
+  today and continue to reject container-only or mixed-backend project-wide
+  Compose operations until the MAC6 host-command path lands
+- so the macOS developer target no longer lacks the remote backend seam, but
+  it still needs the live guest artifact, forwarded-socket proof, and
+  transparent host command UX before the Podman-aligned macOS flow can be
+  called complete
 
 ## Transport And Probe Semantics
 
@@ -152,7 +158,7 @@ service in the guest is still `Starting` or `NotReady`.
 Neovex currently exposes three operator paths relevant to services and macOS
 developer machines:
 
-- `neovex --compose-file ./compose.yaml`
+- `neovex serve --compose-file ./compose.yaml`
   starts the server with a declared service catalog available for
   request-time activation through `ctx.services.*`
 - `neovex service ...`
@@ -176,16 +182,12 @@ Supported CLI commands today:
 - `neovex machine ssh`
 - `neovex machine rm`
 
-Server startup is still flag-driven today: `neovex [flags]` starts the server
-when no subcommand is provided. `service` is the managed-service namespace.
-The intended future command taxonomy is:
+Server startup now uses the explicit `neovex serve` subcommand. `service` is
+the managed-service namespace. The current command taxonomy is:
 
 - `neovex serve` for explicit server startup
 - `neovex service ...` for managed service lifecycle
 - `neovex machine ...` for macOS machine lifecycle
-
-Until `serve` is implemented as an explicit subcommand, docs should describe it
-as target CLI taxonomy rather than shipped behavior.
 
 The current `machine` surface includes the CLI/state-model foundation plus the
 first direct `krunkit` + `gvproxy` host-manager seam. Guest image/bootstrap

@@ -276,7 +276,7 @@ convex-demo: convex-demo-stop
 	@overlay_dir="$$(node ./scripts/convex-demo-overlay.mjs "$(CONVEX_DEMOS_DIR)" "$(DEMO)")"; \
 	echo "Prepared overlay at $$overlay_dir"; \
 	npx convex codegen --app "$$overlay_dir"; \
-	cargo run -p neovex-bin -- --port 8080 --convex-app-dir "$$overlay_dir"
+	cargo run -p neovex-bin -- serve --port 8080 --convex-app-dir "$$overlay_dir"
 
 convex-demo-node: DEMO=node
 convex-demo-node: convex-demo

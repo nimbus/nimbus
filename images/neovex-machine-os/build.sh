@@ -100,7 +100,6 @@ done
 
 require_linux_root
 require_command podman
-require_command rpm-ostree
 
 if [[ -z "${neovex_binary}" ]]; then
   echo "--neovex-binary is required" >&2
@@ -141,10 +140,28 @@ raw_disk_path=""
 compressed_raw_disk_path=""
 raw_disk_sha256="<not-built>"
 compressed_raw_disk_sha256="<not-built>"
-rpm-ostree compose build-chunked-oci \
-  --bootc \
-  --from "${image_name}" \
-  --output "oci-archive:${oci_archive_path}"
+
+if command -v rpm-ostree >/dev/null 2>&1; then
+  rpm-ostree compose build-chunked-oci \
+    --bootc \
+    --from "${image_name}" \
+    --output "oci-archive:${oci_archive_path}"
+else
+  echo "rpm-ostree not found on host; composing via Fedora container"
+  input_archive="$(mktemp --suffix=.ociarchive)"
+  podman save --format oci-archive -o "${input_archive}" "${image_name}"
+  podman run --rm --privileged \
+    --security-opt label=disable \
+    -v "${input_archive}:/input.ociarchive:ro" \
+    -v "${output_dir}:${output_dir}" \
+    quay.io/fedora/fedora:41 \
+    bash -c "dnf install -y rpm-ostree >/dev/null 2>&1 && \
+      rpm-ostree compose build-chunked-oci \
+        --bootc \
+        --from oci-archive:/input.ociarchive \
+        --output 'oci-archive:${oci_archive_path}'"
+  rm -f "${input_archive}"
+fi
 
 if [[ -n "${custom_coreos_disk_images}" ]]; then
   if [[ ! -x "${custom_coreos_disk_images}" ]]; then

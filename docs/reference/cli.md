@@ -6,12 +6,10 @@ management subcommands.
 Current shipped CLI shape:
 
 ```bash
-neovex [flags]
+neovex serve [flags]
 ```
 
-That flag-driven root command is the current server-start path. An explicit
-`neovex serve` subcommand is part of the intended command taxonomy, but it is
-not implemented in the current binary yet.
+`neovex serve` is the current server-start path.
 
 Current shipped service-management commands:
 
@@ -70,21 +68,19 @@ neovex machine rm
 ```
 
 ```bash
-neovex --compose-file ./compose.yaml [--convex-app-dir ./app]
+neovex serve --compose-file ./compose.yaml [--convex-app-dir ./app]
 ```
 
 For local development from source:
 
 ```bash
-cargo run -p neovex-bin -- [flags]
+cargo run -p neovex-bin -- serve [flags]
 ```
 
-Target command taxonomy:
+Current command taxonomy:
 
-- `neovex [flags]`
-  current shipped server startup path
 - `neovex serve`
-  intended future explicit server-start verb
+  shipped explicit server-start verb
 - `neovex service ...`
   shipped managed-service lifecycle namespace
 - `neovex machine ...`
@@ -233,8 +229,12 @@ Current scope:
 - resolves lifecycle commands against backend-owned persisted krun manifests and
   conmon logs under the project-scoped `control_data_dir`, not a separate
   CLI-owned service database
-- rejects container-only or mixed-backend project-wide Compose operations
-  explicitly until the guest-side container backend lands
+- the explicit `neovex service ...` lifecycle commands still reject
+  container-only or mixed-backend project-wide Compose operations until the
+  host-side forwarded machine-API service path lands
+- the server startup path can now load container-backed Compose managers on
+  macOS through the forwarded guest machine API when the default machine API
+  is reachable and reports `service_execution_ready`
 - derives a deterministic local project tenant id from the Compose project key,
   and uses that tenant by default for `service up` / `service down` /
   `service list` / `service inspect` / `service logs` / `service ps`

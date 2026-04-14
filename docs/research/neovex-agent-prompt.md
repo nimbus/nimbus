@@ -29,7 +29,7 @@ If that loop works end-to-end under automated test, this pass is successful.
 The final deliverable must include:
 
 1. A Rust workspace that compiles on stable Rust.
-2. A runnable binary: `cargo run -p neovex-bin -- --port 8080 --data-dir ./data`
+2. A runnable binary: `cargo run -p neovex-bin -- serve --port 8080 --data-dir ./data`
 3. A passing end-to-end integration test proving:
   `subscribe -> HTTP insert -> automatic WebSocket push`
 4. Clean crate boundaries and testable modules, without over-abstracting v1.
