@@ -14,7 +14,10 @@ use super::protocol::{
     MachineApiServiceSandboxStopResponse,
 };
 
-const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(30);
+const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
 const HEALTHZ_PATH: &str = "/healthz";
 const CAPABILITIES_PATH: &str = "/v1/machine-api/capabilities";
 const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
@@ -24,6 +27,7 @@ const BUILD_START_PATH: &str = "/v1/machine-api/service-sandboxes/build-start";
 #[allow(dead_code)]
 pub(crate) struct MachineApiClient {
     socket_path: PathBuf,
+    io_timeout: Duration,
 }
 
 #[allow(dead_code)]
@@ -31,6 +35,15 @@ impl MachineApiClient {
     pub(crate) fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
             socket_path: socket_path.into(),
+            io_timeout: SOCKET_IO_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(socket_path: impl Into<PathBuf>) -> Self {
+        Self {
+            socket_path: socket_path.into(),
+            io_timeout: SOCKET_IO_TIMEOUT_TEST,
         }
     }
 
@@ -98,7 +111,8 @@ impl MachineApiClient {
     where
         T: DeserializeOwned,
     {
-        let response = read_unix_http_request(&self.socket_path, "GET", path, None)?;
+        let response =
+            read_unix_http_request(&self.socket_path, "GET", path, None, self.io_timeout)?;
         let body = parse_http_json_body(&response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
@@ -121,7 +135,13 @@ impl MachineApiClient {
                 path
             ))
         })?;
-        let response = read_unix_http_request(&self.socket_path, "POST", path, Some(&encoded))?;
+        let response = read_unix_http_request(
+            &self.socket_path,
+            "POST",
+            path,
+            Some(&encoded),
+            self.io_timeout,
+        )?;
         let body = parse_http_json_body(&response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
@@ -136,7 +156,13 @@ impl MachineApiClient {
     where
         T: DeserializeOwned,
     {
-        let response = read_unix_http_request(&self.socket_path, "POST", path, Some(b"{}"))?;
+        let response = read_unix_http_request(
+            &self.socket_path,
+            "POST",
+            path,
+            Some(b"{}"),
+            self.io_timeout,
+        )?;
         let body = parse_http_json_body(&response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
@@ -153,6 +179,7 @@ fn read_unix_http_request(
     method: &str,
     path: &str,
     body: Option<&[u8]>,
+    io_timeout: Duration,
 ) -> Result<Vec<u8>, Error> {
     let mut stream = UnixStream::connect(socket_path).map_err(|error| {
         Error::Internal(format!(
@@ -160,14 +187,12 @@ fn read_unix_http_request(
             socket_path.display()
         ))
     })?;
-    stream
-        .set_read_timeout(Some(SOCKET_IO_TIMEOUT))
-        .map_err(|error| {
-            Error::Internal(format!(
-                "failed to configure machine API socket timeout {}: {error}",
-                socket_path.display()
-            ))
-        })?;
+    stream.set_read_timeout(Some(io_timeout)).map_err(|error| {
+        Error::Internal(format!(
+            "failed to configure machine API socket timeout {}: {error}",
+            socket_path.display()
+        ))
+    })?;
     let body = body.unwrap_or_default();
     let mut request = format!("{method} {path} HTTP/1.0\r\nHost: localhost\r\n");
     if !body.is_empty() {
@@ -305,7 +330,7 @@ mod tests {
         let server = tokio::spawn(serve_machine_api(listener, state, async move {
             let _ = shutdown_rx.await;
         }));
-        let client = MachineApiClient::new(socket_path);
+        let client = MachineApiClient::new_for_test(socket_path);
 
         let health = wait_for_health(&client);
         assert_eq!(health.status, "ok");
@@ -362,7 +387,7 @@ mod tests {
         let server = tokio::spawn(serve_machine_api(listener, state, async move {
             let _ = shutdown_rx.await;
         }));
-        let client = MachineApiClient::new(socket_path);
+        let client = MachineApiClient::new_for_test(socket_path);
         let _ = wait_for_health(&client);
 
         let capabilities = client
