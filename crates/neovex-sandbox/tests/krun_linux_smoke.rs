@@ -866,17 +866,16 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut observed_starting = false;
     while Instant::now() < deadline {
-        if let Some(current) =
-            block_on(backend.inspect(&handle.id)).expect("inspect should succeed")
+        if let Some(current) = block_on(backend.inspect(&handle.id))
+            .expect("inspect should succeed")
+            .filter(|h| h.status == SandboxStatus::Starting)
         {
-            if current.status == SandboxStatus::Starting {
-                observed_starting = true;
-                assert!(
-                    current.published_endpoints.is_empty(),
-                    "published endpoints should remain hidden while the guest is still booting"
-                );
-                break;
-            }
+            observed_starting = true;
+            assert!(
+                current.published_endpoints.is_empty(),
+                "published endpoints should remain hidden while the guest is still booting"
+            );
+            break;
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -1461,10 +1460,11 @@ fn wait_for_status(
 ) -> neovex_sandbox::SandboxHandle {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(handle) = block_on(backend.inspect(id)).expect("inspect should succeed") {
-            if handle.status == expected {
-                return handle;
-            }
+        if let Some(handle) = block_on(backend.inspect(id))
+            .expect("inspect should succeed")
+            .filter(|h| h.status == expected)
+        {
+            return handle;
         }
         thread::sleep(Duration::from_millis(250));
     }
