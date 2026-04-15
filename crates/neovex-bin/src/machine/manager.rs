@@ -1450,10 +1450,7 @@ fn check_build_attestation(reference: &str, subject_digest: &str) {
         vec![&image_repo, NEOVEX_SOURCE_REPO]
     };
 
-    let client = match Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-    {
+    let client = match Client::builder().timeout(Duration::from_secs(10)).build() {
         Ok(client) => client,
         Err(error) => {
             eprintln!("warning: attestation lookup failed: {error}");
