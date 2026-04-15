@@ -9,6 +9,7 @@ pub mod materializer;
 pub mod mysql;
 pub mod postgres;
 pub mod query_read;
+mod runtime_bridge;
 pub mod scheduler;
 pub mod schema_store;
 pub mod simulation;

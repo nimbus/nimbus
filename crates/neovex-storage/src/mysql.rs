@@ -20,6 +20,7 @@ use tokio::sync::Semaphore;
 
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
@@ -1223,16 +1224,14 @@ impl MySqlTenantStore {
 
     pub fn block_on<F, T>(&self, future: F) -> Result<T>
     where
-        F: Future<Output = Result<T>> + Send + 'static,
-        T: Send + 'static,
+        F: Future<Output = Result<T>> + Send,
+        T: Send,
     {
-        if TokioRuntimeHandle::try_current().is_ok() {
-            let runtime_handle = self.provider.runtime_handle.clone();
-            return std::thread::spawn(move || runtime_handle.block_on(future))
-                .join()
-                .map_err(|_| Error::Internal("MySQL bridge thread panicked".to_string()))?;
-        }
-        self.provider.runtime_handle.block_on(future)
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let handle_for_task = runtime_handle.clone();
+        bridge_tokio_runtime(&runtime_handle, "MySQL bridge thread panicked", move || {
+            handle_for_task.block_on(future)
+        })
     }
 }
 
@@ -2009,15 +2008,11 @@ impl MySqlWriteTransaction {
         F: Future<Output = Result<T>> + Send,
         T: Send,
     {
-        if TokioRuntimeHandle::try_current().is_ok() {
-            return std::thread::scope(|scope| {
-                scope
-                    .spawn(move || runtime_handle.block_on(future))
-                    .join()
-                    .map_err(|_| Error::Internal("MySQL write bridge thread panicked".to_string()))
-            })?;
-        }
-        runtime_handle.block_on(future)
+        bridge_tokio_runtime(
+            runtime_handle,
+            "MySQL write bridge thread panicked",
+            move || runtime_handle.block_on(future),
+        )
     }
 
     fn check_cancel(&self) -> Result<()> {
