@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-04-15
+
+### Build
+
+- Use stable machine-os workflow ref by @jackspirou
+- Repin machine-os workflow refs by @jackspirou
+- Cache rusty_v8 artifacts by @jackspirou
+- Repin machine-os performance updates by @jackspirou
+- Shorten release critical path by @jackspirou
+- Fix machine-os workflow pin by @jackspirou
+- Reuse staged machine-os release bundles by @jackspirou
+- Switch machine-os release flow to app auth by @jackspirou
+- Repin machine-os reusable workflow by @jackspirou
+- Use reusable machine-os release workflow by @jackspirou
+- Dispatch native machine-os releases by @jackspirou
+
+### CI/CD
+
+- Harden workflow timeouts and permissions by @jackspirou
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.3 by @github-actions[bot]
+
+### Fixed
+
+- Grant reusable machine-os workflow write access by @jackspirou
+- Pin valid machine-os workflow commit by @jackspirou
+- Use valid release workflow step ids by @jackspirou
+- Match machine-os release run names by @jackspirou
+- Account worker load before dispatch send by @jackspirou
+
+### Testing
+
+- Invoke fake buildah via shell launcher by @jackspirou
+- Close fake buildah temp path before exec by @jackspirou
+- Harden fake buildah helper creation by @jackspirou
+
+### New Contributors
+* @github-actions[bot] made their first contribution
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.3...v0.1.4
+
 ## [0.1.3] - 2026-04-15
 
 ### Build
