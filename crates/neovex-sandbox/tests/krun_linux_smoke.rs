@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![allow(clippy::field_reassign_with_default)]
 
 use std::env;
 use std::io::{Read, Write};
