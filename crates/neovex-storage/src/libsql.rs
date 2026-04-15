@@ -32,6 +32,7 @@ use tracing::{debug, warn};
 
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
 use crate::simulation::{Clock, FaultInjector, NoopFaultInjector, SystemClock};
 use crate::sqlite::{
     SQLITE_INIT_SQL, SqliteReadSnapshot, SqliteTenantStore,
@@ -1656,15 +1657,25 @@ impl LibsqlReplicaTenantStore {
         Check: Fn() -> Result<()> + Send + 'static,
         F: FnOnce(&mut LibsqlReplicaWriteTransaction) -> Result<T> + Send + 'static,
     {
-        if TokioRuntimeHandle::try_current().is_ok() {
-            let store = self.clone();
-            return std::thread::spawn(move || store.execute_write_cancellable(check_cancel, task))
-                .join()
-                .map_err(|_| {
-                    Error::Internal("libsql replica write bridge thread panicked".to_string())
-                })?;
-        }
+        let store = self.clone();
+        let runtime_handle = self.provider.runtime_handle.clone();
+        bridge_tokio_runtime(
+            &runtime_handle,
+            "libsql replica write bridge thread panicked",
+            move || store.execute_write_cancellable_inline(check_cancel, task),
+        )
+    }
 
+    fn execute_write_cancellable_inline<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut LibsqlReplicaWriteTransaction) -> Result<T> + Send + 'static,
+    {
         let mut transaction = self.begin_write_transaction_cancellable(check_cancel)?;
         let value = match task(&mut transaction) {
             Ok(value) => value,
@@ -1998,11 +2009,12 @@ impl LibsqlReplicaTenantStore {
         Fut: Future<Output = Result<T>>,
     {
         let handle = self.provider.runtime_handle.clone();
-        if TokioRuntimeHandle::try_current().is_ok() {
-            tokio::task::block_in_place(|| handle.block_on(future))
-        } else {
-            handle.block_on(future)
-        }
+        let handle_for_task = handle.clone();
+        bridge_tokio_runtime_local(
+            &handle,
+            "libsql replica synchronous transaction bridge requires a multi-thread Tokio runtime",
+            move || handle_for_task.block_on(future),
+        )
     }
 
     async fn load_remote_schema(&self) -> Result<Schema> {

@@ -26,6 +26,7 @@ use tokio_postgres::{AsyncMessage, Config as PostgresConfig, IsolationLevel, NoT
 
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
@@ -522,15 +523,25 @@ impl PostgresTenantStore {
         Check: Fn() -> Result<()> + Send + 'static,
         F: FnOnce(&mut PostgresWriteTransaction) -> Result<T> + Send + 'static,
     {
-        if TokioRuntimeHandle::try_current().is_ok() {
-            let store = self.clone();
-            return std::thread::spawn(move || store.execute_write_cancellable(check_cancel, task))
-                .join()
-                .map_err(|_| {
-                    Error::Internal("Postgres write bridge thread panicked".to_string())
-                })?;
-        }
+        let store = self.clone();
+        let runtime_handle = self.provider.runtime_handle.clone();
+        bridge_tokio_runtime(
+            &runtime_handle,
+            "Postgres write bridge thread panicked",
+            move || store.execute_write_cancellable_inline(check_cancel, task),
+        )
+    }
 
+    fn execute_write_cancellable_inline<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut PostgresWriteTransaction) -> Result<T> + Send + 'static,
+    {
         let mut transaction = self.begin_write_transaction_cancellable(check_cancel)?;
         let value = match task(&mut transaction) {
             Ok(value) => value,
@@ -1311,15 +1322,12 @@ impl PostgresTenantStore {
         Fut: Future<Output = Result<T>> + Send + 'static,
     {
         let handle = self.provider.runtime_handle.clone();
-        if TokioRuntimeHandle::try_current().is_ok() {
-            std::thread::spawn(move || handle.block_on(future))
-                .join()
-                .map_err(|_| {
-                    Error::Internal("Postgres runtime bridge thread panicked".to_string())
-                })?
-        } else {
-            handle.block_on(future)
-        }
+        let handle_for_task = handle.clone();
+        bridge_tokio_runtime(
+            &handle,
+            "Postgres runtime bridge thread panicked",
+            move || handle_for_task.block_on(future),
+        )
     }
 
     fn durable_journal_cursor_floor(&self) -> Result<SequenceNumber> {
