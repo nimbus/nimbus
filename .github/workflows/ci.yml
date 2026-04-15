@@ -48,6 +48,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: ci-ubuntu-stable
           cache-on-failure: "true"
 
       - name: Check formatting
@@ -97,6 +98,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: ci-ubuntu-stable
           cache-on-failure: "true"
 
       - name: Run PR verification harness corpus
@@ -131,6 +133,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: ci-ubuntu-stable
           cache-on-failure: "true"
 
       - name: Run nightly verification harness corpus
@@ -160,6 +163,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: ci-ubuntu-stable
           cache-on-failure: "true"
 
       - name: Install cargo-deny
@@ -266,7 +270,7 @@ jobs:
 
       - name: Wait for libsql provider fixture
         run: |
-          for attempt in {1..60}; do
+          for _ in {1..60}; do
             if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/neovex_coverage_probe/create \
               -H 'content-type: application/json' \
               --data '{}' >/dev/null; then
