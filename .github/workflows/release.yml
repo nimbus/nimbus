@@ -35,6 +35,50 @@ jobs:
             exit 1
           fi
 
+  build-linux-arm64:
+    name: Build (aarch64-unknown-linux-gnu)
+    needs: verify-release-contract
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        shell: bash
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-aarch64-unknown-linux-gnu
+          cache-on-failure: "true"
+
+      - name: Build release binary
+        run: cargo build --release -p neovex-bin
+
+      - name: Package archive
+        run: |
+          tar czf neovex_linux_arm64.tar.gz \
+            -C target/release neovex \
+            -C ${{ github.workspace }} README.md LICENSE
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: neovex_linux_arm64
+          path: neovex_linux_arm64.tar.gz
+          compression-level: 0
+
   build:
     name: Build (${{ matrix.target }})
     needs: verify-release-contract
@@ -47,11 +91,6 @@ jobs:
             runner: ubuntu-22.04
             os: linux
             arch: x86_64
-            archive: tar.gz
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
             archive: tar.gz
           - target: aarch64-apple-darwin
             runner: macos-14
@@ -117,10 +156,11 @@ jobs:
         with:
           name: neovex_${{ matrix.os }}_${{ matrix.arch }}
           path: neovex_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
+          compression-level: 0
 
   stage-machine-os:
     name: Stage machine-os bundle
-    needs: build
+    needs: build-linux-arm64
     uses: agentstation/neovex-machine-os/.github/workflows/build.yml@51aca91fb9edbf370745dea1b0ecae8f269111f2
     with:
       neovex_version: ${{ github.ref_name }}
@@ -138,7 +178,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build, stage-machine-os]
+    needs: [build-linux-arm64, build, stage-machine-os]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -313,7 +353,7 @@ jobs:
 
   release-machine-os:
     name: Release machine-os
-    needs: [build, stage-machine-os, release]
+    needs: release
     uses: agentstation/neovex-machine-os/.github/workflows/publish.yml@51aca91fb9edbf370745dea1b0ecae8f269111f2
     with:
       neovex_version: ${{ github.ref_name }}
