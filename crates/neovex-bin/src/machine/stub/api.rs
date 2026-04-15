@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), allow(dead_code))]
+
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
