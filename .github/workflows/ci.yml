@@ -24,6 +24,7 @@ jobs:
   test:
     name: Format + Clippy + Test
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: github.event_name != 'schedule'
 
     steps:
@@ -73,6 +74,7 @@ jobs:
   harness-pr:
     name: Verification Harness (PR / ${{ matrix.surface }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
@@ -109,6 +111,7 @@ jobs:
   harness-nightly:
     name: Verification Harness (Nightly / ${{ matrix.surface }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -145,6 +148,7 @@ jobs:
   deny:
     name: Dependency audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -179,6 +183,7 @@ jobs:
   js:
     name: JS Build + Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name != 'schedule'
 
     steps:

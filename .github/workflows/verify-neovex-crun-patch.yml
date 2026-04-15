@@ -52,6 +52,7 @@ jobs:
   verify:
     name: Verify krun infrastructure helpers
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
