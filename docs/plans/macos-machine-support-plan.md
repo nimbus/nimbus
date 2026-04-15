@@ -1958,3 +1958,24 @@ Acceptance criteria:
   `cargo fmt --all --check`;
   `cargo check -p neovex-bin`;
   `cargo test -p neovex-bin`.
+- 2026-04-14: Hardened the `neovex-bin` coverage lane around the shared macOS
+  machine helper environment so CI no longer flakes on the unreachable-registry
+  OCI fixture. GitHub Actions run `24435896563` / job `71389968904` failed in
+  coverage with `required helper 'krunkit' was not found` inside
+  `machine_start_reports_oci_materialization_failure_for_unreachable_registry_image`,
+  which narrowed the regression to process-global `NEOVEX_MACHINE_KRUNKIT` /
+  `NEOVEX_MACHINE_GVPROXY` interference rather than OCI resolution itself.
+  `crates/neovex-bin/src/machine/manager.rs` now owns a shared
+  `MachineHelperEnvGuard` that serializes helper-env mutation for tests,
+  records prior values, restores them on drop instead of unconditionally
+  clearing them, and recovers from poisoned mutex state so one unrelated panic
+  does not cascade into false helper-resolution failures. The manager tests and
+  the CLI-level unreachable-registry test in
+  `crates/neovex-bin/src/machine/mod.rs` now all use that same guard and
+  shared stub-binary writer instead of open-coded `set_var` / `remove_var`
+  sequences. Durable conclusion: the MAC4/MAC5 host-machine coverage proof is
+  again deterministic under `cargo llvm-cov`, and the helper-resolution seam no
+  longer depends on parallel test scheduling. Verification:
+  `cargo fmt --all --check`;
+  `cargo llvm-cov -p neovex-bin --bin neovex --no-report -- machine::tests::machine_start_reports_oci_materialization_failure_for_unreachable_registry_image --exact`;
+  `cargo llvm-cov -p neovex-bin --bin neovex --no-report`.
