@@ -38,6 +38,12 @@ struct WorkerRouteSelection {
     strategy: WorkerRouteStrategy,
 }
 
+struct WorkerAssignment {
+    worker_id: usize,
+    affinity_key: Option<RuntimeAffinityKey>,
+    last_assigned_sequence: u64,
+}
+
 impl WorkerDispatchQueue {
     fn new(
         sender: mpsc::Sender<RuntimeWorkerJob>,
@@ -171,20 +177,24 @@ impl RuntimeWorkerRouter {
         }
     }
 
-    fn note_assignment(&self, worker_id: usize, affinity_key: Option<RuntimeAffinityKey>) {
+    fn note_assignment(
+        &self,
+        worker_id: usize,
+        affinity_key: Option<RuntimeAffinityKey>,
+    ) -> WorkerAssignment {
         let sequence = self.next_assignment_sequence.fetch_add(1, Ordering::SeqCst);
         let worker = &self.workers[worker_id];
         worker
             .last_assigned_sequence
             .store(sequence, Ordering::SeqCst);
         worker.load.fetch_add(1, Ordering::SeqCst);
-        if let Some(affinity_key) = affinity_key {
+        if let Some(affinity_key) = affinity_key.as_ref() {
             let mut affinity = self
                 .affinity
                 .lock()
                 .expect("worker affinity lock should not be poisoned");
             affinity.insert(
-                affinity_key,
+                affinity_key.clone(),
                 RuntimeAffinityAssignment {
                     worker_id,
                     last_assigned_sequence: sequence,
@@ -204,6 +214,36 @@ impl RuntimeWorkerRouter {
             self.metrics
                 .update_worker_affinity_cache_entries(affinity.len());
         }
+        WorkerAssignment {
+            worker_id,
+            affinity_key,
+            last_assigned_sequence: sequence,
+        }
+    }
+
+    fn rollback_assignment(&self, assignment: WorkerAssignment) {
+        let worker = &self.workers[assignment.worker_id];
+        let update = worker
+            .load
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                current.checked_sub(1)
+            });
+        debug_assert!(update.is_ok(), "worker load rollback should not underflow");
+        if let Some(affinity_key) = assignment.affinity_key {
+            let mut affinity = self
+                .affinity
+                .lock()
+                .expect("worker affinity lock should not be poisoned");
+            let should_remove = affinity.get(&affinity_key).is_some_and(|existing| {
+                existing.worker_id == assignment.worker_id
+                    && existing.last_assigned_sequence == assignment.last_assigned_sequence
+            });
+            if should_remove {
+                affinity.remove(&affinity_key);
+            }
+            self.metrics
+                .update_worker_affinity_cache_entries(affinity.len());
+        }
     }
 
     pub(in crate::executor) async fn dispatch_job(&self, job: RuntimeWorkerJob) -> Result<()> {
@@ -211,7 +251,11 @@ impl RuntimeWorkerRouter {
         let selection = self.choose_worker(affinity_key.as_ref());
         let dispatch_handle = job.dispatch_handle.clone();
         let sender = self.dispatch_sender(selection.worker_id)?;
+        // Account for the assignment before enqueueing so a very fast worker
+        // completion cannot beat the router's load increment.
+        let assignment = self.note_assignment(selection.worker_id, affinity_key);
         sender.send(job).await.map_err(|error| {
+            self.rollback_assignment(assignment);
             if let Some(dispatch_handle) = dispatch_handle {
                 dispatch_handle.rollback_dispatch();
             }
@@ -219,7 +263,6 @@ impl RuntimeWorkerRouter {
             Self::closed_error()
         })?;
         self.record_route(selection.strategy);
-        self.note_assignment(selection.worker_id, affinity_key);
         self.workers[selection.worker_id].activity_signal.notify();
         Ok(())
     }
@@ -240,14 +283,17 @@ impl RuntimeWorkerRouter {
                 return Err(Box::new(job));
             }
         };
+        // Account for the assignment before enqueueing so a very fast worker
+        // completion cannot beat the router's load increment.
+        let assignment = self.note_assignment(selection.worker_id, affinity_key);
         sender.blocking_send(job).map_err(|error| {
+            self.rollback_assignment(assignment);
             if let Some(dispatch_handle) = dispatch_handle {
                 dispatch_handle.rollback_dispatch();
             }
             Box::new(error.0)
         })?;
         self.record_route(selection.strategy);
-        self.note_assignment(selection.worker_id, affinity_key);
         self.workers[selection.worker_id].activity_signal.notify();
         Ok(())
     }
@@ -277,5 +323,71 @@ impl RuntimeWorkerRouter {
             .expect("worker affinity lock should not be poisoned");
         affinity.clear();
         self.metrics.update_worker_affinity_cache_entries(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::context::RuntimeInvocationContext;
+    use crate::executor::queue::RuntimeWorkerResultSender;
+    use crate::host::{HostBridge, HostCallRequest};
+    use crate::metrics::RuntimeMetrics;
+    use crate::runtime::{InvocationKind, InvocationRequest, NeovexRuntime, RuntimeBundle};
+
+    struct NoopHost;
+
+    impl HostBridge for NoopHost {
+        fn call(&self, _request: HostCallRequest) -> crate::error::Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    fn sample_job() -> RuntimeWorkerJob {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:list".to_owned(),
+            args: serde_json::Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+        RuntimeWorkerJob {
+            runtime: NeovexRuntime::new(Arc::new(NoopHost)),
+            bundle: RuntimeBundle::new(&bundle_path),
+            request: request.clone(),
+            context: RuntimeInvocationContext::top_level(&request),
+            cancellation: None,
+            enqueued_at: std::time::Instant::now(),
+            result_tx: RuntimeWorkerResultSender::Blocking(std::sync::mpsc::sync_channel(1).0),
+            dispatch_handle: None,
+        }
+    }
+
+    #[test]
+    fn failed_dispatch_rolls_back_pre_send_worker_load() {
+        let metrics = Arc::new(RuntimeMetrics::default());
+        let (router, queues) =
+            RuntimeWorkerRouter::new(1, 1, metrics, RuntimeRoutingAffinity::None, 1);
+        drop(queues);
+
+        let result = router.dispatch_job_blocking(sample_job());
+        assert!(
+            result.is_err(),
+            "closed worker queue should reject dispatch"
+        );
+        assert_eq!(
+            router.workers[0].load.load(Ordering::SeqCst),
+            0,
+            "failed dispatch should roll back the pre-send worker assignment",
+        );
     }
 }
