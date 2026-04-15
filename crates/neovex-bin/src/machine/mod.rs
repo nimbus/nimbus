@@ -988,11 +988,11 @@ mod tests {
 
         match machine.command {
             MachineSubcommand::Init(init) => {
-                assert_eq!(init.image, default_machine_image());
-                assert_eq!(
-                    init.image,
-                    "docker://ghcr.io/agentstation/neovex-machine-os:stable"
+                let expected = format!(
+                    "docker://ghcr.io/agentstation/neovex-machine-os:v{}",
+                    env!("CARGO_PKG_VERSION")
                 );
+                assert_eq!(init.image, expected);
             }
             _ => panic!("expected init subcommand"),
         }
