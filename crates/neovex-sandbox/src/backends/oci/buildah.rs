@@ -1501,6 +1501,7 @@ esac
             .sync_all()
             .expect("fake buildah script should sync cleanly");
         temp_script
+            .into_temp_path()
             .persist(&script_path)
             .expect("fake buildah script should persist cleanly");
 
