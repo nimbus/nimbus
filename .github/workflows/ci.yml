@@ -283,7 +283,11 @@ jobs:
         # Postgres, MySQL, and libsql so provider suites run against the same
         # explicit env-driven fixture contract the tests already support. The runtime
         # crate's V8-sensitive tests still self-isolate inside the harness.
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        #
+        # Keep the instrumented workspace build serialized. GitHub-hosted Linux
+        # runners have shown rust-lld bus errors when multiple large coverage
+        # test binaries link in parallel.
+        run: cargo llvm-cov -j 1 --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
