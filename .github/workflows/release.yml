@@ -26,7 +26,7 @@ jobs:
           MACHINE_OS_RELEASE_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}
         run: |
           if [[ -z "${MACHINE_OS_RELEASE_TOKEN}" ]]; then
-            echo "MACHINE_OS_RELEASE_TOKEN must be configured so neovex can trigger the matching neovex-machine-os release." >&2
+            echo "MACHINE_OS_RELEASE_TOKEN must be configured so the reusable neovex-machine-os release workflow can publish GHCR artifacts and create the matching machine-os release." >&2
             exit 1
           fi
 
@@ -113,13 +113,14 @@ jobs:
           name: neovex_${{ matrix.os }}_${{ matrix.arch }}
           path: neovex_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
 
-  build-machine-os:
+  verify-machine-os:
     name: Verify machine-os contract
     needs: build
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7d67518be340c1898750cfae647c47eb2aa05af9
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@cb474ebe26dd15c4978d57c0095d91c7856fcf50
     with:
       neovex_version: ${{ github.ref_name }}
       neovex_artifact_name: neovex_linux_arm64
+      create_release: false
       publish: false
       image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
     permissions:
@@ -131,7 +132,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build, build-machine-os]
+    needs: [build, verify-machine-os]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -306,60 +307,19 @@ jobs:
 
   release-machine-os:
     name: Release machine-os
-    runs-on: ubuntu-latest
-    needs: release
+    needs: [build, verify-machine-os, release]
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@cb474ebe26dd15c4978d57c0095d91c7856fcf50
+    with:
+      neovex_version: ${{ github.ref_name }}
+      release_tag: ${{ github.ref_name }}
+      neovex_artifact_name: neovex_linux_arm64
+      create_release: true
+      publish: true
+      image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
     permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}
-      MACHINE_OS_REPO: agentstation/neovex-machine-os
-      RELEASE_TAG: ${{ github.ref_name }}
-    steps:
-      - name: Capture dispatch timestamp
-        id: dispatch_meta
-        run: |
-          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
-
-      - name: Dispatch machine-os release workflow
-        run: |
-          gh workflow run build.yml \
-            -R "${MACHINE_OS_REPO}" \
-            --ref main \
-            -f neovex_version="${RELEASE_TAG}" \
-            -f release_tag="${RELEASE_TAG}" \
-            -f create_release=true \
-            -f publish=true \
-            -f image_reference="docker://ghcr.io/agentstation/neovex-machine-os:${RELEASE_TAG}"
-
-      - name: Wait for machine-os release workflow
-        run: |
-          run_id=""
-          run_name="Build machine-os (${RELEASE_TAG})"
-
-          for _ in {1..30}; do
-            run_id="$(
-              gh api "repos/${MACHINE_OS_REPO}/actions/workflows/build.yml/runs?event=workflow_dispatch&per_page=10" \
-                | jq -r \
-                    --arg run_name "${run_name}" \
-                    --arg started_at "${{ steps.dispatch_meta.outputs.started_at }}" \
-                    '.workflow_runs
-                    | map(select(.display_title == $run_name))
-                    | map(select(.created_at >= $started_at))
-                    | sort_by(.created_at)
-                    | last
-                    | .id // empty'
-            )"
-
-            if [[ -n "${run_id}" ]]; then
-              break
-            fi
-
-            sleep 10
-          done
-
-          if [[ -z "${run_id}" ]]; then
-            echo "unable to locate the dispatched neovex-machine-os workflow run for ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-
-          gh run watch "${run_id}" -R "${MACHINE_OS_REPO}" --exit-status
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    secrets:
+      MACHINE_OS_RELEASE_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}

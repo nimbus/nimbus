@@ -403,9 +403,16 @@ Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
 `agentstation/neovex-machine-os`, mirroring Podman's
 `containers/podman` + `containers/podman-machine-os` model. The host repo
 (`agentstation/neovex`) owns the binary/CLI/server release and uses the
-machine-image repo in two phases on `v*` releases: a reusable workflow for the
-coupled contract build, then a native `agentstation/neovex-machine-os`
-release/publish run with the same tag. This gives clean attestation semantics:
+machine-image repo in two reusable-workflow phases on `v*` releases: a
+publish-free contract build before the host release, then a publish/release
+call after the host release succeeds. That keeps the GitHub Actions shape
+modern by removing the extra cross-repo `workflow_dispatch` hop while still
+preserving machine-image release ownership in `agentstation/neovex-machine-os`.
+Because reusable workflows still execute in the caller's context, the
+publish/release call must pass an explicit token (today `MACHINE_OS_RELEASE_TOKEN`;
+longer term a GitHub App installation token is the preferred upgrade) so the
+called workflow can publish GHCR artifacts and create a GitHub Release in the
+separate machine-image repo. This keeps attestation ownership split cleanly:
 `agentstation/neovex` attests the host binary/CLI/server, while
 `agentstation/neovex-machine-os` attests and releases the guest image in its
 own repo. Consumers still reference the image only by GHCR reference, so the
