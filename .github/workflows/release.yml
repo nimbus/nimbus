@@ -12,14 +12,13 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   verify-release-contract:
     name: Verify cross-repo release contract
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Require machine-os release app credentials
         env:
@@ -39,6 +38,7 @@ jobs:
     name: Build (aarch64-unknown-linux-gnu)
     needs: verify-release-contract
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v6
@@ -84,6 +84,7 @@ jobs:
     name: Build (${{ matrix.target }})
     needs: verify-release-contract
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -180,7 +181,12 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [build-linux-arm64, build, stage-machine-os]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
         with:
