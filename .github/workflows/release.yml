@@ -116,7 +116,7 @@ jobs:
   build-machine-os:
     name: Verify machine-os contract
     needs: build
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7d67518d8e4d5ba20ce3c90888ef688b1c0f4174
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7d67518be340c1898750cfae647c47eb2aa05af9
     with:
       neovex_version: ${{ github.ref_name }}
       neovex_artifact_name: neovex_linux_arm64
