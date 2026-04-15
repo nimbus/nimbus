@@ -231,8 +231,7 @@ jobs:
         # inside the harness.
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info \
-            -- --skip tests::postgres_provider --skip tests::mysql_provider --skip tests::libsql_provider \
-               --skip backend_round_trips_image_build_inspect_and_stop_over_machine_api
+            -- --skip tests::postgres_provider --skip tests::mysql_provider --skip tests::libsql_provider
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
