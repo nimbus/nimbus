@@ -113,5 +113,6 @@ build needed.
 3. `scripts/build-neovex-crun.sh` — existing build script
 4. `scripts/verify-neovex-crun-fedora-userspace.sh` — Fedora container build pattern
 5. `.github/workflows/verify-neovex-crun-patch.yml` — existing CI (verify only)
-6. `.github/workflows/neovex-machine-os.yml` — reference for workflow patterns
-   (caching, attestation, parallel pulls, artifact upload)
+6. `/Users/jack/src/github.com/agentstation/neovex-machine-os/.github/workflows/build.yml`
+   — reference for workflow patterns (caching, attestation, parallel pulls,
+   artifact upload)

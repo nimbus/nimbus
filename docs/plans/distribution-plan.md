@@ -399,15 +399,16 @@ containers-common).
 selection for the bootable guest disk.
 Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
 
-**Repo split:** The guest image source (`images/neovex-machine-os/`,
-`.github/workflows/neovex-machine-os.yml`) currently lives in the neovex
-monorepo. Once the build/publish contract stabilizes, split to
-`agentstation/neovex-machine-os` — mirroring Podman's
-`containers/podman` + `containers/podman-machine-os` model. This gives
-clean attestation semantics: `agentstation/neovex` attests the host
-binary/CLI/server, `agentstation/neovex-machine-os` attests the guest
-image. Consumers reference the image by GHCR reference, so the split is
-transparent.
+**Repo split:** The guest image source now lives in
+`agentstation/neovex-machine-os`, mirroring Podman's
+`containers/podman` + `containers/podman-machine-os` model. The host repo
+(`agentstation/neovex`) owns the binary/CLI/server release and invokes the
+machine-image repo through a reusable workflow on `v*` releases so the
+published guest image tag matches the host version. This gives clean
+attestation semantics: `agentstation/neovex` attests the host
+binary/CLI/server, while `agentstation/neovex-machine-os` attests
+standalone guest-image builds. Consumers still reference the image only by
+GHCR reference, so the split stays transparent to operators.
 
 The Podman machine-os source is also a useful negative reference here: its
 guest image build script installs plain container tooling (`crun`, `podman`,
@@ -677,20 +678,22 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
   `stable` and optionally `latest`
 - `neovex machine init` pulls and caches by digest
 - Ignition provisioning: SSH keys, neovex systemd unit, virtiofs mounts
-- Dedicated Linux ARM64 GitHub Actions runner lane; macOS consumes the
-  published artifact, it does not build the guest image locally
-- **Repo split (future):** once the build/publish contract stabilizes, move
-  guest image source to `agentstation/neovex-machine-os` (mirrors Podman's
-  `containers/podman-machine-os` split). Gives clean attestation: neovex
-  repo attests host binaries, machine-os repo attests guest image.
+- Dedicated Linux ARM64 GitHub Actions lane in
+  `agentstation/neovex-machine-os`; macOS consumes the published artifact, it
+  does not build the guest image locally
+- **Cross-repo release contract:** neovex `v*` releases call the reusable
+  machine-os workflow with the same `v*` tag so the default host image
+  reference `ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`
+  always resolves to a matching guest image. Standalone machine-os `v*` tags
+  must embed the same neovex version they publish.
 
 **Acceptance criteria:**
 - `neovex machine init` downloads the custom image
 - the published machine image has a versioned GHCR reference plus recorded
   digest/provenance
 - `neovex serve` runs inside the VM with all deps available
-- a dedicated machine-image release tag such as `machine-os/v0.1.0` can drive
-  the Linux ARM64 build/publish lane
+- a neovex `v0.1.0` release triggers a matching
+  `ghcr.io/agentstation/neovex-machine-os:v0.1.0` guest-image publish
 
 #### Phase D4c: API forwarding + port forwarding
 
@@ -733,7 +736,7 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 | D2: Apt repo (Debian/Ubuntu) | `todo` | D1 | cargo-deb or nfpm |
 | D3: COPR (Fedora) | `todo` | D1 | COPR build service |
 | D4a: Homebrew + krunkit | `todo` | D1 | Apple Silicon, macOS 14+ |
-| D4b: Guest VM image | `in_progress` | D4a | machine-os CI live on arm64, publishes to GHCR on `machine-os/v*` tags |
+| D4b: Guest VM image | `in_progress` | D4a | split to `agentstation/neovex-machine-os`; host `v*` release now calls the reusable image workflow |
 | D4c: API + port forwarding | `todo` | D4b | host-local control channel, gvproxy, layered probes |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 
@@ -755,3 +758,4 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 | 2026-04-12 | D4a prep | `documented` | Promoted that recreate/reset guidance from narrative advice into a checked-in operator path and validated it against the real long-lived machine on this Mac. The repo now owns `scripts/recreate-podman-machine.sh`, `scripts/verify-podman-machine-recreate-helper.sh`, `make recreate-podman-machine`, and `make verify-podman-machine-recreate-helper`, so Channel 4 has a durable Podman-aligned repair entrypoint instead of ad hoc shell history. A live run at `/tmp/neovex-libkrun-users-only-recreate` first preserved the stale-state failure under `pre-diagnostics/summary.txt` (`podman info --debug` failed and the API/gvproxy sockets were missing), then removed and recreated `neovex-libkrun-users-only` under the same `/tmp/podman` short-root contract and returned `result ready info=ok ssh=ok` in `readiness/summary.txt`. | `bash -n scripts/recreate-podman-machine.sh`; `bash -n scripts/verify-podman-machine-recreate-helper.sh`; `bash scripts/verify-podman-machine-recreate-helper.sh`; `make verify-podman-machine-recreate-helper`; `bash scripts/recreate-podman-machine.sh --machine neovex-libkrun-users-only --connection neovex-libkrun-users-only --provider libkrun --tmp-root /tmp/podman --output-dir /tmp/neovex-libkrun-users-only-recreate --cpus 2 --memory 2048 --disk-size 20 --volume /Users:/Users`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/summary.txt`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/pre-diagnostics/summary.txt`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/readiness/summary.txt`; `cargo fmt --all --check` | Keep Channel 4 aligned with the proven short-root recreate path: prefer the checked-in helper when a macOS machine wedges, and treat the recreated `users-only` result as stronger local evidence than the earlier stale-state failure |
 | 2026-04-14 | D4b | `done` | Machine-os CI workflow (`.github/workflows/neovex-machine-os.yml`) migrated from self-hosted ARM64 runners to GitHub-hosted `ubuntu-24.04-arm`. Pipeline switched from rpm-ostree + custom-coreos-disk-images to `podman save --format oci-archive` + `bootc-image-builder`. Base image changed from Fedora CoreOS to `fedora-bootc:42`. Publishes raw-disk OCI artifact to GHCR on `machine-os/v*` tags with `actions/attest@v4` provenance. Consumer-side attestation verification added to `manager.rs`. | CI run green on `ubuntu-24.04-arm`; `actions/attest@v4` provenance attached; machine manager queries GitHub Attestations API after SHA256 verification | D4b acceptance criteria met: versioned GHCR reference, digest/provenance, dedicated ARM64 build lane |
 | 2026-04-14 | D1 | `in_progress` | neovex-crun CI workflow (`.github/workflows/neovex-crun.yml`) implemented and verified green. Three jobs: verify (patch syntax + help entrypoints on `ubuntu-latest`), build (matrix amd64 on `ubuntu-latest` + arm64 on `ubuntu-24.04-arm`, inside `fedora:43` containers with `libkrun-devel` from repos), publish (on `crun/v*` tags with `actions/attest@v4` provenance + GitHub Release). Fixed existing `verify-neovex-crun-patch.yml` CRUN_VERSION from 1.22 to 1.27. Linux aarch64 platform support partially unlocked via both machine-os and neovex-crun CI. | CI run `24417536553` green: verify success, build amd64 success, build arm64 success, publish skipped (no tag) | neovex binary CI workflow still needed to complete D1; then `crun/v*` tag push to validate publish job end-to-end |
+| 2026-04-15 | D4b | `documented` | The machine-image repo split has now landed. The guest image source and workflow moved out of the neovex monorepo into `agentstation/neovex-machine-os`, and the host `v*` release workflow now calls the external reusable build workflow with the same version tag. Follow-on hardening then converted the repo boundary into an explicit artifact contract: standalone machine-os `v*` tags now resolve the matching Neovex release tag instead of `latest`, the packaged OCI artifact carries source/attestation/version annotations, and the host machine manager reads those annotations before falling back to the older dual-repo attestation lookup. Durable conclusion: the host repo should treat machine-image production as an external dependency with a versioned, machine-readable cross-repo release contract, not as a future monorepo refactor. | repo review of `agentstation/neovex/.github/workflows/release.yml`; repo review of `agentstation/neovex-machine-os/.github/workflows/build.yml`; repo review of `agentstation/neovex-machine-os/scripts/package-oci.sh`; focused `cargo check -p neovex-bin`; `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-oci-layout-helper.sh`; `cargo fmt --all --check` | Keep host docs version-pinned (`v{CARGO_PKG_VERSION}`), keep publishing explicit OCI metadata, and continue removing host-side fallbacks once all live machine images carry the new annotations |

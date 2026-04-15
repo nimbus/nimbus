@@ -981,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_machine_init_defaults_to_stable_release_channel() {
+    fn parses_machine_init_defaults_to_version_pinned_release_image() {
         let cli = RootCli::parse_from(["neovex", "machine", "init"]);
         let Some(RootCommand::Machine(machine)) = cli.command else {
             panic!("machine init should parse");

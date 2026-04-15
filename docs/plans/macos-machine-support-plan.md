@@ -79,39 +79,22 @@ Reviewed against:
   `neovex-bin` renders a Neovex-owned ignition payload with Podman-aligned
   ready signaling, guest `neovex.socket` plus `neovex.service` units, and
   virtiofs mount units derived from the recorded machine volumes.
-- The repo now also owns the first checked-in Neovex guest-image recipe under
-  `images/neovex-machine-os/`, plus a verifier script
-  `scripts/verify-neovex-machine-os-recipe.sh` that checks the FCOS/bootc
-  build shape, guest package contract, and the bootstrap asset anchors used by
-  the generated Ignition path.
-- The repo now also owns a canonical Linux/CI wrapper for that guest-image
-  recipe: `scripts/build-neovex-machine-os.sh`, plus
-  `scripts/verify-neovex-machine-os-build-helper.sh` and the
-  `make build-neovex-machine-os` / `make verify-neovex-machine-os-build-helper`
-  entrypoints. That makes MAC4's remaining supply-side work explicit and
-  repeatable instead of leaving Linux builders to reconstruct the recipe
-  invocation by hand.
-- The repo now also owns the packaging/publish seam that matches the existing
-  macOS machine-manager OCI pull contract. `scripts/package-neovex-machine-os-oci.sh`
-  wraps a produced raw disk into an OCI image layout with
-  linux/current-arch plus `disktype=raw`, and
-  `scripts/publish-neovex-machine-os.sh` pushes that layout to a registry. The
-  repo also now owns deterministic verifiers plus Makefile entrypoints for
-  that lane. The remaining MAC4 blocker is therefore no longer "what should a
-  published artifact look like?" It is the live Linux-host build/publish
-  execution that produces the real guest image and registry evidence.
-- The repo now also owns the pinned external raw-disk-helper resolution seam
-  for that Linux build lane. Because Neovex does not vendor Podman's
-  GPL-licensed `custom-coreos-disk-images` helper, the build wrapper can now
-  resolve the exact upstream commit Podman currently pins before invoking the
-  image recipe. That keeps the raw-disk build step reproducible without
-  copying that helper into the repo.
-- The repo now also owns a dedicated GitHub Actions workflow for the machine
-  image contract. `.github/workflows/neovex-machine-os.yml` now splits this
-  work the same way the plan does: hosted Linux verifies the helper/build
-  contract quickly, while a dedicated self-hosted Linux ARM64 runner owns the
-  real Fedora CoreOS image build, raw-disk OCI packaging, and optional GHCR
-  publish path for the Apple Silicon guest artifact.
+- The machine-image supply side is no longer owned in this repo. The guest
+  image recipe, Linux build helpers, OCI packaging/publish scripts, and build
+  workflow now live in `agentstation/neovex-machine-os`, which is the Neovex
+  equivalent of Podman's `containers/podman-machine-os`. This repo keeps the
+  guest bootstrap assets, image-consumption logic, and host integration seams.
+- The current host release contract is version-pinned, not alias-driven.
+  `neovex machine init` defaults to
+  `docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`, and
+  the host `v*` release workflow now calls the external machine-os reusable
+  workflow with that same tag. Moving aliases such as `stable` remain
+  convenience pointers, not the default host contract.
+- Historical references to `images/neovex-machine-os/`,
+  `scripts/build-neovex-machine-os.sh`, and the old local workflow in the
+  execution log below are pre-split evidence. They remain useful as historical
+  validation, but future supply-side work should be performed in
+  `agentstation/neovex-machine-os`.
 - The repo now also owns an explicit shared OCI-runtime seam inside
   `neovex-sandbox`. The generic buildah/image-lowering, command-spec,
   conmon-launch, and published-port allocation helpers no longer live only
@@ -196,23 +179,17 @@ Reviewed against:
   `summary.txt`. That gives the Linux build lane and the later macOS guest
   proof lane a concrete provenance seam they can compare instead of relying
   only on paths and tags.
-- The intended publish/consume model is also explicit now: keep the
-  Podman-like split where Linux/CI builds the guest artifact and macOS
-  consumes it, but use Neovex-native delivery infrastructure. That means
-  GitHub-hosted Actions for contract verification, a dedicated self-hosted
-  `linux arm64 neovex-machine-os` runner for the real Apple Silicon build, and
-  GHCR for the published raw-disk OCI artifact. Immutable version tags are the
-  release truth; moving aliases such as `stable` or `latest` are convenience
-  entrypoints on top.
-- The repo behavior now follows that policy in two concrete places:
-  `neovex machine init` defaults to the `stable` machine-image alias for
-  consumption, and the machine-os workflow now validates that real publishes
-  use immutable version tags while letting operators attach `stable` and
-  `latest` aliases deliberately.
-- The workflow now also has a non-interactive release trigger: pushing a
-  dedicated repo tag such as `machine-os/v0.1.0` is enough to kick off the
-  real Linux ARM64 build/publish lane. That removes the current dependence on
-  a valid local `gh workflow run` session for the first machine-image release.
+- The intended publish/consume model is now fully Podman-shaped and
+  cross-repo: Linux/CI builds the guest artifact in
+  `agentstation/neovex-machine-os`, while macOS consumes it from GHCR through
+  the host machine manager in this repo. Immutable version tags are the release
+  truth; moving aliases such as `stable` or `latest` are convenience pointers
+  on top.
+- The cross-repo release contract is now explicit in code: neovex `v*` releases
+  call the external machine-os reusable workflow with the same `v*` tag so the
+  default host image reference always resolves to a matching guest artifact.
+  Any standalone machine-os `v*` release must embed the same neovex version it
+  publishes.
 - Historical validation on the current Mac host already proved two critical
   operational facts we should preserve:
   - a short runtime root such as `/tmp/podman` avoids Darwin unix-socket path
@@ -845,8 +822,8 @@ This plan does not cover:
 - `cargo fmt --all --check`
 - focused `cargo check` for touched crates
 - targeted tests for the touched CLI, machine-manager, or guest/bootstrap seam
-- `actionlint .github/workflows/neovex-machine-os.yml` when the machine-image
-  workflow changes
+- `actionlint /Users/jack/src/github.com/agentstation/neovex-machine-os/.github/workflows/build.yml`
+  when the machine-image workflow changes
 - plan ledger and execution-log update in the same change set
 
 ### Required real-host verification lanes
@@ -883,7 +860,7 @@ This plan does not cover:
 | MAC1 | done | Lock the macOS architecture, transport vocabulary, and probe model docs | none |
 | MAC2 | done | Add `neovex machine ...` CLI surface and host-side config/runtime roots | MAC1 |
 | MAC3 | done | Implement direct host machine lifecycle around `krunkit` + `gvproxy` | MAC2 |
-| MAC4 | in_progress | Build the Linux guest image, bootstrap contract, and guest `neovex.sock` machine API plus standard-container launch family | MAC2 |
+| MAC4 | in_progress | Cross-repo machine-image release contract and explicit OCI metadata are landed; remaining work is real guest-image boot/bootstrap proof and guest `neovex.sock` machine API closeout | MAC2 |
 | MAC5 | in_progress | In progress: host-side forwarded sandbox backend/loader landed; live forwarded-socket and published-port proof remain | MAC3, MAC4 |
 | MAC6 | in_progress | In progress: explicit `neovex serve` landed; mac-aware serve/service flow and real host proof remain | MAC5 |
 | MAC7 | todo | Close out packaging, diagnostics, and real-host validation evidence | MAC3, MAC4, MAC5, MAC6 |
@@ -1826,15 +1803,38 @@ Acceptance criteria:
   repo review of `.github/workflows/neovex-machine-os.yml`,
   `images/neovex-machine-os/README.md`, and this plan; `cargo fmt --all --check`.
 - 2026-04-13: Turned that release-channel policy into repo behavior. The CLI
-  default machine image now points at
-  `docker://ghcr.io/agentstation/neovex-machine-os:stable`, so macOS consumes
-  the supported channel by default instead of `latest`. In parallel,
-  `.github/workflows/neovex-machine-os.yml` now validates that real publishes
-  use immutable version tags and exposes explicit booleans for attaching the
-  `stable` and `latest` aliases on top. Durable conclusion: the remaining
-  machine-image release work is now operational, not semantic — produce the
-  first real versioned artifact and publish it through the shaped workflow.
-  Verification: `cargo test -p neovex-bin parses_machine_init_defaults_to_stable_release_channel -- --exact`;
+  default machine image now points at the matching versioned release reference
+  `docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}` so
+  macOS consumes the guest image that matches the host binary release by
+  default. Moving aliases such as `stable` and `latest` remain convenience
+  pointers on top rather than the default host contract. Durable conclusion:
+  the remaining machine-image release work is now operational, not semantic —
+  produce the first real versioned artifact and publish it through the shaped
+  workflow. Verification: `cargo test -p neovex-bin parses_machine_init_defaults_to_version_pinned_release_image -- --exact`; `cargo fmt --all --check`.
+- 2026-04-15: Landed the Podman-shaped machine-image repo split for real. The
+  guest image source and workflow now live in `agentstation/neovex-machine-os`,
+  while the host `agentstation/neovex` release workflow calls that repo through
+  a reusable workflow on `v*` tags. Durable conclusion: future MAC4 supply-side
+  fixes belong in the machine-os repo, while this repo owns only the consumer
+  contract, guest bootstrap assets, and host machine manager integration.
+  Verification: repo review of `agentstation/neovex/.github/workflows/release.yml`;
+  repo review of `agentstation/neovex-machine-os/.github/workflows/build.yml`;
+  `cargo fmt --all --check`.
+- 2026-04-15: Tightened that split into an explicit cross-repo machine-image
+  contract instead of relying on repo-name guessing. The external
+  `agentstation/neovex-machine-os` workflow now treats standalone `v*` tags as
+  the embedded Neovex version, annotates the packaged OCI artifact with
+  `org.opencontainers.image.source`,
+  `io.neovex.machine.attestation.repository`, and
+  `io.neovex.machine.neovex.version`, and the host machine manager now reads
+  those annotations before falling back to the legacy dual-repo attestation
+  lookup. Durable conclusion: new machine images can declare exactly which repo
+  owns their attestations and which Neovex release they embed, while older
+  images still load through the existing fallback path. Verification: repo
+  review of `agentstation/neovex-machine-os/.github/workflows/build.yml`,
+  `agentstation/neovex-machine-os/scripts/package-oci.sh`, and
+  `crates/neovex-bin/src/machine/manager.rs`; focused `cargo check -p neovex-bin`;
+  `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-oci-layout-helper.sh`;
   `cargo fmt --all --check`.
 - 2026-04-13: Added the git-tagged release trigger to that workflow so the
   first machine-image release can run through normal git state instead of an
@@ -1979,3 +1979,25 @@ Acceptance criteria:
   `cargo fmt --all --check`;
   `cargo llvm-cov -p neovex-bin --bin neovex --no-report -- machine::tests::machine_start_reports_oci_materialization_failure_for_unreachable_registry_image --exact`;
   `cargo llvm-cov -p neovex-bin --bin neovex --no-report`.
+- 2026-04-15: Tightened the remaining producer/consumer contract drift after
+  the machine-image repo split. The host machine-manager tests no longer hard
+  code the old `:stable` reference in default-path coverage, the external
+  `agentstation/neovex-machine-os` build workflow now passes
+  `--neovex-version` into the Linux image recipe itself, and the recipe summary
+  now records `neovex_version` so OCI packaging can recover the embedded
+  release tag from build outputs instead of depending only on workflow flags.
+  The machine-os recipe docs in `images/README.md` were also rewritten to
+  match the current post-split script names, workflow path, and OCI metadata
+  contract. Durable conclusion: the cross-repo MAC4 release contract is now
+  explicit all the way from Linux guest build summary to packaged OCI
+  annotations, and the active docs no longer point contributors at the old
+  monorepo-era entrypoints. Verification:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin machine::manager::tests:: -- --test-threads=1`;
+  `cargo test -p neovex-bin version_pinned_release_image`;
+  `actionlint /Users/jack/src/github.com/agentstation/neovex-machine-os/.github/workflows/build.yml`;
+  `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-recipe.sh`;
+  `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-build-helper.sh`;
+  `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-oci-layout-helper.sh`;
+  `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-publish-helper.sh`.

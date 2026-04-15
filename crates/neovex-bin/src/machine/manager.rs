@@ -52,6 +52,10 @@ const HTTP_IMAGE_TIMEOUT: Duration = Duration::from_secs(300);
 const OCI_MACHINE_DISK_TYPE: &str = "raw";
 const OCI_MACHINE_OS: &str = "linux";
 const OCI_ANNOTATION_TITLE: &str = "org.opencontainers.image.title";
+const OCI_ANNOTATION_SOURCE: &str = "org.opencontainers.image.source";
+const OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY: &str =
+    "io.neovex.machine.attestation.repository";
+const OCI_ANNOTATION_MACHINE_NEOVEX_VERSION: &str = "io.neovex.machine.neovex.version";
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
 
@@ -77,6 +81,8 @@ struct RegistryPlatform {
 #[derive(Debug, Deserialize)]
 struct RegistryImageManifest {
     layers: Vec<RegistryLayerDescriptor>,
+    #[serde(default)]
+    annotations: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -87,6 +93,20 @@ struct RegistryLayerDescriptor {
     media_type: String,
     #[serde(default)]
     annotations: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct MachineArtifactMetadata {
+    attestation_repository: Option<String>,
+    source_repository_url: Option<String>,
+    neovex_version: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SelectedMachineArtifact {
+    child_reference: Reference,
+    layer: RegistryLayerDescriptor,
+    metadata: MachineArtifactMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1223,16 +1243,16 @@ async fn pull_oci_artifact_to_cache(
             ))
         })?;
 
-    let (child_reference, layer_descriptor) =
+    let selected_artifact =
         select_oci_artifact_layer(&reference, &top_manifest_bytes, &client, &auth).await?;
-    let cache_path = image_cache_dir.join(cached_oci_blob_file_name(&layer_descriptor));
+    let cache_path = image_cache_dir.join(cached_oci_blob_file_name(&selected_artifact.layer));
     if cache_path.is_file() {
         return Ok(cache_path);
     }
 
     let download_path = image_cache_dir.join(format!(
         "{}.download",
-        digest_hex(&layer_descriptor.digest)?
+        digest_hex(&selected_artifact.layer.digest)?
     ));
     if download_path.exists() {
         fs::remove_file(&download_path).map_err(|error| {
@@ -1251,9 +1271,9 @@ async fn pull_oci_artifact_to_cache(
                 download_path.display()
             ))
         })?;
-    let layer = to_oci_descriptor(&layer_descriptor);
+    let layer = to_oci_descriptor(&selected_artifact.layer);
     client
-        .pull_blob(&child_reference, &layer, &mut output)
+        .pull_blob(&selected_artifact.child_reference, &layer, &mut output)
         .await
         .map_err(|error| {
             Error::InvalidInput(format!(
@@ -1275,8 +1295,13 @@ async fn pull_oci_artifact_to_cache(
     })?;
     drop(output);
 
-    verify_downloaded_oci_blob(&download_path, &layer_descriptor)?;
-    check_build_attestation(&reference, &layer_descriptor.digest);
+    verify_downloaded_oci_blob(&download_path, &selected_artifact.layer)?;
+    log_machine_artifact_metadata(&reference, &selected_artifact.metadata);
+    check_build_attestation(
+        &reference,
+        &selected_artifact.layer.digest,
+        selected_artifact.metadata.attestation_repository.as_deref(),
+    );
     fs::rename(&download_path, &cache_path).map_err(|error| {
         Error::Internal(format!(
             "failed to persist machine guest OCI artifact cache {}: {error}",
@@ -1292,7 +1317,7 @@ async fn select_oci_artifact_layer(
     top_manifest_bytes: &[u8],
     client: &OciClient,
     auth: &RegistryAuth,
-) -> Result<(Reference, RegistryLayerDescriptor), Error> {
+) -> Result<SelectedMachineArtifact, Error> {
     if let Ok(index) = serde_json::from_slice::<RegistryImageIndex>(top_manifest_bytes) {
         let manifest_descriptor =
             select_oci_manifest_descriptor(reference, &index.manifests)?.clone();
@@ -1318,7 +1343,14 @@ async fn select_oci_artifact_layer(
                 ))
             })?;
         let layer = select_machine_layer(reference, &child_manifest.layers)?;
-        return Ok((child_reference, layer.clone()));
+        return Ok(SelectedMachineArtifact {
+            child_reference,
+            layer: layer.clone(),
+            metadata: machine_artifact_metadata_from_annotations(
+                Some(&manifest_descriptor.annotations),
+                Some(&child_manifest.annotations),
+            ),
+        });
     }
 
     let image_manifest = serde_json::from_slice::<RegistryImageManifest>(top_manifest_bytes)
@@ -1335,7 +1367,14 @@ async fn select_oci_artifact_layer(
                 "failed to parse machine guest OCI reference '{reference}': {error}"
             ))
         })?;
-    Ok((registry_reference, layer.clone()))
+    Ok(SelectedMachineArtifact {
+        child_reference: registry_reference,
+        layer: layer.clone(),
+        metadata: machine_artifact_metadata_from_annotations(
+            Some(&image_manifest.annotations),
+            None,
+        ),
+    })
 }
 
 fn build_oci_client(reference: &str) -> Result<OciClient, Error> {
@@ -1495,30 +1534,65 @@ fn verify_downloaded_oci_blob(path: &Path, layer: &RegistryLayerDescriptor) -> R
     Ok(())
 }
 
-/// The neovex source repo, used as a fallback for attestation lookups.
-/// When neovex-machine-os is built via a reusable workflow call from the
-/// neovex release workflow, attestations are stored in the caller repo
-/// (agentstation/neovex), not in the image repo (agentstation/neovex-machine-os).
+fn machine_artifact_metadata_from_annotations(
+    primary: Option<&BTreeMap<String, String>>,
+    fallback: Option<&BTreeMap<String, String>>,
+) -> MachineArtifactMetadata {
+    MachineArtifactMetadata {
+        attestation_repository: annotation_value(
+            primary,
+            fallback,
+            OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY,
+        ),
+        source_repository_url: annotation_value(primary, fallback, OCI_ANNOTATION_SOURCE),
+        neovex_version: annotation_value(primary, fallback, OCI_ANNOTATION_MACHINE_NEOVEX_VERSION),
+    }
+}
+
+fn annotation_value(
+    primary: Option<&BTreeMap<String, String>>,
+    fallback: Option<&BTreeMap<String, String>>,
+    key: &str,
+) -> Option<String> {
+    primary
+        .and_then(|annotations| annotations.get(key))
+        .or_else(|| fallback.and_then(|annotations| annotations.get(key)))
+        .filter(|value| !value.is_empty())
+        .cloned()
+}
+
+fn log_machine_artifact_metadata(reference: &str, metadata: &MachineArtifactMetadata) {
+    if let Some(neovex_version) = metadata.neovex_version.as_deref() {
+        eprintln!("info: machine image '{reference}' embeds neovex {neovex_version}");
+    }
+    if let Some(source_repository_url) = metadata.source_repository_url.as_deref() {
+        eprintln!("info: machine image '{reference}' source={source_repository_url}");
+    }
+}
+
+/// The neovex source repo, used as a fallback for legacy machine images that
+/// were published before OCI metadata recorded the attestation repository.
 const NEOVEX_SOURCE_REPO: &str = "agentstation/neovex";
 
 /// Query the GitHub Attestations API for a signed build provenance attestation
-/// matching the downloaded artifact digest. Checks both the GHCR image repo
-/// and the neovex source repo, since reusable workflows store attestations in
-/// the caller's repo context. Advisory only — logs the result but does not
-/// block the download.
-fn check_build_attestation(reference: &str, subject_digest: &str) {
+/// matching the downloaded artifact digest. Prefer the explicit attestation
+/// repository published in the OCI metadata; fall back to the historical
+/// dual-repo lookup only for older machine images. Advisory only — logs the
+/// result but does not block the download.
+fn check_build_attestation(
+    reference: &str,
+    subject_digest: &str,
+    explicit_repository: Option<&str>,
+) {
     let stripped = strip_docker_reference_prefix(reference);
     let Some(image_repo) = extract_ghcr_repo_path(&stripped) else {
         return;
     };
 
-    // Check the image repo first (standalone builds from neovex-machine-os),
-    // then the neovex source repo (reusable workflow builds from neovex release).
-    let repos_to_check: Vec<&str> = if image_repo == NEOVEX_SOURCE_REPO {
-        vec![&image_repo]
-    } else {
-        vec![&image_repo, NEOVEX_SOURCE_REPO]
-    };
+    let repos_to_check = attestation_repositories_for_reference(
+        &image_repo,
+        explicit_repository.filter(|repo| !repo.is_empty()),
+    );
 
     let client = match Client::builder().timeout(Duration::from_secs(10)).build() {
         Ok(client) => client,
@@ -1569,6 +1643,21 @@ fn query_attestations(client: &Client, repo: &str, subject_digest: &str) -> Resu
         .and_then(|v| v.as_array())
         .map(|a| a.len())
         .unwrap_or(0))
+}
+
+fn attestation_repositories_for_reference(
+    image_repo: &str,
+    explicit_repository: Option<&str>,
+) -> Vec<String> {
+    if let Some(explicit_repository) = explicit_repository {
+        return vec![explicit_repository.to_owned()];
+    }
+
+    if image_repo == NEOVEX_SOURCE_REPO {
+        vec![image_repo.to_owned()]
+    } else {
+        vec![image_repo.to_owned(), NEOVEX_SOURCE_REPO.to_owned()]
+    }
 }
 
 /// Extract the GitHub repository path (owner/repo) from a ghcr.io image
@@ -2006,7 +2095,7 @@ mod tests {
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
                 image_source: MachineImageSource::OciReference {
-                    reference: "docker://ghcr.io/agentstation/neovex-machine-os:stable".to_owned(),
+                    reference: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned(),
                 },
                 ssh_user: "core".to_owned(),
                 ssh_identity_path: None,
@@ -2372,7 +2461,10 @@ mod tests {
                     "os": OCI_MACHINE_OS
                 },
                 "annotations": {
-                    "disktype": OCI_MACHINE_DISK_TYPE
+                    "disktype": OCI_MACHINE_DISK_TYPE,
+                    "org.opencontainers.image.source": "https://github.com/agentstation/neovex-machine-os",
+                    "io.neovex.machine.attestation.repository": "agentstation/neovex-machine-os",
+                    "io.neovex.machine.neovex.version": "v1.2.3"
                 }
             }]
         });
@@ -2428,5 +2520,57 @@ mod tests {
         });
 
         format!("docker://127.0.0.1:{}/{repository}:{tag}", address.port())
+    }
+
+    #[test]
+    fn attestation_repository_prefers_explicit_metadata() {
+        assert_eq!(
+            attestation_repositories_for_reference(
+                "agentstation/neovex-machine-os",
+                Some("agentstation/neovex")
+            ),
+            vec!["agentstation/neovex".to_owned()]
+        );
+    }
+
+    #[test]
+    fn attestation_repository_falls_back_to_known_repo_order() {
+        assert_eq!(
+            attestation_repositories_for_reference("agentstation/neovex-machine-os", None),
+            vec![
+                "agentstation/neovex-machine-os".to_owned(),
+                "agentstation/neovex".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn machine_artifact_metadata_uses_primary_then_fallback_annotations() {
+        let mut primary = BTreeMap::new();
+        primary.insert(
+            OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY.to_owned(),
+            "agentstation/neovex".to_owned(),
+        );
+        let mut fallback = BTreeMap::new();
+        fallback.insert(
+            OCI_ANNOTATION_SOURCE.to_owned(),
+            "https://github.com/agentstation/neovex-machine-os".to_owned(),
+        );
+        fallback.insert(
+            OCI_ANNOTATION_MACHINE_NEOVEX_VERSION.to_owned(),
+            "v1.2.3".to_owned(),
+        );
+
+        let metadata = machine_artifact_metadata_from_annotations(Some(&primary), Some(&fallback));
+
+        assert_eq!(
+            metadata.attestation_repository.as_deref(),
+            Some("agentstation/neovex")
+        );
+        assert_eq!(
+            metadata.source_repository_url.as_deref(),
+            Some("https://github.com/agentstation/neovex-machine-os")
+        );
+        assert_eq!(metadata.neovex_version.as_deref(), Some("v1.2.3"));
     }
 }

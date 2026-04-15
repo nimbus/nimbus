@@ -19,8 +19,9 @@ Fedora/RHEL) and macOS (Apple Silicon).
     linux arm64, darwin arm64, windows x86_64) on `v*` tags
   - `.github/workflows/neovex-crun.yml` — neovex-crun builds (linux amd64,
     linux arm64) on `crun/v*` tags
-  - `.github/workflows/neovex-machine-os.yml` — machine guest image on
-    `machine-os/v*` tags
+  - `agentstation/neovex-machine-os/.github/workflows/build.yml` — machine
+    guest image build/publish lane, called from the neovex `v*` release
+    workflow and available for standalone image-repo `v*` tags
 
 ## Control Plan Rules
 
