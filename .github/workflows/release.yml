@@ -26,11 +26,11 @@ jobs:
           MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "${MACHINE_OS_RELEASE_APP_ID}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_ID must be configured so the reusable neovex-machine-os release workflow can mint a cross-repo GitHub App token." >&2
+            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can dispatch and observe the matching neovex-machine-os release workflow." >&2
             exit 1
           fi
           if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so the reusable neovex-machine-os release workflow can mint a cross-repo GitHub App token." >&2
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can dispatch and observe the matching neovex-machine-os release workflow." >&2
             exit 1
           fi
 
@@ -364,19 +364,89 @@ jobs:
   release-machine-os:
     name: Release machine-os
     needs: release
-    # Shared cross-repo release seam; advance release-workflow-v1 deliberately.
-    uses: agentstation/neovex-machine-os/.github/workflows/publish.yml@release-workflow-v1
-    with:
-      neovex_version: ${{ github.ref_name }}
-      release_tag: ${{ github.ref_name }}
-      create_release: true
-      image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
-      stage_artifact_name: neovex-machine-os-${{ github.run_id }}-${{ github.run_attempt }}
-      release_app_id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
-      contents: write
-      packages: write
-      id-token: write
-      attestations: write
-    secrets:
-      MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
+      contents: read
+    steps:
+      - name: Create machine-os dispatch token
+        id: release_app_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
+          private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
+          owner: agentstation
+          repositories: neovex-machine-os
+          permission-actions: write
+          permission-contents: read
+
+      - name: Dispatch machine-os publish workflow
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
+        run: |
+          expected_title="Publish machine-os (${{ github.ref_name }}) from ${{ github.repository }}#${{ github.run_id }}"
+          cat > /tmp/machine-os-dispatch.json <<EOF
+          {
+            "ref": "release-workflow-v1",
+            "inputs": {
+              "source_repository": "${{ github.repository }}",
+              "source_run_id": "${{ github.run_id }}",
+              "neovex_version": "${{ github.ref_name }}",
+              "release_tag": "${{ github.ref_name }}",
+              "stage_artifact_name": "neovex-machine-os-${{ github.run_id }}-${{ github.run_attempt }}",
+              "image_reference": "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}",
+              "create_release": true
+            }
+          }
+          EOF
+
+          gh api \
+            repos/agentstation/neovex-machine-os/actions/workflows/publish.yml/dispatches \
+            --method POST \
+            --input /tmp/machine-os-dispatch.json
+
+          echo "expected_title=${expected_title}" >> "${GITHUB_OUTPUT}"
+
+      - name: Wait for machine-os publish workflow
+        env:
+          GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
+          EXPECTED_TITLE: ${{ steps.dispatch.outputs.expected_title }}
+        run: |
+          deadline=$(( $(date +%s) + 600 ))
+          run_id=""
+
+          while [[ $(date +%s) -lt "${deadline}" ]]; do
+            run_id="$(
+              gh run list \
+                --repo agentstation/neovex-machine-os \
+                --workflow publish.yml \
+                --branch release-workflow-v1 \
+                --event workflow_dispatch \
+                --limit 20 \
+                --json databaseId,displayTitle \
+                | jq -r --arg expected "${EXPECTED_TITLE}" '.[] | select(.displayTitle == $expected) | .databaseId' \
+                | head -n1
+            )"
+            if [[ -n "${run_id}" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ -z "${run_id}" ]]; then
+            echo "Failed to locate dispatched neovex-machine-os publish run with title '${EXPECTED_TITLE}'." >&2
+            gh run list \
+              --repo agentstation/neovex-machine-os \
+              --workflow publish.yml \
+              --branch release-workflow-v1 \
+              --event workflow_dispatch \
+              --limit 20
+            exit 1
+          fi
+
+          echo "Watching neovex-machine-os run ${run_id} (${EXPECTED_TITLE})"
+          if ! gh run watch "${run_id}" --repo agentstation/neovex-machine-os --exit-status; then
+            gh run view "${run_id}" --repo agentstation/neovex-machine-os --log-failed || true
+            exit 1
+          fi
