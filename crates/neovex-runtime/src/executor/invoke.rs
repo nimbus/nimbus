@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use serde_json::Value;
+use tokio::runtime::RuntimeFlavor;
 use tokio::sync::oneshot;
 
 use crate::context::RuntimeInvocationContext;
@@ -13,6 +14,26 @@ use super::admission::{RuntimeExecutorAdmissionDecision, SharedInvocationPermit}
 use super::facade::{BLOCKING_RESULT_POLL_INTERVAL, RuntimeExecutor};
 use super::lifecycle::run_invocation_lifecycle;
 use super::queue::{RuntimeWorkerJob, RuntimeWorkerResultSender, RuntimeWorkerRouter};
+
+fn bridge_blocking_invocation<T, F>(thread_panic_message: &'static str, task: F) -> Result<T>
+where
+    T: Send,
+    F: FnOnce() -> Result<T> + Send,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        return match handle.runtime_flavor() {
+            RuntimeFlavor::MultiThread => tokio::task::block_in_place(task),
+            RuntimeFlavor::CurrentThread | _ => std::thread::scope(|scope| {
+                scope
+                    .spawn(task)
+                    .join()
+                    .map_err(|_| NeovexRuntimeError::Contract(thread_panic_message.to_string()))
+            })?,
+        };
+    }
+
+    task()
+}
 
 impl RuntimeExecutor {
     async fn dispatch_admitted_job_async(&self, job: RuntimeWorkerJob) -> Result<()> {
@@ -188,15 +209,7 @@ impl RuntimeExecutor {
             executor.invoke_on_worker_blocking(runtime, bundle, request, context, cancellation)
         };
 
-        if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::spawn(invoke).join().map_err(|_| {
-                NeovexRuntimeError::Contract(
-                    "runtime executor invocation thread panicked".to_string(),
-                )
-            })?
-        } else {
-            invoke()
-        }
+        bridge_blocking_invocation("runtime executor invocation thread panicked", invoke)
     }
 
     fn invoke_on_worker_blocking(
@@ -261,5 +274,48 @@ impl RuntimeExecutor {
                 )
             })?,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn blocking_bridge_stays_on_current_thread_for_multi_thread_runtime() {
+        let runtime_thread = std::thread::current().id();
+
+        let bridged_thread = bridge_blocking_invocation("blocking bridge should not panic", || {
+            Ok(std::thread::current().id())
+        })
+        .expect("blocking bridge should return the current thread id");
+
+        assert_eq!(
+            bridged_thread, runtime_thread,
+            "multi-thread runtime bridge should use block_in_place instead of spawning a new thread"
+        );
+    }
+
+    #[test]
+    fn blocking_bridge_spawns_fallback_thread_for_current_thread_runtimes() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime should build");
+
+        let (runtime_thread, bridged_thread) = runtime.block_on(async {
+            let runtime_thread = std::thread::current().id();
+            let bridged_thread =
+                bridge_blocking_invocation("blocking bridge should not panic", || {
+                    Ok(std::thread::current().id())
+                })
+                .expect("blocking bridge should return a fallback thread id");
+            (runtime_thread, bridged_thread)
+        });
+
+        assert_ne!(
+            bridged_thread, runtime_thread,
+            "current-thread runtimes should keep using the dedicated bridge-thread fallback"
+        );
     }
 }
