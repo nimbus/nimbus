@@ -195,6 +195,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name != 'schedule'
 
     steps:
@@ -223,10 +224,14 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        # Coverage intentionally tracks the default workspace suite. The
-        # heavier verification-harness corpora run in dedicated lanes, and the
-        # runtime crate's V8-sensitive tests self-isolate inside the harness.
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        # Coverage tracks the core workspace crates. External provider tests
+        # (Postgres, MySQL, libsql) use testcontainers which are too slow under
+        # llvm-cov instrumentation — those are validated in dedicated harness
+        # lanes instead. The runtime crate's V8-sensitive tests self-isolate
+        # inside the harness.
+        run: |
+          cargo llvm-cov --workspace --lcov --output-path lcov.info \
+            -- --skip tests::postgres_provider --skip tests::mysql_provider --skip tests::libsql_provider
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
