@@ -102,9 +102,10 @@ jobs:
   build-machine-os:
     name: Build machine-os
     needs: build
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@main
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@c971962e6220b11c5717d0e98e7fb66b286333dc
     with:
       neovex_version: ${{ github.ref_name }}
+      neovex_artifact_name: neovex_linux_arm64
       publish: true
       image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
     permissions:
