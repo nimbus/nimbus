@@ -11,6 +11,7 @@ use crate::spec::{SandboxFilesystemSpec, SandboxImageProcessOverrides, SandboxPr
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildahCli {
     path: PathBuf,
+    launcher_args: Vec<String>,
     use_unshare: bool,
 }
 
@@ -18,8 +19,19 @@ impl BuildahCli {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
+            launcher_args: Vec::new(),
             use_unshare: false,
         }
+    }
+
+    #[cfg(test)]
+    pub fn with_launcher_args<I, S>(mut self, launcher_args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.launcher_args = launcher_args.into_iter().map(Into::into).collect();
+        self
     }
 
     pub fn with_unshare(mut self, use_unshare: bool) -> Self {
@@ -27,9 +39,20 @@ impl BuildahCli {
         self
     }
 
+    fn launcher_command(&self) -> CommandSpec {
+        CommandSpec::new(self.path.clone()).args(self.launcher_args.iter().cloned())
+    }
+
+    fn launcher_command_prefix(&self) -> String {
+        std::iter::once(shell_escape(&self.path.to_string_lossy()))
+            .chain(self.launcher_args.iter().map(|arg| shell_escape(arg)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     pub fn wrap_unshare(&self, command: &CommandSpec) -> CommandSpec {
         let program = command.program.to_string_lossy().into_owned();
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("unshare")
             .arg("--")
             .arg(program)
@@ -65,7 +88,7 @@ impl BuildahCli {
     ) -> CommandSpec {
         let mount_cmd = format!(
             "{} mount {} >/dev/null",
-            shell_escape(&self.path.to_string_lossy()),
+            self.launcher_command_prefix(),
             shell_escape(container_name),
         );
         let wrapped_command = format!(
@@ -83,7 +106,7 @@ impl BuildahCli {
         inner_steps.extend(prelude_commands.iter().cloned());
         inner_steps.push(wrapped_command);
         let inner_cmd = inner_steps.join(" && ");
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("unshare")
             .arg("--")
             .arg("sh")
@@ -111,7 +134,7 @@ impl BuildahCli {
         container_name: &str,
         image_reference: &str,
     ) -> CommandSpec {
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("from")
             .arg("--name")
             .arg(container_name.to_owned())
@@ -119,13 +142,13 @@ impl BuildahCli {
     }
 
     pub fn mount_command(&self, container_name: &str) -> CommandSpec {
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("mount")
             .arg(container_name.to_owned())
     }
 
     pub fn inspect_command(&self, container_name: &str) -> CommandSpec {
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("inspect")
             .arg("--type")
             .arg("container")
@@ -133,13 +156,13 @@ impl BuildahCli {
     }
 
     pub fn unmount_command(&self, container_name: &str) -> CommandSpec {
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("umount")
             .arg(container_name.to_owned())
     }
 
     pub fn remove_command(&self, container_name: &str) -> CommandSpec {
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("rm")
             .arg(container_name.to_owned())
     }
@@ -150,7 +173,7 @@ impl BuildahCli {
         dockerfile_path: &Path,
         context_path: &Path,
     ) -> CommandSpec {
-        CommandSpec::new(self.path.clone())
+        self.launcher_command()
             .arg("bud")
             .arg("-t")
             .arg(image_name.to_owned())
@@ -932,6 +955,10 @@ mod tests {
     use crate::backends::oci::command::CommandSpec;
     use crate::spec::SandboxImageProcessOverrides;
 
+    fn fake_buildah_cli(script_path: PathBuf) -> BuildahCli {
+        BuildahCli::new("/bin/sh").with_launcher_args([script_path.to_string_lossy().into_owned()])
+    }
+
     #[test]
     fn wrap_unshare_prefixes_existing_command() {
         let buildah = BuildahCli::new("buildah");
@@ -1237,7 +1264,7 @@ mod tests {
     fn pull_mount_inspect_and_cleanup_execute_expected_commands() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let (script_path, log_path) = write_fake_buildah_script(&temp_dir);
-        let buildah = BuildahCli::new(script_path).with_unshare(true);
+        let buildah = fake_buildah_cli(script_path).with_unshare(true);
 
         let pulled = buildah
             .pull("postgres-working", "postgres:16")
@@ -1284,7 +1311,7 @@ mod tests {
     fn prepare_image_launch_combines_buildah_materialization_and_launch_defaults() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let (script_path, log_path) = write_fake_buildah_script(&temp_dir);
-        let buildah = BuildahCli::new(script_path).with_unshare(true);
+        let buildah = fake_buildah_cli(script_path).with_unshare(true);
 
         let prepared = buildah
             .prepare_image_launch(
@@ -1343,7 +1370,7 @@ mod tests {
     fn prepare_image_launch_prefers_process_user_override_over_image_user() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let (script_path, _log_path) = write_fake_buildah_script(&temp_dir);
-        let buildah = BuildahCli::new(script_path).with_unshare(true);
+        let buildah = fake_buildah_cli(script_path).with_unshare(true);
 
         let prepared = buildah
             .prepare_image_launch(
@@ -1364,7 +1391,7 @@ mod tests {
     fn build_materializes_localhost_image_before_creating_working_container() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let (script_path, log_path) = write_fake_buildah_script(&temp_dir);
-        let buildah = BuildahCli::new(script_path);
+        let buildah = fake_buildah_cli(script_path);
 
         let built = buildah
             .build(
@@ -1389,7 +1416,7 @@ mod tests {
     fn prepare_built_image_launch_uses_built_image_reference() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let (script_path, log_path) = write_fake_buildah_script(&temp_dir);
-        let buildah = BuildahCli::new(script_path);
+        let buildah = fake_buildah_cli(script_path);
 
         let prepared = buildah
             .prepare_built_image_launch(
@@ -1446,6 +1473,9 @@ if [ "$cmd" = "unshare" ]; then
     exit 1
   fi
   shift
+  if [ "${{1:-}}" = "$0" ]; then
+    shift
+  fi
   cmd="${{1:-}}"
   if [ -z "$cmd" ]; then
     printf 'missing subcommand for wrapped program %s\n' "$wrapped_program" >&2
