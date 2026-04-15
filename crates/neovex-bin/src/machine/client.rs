@@ -156,13 +156,8 @@ impl MachineApiClient {
     where
         T: DeserializeOwned,
     {
-        let response = read_unix_http_request(
-            &self.socket_path,
-            "POST",
-            path,
-            Some(b"{}"),
-            self.io_timeout,
-        )?;
+        let response =
+            read_unix_http_request(&self.socket_path, "POST", path, None, self.io_timeout)?;
         let body = parse_http_json_body(&response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
@@ -292,7 +287,9 @@ fn parse_http_json_body<'a>(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::os::unix::net::UnixListener as StdUnixListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -462,6 +459,73 @@ mod tests {
                 .to_string()
                 .contains("failed to connect to machine API socket"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn stop_service_sandbox_sends_a_bodyless_post_request() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("neovex.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let expected_path = "/v1/machine-api/service-sandboxes/db-1/stop";
+        let response_body = format!("{{\"sandbox_id\":\"db-1\",\"stopped\":true}}");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("read timeout should set");
+
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        request.extend_from_slice(&chunk[..read]);
+                        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        break;
+                    }
+                    Err(error) => panic!("request should read: {error}"),
+                }
+            }
+
+            write!(
+                stream,
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            )
+            .expect("response should write");
+
+            String::from_utf8(request).expect("request should be valid utf-8")
+        });
+
+        let client = MachineApiClient::new_for_test(socket_path);
+        client
+            .stop_service_sandbox(&SandboxId::new("db-1"))
+            .expect("stop should succeed");
+
+        let request = server.join().expect("server should join");
+        assert!(
+            request.starts_with(&format!("POST {expected_path} HTTP/1.0\r\n")),
+            "{request}"
+        );
+        assert!(
+            !request.contains("Content-Length"),
+            "bodyless stop request should not advertise a content length: {request}"
+        );
+        assert!(
+            !request.contains("{}"),
+            "bodyless stop request should not send a JSON stub body: {request}"
         );
     }
 
