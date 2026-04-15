@@ -1341,7 +1341,7 @@ mod tests {
             name: DEFAULT_MACHINE_NAME.to_owned(),
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
-                image_source: MachineImageSource::parse(default_machine_image())
+                image_source: MachineImageSource::parse(&default_machine_image())
                     .expect("default image should parse"),
                 ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
                 ssh_identity_path: Some(PathBuf::from("/tmp/neovex-test-ed25519")),
