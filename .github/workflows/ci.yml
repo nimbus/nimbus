@@ -49,6 +49,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
       - name: Check formatting
@@ -99,6 +100,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
       - name: Run PR verification harness corpus
@@ -134,6 +136,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
       - name: Run nightly verification harness corpus
@@ -164,6 +167,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
       - name: Install cargo-deny
@@ -253,6 +257,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
+          cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
       - name: Install cargo-llvm-cov

@@ -496,7 +496,7 @@ an acceptable long-term tradeoff.
 
 ## What the Locker Fork Actually Provides
 
-The V8 Locker fork (`v147.0.0-locker.1`) and deno_core Locker fork
+The V8 Locker fork (`v147.0.0-locker.2`) and deno_core Locker fork
 (`0.395.0-locker.2`) are **not** about cross-thread isolate mobility — the
 `!Send` constraint on `JsRuntime` prevents that. They provide cooperative
 scheduling within the thread-pinned model, plus the warm module pool:
