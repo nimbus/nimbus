@@ -19,6 +19,7 @@ pub(in crate::adapters::convex) struct ConvexHostBridge {
 
 impl ConvexHostBridge {
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::adapters::convex) fn new(
         service: Arc<neovex_engine::Service>,
         registry: Arc<ConvexRegistry>,

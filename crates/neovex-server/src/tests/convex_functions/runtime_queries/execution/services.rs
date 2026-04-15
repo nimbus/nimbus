@@ -844,6 +844,7 @@ export {};
 
 #[tokio::test]
 #[ignore = "requires a Linux host with KVM, buildah, conmon, and network access"]
+#[allow(clippy::field_reassign_with_default)]
 async fn convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down() {
     let registry = convex_registry_with_routes_and_bundle(
         json!([
