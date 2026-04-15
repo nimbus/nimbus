@@ -918,11 +918,12 @@ fn render_command_failure(stdout: &[u8], stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
     use serde_json::json;
-    use tempfile::TempDir;
+    use tempfile::{NamedTempFile, TempDir};
 
     use super::{
         BuildahCli, OciExposedPort, OciExposedPortProtocol, OciImageConfig, OciImageLaunchDefaults,
@@ -1477,13 +1478,31 @@ esac
             inspect_json = sample_inspect_json()
         );
 
-        fs::write(&script_path, script).expect("fake buildah script should be written");
-        let mut permissions = fs::metadata(&script_path)
-            .expect("fake buildah script metadata should exist")
+        let mut temp_script = NamedTempFile::new_in(temp_dir.path())
+            .expect("temporary fake buildah file should exist");
+        temp_script
+            .write_all(script.as_bytes())
+            .expect("fake buildah script should be written");
+        temp_script
+            .flush()
+            .expect("fake buildah script should flush cleanly");
+        let mut permissions = temp_script
+            .as_file()
+            .metadata()
+            .expect("fake buildah temp script metadata should exist")
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&script_path, permissions)
-            .expect("fake buildah script should be executable");
+        temp_script
+            .as_file()
+            .set_permissions(permissions)
+            .expect("fake buildah temp script should be executable");
+        temp_script
+            .as_file()
+            .sync_all()
+            .expect("fake buildah script should sync cleanly");
+        temp_script
+            .persist(&script_path)
+            .expect("fake buildah script should persist cleanly");
 
         (script_path, log_path)
     }
