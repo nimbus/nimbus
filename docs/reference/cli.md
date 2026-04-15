@@ -259,10 +259,11 @@ Current scope:
   and log paths
 - persists the machine provider, typed guest image source, guest SSH user,
   guest resources, and future virtiofs volume mappings
-- defaults that guest image source to a published raw-disk OCI reference
-  (`docker://ghcr.io/agentstation/neovex-machine-os:stable`) instead of
-  assuming macOS will build the guest image locally; versioned GHCR tags stay
-  the release truth, while `stable` is the default consumption alias
+- defaults that guest image source to the matching published raw-disk OCI
+  release reference
+  (`docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`)
+  instead of assuming macOS will build the guest image locally; moving aliases
+  such as `stable` remain convenience pointers, not the default host contract
 - auto-generates a Neovex-owned Ignition file when no explicit
   `--ignition-file` override is configured, carrying the machine ready signal,
   guest `neovex.socket` plus `neovex.service`, and virtiofs mount-unit wiring
