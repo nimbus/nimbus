@@ -965,6 +965,7 @@ mod tests {
     use std::os::unix::net::UnixListener as StdUnixListener;
 
     use super::*;
+    use crate::machine::manager::MachineHelperEnvGuard;
     use clap::Parser;
     use tempfile::TempDir;
 
@@ -1421,14 +1422,7 @@ mod tests {
     #[test]
     fn machine_start_reports_oci_materialization_failure_for_unreachable_registry_image() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let krunkit_stub = temp_dir.path().join("krunkit");
-        let gvproxy_stub = temp_dir.path().join("gvproxy");
-        std::fs::write(&krunkit_stub, "#!/bin/sh\n").expect("krunkit stub should write");
-        std::fs::write(&gvproxy_stub, "#!/bin/sh\n").expect("gvproxy stub should write");
-        unsafe {
-            std::env::set_var("NEOVEX_MACHINE_KRUNKIT", &krunkit_stub);
-            std::env::set_var("NEOVEX_MACHINE_GVPROXY", &gvproxy_stub);
-        }
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
         let layout = MachineRootLayout::new(
             temp_dir.path().join("config"),
             temp_dir.path().join("state"),
@@ -1459,11 +1453,6 @@ mod tests {
             &layout,
         )
         .expect_err("machine start should surface OCI pull failure");
-
-        unsafe {
-            std::env::remove_var("NEOVEX_MACHINE_KRUNKIT");
-            std::env::remove_var("NEOVEX_MACHINE_GVPROXY");
-        }
 
         let error_message = error.to_string();
         assert!(

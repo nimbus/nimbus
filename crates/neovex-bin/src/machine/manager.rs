@@ -976,6 +976,76 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+#[cfg(test)]
+fn helper_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
+pub(crate) struct MachineHelperEnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous_krunkit: Option<std::ffi::OsString>,
+    previous_gvproxy: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl MachineHelperEnvGuard {
+    pub(crate) fn install_stub_binaries(dir: &Path) -> Self {
+        let krunkit_path = dir.join("krunkit");
+        let gvproxy_path = dir.join("gvproxy");
+        write_helper_stub(&krunkit_path, "krunkit");
+        write_helper_stub(&gvproxy_path, "gvproxy");
+        Self::set_paths(&krunkit_path, &gvproxy_path)
+    }
+
+    pub(crate) fn set_paths(krunkit_path: &Path, gvproxy_path: &Path) -> Self {
+        let lock = helper_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
+        let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
+        unsafe {
+            std::env::set_var(KRUNKIT_ENV, krunkit_path);
+            std::env::set_var(GVPROXY_ENV, gvproxy_path);
+        }
+        Self {
+            _lock: lock,
+            previous_krunkit,
+            previous_gvproxy,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for MachineHelperEnvGuard {
+    fn drop(&mut self) {
+        match &self.previous_krunkit {
+            Some(path) => unsafe { std::env::set_var(KRUNKIT_ENV, path) },
+            None => unsafe { std::env::remove_var(KRUNKIT_ENV) },
+        }
+        match &self.previous_gvproxy {
+            Some(path) => unsafe { std::env::set_var(GVPROXY_ENV, path) },
+            None => unsafe { std::env::remove_var(GVPROXY_ENV) },
+        }
+    }
+}
+
+#[cfg(test)]
+fn write_helper_stub(path: &Path, helper_name: &str) {
+    fs::write(path, "#!/bin/sh\n").unwrap_or_else(|error| {
+        panic!("{helper_name} stub should write: {error}");
+    });
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap_or_else(|error| {
+            panic!("{helper_name} stub should be executable: {error}");
+        });
+    }
+}
+
 fn resolve_bootable_image_path(
     paths: &MachinePaths,
     image_source: &MachineImageSource,
@@ -1754,7 +1824,6 @@ pub(super) fn mount_tag(target: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
     use std::thread;
@@ -1768,31 +1837,6 @@ mod tests {
         MachineGuestConfig, MachineImageSource, MachineProvider, MachineResources,
         MachineRootLayout,
     };
-
-    struct HelperStubGuard;
-
-    impl HelperStubGuard {
-        fn install(dir: &Path) -> Self {
-            let krunkit_path = dir.join("krunkit");
-            let gvproxy_path = dir.join("gvproxy");
-            fs::write(&krunkit_path, "#!/bin/sh\n").expect("krunkit stub should write");
-            fs::write(&gvproxy_path, "#!/bin/sh\n").expect("gvproxy stub should write");
-            unsafe {
-                env::set_var(KRUNKIT_ENV, &krunkit_path);
-                env::set_var(GVPROXY_ENV, &gvproxy_path);
-            }
-            Self
-        }
-    }
-
-    impl Drop for HelperStubGuard {
-        fn drop(&mut self) {
-            unsafe {
-                env::remove_var(KRUNKIT_ENV);
-                env::remove_var(GVPROXY_ENV);
-            }
-        }
-    }
 
     fn sample_config(image: &Path) -> MachineConfigRecord {
         MachineConfigRecord {
@@ -1827,7 +1871,7 @@ mod tests {
     #[test]
     fn launch_plan_requires_bootable_local_disk_image() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let _guard = HelperStubGuard::install(temp_dir.path());
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
         let image_path = temp_dir.path().join("disk.raw");
         fs::write(&image_path, []).expect("image should write");
         let config = sample_config(&image_path);
@@ -1876,7 +1920,7 @@ mod tests {
     #[test]
     fn launch_plan_adds_gvproxy_machine_api_forwarding_when_ssh_identity_exists() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let _guard = HelperStubGuard::install(temp_dir.path());
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
         let image_path = temp_dir.path().join("disk.raw");
         let ssh_identity_path = temp_dir.path().join("machine-key");
         let ssh_public_key_path = temp_dir.path().join("machine-key.pub");
@@ -1947,7 +1991,7 @@ mod tests {
     #[test]
     fn registry_image_reference_reuses_materialized_disk_when_present() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let _guard = HelperStubGuard::install(temp_dir.path());
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
         let layout = MachineRootLayout::new(
             temp_dir.path().join("config"),
             temp_dir.path().join("state"),
@@ -2068,19 +2112,9 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let krunkit_path = temp_dir.path().join("krunkit");
         let gvproxy_path = temp_dir.path().join("gvproxy");
-        fs::write(&krunkit_path, "#!/bin/sh\n").expect("krunkit stub should write");
-        fs::write(&gvproxy_path, "#!/bin/sh\n").expect("gvproxy stub should write");
-
-        unsafe {
-            env::set_var(KRUNKIT_ENV, &krunkit_path);
-            env::set_var(GVPROXY_ENV, &gvproxy_path);
-        }
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
         let resolved =
             MachineHelperBinaryPaths::resolve().expect("helper binaries should resolve via env");
-        unsafe {
-            env::remove_var(KRUNKIT_ENV);
-            env::remove_var(GVPROXY_ENV);
-        }
 
         assert_eq!(resolved.krunkit, krunkit_path);
         assert_eq!(resolved.gvproxy, gvproxy_path);
