@@ -404,10 +404,12 @@ Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
 `containers/podman` + `containers/podman-machine-os` model. The host repo
 (`agentstation/neovex`) owns the binary/CLI/server release and uses the
 machine-image repo in two reusable-workflow phases on `v*` releases: a
-publish-free contract build before the host release, then a publish/release
-call after the host release succeeds. That keeps the GitHub Actions shape
-modern by removing the extra cross-repo `workflow_dispatch` hop while still
-preserving machine-image release ownership in `agentstation/neovex-machine-os`.
+a staging build before the host release, then a publish/release call that
+reuses the staged machine-image bundle after the host release succeeds. That
+keeps the GitHub Actions shape modern by removing the extra cross-repo
+`workflow_dispatch` hop and by avoiding a second machine-image rebuild while
+still preserving machine-image release ownership in
+`agentstation/neovex-machine-os`.
 Because reusable workflows still execute in the caller's context, the
 publish/release call must pass GitHub App credentials (`release_app_id` plus
 `MACHINE_OS_RELEASE_APP_PRIVATE_KEY`) so the called workflow can mint its own
