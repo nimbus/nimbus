@@ -1,19 +1,36 @@
 # Postgres Coverage Thread Starvation
 
+## Status
+
+Resolved on 2026-04-15.
+
+- `crates/neovex-storage/src/postgres.rs` now bridges sync Postgres reads and
+  writes back into Tokio with `tokio::task::block_in_place` on multi-thread
+  runtimes instead of spawning a fresh OS thread per bridged operation.
+- The dedicated bridge-thread fallback remains only for current-thread runtimes,
+  where `block_in_place` would panic.
+- `crates/neovex-engine/src/tests/postgres_provider.rs` now pins the
+  128-round CRUD regression to `worker_threads = 2` so the local/runtime shape
+  matches the constrained GitHub Actions coverage runner.
+- `.github/workflows/ci.yml` now provisions explicit Postgres, MySQL, and
+  libsql fixtures via explicit `NEOVEX_*` fixture env vars, so the
+  coverage lane runs all three external provider suites without skip filters or
+  silent testcontainer fallback.
+
 ## Compact prompt
 
 Use this when running `/compact` before starting the work:
 
 ```
-Preserve: fixing a thread starvation issue in the Postgres storage
-provider that causes test hangs under cargo llvm-cov on CI runners.
-The journal mutation worker uses spawn_blocking → std::thread::spawn →
-Handle::block_on for each write, creating hundreds of short-lived
-threads under 128-round CRUD tests. On resource-constrained CI runners
-(2 vCPUs) with coverage instrumentation (20-40x slower), this causes
-thread scheduling pathology. Currently worked around by skipping
-Postgres provider tests from coverage. Read
-docs/prompts/postgres-coverage-thread-starvation.md for full context.
+Preserve: historical context for the resolved Postgres coverage-thread
+starvation bug. The original issue was the Postgres storage bridge
+creating a nested spawn_blocking → std::thread::spawn →
+Handle::block_on chain for journaled mutations, which hung the
+128-round CRUD test under cargo llvm-cov on 2-vCPU CI runners. The
+fix switched the Postgres bridge to block_in_place on multi-thread
+Tokio runtimes and re-enabled tests::postgres_provider in coverage.
+Read docs/prompts/postgres-coverage-thread-starvation.md for details if
+the regression reappears.
 ```
 
 ---
@@ -21,11 +38,10 @@ docs/prompts/postgres-coverage-thread-starvation.md for full context.
 ## Session prompt
 
 ```
-Read docs/prompts/postgres-coverage-thread-starvation.md then investigate
-and fix the Postgres write path threading issue. The goal is to eliminate
-the nested spawn_blocking → std::thread::spawn → Handle::block_on chain
-so the 128-round CRUD test can run under cargo llvm-cov on a 2-vCPU CI
-runner without hanging.
+Read docs/prompts/postgres-coverage-thread-starvation.md for the
+historical Postgres coverage-thread-starvation fix, then verify whether
+the regression has reappeared. If it has, focus on the Postgres runtime
+bridge and the 128-round CRUD coverage test on a 2-worker Tokio runtime.
 ```
 
 ---
@@ -46,14 +62,19 @@ against a Postgres testcontainer, each going through the full
 
 ### Current workaround
 
-The coverage CI step skips provider tests:
+Resolved for the external SQL provider suites. The coverage CI step now
+provisions explicit provider fixtures and runs the provider suites without skip
+filters:
+
+The coverage CI step runs:
 ```yaml
-cargo llvm-cov --workspace --lcov --output-path lcov.info \
-  -- --skip tests::postgres_provider --skip tests::mysql_provider --skip tests::libsql_provider
+cargo llvm-cov --workspace --lcov --output-path lcov.info
 ```
 
-These tests still run in the dedicated verification harness lanes without
-coverage instrumentation.
+The provider tests continue to support container-backed local fallback when no
+explicit fixture envs are set, but the coverage lane now declares
+`NEOVEX_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1` so missing explicit fixtures fail
+honestly instead of silently downgrading to skip-and-pass behavior.
 
 ### Root cause analysis
 
@@ -109,6 +130,13 @@ MySQL vs Postgres behavioral difference — the heavy test simply
 doesn't exist for MySQL.
 
 ### Desired fix
+
+Implemented on 2026-04-15 by replacing the Postgres runtime bridge's
+per-operation thread spawn with `block_in_place` on multi-thread runtimes and
+keeping the existing bridge-thread fallback only for current-thread runtimes.
+That removes the hot `spawn_blocking -> std::thread::spawn -> Handle::block_on`
+path from the multi-thread coverage lane while preserving sync call support for
+current-thread runtimes.
 
 Eliminate the nested blocking chain. The Postgres write path should not
 require spawn_blocking → std::thread::spawn → Handle::block_on. Options:

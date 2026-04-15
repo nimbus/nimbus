@@ -14,7 +14,8 @@ use testcontainers_modules::{
 
 use super::{
     Document, DurableMutationRecord, Duration, FieldSchema, FieldType, IndexDefinition,
-    PostgresProvider, PostgresProviderConfig, TableSchema, WriteOp, WriteOpType, timeout,
+    PostgresProvider, PostgresProviderConfig, TableSchema, WriteOp, WriteOpType,
+    require_explicit_external_provider_fixture_envs, timeout,
 };
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
@@ -741,6 +742,8 @@ async fn test_connection() -> Option<TestConnection> {
     if let Ok(connection_string) = env::var(TEST_POSTGRES_URL_ENV) {
         return Some(TestConnection::External(connection_string));
     }
+
+    require_explicit_external_provider_fixture_envs("Postgres provider", &[TEST_POSTGRES_URL_ENV]);
 
     let container = match postgres::Postgres::default().start().await {
         Ok(container) => container,
