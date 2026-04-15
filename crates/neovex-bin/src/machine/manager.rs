@@ -2095,7 +2095,10 @@ mod tests {
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
                 image_source: MachineImageSource::OciReference {
-                    reference: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned(),
+                    reference: format!(
+                        "docker://ghcr.io/agentstation/neovex-machine-os:v{}",
+                        env!("CARGO_PKG_VERSION")
+                    ),
                 },
                 ssh_user: "core".to_owned(),
                 ssh_identity_path: None,
