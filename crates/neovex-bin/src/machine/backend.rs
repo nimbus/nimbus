@@ -142,8 +142,9 @@ mod tests {
             let _ = shutdown_rx.await;
         }));
 
-        let backend =
-            ForwardedMachineApiSandboxBackend::new(MachineApiClient::new(socket_path.clone()));
+        let backend = ForwardedMachineApiSandboxBackend::new(MachineApiClient::new_for_test(
+            socket_path.clone(),
+        ));
         let tenant = TenantId::new("tenant").expect("tenant should be valid");
         let image_handle = backend
             .start_from_image(SandboxImageLaunchSpec::new(
