@@ -468,7 +468,7 @@ mod tests {
         let socket_path = temp_dir.path().join("neovex.sock");
         let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
         let expected_path = "/v1/machine-api/service-sandboxes/db-1/stop";
-        let response_body = format!("{{\"sandbox_id\":\"db-1\",\"stopped\":true}}");
+        let response_body = "{\"sandbox_id\":\"db-1\",\"stopped\":true}".to_string();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("request should connect");
             stream
