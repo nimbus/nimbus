@@ -1425,54 +1425,83 @@ fn verify_downloaded_oci_blob(path: &Path, layer: &RegistryLayerDescriptor) -> R
     Ok(())
 }
 
+/// The neovex source repo, used as a fallback for attestation lookups.
+/// When neovex-machine-os is built via a reusable workflow call from the
+/// neovex release workflow, attestations are stored in the caller repo
+/// (agentstation/neovex), not in the image repo (agentstation/neovex-machine-os).
+const NEOVEX_SOURCE_REPO: &str = "agentstation/neovex";
+
 /// Query the GitHub Attestations API for a signed build provenance attestation
-/// matching the downloaded artifact digest. This verifies that the artifact was
-/// produced by a trusted GitHub Actions workflow. Advisory only — logs the
-/// result but does not block the download.
+/// matching the downloaded artifact digest. Checks both the GHCR image repo
+/// and the neovex source repo, since reusable workflows store attestations in
+/// the caller's repo context. Advisory only — logs the result but does not
+/// block the download.
 fn check_build_attestation(reference: &str, subject_digest: &str) {
     let stripped = strip_docker_reference_prefix(reference);
-    let Some(repo_path) = extract_ghcr_repo_path(&stripped) else {
+    let Some(image_repo) = extract_ghcr_repo_path(&stripped) else {
         return;
     };
 
-    let url = format!("https://api.github.com/repos/{repo_path}/attestations/{subject_digest}");
+    // Check the image repo first (standalone builds from neovex-machine-os),
+    // then the neovex source repo (reusable workflow builds from neovex release).
+    let repos_to_check: Vec<&str> = if image_repo == NEOVEX_SOURCE_REPO {
+        vec![&image_repo]
+    } else {
+        vec![&image_repo, NEOVEX_SOURCE_REPO]
+    };
 
-    let result = Client::builder()
+    let client = match Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .and_then(|client| {
-            client
-                .get(&url)
-                .header("Accept", "application/json")
-                .header("User-Agent", "neovex-machine-manager")
-                .send()
-        });
-
-    match result {
-        Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>() {
-                let count = body
-                    .get("attestations")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-                if count > 0 {
-                    eprintln!("verified: {count} build attestation(s) found for {subject_digest}");
-                } else {
-                    eprintln!("warning: no build attestations found for {subject_digest}");
-                }
-            }
-        }
-        Ok(response) => {
-            eprintln!(
-                "warning: attestation lookup returned HTTP {}: {reference}",
-                response.status()
-            );
-        }
+    {
+        Ok(client) => client,
         Err(error) => {
             eprintln!("warning: attestation lookup failed: {error}");
+            return;
+        }
+    };
+
+    for repo in &repos_to_check {
+        match query_attestations(&client, repo, subject_digest) {
+            Ok(count) if count > 0 => {
+                eprintln!(
+                    "verified: {count} build attestation(s) found for {subject_digest} in {repo}"
+                );
+                return;
+            }
+            Ok(_) => {}
+            Err(msg) => {
+                eprintln!("warning: attestation lookup for {repo}: {msg}");
+            }
         }
     }
+
+    eprintln!("warning: no build attestations found for {subject_digest}");
+}
+
+/// Query the GitHub Attestations API for a specific repo and digest.
+/// Returns the number of attestations found, or an error message.
+fn query_attestations(client: &Client, repo: &str, subject_digest: &str) -> Result<usize, String> {
+    let url = format!("https://api.github.com/repos/{repo}/attestations/{subject_digest}");
+
+    let response = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "neovex-machine-manager")
+        .send()
+        .map_err(|e| format!("{e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let body: serde_json::Value = response.json().map_err(|e| format!("{e}"))?;
+
+    Ok(body
+        .get("attestations")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0))
 }
 
 /// Extract the GitHub repository path (owner/repo) from a ghcr.io image
