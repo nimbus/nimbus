@@ -8,10 +8,26 @@ use clap::{Args, Subcommand};
 use neovex::Error;
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
 mod api;
+#[cfg(not(unix))]
+#[path = "stub/api.rs"]
+mod api;
+#[cfg(unix)]
+mod backend;
+#[cfg(not(unix))]
+#[path = "stub/backend.rs"]
 mod backend;
 mod bootstrap;
+#[cfg(unix)]
 mod client;
+#[cfg(not(unix))]
+#[path = "stub/client.rs"]
+mod client;
+#[cfg(unix)]
+mod manager;
+#[cfg(not(unix))]
+#[path = "stub/manager.rs"]
 mod manager;
 mod protocol;
 
