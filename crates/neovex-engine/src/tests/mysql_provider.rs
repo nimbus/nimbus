@@ -496,6 +496,8 @@ async fn test_connection() -> Option<TestConnection> {
         return Some(TestConnection::External(connection_string));
     }
 
+    require_explicit_external_provider_fixture_envs("MySQL engine", &[MYSQL_URL_ENV]);
+
     let container = match mysql::Mysql::default().start().await {
         Ok(container) => container,
         Err(error) => {

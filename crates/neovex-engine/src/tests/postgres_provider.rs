@@ -221,7 +221,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud() {
     with_postgres_service_config(|service_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
@@ -1161,6 +1161,8 @@ async fn test_connection() -> Option<TestConnection> {
     if let Ok(connection_string) = env::var(TEST_POSTGRES_URL_ENV) {
         return Some(TestConnection::External(connection_string));
     }
+
+    require_explicit_external_provider_fixture_envs("Postgres engine", &[TEST_POSTGRES_URL_ENV]);
 
     let container = match postgres::Postgres::default().start().await {
         Ok(container) => container,

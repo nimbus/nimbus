@@ -50,8 +50,11 @@ mod mutation_journal;
 mod mysql_provider;
 mod policy;
 mod postgres_provider;
+mod provider_fixtures;
 mod queries;
 mod subscriptions;
+
+pub(crate) use provider_fixtures::require_explicit_external_provider_fixture_envs;
 
 pub(crate) fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")

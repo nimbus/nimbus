@@ -33,10 +33,13 @@ mod generated_history;
 mod libsql_provider;
 mod mysql_provider;
 mod postgres_provider;
+mod provider_fixtures;
 mod recovery;
 mod sqlite_foundation;
 mod store_basics;
 mod usage_store;
+
+pub(crate) use provider_fixtures::require_explicit_external_provider_fixture_envs;
 
 pub(crate) fn sample_document(table: &str, title: &str) -> Document {
     Document::new(

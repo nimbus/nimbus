@@ -596,6 +596,11 @@ async fn test_connection() -> Option<TestConnection> {
         });
     }
 
+    require_explicit_external_provider_fixture_envs(
+        "libsql replica engine",
+        &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
+    );
+
     let image = GenericImage::new("ghcr.io/tursodatabase/libsql-server", "latest")
         .with_wait_for(WaitFor::seconds(1))
         // The container entrypoint already appends --http-listen-addr from
