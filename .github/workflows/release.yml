@@ -116,7 +116,7 @@ jobs:
   verify-machine-os:
     name: Verify machine-os contract
     needs: build
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@cb474ebe26dd15c4978d57c0095d91c7856fcf50
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7c5eb8bb62d9f8f2a8da809904fdec612e8bff41
     with:
       neovex_version: ${{ github.ref_name }}
       neovex_artifact_name: neovex_linux_arm64
@@ -308,7 +308,7 @@ jobs:
   release-machine-os:
     name: Release machine-os
     needs: [build, verify-machine-os, release]
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@cb474ebe26dd15c4978d57c0095d91c7856fcf50
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7c5eb8bb62d9f8f2a8da809904fdec612e8bff41
     with:
       neovex_version: ${{ github.ref_name }}
       release_tag: ${{ github.ref_name }}
