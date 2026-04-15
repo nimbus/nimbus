@@ -402,13 +402,14 @@ Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
 **Repo split:** The guest image source now lives in
 `agentstation/neovex-machine-os`, mirroring Podman's
 `containers/podman` + `containers/podman-machine-os` model. The host repo
-(`agentstation/neovex`) owns the binary/CLI/server release and invokes the
-machine-image repo through a reusable workflow on `v*` releases so the
-published guest image tag matches the host version. This gives clean
-attestation semantics: `agentstation/neovex` attests the host
-binary/CLI/server, while `agentstation/neovex-machine-os` attests
-standalone guest-image builds. Consumers still reference the image only by
-GHCR reference, so the split stays transparent to operators.
+(`agentstation/neovex`) owns the binary/CLI/server release and uses the
+machine-image repo in two phases on `v*` releases: a reusable workflow for the
+coupled contract build, then a native `agentstation/neovex-machine-os`
+release/publish run with the same tag. This gives clean attestation semantics:
+`agentstation/neovex` attests the host binary/CLI/server, while
+`agentstation/neovex-machine-os` attests and releases the guest image in its
+own repo. Consumers still reference the image only by GHCR reference, so the
+split stays transparent to operators.
 
 The Podman machine-os source is also a useful negative reference here: its
 guest image build script installs plain container tooling (`crun`, `podman`,

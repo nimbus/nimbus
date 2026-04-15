@@ -87,9 +87,12 @@ Reviewed against:
 - The current host release contract is version-pinned, not alias-driven.
   `neovex machine init` defaults to
   `docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`, and
-  the host `v*` release workflow now calls the external machine-os reusable
-  workflow with that same tag. Moving aliases such as `stable` remain
-  convenience pointers, not the default host contract.
+  the host `v*` release workflow now first runs the external machine-os
+  reusable workflow as a contract build and then dispatches the native
+  `agentstation/neovex-machine-os` release with that same tag. That keeps the
+  matching guest image release owned by the machine-image repo instead of the
+  host repo. Moving aliases such as `stable` remain convenience pointers, not
+  the default host contract.
 - Historical references to `images/neovex-machine-os/`,
   `scripts/build-neovex-machine-os.sh`, and the old local workflow in the
   execution log below are pre-split evidence. They remain useful as historical
@@ -1813,10 +1816,12 @@ Acceptance criteria:
   workflow. Verification: `cargo test -p neovex-bin parses_machine_init_defaults_to_version_pinned_release_image -- --exact`; `cargo fmt --all --check`.
 - 2026-04-15: Landed the Podman-shaped machine-image repo split for real. The
   guest image source and workflow now live in `agentstation/neovex-machine-os`,
-  while the host `agentstation/neovex` release workflow calls that repo through
-  a reusable workflow on `v*` tags. Durable conclusion: future MAC4 supply-side
-  fixes belong in the machine-os repo, while this repo owns only the consumer
-  contract, guest bootstrap assets, and host machine manager integration.
+  while the host `agentstation/neovex` release workflow now uses that repo in
+  two phases on `v*` tags: reusable-workflow contract build first, then a
+  native machine-os release dispatch with the same tag. Durable conclusion:
+  future MAC4 supply-side fixes belong in the machine-os repo, while this repo
+  owns only the consumer contract, guest bootstrap assets, and host machine
+  manager integration.
   Verification: repo review of `agentstation/neovex/.github/workflows/release.yml`;
   repo review of `agentstation/neovex-machine-os/.github/workflows/build.yml`;
   `cargo fmt --all --check`.
