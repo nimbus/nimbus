@@ -21,12 +21,17 @@ jobs:
     name: Verify cross-repo release contract
     runs-on: ubuntu-latest
     steps:
-      - name: Require machine-os release token
+      - name: Require machine-os release app credentials
         env:
-          MACHINE_OS_RELEASE_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}
+          MACHINE_OS_RELEASE_APP_ID: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
+          MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
-          if [[ -z "${MACHINE_OS_RELEASE_TOKEN}" ]]; then
-            echo "MACHINE_OS_RELEASE_TOKEN must be configured so the reusable neovex-machine-os release workflow can publish GHCR artifacts and create the matching machine-os release." >&2
+          if [[ -z "${MACHINE_OS_RELEASE_APP_ID}" ]]; then
+            echo "MACHINE_OS_RELEASE_APP_ID must be configured so the reusable neovex-machine-os release workflow can mint a cross-repo GitHub App token." >&2
+            exit 1
+          fi
+          if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so the reusable neovex-machine-os release workflow can mint a cross-repo GitHub App token." >&2
             exit 1
           fi
 
@@ -116,7 +121,7 @@ jobs:
   verify-machine-os:
     name: Verify machine-os contract
     needs: build
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7c5eb8bb62d9f8f2a8da809904fdec612e8bff41
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@317bed9fd6507fc4f65fcbb5e51f92a2cab2b4f5
     with:
       neovex_version: ${{ github.ref_name }}
       neovex_artifact_name: neovex_linux_arm64
@@ -308,7 +313,7 @@ jobs:
   release-machine-os:
     name: Release machine-os
     needs: [build, verify-machine-os, release]
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@7c5eb8bb62d9f8f2a8da809904fdec612e8bff41
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@317bed9fd6507fc4f65fcbb5e51f92a2cab2b4f5
     with:
       neovex_version: ${{ github.ref_name }}
       release_tag: ${{ github.ref_name }}
@@ -316,10 +321,11 @@ jobs:
       create_release: true
       publish: true
       image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
+      release_app_id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
     permissions:
       contents: write
       packages: write
       id-token: write
       attestations: write
     secrets:
-      MACHINE_OS_RELEASE_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}
+      MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}

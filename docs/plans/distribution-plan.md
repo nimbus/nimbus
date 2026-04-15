@@ -409,10 +409,10 @@ call after the host release succeeds. That keeps the GitHub Actions shape
 modern by removing the extra cross-repo `workflow_dispatch` hop while still
 preserving machine-image release ownership in `agentstation/neovex-machine-os`.
 Because reusable workflows still execute in the caller's context, the
-publish/release call must pass an explicit token (today `MACHINE_OS_RELEASE_TOKEN`;
-longer term a GitHub App installation token is the preferred upgrade) so the
-called workflow can publish GHCR artifacts and create a GitHub Release in the
-separate machine-image repo. This keeps attestation ownership split cleanly:
+publish/release call must pass GitHub App credentials (`release_app_id` plus
+`MACHINE_OS_RELEASE_APP_PRIVATE_KEY`) so the called workflow can mint its own
+installation token, publish GHCR artifacts, and create a GitHub Release in
+the separate machine-image repo. This keeps attestation ownership split cleanly:
 `agentstation/neovex` attests the host binary/CLI/server, while
 `agentstation/neovex-machine-os` attests and releases the guest image in its
 own repo. Consumers still reference the image only by GHCR reference, so the
