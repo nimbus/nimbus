@@ -9,7 +9,7 @@ git-fetch-with-cli = true
 [env]
 # Fork release tags keep upstream crate versions intact while selecting the
 # locker-enabled prebuilt asset line explicitly.
-RUSTY_V8_VERSION = "147.0.0-locker.1"
+RUSTY_V8_VERSION = "147.0.0-locker.2"
 
 # Use lld linker on Linux for faster linking (install: apt install lld)
 # Uncomment if you have lld installed:
