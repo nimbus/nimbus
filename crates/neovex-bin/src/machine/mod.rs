@@ -1441,7 +1441,7 @@ mod tests {
                     cpus: DEFAULT_MACHINE_CPUS,
                     memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
                     disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                    image: "docker://127.0.0.1:9/example/neovex-machine-os:test".to_owned(),
+                    image: "docker://127.0.0.1:1/example/neovex-machine-os:test".to_owned(),
                     ssh_identity: None,
                     ignition_file: None,
                     efi_store: None,
@@ -1465,10 +1465,10 @@ mod tests {
             std::env::remove_var("NEOVEX_MACHINE_GVPROXY");
         }
 
+        let error_message = error.to_string();
         assert!(
-            error
-                .to_string()
-                .contains("failed to resolve machine guest OCI reference")
+            error_message.contains("failed to resolve machine guest OCI reference"),
+            "expected OCI resolution error, got: {error_message}"
         );
     }
 
