@@ -164,7 +164,9 @@ jobs:
   stage-machine-os:
     name: Stage machine-os bundle
     needs: build-linux-arm64
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@4a8e493b47cc2b760f4a9164b94a7c875a9b9bde
+    # Keep this on a dedicated stable ref so machine-os workflow fixes do not
+    # require raw-SHA repins in neovex for every change.
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@release-workflow-v1
     with:
       neovex_version: ${{ github.ref_name }}
       neovex_artifact_name: neovex_linux_arm64
@@ -362,7 +364,8 @@ jobs:
   release-machine-os:
     name: Release machine-os
     needs: release
-    uses: agentstation/neovex-machine-os/.github/workflows/publish.yml@4a8e493b47cc2b760f4a9164b94a7c875a9b9bde
+    # Shared cross-repo release seam; advance release-workflow-v1 deliberately.
+    uses: agentstation/neovex-machine-os/.github/workflows/publish.yml@release-workflow-v1
     with:
       neovex_version: ${{ github.ref_name }}
       release_tag: ${{ github.ref_name }}
