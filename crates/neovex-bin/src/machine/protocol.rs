@@ -1,9 +1,11 @@
-use neovex::{
-    SandboxBackendKind, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-};
+use neovex::SandboxBackendKind;
+#[cfg(unix)]
+use neovex::{SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec};
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
 pub(crate) const PROTOCOL_VERSION: &str = "v1alpha1";
+#[cfg(unix)]
 pub(crate) const MACHINE_API_ROLE: &str = "guest-machine-api";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,33 +41,39 @@ pub(crate) struct MachineApiRequiredBinaryStatus {
     pub(crate) resolved_path: Option<String>,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxImageStartRequest {
     pub(crate) launch: SandboxImageLaunchSpec,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxBuildStartRequest {
     pub(crate) launch: SandboxBuildLaunchSpec,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxStartResponse {
     pub(crate) handle: SandboxHandle,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxInspectResponse {
     pub(crate) sandbox_id: SandboxId,
     pub(crate) handle: Option<SandboxHandle>,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxStopResponse {
     pub(crate) sandbox_id: SandboxId,
     pub(crate) stopped: bool,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiErrorResponse {
     pub(crate) error: String,

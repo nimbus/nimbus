@@ -18,6 +18,10 @@ mod backend;
 #[cfg(not(unix))]
 #[path = "stub/backend.rs"]
 mod backend;
+#[cfg(unix)]
+mod bootstrap;
+#[cfg(not(unix))]
+#[path = "stub/bootstrap.rs"]
 mod bootstrap;
 #[cfg(unix)]
 mod client;
