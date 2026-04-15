@@ -45,7 +45,7 @@ OUT
     rendered="$*"
     case "${rendered}" in
       "/usr/local/bin/neovex --version")
-        echo "neovex 0.1.2"
+        echo "neovex 0.1.3"
         ;;
       *"sha256sum /usr/local/bin/neovex"*)
         echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /usr/local/bin/neovex"
@@ -149,7 +149,7 @@ grep -E "^artifact\\.machine_log_tail[[:space:]]+present path=${runtime_root}/de
 grep -F "result                             captured" "${summary_file}" >/dev/null
 
 grep -F "manager: ready" "${output_dir}/machine-status.txt" >/dev/null
-grep -F "neovex 0.1.2" "${output_dir}/guest-neovex-version.txt" >/dev/null
+grep -F "neovex 0.1.3" "${output_dir}/guest-neovex-version.txt" >/dev/null
 grep -F "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /usr/local/bin/neovex" "${output_dir}/guest-neovex-sha256.txt" >/dev/null
 grep -F "present buildah /usr/bin/buildah" "${output_dir}/guest-required-binaries.txt" >/dev/null
 grep -F "SubState=listening" "${output_dir}/guest-neovex-socket-status.txt" >/dev/null
