@@ -123,7 +123,7 @@ jobs:
       publish: false
       image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
       attestations: write
