@@ -121,7 +121,7 @@ jobs:
   stage-machine-os:
     name: Stage machine-os bundle
     needs: build
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@51aca91324dfb1ab242a8033b8e441900f5c7bbd
+    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@51aca91fb9edbf370745dea1b0ecae8f269111f2
     with:
       neovex_version: ${{ github.ref_name }}
       neovex_artifact_name: neovex_linux_arm64
@@ -314,7 +314,7 @@ jobs:
   release-machine-os:
     name: Release machine-os
     needs: [build, stage-machine-os, release]
-    uses: agentstation/neovex-machine-os/.github/workflows/publish.yml@51aca91324dfb1ab242a8033b8e441900f5c7bbd
+    uses: agentstation/neovex-machine-os/.github/workflows/publish.yml@51aca91fb9edbf370745dea1b0ecae8f269111f2
     with:
       neovex_version: ${{ github.ref_name }}
       release_tag: ${{ github.ref_name }}
