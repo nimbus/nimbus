@@ -14,7 +14,7 @@ use super::protocol::{
     MachineApiServiceSandboxStopResponse,
 };
 
-const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
+const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTHZ_PATH: &str = "/healthz";
 const CAPABILITIES_PATH: &str = "/v1/machine-api/capabilities";
 const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
