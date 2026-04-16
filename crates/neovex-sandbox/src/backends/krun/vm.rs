@@ -2462,6 +2462,9 @@ if [ "$cmd" = "unshare" ]; then
     exit 1
   fi
   shift
+  if [ "${{1:-}}" = "$0" ]; then
+    shift
+  fi
   cmd="${{1:-}}"
   if [ -z "$cmd" ]; then
     printf 'missing subcommand for wrapped program %s\n' "$wrapped_program" >&2
