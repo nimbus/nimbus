@@ -26,6 +26,23 @@ This directory prefers a small-number-of-plans model with clear ownership.
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
 
+## Deferred plans with defined scope
+
+- `docs/plans/machine-lifecycle-hardening-plan.md`
+  - canonical execution plan for Podman-aligned machine lifecycle robustness:
+    graceful guest shutdown, signal handling during startup, file-locked SSH
+    port allocation, atomic config writes, config schema versioning, provider
+    capability flags, pre/post-start networking phases; activation gate is
+    macOS MAC6 complete; shared infrastructure for both macOS and Windows
+    machine paths
+
+- `docs/plans/windows-machine-support-plan.md`
+  - canonical execution plan for the Podman-aligned Windows developer-machine
+    architecture, source-backed against the Podman WSL2 provider: Windows-native
+    `neovex.exe` with WSL2 machine provider, win-sshproxy named-pipe API
+    forwarding, shell-script bootstrap (not ignition), WSL2-native networking
+    (not gvproxy); activation gate is macOS MAC5+ stabilization
+
 ## Deferred design and experiment plans
 
 - `docs/plans/distribution-plan.md`
