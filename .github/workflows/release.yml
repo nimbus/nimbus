@@ -208,13 +208,14 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
         run: |
-          expected_title="Publish machine-os (${{ github.ref_name }}) from ${{ github.repository }}#${{ github.run_id }}"
+          expected_title="Publish machine-os (${{ github.ref_name }}) from ${{ github.repository }}#${{ github.run_id }} (attempt ${{ github.run_attempt }})"
           cat > /tmp/machine-os-dispatch.json <<EOF
           {
             "ref": "release-workflow-v1",
             "inputs": {
               "source_repository": "${{ github.repository }}",
               "source_run_id": "${{ github.run_id }}",
+              "source_run_attempt": "${{ github.run_attempt }}",
               "neovex_version": "${{ github.ref_name }}",
               "release_tag": "${{ github.ref_name }}",
               "stage_artifact_name": "neovex-machine-os-${{ github.run_id }}",
