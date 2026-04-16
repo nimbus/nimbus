@@ -15,6 +15,10 @@ and where to go next.
 - [MicroVM and service-control baseline](reference/microvm-service-baseline.md):
   concise current baseline for the landed krun-backed microVM runtime,
   `ctx.services.*` integration, and `neovex service ...` control surface
+- [macOS machine image and control flows](reference/macos-machine-flow.md):
+  current source-backed diagrams for host release -> guest image release,
+  GHCR publish, macOS image pull/materialization, and host/guest service
+  execution flow
 - [HTTP and WebSocket API](reference/http-api.md):
   native and optional Convex route catalog
 - [CLI reference](reference/cli.md):
