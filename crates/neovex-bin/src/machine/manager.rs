@@ -1052,18 +1052,8 @@ impl Drop for MachineHelperEnvGuard {
 }
 
 #[cfg(test)]
-fn write_helper_stub(path: &Path, helper_name: &str) {
-    fs::write(path, "#!/bin/sh\n").unwrap_or_else(|error| {
-        panic!("{helper_name} stub should write: {error}");
-    });
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap_or_else(|error| {
-            panic!("{helper_name} stub should be executable: {error}");
-        });
-    }
+fn write_helper_stub(path: &Path, _helper_name: &str) {
+    crate::test_support::write_executable_stub(path, "#!/bin/sh\n");
 }
 
 fn resolve_bootable_image_path(
