@@ -13,6 +13,8 @@ use serde::Deserialize;
 
 mod machine;
 mod service;
+#[cfg(test)]
+mod test_support;
 
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::service::{

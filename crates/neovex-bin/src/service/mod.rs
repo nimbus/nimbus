@@ -1888,15 +1888,7 @@ services:
             "fuse-overlayfs",
         ] {
             let path = dir.join(binary);
-            fs::write(&path, "#!/bin/sh\nexit 0\n").expect("fake runtime binary should write");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-
-                let permissions = fs::Permissions::from_mode(0o755);
-                fs::set_permissions(&path, permissions)
-                    .expect("fake runtime binary should be executable");
-            }
+            crate::test_support::write_executable_stub(&path, "#!/bin/sh\nexit 0\n");
         }
     }
 
