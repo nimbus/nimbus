@@ -62,6 +62,8 @@ pub struct KrunSandboxBackendConfig {
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
+    #[cfg(test)]
+    pub buildah_launcher_args: Vec<String>,
     pub guest_user_helper_root: PathBuf,
     pub use_buildah_unshare: bool,
     pub published_port_range: RangeInclusive<u16>,
@@ -99,6 +101,8 @@ impl Default for KrunSandboxBackendConfig {
             conmon_path: PathBuf::from(DEFAULT_CONMON_PATH),
             runtime_path: PathBuf::from(DEFAULT_RUNTIME_PATH),
             buildah_path: PathBuf::from(DEFAULT_BUILDAH_PATH),
+            #[cfg(test)]
+            buildah_launcher_args: Vec::new(),
             guest_user_helper_root: PathBuf::from(DEFAULT_GUEST_USER_HELPER_ROOT),
             use_buildah_unshare: true,
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
@@ -401,8 +405,10 @@ impl KrunSandboxBackend {
     }
 
     fn buildah_cli(&self) -> BuildahCli {
-        BuildahCli::new(self.config.buildah_path.clone())
-            .with_unshare(self.config.use_buildah_unshare)
+        let buildah = BuildahCli::new(self.config.buildah_path.clone());
+        #[cfg(test)]
+        let buildah = buildah.with_launcher_args(self.config.buildah_launcher_args.clone());
+        buildah.with_unshare(self.config.use_buildah_unshare)
     }
 
     fn cleanup_manifest_buildah_artifacts(&self, manifest: &KrunSandboxManifest) -> Result<()> {
@@ -1460,7 +1466,7 @@ mod tests {
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        config.buildah_path = buildah_path;
+        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
         let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
@@ -1492,7 +1498,7 @@ mod tests {
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        config.buildah_path = buildah_path;
+        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
         let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
@@ -1789,7 +1795,7 @@ mod tests {
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        config.buildah_path = buildah_path;
+        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
 
         let backend = KrunSandboxBackend::new(config);
@@ -1855,7 +1861,7 @@ mod tests {
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        config.buildah_path = buildah_path;
+        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = true;
 
         let backend = KrunSandboxBackend::new(config);
@@ -1903,7 +1909,7 @@ mod tests {
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        config.buildah_path = buildah_path;
+        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
         config.published_port_range = 15000..=15001;
 
@@ -2408,6 +2414,11 @@ mod tests {
             shutdown_requested: false,
             status: SandboxStatus::Starting,
         }
+    }
+
+    fn configure_fake_buildah(config: &mut KrunSandboxBackendConfig, script_path: PathBuf) {
+        config.buildah_path = PathBuf::from("/bin/sh");
+        config.buildah_launcher_args = vec![script_path.to_string_lossy().into_owned()];
     }
 
     #[test]
