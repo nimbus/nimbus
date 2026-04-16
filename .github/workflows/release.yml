@@ -166,6 +166,10 @@ jobs:
     needs: build-linux-arm64
     # Keep this on a dedicated stable ref so machine-os workflow fixes do not
     # require raw-SHA repins in neovex for every change.
+    # Use github.run_id for the staged bundle handoff because the downstream
+    # publish workflow must still find the artifact across reruns. Reserve
+    # github.run_attempt for per-attempt diagnostics, not durable artifact
+    # names.
     uses: agentstation/neovex-machine-os/.github/workflows/build.yml@release-workflow-v1
     with:
       neovex_version: ${{ github.ref_name }}
