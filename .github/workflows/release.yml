@@ -173,7 +173,7 @@ jobs:
       create_release: false
       publish: false
       image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
-      stage_artifact_name: neovex-machine-os-${{ github.run_id }}-${{ github.run_attempt }}
+      stage_artifact_name: neovex-machine-os-${{ github.run_id }}
     permissions:
       contents: write
       packages: write
@@ -213,7 +213,7 @@ jobs:
               "source_run_id": "${{ github.run_id }}",
               "neovex_version": "${{ github.ref_name }}",
               "release_tag": "${{ github.ref_name }}",
-              "stage_artifact_name": "neovex-machine-os-${{ github.run_id }}-${{ github.run_attempt }}",
+              "stage_artifact_name": "neovex-machine-os-${{ github.run_id }}",
               "image_reference": "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}",
               "create_release": true
             }
