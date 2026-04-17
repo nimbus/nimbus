@@ -66,9 +66,14 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          key: release-aarch64-unknown-linux-gnu
+          # Release builds should reuse downloaded crates and prebuilt
+          # rusty_v8 archives, but not prior target/ artifacts. A failed
+          # Windows V8 link can otherwise be restored into later tag builds
+          # and keep re-failing without rerunning the build script.
+          key: release-aarch64-unknown-linux-gnu-v2
           cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
+          cache-targets: "false"
+          cache-on-failure: "false"
 
       - name: Build release binary
         run: cargo build --release -p neovex-bin
@@ -139,9 +144,13 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          # Keep release builds deterministic by caching registries and
+          # downloaded rusty_v8 archives while forcing each tag to rebuild its
+          # target artifacts from source/current prebuilt inputs.
+          key: release-${{ matrix.target }}-v2
           cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
+          cache-targets: "false"
+          cache-on-failure: "false"
 
       - name: Build release binary
         run: cargo build --release -p neovex-bin
