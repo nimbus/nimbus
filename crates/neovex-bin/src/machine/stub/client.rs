@@ -1,8 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use neovex::{Error, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec};
+use neovex::{
+    Error, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec, TenantId,
+};
 
-use super::protocol::{MachineApiCapabilityResponse, MachineApiHealthResponse};
+use super::protocol::{
+    MachineApiCapabilityResponse, MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
+    MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
+    MachineApiServiceSandboxSummary,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -57,6 +63,36 @@ impl MachineApiClient {
     }
 
     pub(crate) fn stop_service_sandbox(&self, _sandbox_id: &SandboxId) -> Result<(), Error> {
+        Err(unsupported_machine_api_client_error(&self.socket_path))
+    }
+
+    pub(crate) fn list_service_sandboxes(
+        &self,
+        _tenant_id: Option<&TenantId>,
+    ) -> Result<Vec<MachineApiServiceSandboxSummary>, Error> {
+        Err(unsupported_machine_api_client_error(&self.socket_path))
+    }
+
+    pub(crate) fn inspect_current_service_sandbox(
+        &self,
+        _tenant_id: &TenantId,
+        _service_name: &str,
+    ) -> Result<MachineApiServiceSandboxLookupResponse, Error> {
+        Err(unsupported_machine_api_client_error(&self.socket_path))
+    }
+
+    pub(crate) fn read_service_sandbox_log_chunk(
+        &self,
+        _sandbox_id: &SandboxId,
+        _offset: u64,
+    ) -> Result<MachineApiServiceSandboxLogChunkResponse, Error> {
+        Err(unsupported_machine_api_client_error(&self.socket_path))
+    }
+
+    pub(crate) fn service_process_snapshot(
+        &self,
+        _sandbox_id: &SandboxId,
+    ) -> Result<MachineApiServiceProcessSnapshot, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 }
