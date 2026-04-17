@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.10] - 2026-04-17
 
+### CI/CD
+
+- Restore release target caching safely by @jackspirou
+- Avoid stale release target caches by @jackspirou
+
 ### Fixed
 
-- Restore Windows machine stub parity for the expanded machine API surface so release builds stay green by @jackspirou
+- Gate unix-only protocol imports by @jackspirou
+- Gate unix machine types on windows by @jackspirou
+- Repair v0.1.10 ci lanes by @jackspirou
+
+### Release
+
+- Prepare v0.1.10 by @jackspirou
 
 
 
@@ -17,17 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.9] - 2026-04-17
 
-### CI/CD
-
-- Verify release tags against crate, package, lockfile, and changelog versions by @jackspirou
-
 ### Documentation
 
-- Archive the completed macOS machine support plan and promote the stable macOS flow reference by @jackspirou
+- Add machine flow and deferred machine plans by @jackspirou
+- Update CHANGELOG.md for v0.1.8 by @github-actions[bot]
 
-### Fixed
+### Testing
 
-- Align shipped `neovex --version` metadata with the next release tag across Rust crates and JS workspaces by @jackspirou
+- Fix krun fake buildah unshare parsing by @jackspirou
+- Harden executable test stubs by @jackspirou
+- Run krun fake buildah via shell by @jackspirou
+- Harden fake buildah script publishing by @jackspirou
+
+### Release
+
+- Prepare v0.1.9 by @jackspirou
 
 
 
