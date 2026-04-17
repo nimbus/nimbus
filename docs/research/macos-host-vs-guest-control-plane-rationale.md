@@ -7,8 +7,9 @@ the active macOS plan to the hybrid direction.
 
 This document captures the evaluated tradeoff space as of 2026-04-13 so future
 contributors do not re-derive the same architecture fork from scratch. It is a
-research rationale, not an execution plan. The active execution control plane
-remains `docs/plans/macos-machine-support-plan.md`.
+research rationale, not an execution plan. The settled current contract lives
+in `docs/reference/macos-machine-flow.md`, and the historical execution record
+now lives in `docs/plans/archive/macos-machine-support-plan.md`.
 
 ---
 

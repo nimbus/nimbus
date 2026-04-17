@@ -1397,6 +1397,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2651,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "neovex"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "neovex-core",
  "neovex-engine",
@@ -2663,22 +2673,25 @@ dependencies = [
 
 [[package]]
 name = "neovex-bin"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "axum",
  "clap",
  "flate2",
+ "fs2",
  "libc",
  "neovex",
  "neovex-sandbox",
  "neovex-testing",
  "oci-client",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
  "shell-words",
+ "signal-hook-registry",
  "tempfile",
  "tokio",
  "tracing",
@@ -2688,7 +2701,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-core"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "rmp-serde",
  "serde",
@@ -2700,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-engine"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -2727,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-runtime"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "criterion",
  "deno_core",
@@ -2746,21 +2759,28 @@ dependencies = [
 
 [[package]]
 name = "neovex-sandbox"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
+ "flate2",
+ "fs2",
  "futures",
  "libc",
  "neovex-core",
+ "oci-client",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "ulid",
+ "zstd",
 ]
 
 [[package]]
 name = "neovex-server"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2786,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-storage"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "deadpool-postgres",
  "hyper 0.14.32",
@@ -2815,7 +2835,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-testing"
-version = "0.1.3"
+version = "0.1.9"
 dependencies = [
  "axum",
  "futures",
@@ -3062,6 +3082,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "openssl-src"
+version = "300.5.5+3.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f1787d533e03597a7934fd0a765f0d28e94ecc5fb7789f8053b1e699a56f709"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3069,6 +3098,7 @@ checksum = "57d55af3b3e226502be1526dfdba67ab0e9c96fc293004e79576b2b9edb0dbdb"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -4576,6 +4606,17 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "tar"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
 
 [[package]]
 name = "tempfile"

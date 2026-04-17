@@ -1,16 +1,21 @@
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
+use fs2::FileExt;
 use libc::{SIGKILL, SIGTERM, kill};
 use neovex::Error;
 use oci_client::Reference;
@@ -23,13 +28,17 @@ use oci_client::secrets::RegistryAuth;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tempfile::NamedTempFile;
+use signal_hook_registry::{SigId, register as register_signal, unregister as unregister_signal};
+use tempfile::{NamedTempFile, tempdir_in};
 use tokio::io::AsyncWriteExt;
 
-use super::bootstrap::{GUEST_NEOVEX_SOCKET, resolve_ignition_file};
+use super::bootstrap::{GUEST_NEOVEX_BIN, GUEST_NEOVEX_SOCKET, resolve_ignition_file};
+use super::client::MachineApiClient;
 use super::{
-    MachineConfigRecord, MachineImageSource, MachineLifecycle, MachineManagerState, MachinePaths,
-    MachineStateRecord, MachineVolume, write_json_file,
+    MachineBootstrapMode, MachineConfigRecord, MachineImageFormat, MachineImageSource,
+    MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout, MachineStateRecord,
+    MachineVolume, describe_machine_image_source, desired_machine_image_source,
+    invalidate_materialized_machine_os, uses_host_managed_machine_image_contract, write_json_file,
 };
 
 const DEFAULT_KRUNKIT_BINARY: &str = "krunkit";
@@ -43,13 +52,24 @@ const READY_WAIT_TIMEOUT_ENV: &str = "NEOVEX_MACHINE_READY_TIMEOUT_SECS";
 const DEFAULT_READY_WAIT_TIMEOUT: Duration = Duration::from_secs(90);
 const SSH_READY_WAIT_TIMEOUT_ENV: &str = "NEOVEX_MACHINE_SSH_READY_TIMEOUT_SECS";
 const DEFAULT_SSH_READY_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+const MACHINE_API_READY_WAIT_TIMEOUT_ENV: &str = "NEOVEX_MACHINE_API_READY_TIMEOUT_SECS";
+const DEFAULT_MACHINE_API_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const STOP_WAIT_TIMEOUT_ENV: &str = "NEOVEX_MACHINE_STOP_TIMEOUT_SECS";
+const DEFAULT_STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(90);
 const GVPROXY_SOCKET_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+const HARD_STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+const MACHINE_PORT_MIN: u16 = 10000;
+const MACHINE_PORT_MAX: u16 = 65535;
 const KRUNKIT_ENV: &str = "NEOVEX_MACHINE_KRUNKIT";
 const GVPROXY_ENV: &str = "NEOVEX_MACHINE_GVPROXY";
 const HTTP_IMAGE_TIMEOUT: Duration = Duration::from_secs(300);
-const OCI_MACHINE_DISK_TYPE: &str = "raw";
+const GUEST_NEOVEX_BINARY_OVERRIDE_ENV: &str = "NEOVEX_MACHINE_GUEST_BINARY";
+const GUEST_NEOVEX_RELEASE_BASE_URL_ENV: &str = "NEOVEX_MACHINE_GUEST_RELEASE_BASE_URL";
+const DEFAULT_GUEST_NEOVEX_RELEASE_BASE_URL: &str =
+    "https://github.com/agentstation/neovex/releases/download";
+const DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_ARM64: &str = "neovex_linux_arm64.tar.gz";
+const DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_X86_64: &str = "neovex_linux_x86_64.tar.gz";
 const OCI_MACHINE_OS: &str = "linux";
 const OCI_ANNOTATION_TITLE: &str = "org.opencontainers.image.title";
 const OCI_ANNOTATION_SOURCE: &str = "org.opencontainers.image.source";
@@ -114,6 +134,8 @@ pub(super) struct MachineRuntimeState {
     pub(super) helper_binaries: MachineHelperBinaryPaths,
     pub(super) image_path: PathBuf,
     pub(super) efi_variable_store_path: PathBuf,
+    #[serde(default)]
+    pub(super) machine_image_source: String,
     pub(super) ssh_port: u16,
     pub(super) rest_uri: String,
     pub(super) ready_vsock_port: u32,
@@ -137,6 +159,81 @@ pub(super) struct MachineLaunchPlan {
 struct MachineCommandLine {
     program: PathBuf,
     args: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct MachinePortAllocationState {
+    #[serde(default)]
+    machine_ports: BTreeMap<String, u16>,
+}
+
+struct MachinePortAllocationLock {
+    _file: fs::File,
+}
+
+struct StartupSignalMonitor {
+    interrupted: Arc<AtomicBool>,
+    registrations: Vec<SigId>,
+}
+
+impl StartupSignalMonitor {
+    fn install() -> Result<Self, Error> {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let mut registrations = Vec::new();
+        for signal in [libc::SIGINT, libc::SIGTERM] {
+            let interrupted = Arc::clone(&interrupted);
+            let registration = unsafe {
+                // The callback performs only an atomic store, which is
+                // signal-safe and lets the synchronous startup loops observe
+                // interruption without doing non-signal-safe work in the
+                // handler itself.
+                register_signal(signal, move || {
+                    interrupted.store(true, Ordering::SeqCst);
+                })
+            }
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "failed to register startup signal handler for signal {signal}: {error}"
+                ))
+            })?;
+            registrations.push(registration);
+        }
+        Ok(Self {
+            interrupted,
+            registrations,
+        })
+    }
+
+    fn check(&self) -> Result<(), Error> {
+        if self.interrupted.load(Ordering::SeqCst) {
+            return Err(Error::Cancelled);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn inactive_for_test() -> Self {
+        Self {
+            interrupted: Arc::new(AtomicBool::new(false)),
+            registrations: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    fn interrupted_for_test() -> Self {
+        Self {
+            interrupted: Arc::new(AtomicBool::new(true)),
+            registrations: Vec::new(),
+        }
+    }
+}
+
+impl Drop for StartupSignalMonitor {
+    fn drop(&mut self) {
+        for registration in self.registrations.drain(..) {
+            let _ = unregister_signal(registration);
+        }
+    }
 }
 
 impl MachineCommandLine {
@@ -195,14 +292,15 @@ impl MachineLaunchPlan {
         state: &MachineStateRecord,
     ) -> Result<Self, Error> {
         let helper_binaries = MachineHelperBinaryPaths::resolve()?;
-        let image_path = resolve_bootable_image_path(paths, &config.guest.image_source)?;
-        let ignition_file_path = resolve_ignition_file(paths, config, READY_VSOCK_PORT)?;
-        let ssh_port = match state.runtime.as_ref() {
-            Some(runtime) => runtime.ssh_port,
-            None => allocate_local_port().map_err(|error| {
-                Error::Internal(format!("failed to allocate localhost ssh port: {error}"))
-            })?,
+        let image_path =
+            resolve_bootable_image_path(paths, &config.guest.image_source, config.provider)?;
+        let ignition_file_path = match config.provider.bootstrap_mode() {
+            MachineBootstrapMode::Ignition => {
+                Some(resolve_ignition_file(paths, config, READY_VSOCK_PORT)?)
+            }
+            MachineBootstrapMode::ShellScript => None,
         };
+        let ssh_port = allocate_machine_ssh_port(&config.roots, &config.name, state)?;
         let rest_uri = format!("unix://{}", paths.krunkit_endpoint_path.display());
         let runtime = MachineRuntimeState {
             helper_binaries: helper_binaries.clone(),
@@ -212,6 +310,7 @@ impl MachineLaunchPlan {
                 .efi_variable_store_path
                 .clone()
                 .unwrap_or_else(|| paths.efi_variable_store_path.clone()),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
             ssh_port,
             rest_uri: rest_uri.clone(),
             ready_vsock_port: READY_VSOCK_PORT,
@@ -248,23 +347,18 @@ impl MachineLaunchPlan {
             ),
             "--device".to_owned(),
             format!(
-                "virtio-vsock,port={},socketURL={}",
-                READY_VSOCK_PORT,
-                paths.ready_socket_path.display()
-            ),
-            "--device".to_owned(),
-            format!(
                 "virtio-serial,logFilePath={}",
                 paths.machine_log_path.display()
             ),
         ];
-        krunkit_args.extend([
-            "--device".to_owned(),
-            format!(
-                "virtio-vsock,port=1024,socketURL={}",
-                paths.ignition_socket_path.display()
-            ),
-        ]);
+        if config.provider.bootstrap_mode() == MachineBootstrapMode::Ignition {
+            krunkit_args.extend([
+                "--device".to_owned(),
+                build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path),
+                "--device".to_owned(),
+                build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path),
+            ]);
+        }
         krunkit_args.extend(
             config
                 .volumes
@@ -282,7 +376,7 @@ impl MachineLaunchPlan {
             runtime,
             gvproxy_command,
             krunkit_command,
-            ignition_file_path: Some(ignition_file_path),
+            ignition_file_path,
         })
     }
 
@@ -327,24 +421,27 @@ fn build_gvproxy_args(
     args
 }
 
+fn build_virtio_vsock_listen_arg(port: u32, socket_path: &Path) -> String {
+    // Match Podman's vfkit/libkrun contract: the host owns these Unix sockets
+    // and krunkit must connect the guest-side vsock device to that listener.
+    format!(
+        "virtio-vsock,port={port},socketURL={},listen",
+        socket_path.display()
+    )
+}
+
 pub(super) fn start_machine(
     paths: &MachinePaths,
-    config: &MachineConfigRecord,
+    config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
-    if matches!(
-        state.lifecycle,
-        MachineLifecycle::Starting | MachineLifecycle::Running
-    ) {
-        return Err(Error::Conflict(format!(
-            "machine '{}' is already {}",
-            paths.name,
-            state.lifecycle.as_str()
-        )));
-    }
+    ensure_machine_can_start(paths, config, state)?;
+    converge_machine_image_contract(paths, config, state)?;
+    validate_machine_bootstrap_contract(config)?;
 
     cleanup_runtime_artifacts(paths)?;
     let launch_plan = MachineLaunchPlan::build(paths, config, state)?;
+    let startup_signals = StartupSignalMonitor::install()?;
 
     state.lifecycle = MachineLifecycle::Starting;
     state.manager = MachineManagerState::Launching;
@@ -353,67 +450,634 @@ pub(super) fn start_machine(
     write_json_file(&paths.state_path, state)?;
 
     let ready_listener = bind_ready_listener(&paths.ready_socket_path)?;
-    let _ignition_server = match launch_plan.ignition_file_path.as_ref() {
-        Some(path) => Some(serve_ignition_file(&paths.ignition_socket_path, path)?),
-        None => None,
-    };
-    let mut gvproxy_child = launch_plan.gvproxy_command.spawn()?;
-    if let Err(error) = wait_for_path(
-        &paths.gvproxy_socket_path,
-        GVPROXY_SOCKET_WAIT_TIMEOUT,
+    let _ignition_server = start_bootstrap_server(paths, config, &launch_plan)?;
+
+    let mut gvproxy_child = None;
+    if let Err(error) = pre_start_networking(
+        paths,
+        config,
+        &launch_plan,
         &mut gvproxy_child,
+        &startup_signals,
     ) {
-        let _ = cleanup_process(&mut gvproxy_child);
-        state.lifecycle = MachineLifecycle::Failed;
-        state.manager = MachineManagerState::Failed;
-        state.last_error = Some(error.to_string());
-        write_json_file(&paths.state_path, state)?;
-        return Err(error);
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            None,
+            gvproxy_child.as_mut(),
+        );
     }
 
-    let mut krunkit_child = launch_plan.krunkit_command.spawn()?;
-    match wait_for_ready(
+    let mut krunkit_child = None;
+    if let Err(error) = start_vm(config, &launch_plan, &mut krunkit_child) {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            krunkit_child.as_mut(),
+            gvproxy_child.as_mut(),
+        );
+    }
+    if let Err(error) = wait_for_machine_ready(
+        config,
         &ready_listener,
-        resolve_ready_wait_timeout(),
         &mut krunkit_child,
         &mut gvproxy_child,
+        &startup_signals,
     ) {
-        Ok(()) => {
-            if let Err(error) = wait_for_ssh_ready(
-                config,
-                launch_plan.runtime().ssh_port,
-                resolve_ssh_ready_wait_timeout(),
-                &mut krunkit_child,
-                &mut gvproxy_child,
-            ) {
-                let _ = cleanup_process(&mut krunkit_child);
-                let _ = cleanup_process(&mut gvproxy_child);
-                state.lifecycle = MachineLifecycle::Failed;
-                state.manager = MachineManagerState::Failed;
-                state.last_error = Some(error.to_string());
-                write_json_file(&paths.state_path, state)?;
-                return Err(error);
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            krunkit_child.as_mut(),
+            gvproxy_child.as_mut(),
+        );
+    }
+    if let Err(error) = post_start_networking(paths, config, &mut gvproxy_child, &startup_signals) {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            krunkit_child.as_mut(),
+            gvproxy_child.as_mut(),
+        );
+    }
+    if let Err(error) = conduct_readiness_check(
+        config,
+        launch_plan.runtime().ssh_port,
+        &mut krunkit_child,
+        &mut gvproxy_child,
+        &startup_signals,
+    ) {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            krunkit_child.as_mut(),
+            gvproxy_child.as_mut(),
+        );
+    }
+    if let Err(error) = ensure_guest_machine_api_ready(
+        paths,
+        config,
+        launch_plan.runtime().ssh_port,
+        &mut krunkit_child,
+        &mut gvproxy_child,
+        &startup_signals,
+    ) {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            krunkit_child.as_mut(),
+            gvproxy_child.as_mut(),
+        );
+    }
+
+    state.lifecycle = MachineLifecycle::Running;
+    state.manager = MachineManagerState::Ready;
+    state.last_error = None;
+    write_json_file(&paths.state_path, state)?;
+    Ok(())
+}
+
+fn converge_machine_image_contract(
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    let desired_image_source = desired_machine_image_source(config);
+    if config.guest.image_source != desired_image_source {
+        config.guest.image_source = desired_image_source;
+        write_json_file(&paths.config_path, config)?;
+    }
+
+    let desired_image = describe_machine_image_source(&config.guest.image_source);
+    let Some(rebuild_reason) = machine_image_rebuild_reason(paths, state, &desired_image) else {
+        return Ok(());
+    };
+
+    invalidate_materialized_machine_os(paths)?;
+    *state = MachineStateRecord::rebuilt(rebuild_reason);
+    write_json_file(&paths.state_path, state)?;
+    Ok(())
+}
+
+fn machine_image_rebuild_reason(
+    paths: &MachinePaths,
+    state: &MachineStateRecord,
+    desired_image: &str,
+) -> Option<String> {
+    match state
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.machine_image_source.as_str())
+        .filter(|recorded| !recorded.is_empty())
+    {
+        Some(recorded) if recorded != desired_image => Some(format!(
+            "machine base image changed from '{}' to '{}'; boot artifacts were reset and will be recreated on the next start",
+            recorded, desired_image
+        )),
+        Some(_) => None,
+        None if paths.materialized_image_path.is_file()
+            || paths.efi_variable_store_path.exists() =>
+        {
+            Some(format!(
+                "machine boot artifacts existed without a recorded base-image identity for '{}'; boot artifacts were reset and will be recreated on the next start",
+                desired_image
+            ))
+        }
+        None => None,
+    }
+}
+
+fn ensure_machine_can_start(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> Result<(), Error> {
+    if matches!(
+        state.lifecycle,
+        MachineLifecycle::Starting | MachineLifecycle::Running
+    ) {
+        let exclusivity_note = if config.provider.requires_exclusive_active() {
+            " and this provider requires one active machine at a time"
+        } else {
+            ""
+        };
+        return Err(Error::Conflict(format!(
+            "machine '{}' is already {}{}",
+            paths.name,
+            state.lifecycle.as_str(),
+            exclusivity_note
+        )));
+    }
+    Ok(())
+}
+
+fn validate_machine_bootstrap_contract(config: &MachineConfigRecord) -> Result<(), Error> {
+    if !requires_host_guest_neovex_sync(config) {
+        return Ok(());
+    }
+
+    let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{}' uses the host-managed macOS machine-image contract and requires `--ssh-identity <path>` so neovex can stage the guest binary and validate the forwarded machine API",
+            config.name
+        ))
+    })?;
+    if !identity_path.is_file() {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' SSH identity does not exist at {}",
+            config.name,
+            identity_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn requires_host_guest_neovex_sync(config: &MachineConfigRecord) -> bool {
+    config.provider == super::MachineProvider::Krunkit
+        && uses_host_managed_machine_image_contract(config)
+}
+
+fn ensure_guest_machine_api_ready(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+    krunkit_child: &mut Option<Child>,
+    gvproxy_child: &mut Option<Child>,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    if config.provider != super::MachineProvider::Krunkit
+        || config.guest.ssh_identity_path.is_none()
+    {
+        return Ok(());
+    }
+
+    if requires_host_guest_neovex_sync(config) {
+        sync_guest_neovex_binary(paths, config, ssh_port)?;
+    }
+
+    wait_for_machine_api_ready(
+        paths,
+        resolve_machine_api_ready_wait_timeout(),
+        required_child(krunkit_child, "krunkit")?,
+        required_child(gvproxy_child, "gvproxy")?,
+        startup_signals,
+    )
+}
+
+fn sync_guest_neovex_binary(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+) -> Result<(), Error> {
+    let guest_binary = resolve_guest_neovex_binary(paths)?;
+    let desired_hash = compute_sha256(&guest_binary)?;
+    let current_hash = read_guest_neovex_hash(config, ssh_port)?;
+    if current_hash.as_deref() == Some(desired_hash.as_str()) {
+        return Ok(());
+    }
+
+    stream_guest_file_over_ssh(
+        config,
+        ssh_port,
+        &guest_binary,
+        &format!(
+            "set -eu; install_dir=\"{}\"; tmp_name=\".neovex.$$.tmp\"; sudo mkdir -p \"$install_dir\"; tmp_path=\"$install_dir/$tmp_name\"; cat | sudo tee \"$tmp_path\" >/dev/null; sudo chmod 0755 \"$tmp_path\"; if command -v restorecon >/dev/null 2>&1; then sudo restorecon \"$tmp_path\"; fi; sudo mv \"$tmp_path\" \"{}\"; if command -v restorecon >/dev/null 2>&1; then sudo restorecon \"{}\"; fi",
+            Path::new(GUEST_NEOVEX_BIN)
+                .parent()
+                .expect("guest neovex binary path should have a parent")
+                .display(),
+            GUEST_NEOVEX_BIN,
+            GUEST_NEOVEX_BIN
+        ),
+    )?;
+    Ok(())
+}
+
+fn read_guest_neovex_hash(
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+) -> Result<Option<String>, Error> {
+    let output = run_guest_ssh_shell_capture(
+        config,
+        ssh_port,
+        &format!(
+            "if [ -x \"{path}\" ]; then set -- $(sha256sum \"{path}\"); printf '%s' \"$1\"; fi",
+            path = GUEST_NEOVEX_BIN
+        ),
+    )?;
+    let hash = output.trim();
+    if hash.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(hash.to_owned()))
+    }
+}
+
+fn resolve_guest_neovex_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
+    if let Some(path) = env::var_os(GUEST_NEOVEX_BINARY_OVERRIDE_ENV).map(PathBuf::from) {
+        if !path.is_file() {
+            return Err(Error::InvalidInput(format!(
+                "guest neovex binary override {} from ${GUEST_NEOVEX_BINARY_OVERRIDE_ENV} does not exist",
+                path.display()
+            )));
+        }
+        return Ok(path);
+    }
+
+    let cache_dir = paths.state_dir.join("guest-neovex");
+    fs::create_dir_all(&cache_dir).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create guest neovex cache directory {}: {error}",
+            cache_dir.display()
+        ))
+    })?;
+
+    let release_tag = super::current_machine_release_tag();
+    let archive_name = guest_neovex_archive_name()?;
+    let binary_path = cache_dir.join(format!(
+        "{}-{}-neovex",
+        release_tag,
+        archive_name.trim_end_matches(".tar.gz")
+    ));
+    if binary_path.is_file() {
+        return Ok(binary_path);
+    }
+
+    let archive_path = cache_dir.join(format!("{release_tag}-{archive_name}"));
+    if !archive_path.is_file() {
+        let download_url = guest_neovex_release_url(&release_tag, archive_name);
+        download_guest_neovex_archive(&archive_path, &download_url)?;
+    }
+    extract_guest_neovex_archive(&archive_path, &binary_path)?;
+    Ok(binary_path)
+}
+
+fn guest_neovex_archive_name() -> Result<&'static str, Error> {
+    match env::consts::ARCH {
+        "aarch64" | "arm64" => Ok(DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_ARM64),
+        "x86_64" => Ok(DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_X86_64),
+        arch => Err(Error::InvalidInput(format!(
+            "unsupported macOS machine host architecture '{arch}' for guest neovex binary sync"
+        ))),
+    }
+}
+
+fn guest_neovex_release_url(release_tag: &str, archive_name: &str) -> String {
+    let base = env::var(GUEST_NEOVEX_RELEASE_BASE_URL_ENV)
+        .unwrap_or_else(|_| DEFAULT_GUEST_NEOVEX_RELEASE_BASE_URL.to_owned());
+    format!("{}/{}", base.trim_end_matches('/'), release_tag).to_owned() + "/" + archive_name
+}
+
+fn download_guest_neovex_archive(destination: &Path, url: &str) -> Result<(), Error> {
+    let parent = destination.parent().ok_or_else(|| {
+        Error::Internal(format!(
+            "failed to resolve parent directory for guest neovex archive {}",
+            destination.display()
+        ))
+    })?;
+    let mut temp = NamedTempFile::new_in(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create temporary guest neovex archive under {}: {error}",
+            parent.display()
+        ))
+    })?;
+    let client = Client::builder()
+        .timeout(HTTP_IMAGE_TIMEOUT)
+        .build()
+        .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
+    let mut response = client
+        .get(url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to download guest neovex archive from {url}: {error}. Set ${GUEST_NEOVEX_BINARY_OVERRIDE_ENV} to a local Linux guest binary to continue without the release asset."
+            ))
+        })?;
+    io::copy(&mut response, &mut temp).map_err(|error| {
+        Error::Internal(format!(
+            "failed to write guest neovex archive from {url} into {}: {error}",
+            destination.display()
+        ))
+    })?;
+    temp.flush().map_err(|error| {
+        Error::Internal(format!(
+            "failed to flush guest neovex archive from {url}: {error}"
+        ))
+    })?;
+    temp.persist(destination).map_err(|error| {
+        Error::Internal(format!(
+            "failed to persist guest neovex archive {}: {}",
+            destination.display(),
+            error.error
+        ))
+    })?;
+    Ok(())
+}
+
+fn extract_guest_neovex_archive(archive_path: &Path, output_path: &Path) -> Result<(), Error> {
+    let parent = output_path.parent().ok_or_else(|| {
+        Error::Internal(format!(
+            "failed to resolve parent directory for guest neovex binary {}",
+            output_path.display()
+        ))
+    })?;
+    let extract_dir = tempdir_in(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create temporary extraction directory under {}: {error}",
+            parent.display()
+        ))
+    })?;
+    let status = Command::new("tar")
+        .arg("-xzf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(extract_dir.path())
+        .arg("neovex")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to start tar while extracting guest neovex archive {}: {error}",
+                archive_path.display()
+            ))
+        })?;
+    if !status.success() {
+        return Err(Error::Internal(format!(
+            "tar failed while extracting guest neovex archive {} with status {status}",
+            archive_path.display()
+        )));
+    }
+
+    let extracted_binary = extract_dir.path().join("neovex");
+    if !extracted_binary.is_file() {
+        return Err(Error::Internal(format!(
+            "guest neovex archive {} did not contain a top-level 'neovex' binary",
+            archive_path.display()
+        )));
+    }
+
+    let temp_output = NamedTempFile::new_in(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create temporary guest neovex binary under {}: {error}",
+            parent.display()
+        ))
+    })?;
+    fs::copy(&extracted_binary, temp_output.path()).map_err(|error| {
+        Error::Internal(format!(
+            "failed to stage extracted guest neovex binary {}: {error}",
+            extracted_binary.display()
+        ))
+    })?;
+    fs::set_permissions(temp_output.path(), fs::Permissions::from_mode(0o755)).map_err(
+        |error| {
+            Error::Internal(format!(
+                "failed to mark extracted guest neovex binary {} executable: {error}",
+                temp_output.path().display()
+            ))
+        },
+    )?;
+    temp_output.persist(output_path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to persist guest neovex binary {}: {}",
+            output_path.display(),
+            error.error
+        ))
+    })?;
+    Ok(())
+}
+
+fn wait_for_machine_api_ready(
+    paths: &MachinePaths,
+    timeout: Duration,
+    krunkit_child: &mut Child,
+    gvproxy_child: &mut Child,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    let deadline = Instant::now() + timeout;
+    let client = MachineApiClient::new(paths.api_socket_path.clone());
+    loop {
+        startup_signals.check()?;
+        if let Some(status) = krunkit_child.try_wait().map_err(|error| {
+            Error::Internal(format!("failed to poll krunkit process state: {error}"))
+        })? {
+            return Err(Error::Internal(format!(
+                "krunkit exited before machine API readiness with status {status}"
+            )));
+        }
+        if let Some(status) = gvproxy_child.try_wait().map_err(|error| {
+            Error::Internal(format!("failed to poll gvproxy process state: {error}"))
+        })? {
+            return Err(Error::Internal(format!(
+                "gvproxy exited before machine API readiness with status {status}"
+            )));
+        }
+
+        let current_probe_error = if paths.api_socket_path.exists() {
+            match client.health() {
+                Ok(_) => match client.capabilities() {
+                    Ok(_) => return Ok(()),
+                    Err(error) => error.to_string(),
+                },
+                Err(error) => error.to_string(),
             }
-            state.lifecycle = MachineLifecycle::Running;
-            state.manager = MachineManagerState::Ready;
-            state.last_error = None;
-            write_json_file(&paths.state_path, state)?;
+        } else {
+            format!(
+                "forwarded machine API socket {} is not present yet",
+                paths.api_socket_path.display()
+            )
+        };
+
+        if Instant::now() >= deadline {
+            return Err(Error::Internal(format!(
+                "guest machine API readiness did not arrive within {} seconds{}",
+                timeout.as_secs(),
+                if current_probe_error.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {current_probe_error}")
+                }
+            )));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn start_bootstrap_server(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    launch_plan: &MachineLaunchPlan,
+) -> Result<Option<thread::JoinHandle<()>>, Error> {
+    if config.provider.bootstrap_mode() != MachineBootstrapMode::Ignition {
+        return Ok(None);
+    }
+    match launch_plan.ignition_file_path.as_ref() {
+        Some(path) => serve_ignition_file(&paths.ignition_socket_path, path).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn pre_start_networking(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    launch_plan: &MachineLaunchPlan,
+    gvproxy_child: &mut Option<Child>,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    if config.provider.uses_provider_networking() {
+        return Ok(());
+    }
+
+    let mut child = launch_plan.gvproxy_command.spawn()?;
+    wait_for_path(
+        &paths.gvproxy_socket_path,
+        GVPROXY_SOCKET_WAIT_TIMEOUT,
+        &mut child,
+        startup_signals,
+    )?;
+    *gvproxy_child = Some(child);
+    Ok(())
+}
+
+fn start_vm(
+    config: &MachineConfigRecord,
+    launch_plan: &MachineLaunchPlan,
+    krunkit_child: &mut Option<Child>,
+) -> Result<(), Error> {
+    match config.provider {
+        super::MachineProvider::Krunkit => {
+            *krunkit_child = Some(launch_plan.krunkit_command.spawn()?);
             Ok(())
         }
-        Err(error) => {
-            let _ = cleanup_process(&mut krunkit_child);
-            let _ = cleanup_process(&mut gvproxy_child);
-            state.lifecycle = MachineLifecycle::Failed;
-            state.manager = MachineManagerState::Failed;
-            state.last_error = Some(error.to_string());
-            write_json_file(&paths.state_path, state)?;
-            Err(error)
-        }
+        super::MachineProvider::Wsl2 => Err(Error::InvalidInput(
+            "the WSL2 machine provider is not available on this host yet".to_owned(),
+        )),
     }
+}
+
+fn wait_for_machine_ready(
+    config: &MachineConfigRecord,
+    ready_listener: &UnixListener,
+    krunkit_child: &mut Option<Child>,
+    gvproxy_child: &mut Option<Child>,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    match config.provider.bootstrap_mode() {
+        MachineBootstrapMode::Ignition => wait_for_ready(
+            ready_listener,
+            resolve_ready_wait_timeout(),
+            required_child(krunkit_child, "krunkit")?,
+            required_child(gvproxy_child, "gvproxy")?,
+            startup_signals,
+        ),
+        MachineBootstrapMode::ShellScript => Ok(()),
+    }
+}
+
+fn post_start_networking(
+    _paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    _gvproxy_child: &mut Option<Child>,
+    _startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    if config.provider.uses_provider_networking() {
+        // Future providers such as WSL own their own host networking startup
+        // and will wire their post-start verification here.
+        return Ok(());
+    }
+
+    // The current krunkit path launches gvproxy before VM boot, so there is no
+    // additional post-start networking step beyond readiness checks.
+    Ok(())
+}
+
+fn conduct_readiness_check(
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+    krunkit_child: &mut Option<Child>,
+    gvproxy_child: &mut Option<Child>,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
+    match config.provider {
+        super::MachineProvider::Krunkit => wait_for_ssh_ready(
+            config,
+            ssh_port,
+            resolve_ssh_ready_wait_timeout(),
+            required_child(krunkit_child, "krunkit")?,
+            required_child(gvproxy_child, "gvproxy")?,
+            startup_signals,
+        ),
+        super::MachineProvider::Wsl2 => Err(Error::InvalidInput(
+            "the WSL2 machine provider is not available on this host yet".to_owned(),
+        )),
+    }
+}
+
+fn required_child<'a>(child: &'a mut Option<Child>, label: &str) -> Result<&'a mut Child, Error> {
+    child.as_mut().ok_or_else(|| {
+        Error::Internal(format!(
+            "machine startup phase expected a running {label} helper, but none was recorded"
+        ))
+    })
 }
 
 pub(super) fn stop_machine(
     paths: &MachinePaths,
+    config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
     if matches!(
@@ -424,17 +1088,20 @@ pub(super) fn stop_machine(
     }
 
     let mut stop_errors = Vec::new();
-    if let Err(error) = request_graceful_stop(&paths.krunkit_endpoint_path) {
+    if let Err(error) = stop_provider_machine(paths, config, resolve_stop_wait_timeout()) {
         stop_errors.push(error.to_string());
     }
 
     if let Some(pid) = read_pid(&paths.krunkit_pid_path)?
-        && let Err(error) = stop_pid(pid, STOP_WAIT_TIMEOUT)
+        && pid_is_alive(pid)
     {
-        stop_errors.push(error.to_string());
+        stop_errors.push(format!(
+            "provider stop completed but krunkit is still alive at pid {pid}"
+        ));
     }
-    if let Some(pid) = read_pid(&paths.gvproxy_pid_path)?
-        && let Err(error) = stop_pid(pid, STOP_WAIT_TIMEOUT)
+    if !config.provider.uses_provider_networking()
+        && let Some(pid) = read_pid(&paths.gvproxy_pid_path)?
+        && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
     {
         stop_errors.push(error.to_string());
     }
@@ -453,6 +1120,71 @@ pub(super) fn stop_machine(
     };
     write_json_file(&paths.state_path, state)?;
     Ok(())
+}
+
+fn stop_provider_machine(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    timeout: Duration,
+) -> Result<(), Error> {
+    match config.provider {
+        super::MachineProvider::Krunkit => stop_krunkit_machine(paths, timeout),
+        super::MachineProvider::Wsl2 => Err(Error::InvalidInput(
+            "the WSL2 machine provider is not available on this host yet".to_owned(),
+        )),
+    }
+}
+
+fn stop_krunkit_machine(paths: &MachinePaths, timeout: Duration) -> Result<(), Error> {
+    let Some(pid) = read_pid(&paths.krunkit_pid_path)? else {
+        return Ok(());
+    };
+    if !pid_is_alive(pid) {
+        return Ok(());
+    }
+
+    if let Err(error) = request_krunkit_state_change(&paths.krunkit_endpoint_path, "Stop") {
+        force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
+            Error::Internal(format!(
+                "{error}; failed to recover by force-stopping krunkit pid {pid}: {kill_error}"
+            ))
+        })?;
+        return Ok(());
+    }
+    if wait_for_pid_exit(pid, timeout)? {
+        return Ok(());
+    }
+
+    if let Err(error) = request_krunkit_state_change(&paths.krunkit_endpoint_path, "HardStop") {
+        force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
+            Error::Internal(format!(
+                "{error}; failed to recover by force-stopping krunkit pid {pid}: {kill_error}"
+            ))
+        })?;
+        return Ok(());
+    }
+    if wait_for_pid_exit(pid, HARD_STOP_WAIT_TIMEOUT)? {
+        return Ok(());
+    }
+
+    force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
+}
+
+pub(super) fn release_machine_ssh_port(
+    roots: &MachineRootLayout,
+    machine_name: &str,
+) -> Result<(), Error> {
+    with_port_allocation_lock(roots, || {
+        let mut allocation_state = load_machine_port_allocation_state(roots)?;
+        if allocation_state
+            .machine_ports
+            .remove(machine_name)
+            .is_some()
+        {
+            write_machine_port_allocation_state(roots, &allocation_state)?;
+        }
+        Ok(())
+    })
 }
 
 pub(super) fn refresh_machine_state(
@@ -486,6 +1218,94 @@ pub(super) fn refresh_machine_state(
         "machine runtime is stale: krunkit_alive={krunkit_alive} gvproxy_alive={gvproxy_alive}"
     ));
     write_json_file(&paths.state_path, state)
+}
+
+fn handle_start_machine_error(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    error: Error,
+    mut krunkit_child: Option<&mut Child>,
+    mut gvproxy_child: Option<&mut Child>,
+) -> Result<(), Error> {
+    if let Some(child) = krunkit_child.as_mut() {
+        let _ = cleanup_process(child);
+    }
+    if let Some(child) = gvproxy_child.as_mut() {
+        let _ = cleanup_process(child);
+    }
+
+    if matches!(error, Error::Cancelled) {
+        return finalize_interrupted_start(paths, state);
+    }
+
+    let error = annotate_machine_start_error(paths, config, error);
+    state.lifecycle = MachineLifecycle::Failed;
+    state.manager = MachineManagerState::Failed;
+    state.last_error = Some(error.to_string());
+    write_json_file(&paths.state_path, state)?;
+    Err(error)
+}
+
+fn annotate_machine_start_error(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    error: Error,
+) -> Error {
+    let Some(hint) = detect_guest_bootstrap_hint(paths, config, &error) else {
+        return error;
+    };
+
+    match error {
+        Error::Internal(message) => Error::Internal(format!("{message}; {hint}")),
+        other => other,
+    }
+}
+
+fn detect_guest_bootstrap_hint(
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    error: &Error,
+) -> Option<&'static str> {
+    if config.provider != super::MachineProvider::Krunkit
+        || config.provider.bootstrap_mode() != MachineBootstrapMode::Ignition
+    {
+        return None;
+    }
+
+    let error_text = error.to_string();
+    let startup_gate_failed = error_text.contains("gvproxy exited before machine readiness")
+        || error_text.contains("gvproxy exited before SSH readiness")
+        || error_text.contains("machine ready signal did not arrive")
+        || error_text.contains("guest SSH readiness did not arrive");
+    if !startup_gate_failed {
+        return None;
+    }
+
+    let console_log = fs::read_to_string(&paths.machine_log_path).ok()?;
+    if !console_log.to_ascii_lowercase().contains("login:") {
+        return None;
+    }
+
+    Some(
+        "guest reached a console login prompt without consuming the first-boot ignition payload. On macOS, Neovex guest images must stay Podman-aligned (Fedora CoreOS/libkrun ignition path); generic fedora-bootc raw images are not a supported substitute",
+    )
+}
+
+fn finalize_interrupted_start(
+    paths: &MachinePaths,
+    state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    cleanup_runtime_artifacts(paths)?;
+    state.lifecycle = MachineLifecycle::Stopped;
+    state.manager = if state.runtime.is_some() {
+        MachineManagerState::HelpersResolved
+    } else {
+        MachineManagerState::Unconfigured
+    };
+    state.last_error = None;
+    write_json_file(&paths.state_path, state)?;
+    Err(Error::Cancelled)
 }
 
 pub(super) fn build_ssh_command(
@@ -558,6 +1378,99 @@ fn append_localhost_ssh_options(
         .arg(format!("{ssh_user}@127.0.0.1"));
 }
 
+fn build_localhost_ssh_command(
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+) -> Result<Command, Error> {
+    let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{}' has no SSH identity configured",
+            config.name
+        ))
+    })?;
+    if !identity_path.is_file() {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' SSH identity does not exist at {}",
+            config.name,
+            identity_path.display()
+        )));
+    }
+
+    let mut command = Command::new("ssh");
+    append_localhost_ssh_options(
+        &mut command,
+        identity_path,
+        ssh_port,
+        &config.guest.ssh_user,
+    );
+    Ok(command)
+}
+
+fn run_guest_ssh_shell_capture(
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+    remote_shell_script: &str,
+) -> Result<String, Error> {
+    let output = build_localhost_ssh_command(config, ssh_port)?
+        .arg(remote_shell_command(remote_shell_script))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to run guest SSH command on localhost:{ssh_port}: {error}"
+            ))
+        })?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    }
+
+    Err(Error::Internal(format!(
+        "guest SSH command failed on localhost:{ssh_port} with status {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
+}
+
+fn stream_guest_file_over_ssh(
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+    source_path: &Path,
+    remote_shell_script: &str,
+) -> Result<(), Error> {
+    let input = fs::File::open(source_path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to open guest neovex binary {}: {error}",
+            source_path.display()
+        ))
+    })?;
+    let status = build_localhost_ssh_command(config, ssh_port)?
+        .arg(remote_shell_command(remote_shell_script))
+        .stdin(Stdio::from(input))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to stream guest neovex binary over SSH to localhost:{ssh_port}: {error}"
+            ))
+        })?;
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(Error::Internal(format!(
+        "guest neovex binary sync failed on localhost:{ssh_port} with status {status}"
+    )))
+}
+
+fn remote_shell_command(script: &str) -> String {
+    format!("sh -lc {}", shell_single_quote(script))
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 fn bind_ready_listener(path: &Path) -> Result<UnixListener, Error> {
     remove_file_if_exists(path)?;
     let listener = UnixListener::bind(path).map_err(|error| {
@@ -613,9 +1526,11 @@ fn wait_for_ready(
     timeout: Duration,
     krunkit_child: &mut Child,
     gvproxy_child: &mut Child,
+    startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     let deadline = Instant::now() + timeout;
     loop {
+        startup_signals.check()?;
         if let Some(status) = krunkit_child.try_wait().map_err(|error| {
             Error::Internal(format!("failed to poll krunkit process state: {error}"))
         })? {
@@ -661,6 +1576,7 @@ fn wait_for_ssh_ready(
     timeout: Duration,
     krunkit_child: &mut Child,
     gvproxy_child: &mut Child,
+    startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     // Mirror Podman's macOS machine layering: the ready signal alone is not
     // enough to prove host reachability, so only declare the machine started
@@ -668,6 +1584,7 @@ fn wait_for_ssh_ready(
     let deadline = Instant::now() + timeout;
     let mut last_probe_error: Option<String>;
     loop {
+        startup_signals.check()?;
         if let Some(status) = krunkit_child.try_wait().map_err(|error| {
             Error::Internal(format!("failed to poll krunkit process state: {error}"))
         })? {
@@ -757,9 +1674,15 @@ fn run_silent_ssh_probe(config: &MachineConfigRecord, ssh_port: u16) -> Result<(
     )))
 }
 
-fn wait_for_path(path: &Path, timeout: Duration, child: &mut Child) -> Result<(), Error> {
+fn wait_for_path(
+    path: &Path,
+    timeout: Duration,
+    child: &mut Child,
+    startup_signals: &StartupSignalMonitor,
+) -> Result<(), Error> {
     let deadline = Instant::now() + timeout;
     loop {
+        startup_signals.check()?;
         if path.exists() {
             return Ok(());
         }
@@ -784,11 +1707,12 @@ fn wait_for_path(path: &Path, timeout: Duration, child: &mut Child) -> Result<()
     }
 }
 
-fn request_graceful_stop(endpoint_path: &Path) -> Result<(), Error> {
+fn request_krunkit_state_change(endpoint_path: &Path, state: &str) -> Result<(), Error> {
     if !endpoint_path.exists() {
         return Ok(());
     }
 
+    let body = format!("{{\"state\":\"{state}\"}}");
     let mut stream = UnixStream::connect(endpoint_path).map_err(|error| {
         Error::Internal(format!(
             "failed to connect to krunkit control socket {}: {error}",
@@ -805,18 +1729,23 @@ fn request_graceful_stop(endpoint_path: &Path) -> Result<(), Error> {
         })?;
     stream
         .write_all(
-            b"POST /vm/state HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 17\r\n\r\n{\"state\":\"Stop\"}",
+            format!(
+                "POST /vm/state HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .as_bytes(),
         )
         .map_err(|error| {
             Error::Internal(format!(
-                "failed to send krunkit stop request {}: {error}",
+                "failed to send krunkit state-change request {}: {error}",
                 endpoint_path.display()
             ))
         })?;
     let mut response = String::new();
     stream.read_to_string(&mut response).map_err(|error| {
         Error::Internal(format!(
-            "failed to read krunkit stop response {}: {error}",
+            "failed to read krunkit state-change response {}: {error}",
             endpoint_path.display()
         ))
     })?;
@@ -824,8 +1753,35 @@ fn request_graceful_stop(endpoint_path: &Path) -> Result<(), Error> {
         return Ok(());
     }
     Err(Error::Internal(format!(
-        "krunkit stop request did not return 200 OK: {}",
+        "krunkit {state} request did not return 200 OK: {}",
         response.lines().next().unwrap_or("<empty-response>")
+    )))
+}
+
+fn wait_for_pid_exit(pid: i32, timeout: Duration) -> Result<bool, Error> {
+    if !pid_is_alive(pid) {
+        return Ok(true);
+    }
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !pid_is_alive(pid) {
+            return Ok(true);
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    Ok(!pid_is_alive(pid))
+}
+
+fn force_stop_pid(pid: i32, timeout: Duration) -> Result<(), Error> {
+    if !pid_is_alive(pid) {
+        return Ok(());
+    }
+    send_signal(pid, SIGKILL)?;
+    if wait_for_pid_exit(pid, timeout)? {
+        return Ok(());
+    }
+    Err(Error::Internal(format!(
+        "process {pid} did not stop after provider hard-stop and SIGKILL"
     )))
 }
 
@@ -1059,7 +2015,10 @@ fn write_helper_stub(path: &Path, _helper_name: &str) {
 fn resolve_bootable_image_path(
     paths: &MachinePaths,
     image_source: &MachineImageSource,
+    provider: super::MachineProvider,
 ) -> Result<PathBuf, Error> {
+    let image_format = provider.image_format();
+    ensure_image_materialization_supported(image_format)?;
     match image_source {
         MachineImageSource::LocalDisk { path } => {
             if !path.is_file() {
@@ -1074,7 +2033,7 @@ fn resolve_bootable_image_path(
             if paths.materialized_image_path.is_file() {
                 return Ok(paths.materialized_image_path.clone());
             }
-            materialize_oci_image(paths, reference)
+            materialize_oci_image(paths, reference, provider)
         }
         MachineImageSource::HttpUrl { url } => {
             if paths.materialized_image_path.is_file() {
@@ -1082,6 +2041,15 @@ fn resolve_bootable_image_path(
             }
             materialize_http_image(paths, url)
         }
+    }
+}
+
+fn ensure_image_materialization_supported(image_format: MachineImageFormat) -> Result<(), Error> {
+    match image_format {
+        MachineImageFormat::Raw => Ok(()),
+        MachineImageFormat::Tar => Err(Error::InvalidInput(
+            "the current machine manager can only materialize raw-disk guest images".to_owned(),
+        )),
     }
 }
 
@@ -1182,7 +2150,11 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
     Ok(paths.materialized_image_path.clone())
 }
 
-fn materialize_oci_image(paths: &MachinePaths, reference: &str) -> Result<PathBuf, Error> {
+fn materialize_oci_image(
+    paths: &MachinePaths,
+    reference: &str,
+    provider: super::MachineProvider,
+) -> Result<PathBuf, Error> {
     fs::create_dir_all(&paths.image_cache_dir).map_err(|error| {
         Error::Internal(format!(
             "failed to create machine image cache directory {}: {error}",
@@ -1195,7 +2167,7 @@ fn materialize_oci_image(paths: &MachinePaths, reference: &str) -> Result<PathBu
     let source_label = format!("published OCI artifact '{reference}'");
     let reference_for_pull = reference.clone();
     let cached_blob_path = run_async_in_thread(move || async move {
-        pull_oci_artifact_to_cache(cache_dir, reference_for_pull).await
+        pull_oci_artifact_to_cache(cache_dir, reference_for_pull, provider).await
     })?;
 
     materialize_cached_disk(
@@ -1209,6 +2181,7 @@ fn materialize_oci_image(paths: &MachinePaths, reference: &str) -> Result<PathBu
 async fn pull_oci_artifact_to_cache(
     image_cache_dir: PathBuf,
     reference: String,
+    provider: super::MachineProvider,
 ) -> Result<PathBuf, Error> {
     let stripped_reference = strip_docker_reference_prefix(&reference);
     let registry_reference = Reference::try_from(stripped_reference.as_str()).map_err(|error| {
@@ -1234,7 +2207,8 @@ async fn pull_oci_artifact_to_cache(
         })?;
 
     let selected_artifact =
-        select_oci_artifact_layer(&reference, &top_manifest_bytes, &client, &auth).await?;
+        select_oci_artifact_layer(&reference, &top_manifest_bytes, &client, &auth, provider)
+            .await?;
     let cache_path = image_cache_dir.join(cached_oci_blob_file_name(&selected_artifact.layer));
     if cache_path.is_file() {
         return Ok(cache_path);
@@ -1307,10 +2281,11 @@ async fn select_oci_artifact_layer(
     top_manifest_bytes: &[u8],
     client: &OciClient,
     auth: &RegistryAuth,
+    provider: super::MachineProvider,
 ) -> Result<SelectedMachineArtifact, Error> {
     if let Ok(index) = serde_json::from_slice::<RegistryImageIndex>(top_manifest_bytes) {
         let manifest_descriptor =
-            select_oci_manifest_descriptor(reference, &index.manifests)?.clone();
+            select_oci_manifest_descriptor(reference, &index.manifests, provider)?.clone();
         let child_reference = build_digest_reference(reference, &manifest_descriptor.digest)?;
         let (child_manifest_bytes, _) = client
             .pull_manifest_raw(
@@ -1395,7 +2370,9 @@ fn strip_docker_reference_prefix(reference: &str) -> String {
 fn select_oci_manifest_descriptor<'a>(
     reference: &str,
     manifests: &'a [RegistryManifestDescriptor],
+    provider: super::MachineProvider,
 ) -> Result<&'a RegistryManifestDescriptor, Error> {
+    let disk_type = provider.oci_artifact_disk_type();
     manifests
         .iter()
         .find(|descriptor| {
@@ -1409,7 +2386,7 @@ fn select_oci_manifest_descriptor<'a>(
                 && descriptor
                     .annotations
                     .get("disktype")
-                    .map(|value| value == OCI_MACHINE_DISK_TYPE)
+                    .map(|value| value == disk_type)
                     .unwrap_or(false)
         })
         .ok_or_else(|| {
@@ -1417,7 +2394,7 @@ fn select_oci_manifest_descriptor<'a>(
                 "machine guest OCI reference '{}' does not contain a linux/{:?} '{}' disk artifact",
                 reference,
                 current_machine_oci_architectures(),
-                OCI_MACHINE_DISK_TYPE
+                disk_type
             ))
         })
 }
@@ -1864,9 +2841,150 @@ where
     .map_err(|_| Error::Internal("machine async worker panicked".to_owned()))?
 }
 
-fn allocate_local_port() -> io::Result<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    listener.local_addr().map(|addr| addr.port())
+fn allocate_machine_ssh_port(
+    roots: &MachineRootLayout,
+    machine_name: &str,
+    state: &MachineStateRecord,
+) -> Result<u16, Error> {
+    with_port_allocation_lock(roots, || {
+        let mut allocation_state = load_machine_port_allocation_state(roots)?;
+        let preferred_port = state
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.ssh_port)
+            .or_else(|| allocation_state.machine_ports.get(machine_name).copied());
+
+        if let Some(port) = preferred_port
+            && machine_port_is_assignable(&allocation_state, machine_name, port)
+        {
+            allocation_state
+                .machine_ports
+                .insert(machine_name.to_owned(), port);
+            write_machine_port_allocation_state(roots, &allocation_state)?;
+            return Ok(port);
+        }
+
+        allocation_state.machine_ports.remove(machine_name);
+        let port = next_available_machine_port(&allocation_state).ok_or_else(|| {
+            Error::Internal(format!(
+                "failed to allocate managed SSH port in range {MACHINE_PORT_MIN}-{MACHINE_PORT_MAX}"
+            ))
+        })?;
+        allocation_state
+            .machine_ports
+            .insert(machine_name.to_owned(), port);
+        write_machine_port_allocation_state(roots, &allocation_state)?;
+        Ok(port)
+    })
+}
+
+fn machine_port_is_assignable(
+    allocation_state: &MachinePortAllocationState,
+    machine_name: &str,
+    port: u16,
+) -> bool {
+    if !managed_machine_port_range_contains(port) {
+        return false;
+    }
+    if allocation_state
+        .machine_ports
+        .iter()
+        .any(|(owner, owner_port)| owner != machine_name && *owner_port == port)
+    {
+        return false;
+    }
+    machine_port_is_available(port)
+}
+
+fn managed_machine_port_range_contains(port: u16) -> bool {
+    (MACHINE_PORT_MIN..=MACHINE_PORT_MAX).contains(&port)
+}
+
+fn machine_port_is_available(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port))
+        .map(|listener| {
+            drop(listener);
+        })
+        .is_ok()
+}
+
+fn next_available_machine_port(allocation_state: &MachinePortAllocationState) -> Option<u16> {
+    (MACHINE_PORT_MIN..=MACHINE_PORT_MAX).find(|port| {
+        !allocation_state
+            .machine_ports
+            .values()
+            .any(|reserved| reserved == port)
+            && machine_port_is_available(*port)
+    })
+}
+
+fn with_port_allocation_lock<T>(
+    roots: &MachineRootLayout,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    let _lock = lock_machine_port_allocation(roots)?;
+    operation()
+}
+
+fn lock_machine_port_allocation(
+    roots: &MachineRootLayout,
+) -> Result<MachinePortAllocationLock, Error> {
+    fs::create_dir_all(&roots.state_root).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create machine state root {} for SSH port allocation: {error}",
+            roots.state_root.display()
+        ))
+    })?;
+    let lock_path = roots.port_allocation_lock_path();
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to open machine SSH port allocation lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    file.lock_exclusive().map_err(|error| {
+        Error::Internal(format!(
+            "failed to acquire machine SSH port allocation lock {}: {error}",
+            lock_path.display()
+        ))
+    })?;
+    Ok(MachinePortAllocationLock { _file: file })
+}
+
+fn load_machine_port_allocation_state(
+    roots: &MachineRootLayout,
+) -> Result<MachinePortAllocationState, Error> {
+    let path = roots.port_allocation_state_path();
+    match fs::read(&path) {
+        Ok(bytes) => {
+            serde_json::from_slice::<MachinePortAllocationState>(&bytes).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to parse machine SSH port allocation state {}: {error}",
+                    path.display()
+                ))
+            })
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Ok(MachinePortAllocationState::default())
+        }
+        Err(error) => Err(Error::Internal(format!(
+            "failed to read machine SSH port allocation state {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn write_machine_port_allocation_state(
+    roots: &MachineRootLayout,
+    allocation_state: &MachinePortAllocationState,
+) -> Result<(), Error> {
+    write_json_file(&roots.port_allocation_state_path(), allocation_state)
 }
 
 fn build_virtiofs_args(volume: &MachineVolume) -> Vec<String> {
@@ -1892,6 +3010,18 @@ fn resolve_ssh_ready_wait_timeout() -> Duration {
     Duration::from_secs(seconds.max(1))
 }
 
+fn resolve_machine_api_ready_wait_timeout() -> Duration {
+    let seconds = env_parse_u64(MACHINE_API_READY_WAIT_TIMEOUT_ENV)
+        .unwrap_or(DEFAULT_MACHINE_API_READY_TIMEOUT.as_secs());
+    Duration::from_secs(seconds.max(1))
+}
+
+fn resolve_stop_wait_timeout() -> Duration {
+    let seconds =
+        env_parse_u64(STOP_WAIT_TIMEOUT_ENV).unwrap_or(DEFAULT_STOP_WAIT_TIMEOUT.as_secs());
+    Duration::from_secs(seconds.max(1))
+}
+
 fn env_parse_u64(name: &str) -> Option<u64> {
     std::env::var(name).ok()?.trim().parse().ok()
 }
@@ -1913,12 +3043,17 @@ mod tests {
 
     use super::*;
     use crate::machine::{
-        MachineGuestConfig, MachineImageSource, MachineProvider, MachineResources,
-        MachineRootLayout,
+        CURRENT_MACHINE_CONFIG_VERSION, MachineBootstrapMode, MachineGuestConfig,
+        MachineImageFormat, MachineImageSource, MachineProvider, MachineResources,
+        MachineRootLayout, machine_image_reference_repository,
     };
 
     fn sample_config(image: &Path) -> MachineConfigRecord {
+        let base_root = image
+            .parent()
+            .expect("test image path should have a parent directory");
         MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
             name: "default".to_owned(),
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
@@ -1940,11 +3075,160 @@ mod tests {
                 target: PathBuf::from("/Users"),
             }],
             roots: MachineRootLayout::new(
-                PathBuf::from("/tmp/config-root"),
-                PathBuf::from("/tmp/state-root"),
-                PathBuf::from("/tmp/runtime-root"),
+                base_root.join("config-root"),
+                base_root.join("state-root"),
+                base_root.join("runtime-root"),
             ),
         }
+    }
+
+    fn machine_lifecycle_test_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    fn krunkit_provider_capabilities_match_podman_aligned_contract() {
+        assert!(!MachineProvider::Krunkit.uses_provider_networking());
+        assert!(MachineProvider::Krunkit.requires_exclusive_active());
+        assert_eq!(
+            MachineProvider::Krunkit.image_format(),
+            MachineImageFormat::Raw
+        );
+        assert_eq!(
+            MachineProvider::Krunkit.bootstrap_mode(),
+            MachineBootstrapMode::Ignition
+        );
+        assert_eq!(MachineProvider::Krunkit.oci_artifact_disk_type(), "applehv");
+        assert!(MachineProvider::Wsl2.uses_provider_networking());
+        assert!(!MachineProvider::Wsl2.requires_exclusive_active());
+        assert_eq!(
+            MachineProvider::Wsl2.image_format(),
+            MachineImageFormat::Tar
+        );
+        assert_eq!(
+            MachineProvider::Wsl2.bootstrap_mode(),
+            MachineBootstrapMode::ShellScript
+        );
+        assert_eq!(MachineProvider::Wsl2.oci_artifact_disk_type(), "wsl");
+    }
+
+    #[test]
+    fn machine_image_reference_repository_strips_tag_and_digest() {
+        assert_eq!(
+            machine_image_reference_repository("docker://quay.io/podman/machine-os:6.0"),
+            "quay.io/podman/machine-os"
+        );
+        assert_eq!(
+            machine_image_reference_repository("docker://quay.io/podman/machine-os@sha256:abc123"),
+            "quay.io/podman/machine-os"
+        );
+    }
+
+    #[test]
+    fn podman_machine_os_requires_host_guest_neovex_sync() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let mut config = sample_config(&image_path);
+        config.guest.image_source = MachineImageSource::OciReference {
+            reference: "docker://quay.io/podman/machine-os:6.0".to_owned(),
+        };
+
+        assert!(requires_host_guest_neovex_sync(&config));
+    }
+
+    #[test]
+    fn podman_machine_os_bootstrap_contract_requires_ssh_identity() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let mut config = sample_config(&image_path);
+        config.guest.image_source = MachineImageSource::OciReference {
+            reference: "docker://quay.io/podman/machine-os:6.0".to_owned(),
+        };
+
+        let error = validate_machine_bootstrap_contract(&config)
+            .expect_err("podman machine-os should require ssh identity");
+
+        assert!(error.to_string().contains("--ssh-identity"));
+    }
+
+    #[test]
+    fn converge_machine_image_contract_updates_legacy_stream_and_rebuilds_boot_artifacts() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let mut config = sample_config(&image_path);
+        config.guest.image_source = MachineImageSource::OciReference {
+            reference: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned(),
+        };
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+        fs::write(&paths.materialized_image_path, b"old-image").expect("image should write");
+        fs::write(&paths.efi_variable_store_path, b"old-efi").expect("efi store should write");
+
+        let mut state = MachineStateRecord::initialized();
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path: paths.materialized_image_path.clone(),
+            efi_variable_store_path: paths.efi_variable_store_path.clone(),
+            machine_image_source: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0"
+                .to_owned(),
+            ssh_port: 20022,
+            rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        converge_machine_image_contract(&paths, &mut config, &mut state)
+            .expect("contract convergence should succeed");
+
+        assert_eq!(
+            config.guest.image_source,
+            MachineImageSource::OciReference {
+                reference: super::super::default_machine_image_for_provider(
+                    MachineProvider::Krunkit,
+                ),
+            }
+        );
+        assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+        assert_eq!(state.manager, MachineManagerState::Stale);
+        assert!(
+            state
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("boot artifacts were reset")
+        );
+        assert!(!paths.materialized_image_path.exists());
+        assert!(!paths.efi_variable_store_path.exists());
+    }
+
+    #[test]
+    fn machine_image_rebuild_reason_requires_rebuild_when_boot_artifacts_lack_identity() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+        fs::write(&paths.materialized_image_path, b"old-image").expect("image should write");
+
+        let reason = machine_image_rebuild_reason(
+            &paths,
+            &MachineStateRecord::initialized(),
+            "docker://quay.io/podman/machine-os@sha256:test",
+        )
+        .expect("boot artifacts without recorded identity should rebuild");
+
+        assert!(reason.contains("without a recorded base-image identity"));
     }
 
     #[test]
@@ -1971,18 +3255,18 @@ mod tests {
                 .iter()
                 .any(|arg| arg.contains("virtio-net,type=unixgram"))
         );
-        assert!(
-            plan.krunkit_command
-                .args
-                .iter()
-                .any(|arg| arg.contains("virtio-vsock,port=1025"))
-        );
-        assert!(
-            plan.krunkit_command
-                .args
-                .iter()
-                .any(|arg| arg.contains("virtio-vsock,port=1024"))
-        );
+        assert!(plan.krunkit_command.args.iter().any(|arg| {
+            arg == &format!(
+                "virtio-vsock,port=1025,socketURL={},listen",
+                paths.ready_socket_path.display()
+            )
+        }));
+        assert!(plan.krunkit_command.args.iter().any(|arg| {
+            arg == &format!(
+                "virtio-vsock,port=1024,socketURL={},listen",
+                paths.ignition_socket_path.display()
+            )
+        }));
         assert!(
             !plan
                 .gvproxy_command
@@ -2040,6 +3324,78 @@ mod tests {
     }
 
     #[test]
+    fn build_virtio_vsock_listen_arg_matches_podman_listen_mode() {
+        let socket_path = Path::new("/tmp/neovex-test.sock");
+
+        assert_eq!(
+            build_virtio_vsock_listen_arg(1024, socket_path),
+            "virtio-vsock,port=1024,socketURL=/tmp/neovex-test.sock,listen"
+        );
+    }
+
+    #[test]
+    fn remote_shell_command_single_quotes_guest_scripts_for_ssh() {
+        let script = "if [ -x '/usr/local/bin/neovex' ]; then printf '%s' ok; fi";
+
+        assert_eq!(
+            remote_shell_command(script),
+            "sh -lc 'if [ -x '\"'\"'/usr/local/bin/neovex'\"'\"' ]; then printf '\"'\"'%s'\"'\"' ok; fi'"
+        );
+    }
+
+    #[test]
+    fn annotate_machine_start_error_hints_when_guest_reaches_login_prompt() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+        fs::write(&paths.machine_log_path, "Fedora Linux 42\nfedora login:\n")
+            .expect("machine log should write");
+
+        let error = annotate_machine_start_error(
+            &paths,
+            &config,
+            Error::Internal(
+                "gvproxy exited before machine readiness with status exit status: 0".to_owned(),
+            ),
+        );
+
+        let message = error.to_string();
+        assert!(message.contains("gvproxy exited before machine readiness"));
+        assert!(message.contains("guest reached a console login prompt"));
+        assert!(message.contains("generic fedora-bootc raw images"));
+    }
+
+    #[test]
+    fn annotate_machine_start_error_leaves_unrelated_failures_unchanged() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+        fs::write(&paths.machine_log_path, "Fedora Linux 42\nfedora login:\n")
+            .expect("machine log should write");
+
+        let error = annotate_machine_start_error(
+            &paths,
+            &config,
+            Error::Internal("failed to resolve machine guest OCI reference".to_owned()),
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "internal error: failed to resolve machine guest OCI reference"
+        );
+    }
+
+    #[test]
     fn registry_image_reference_materializes_raw_disk_from_oci_registry() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let layout = MachineRootLayout::new(
@@ -2056,9 +3412,12 @@ mod tests {
         let gzip_payload = encoder.finish().expect("gzip payload should finish");
         let reference = serve_fake_oci_registry(gzip_payload);
 
-        let materialized =
-            resolve_bootable_image_path(&paths, &MachineImageSource::OciReference { reference })
-                .expect("registry image should materialize");
+        let materialized = resolve_bootable_image_path(
+            &paths,
+            &MachineImageSource::OciReference { reference },
+            MachineProvider::Krunkit,
+        )
+        .expect("registry image should materialize");
 
         assert_eq!(materialized, paths.materialized_image_path);
         assert_eq!(
@@ -2081,6 +3440,7 @@ mod tests {
         fs::write(&paths.materialized_image_path, []).expect("materialized image should write");
 
         let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
             name: "default".to_owned(),
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
@@ -2131,9 +3491,12 @@ mod tests {
         let payload = b"raw-disk-bytes".to_vec();
         let url = serve_single_http_response(payload.clone(), None);
 
-        let materialized =
-            resolve_bootable_image_path(&paths, &MachineImageSource::HttpUrl { url: url.clone() })
-                .expect("http source should materialize");
+        let materialized = resolve_bootable_image_path(
+            &paths,
+            &MachineImageSource::HttpUrl { url: url.clone() },
+            MachineProvider::Krunkit,
+        )
+        .expect("http source should materialize");
 
         assert_eq!(materialized, paths.materialized_image_path);
         assert_eq!(
@@ -2178,9 +3541,12 @@ mod tests {
         let gzip_payload = encoder.finish().expect("gzip payload should finish");
         let url = serve_single_http_response(gzip_payload, Some("/disk.raw.gz"));
 
-        let materialized =
-            resolve_bootable_image_path(&paths, &MachineImageSource::HttpUrl { url: url.clone() })
-                .expect("gzip http source should materialize");
+        let materialized = resolve_bootable_image_path(
+            &paths,
+            &MachineImageSource::HttpUrl { url: url.clone() },
+            MachineProvider::Krunkit,
+        )
+        .expect("gzip http source should materialize");
 
         assert_eq!(materialized, paths.materialized_image_path);
         assert_eq!(
@@ -2265,6 +3631,7 @@ mod tests {
             Duration::from_secs(1),
             &mut krunkit_child,
             &mut gvproxy_child,
+            &StartupSignalMonitor::inactive_for_test(),
         );
 
         cleanup_process(&mut krunkit_child).expect("krunkit probe child should clean up");
@@ -2272,6 +3639,412 @@ mod tests {
         drop(listener);
 
         assert!(result.is_ok(), "listener-backed SSH readiness should pass");
+    }
+
+    #[test]
+    fn wait_for_path_returns_cancelled_when_startup_signal_is_set() {
+        let _guard = machine_lifecycle_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let path = temp_dir.path().join("gvproxy.sock");
+        let mut child = MachineCommandLine {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        }
+        .spawn()
+        .expect("probe child should spawn");
+
+        let result = wait_for_path(
+            &path,
+            Duration::from_secs(1),
+            &mut child,
+            &StartupSignalMonitor::interrupted_for_test(),
+        );
+
+        cleanup_process(&mut child).expect("probe child should clean up");
+
+        assert!(matches!(result, Err(Error::Cancelled)));
+    }
+
+    #[test]
+    fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
+        let _guard = machine_lifecycle_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+
+        for path in [
+            &paths.ready_socket_path,
+            &paths.ignition_socket_path,
+            &paths.api_socket_path,
+            &paths.gvproxy_socket_path,
+            &paths.krunkit_endpoint_path,
+            &paths.gvproxy_pid_path,
+            &paths.krunkit_pid_path,
+        ] {
+            fs::write(path, b"artifact").expect("runtime artifact should write");
+        }
+        for path in [
+            &paths.machine_log_path,
+            &paths.krunkit_log_path,
+            &paths.gvproxy_log_path,
+        ] {
+            fs::write(path, b"non-empty").expect("log artifact should write");
+        }
+
+        let mut krunkit_child = MachineCommandLine {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        }
+        .spawn()
+        .expect("krunkit child should spawn");
+        let mut gvproxy_child = MachineCommandLine {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        }
+        .spawn()
+        .expect("gvproxy child should spawn");
+
+        let mut state = MachineStateRecord::initialized();
+        state.lifecycle = MachineLifecycle::Starting;
+        state.manager = MachineManagerState::Launching;
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path,
+            efi_variable_store_path: paths.efi_variable_store_path.clone(),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_port: 20022,
+            rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        let result = handle_start_machine_error(
+            &paths,
+            &config,
+            &mut state,
+            Error::Cancelled,
+            Some(&mut krunkit_child),
+            Some(&mut gvproxy_child),
+        );
+
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+        assert_eq!(state.manager, MachineManagerState::HelpersResolved);
+        assert_eq!(state.last_error, None);
+        assert!(
+            krunkit_child
+                .try_wait()
+                .expect("krunkit child status should resolve")
+                .is_some(),
+            "krunkit child should be reaped on interrupted startup"
+        );
+        assert!(
+            gvproxy_child
+                .try_wait()
+                .expect("gvproxy child status should resolve")
+                .is_some(),
+            "gvproxy child should be reaped on interrupted startup"
+        );
+        for path in [
+            &paths.ready_socket_path,
+            &paths.ignition_socket_path,
+            &paths.api_socket_path,
+            &paths.gvproxy_socket_path,
+            &paths.krunkit_endpoint_path,
+            &paths.gvproxy_pid_path,
+            &paths.krunkit_pid_path,
+        ] {
+            assert!(
+                !path.exists(),
+                "runtime artifact {} should be removed",
+                path.display()
+            );
+        }
+        for path in [
+            &paths.machine_log_path,
+            &paths.krunkit_log_path,
+            &paths.gvproxy_log_path,
+        ] {
+            assert_eq!(
+                fs::read(path).expect("log artifact should remain readable"),
+                Vec::<u8>::new(),
+                "log artifact {} should be truncated",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn stop_machine_uses_graceful_krunkit_stop_before_cleaning_up_helpers() {
+        let _guard = machine_lifecycle_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+
+        let (krunkit_pid, krunkit_reaper) = spawn_reaped_process("exec sleep 30");
+        let (gvproxy_pid, gvproxy_reaper) = spawn_reaped_process("exec sleep 30");
+        fs::write(&paths.krunkit_pid_path, krunkit_pid.to_string())
+            .expect("krunkit pid should write");
+        fs::write(&paths.gvproxy_pid_path, gvproxy_pid.to_string())
+            .expect("gvproxy pid should write");
+
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests_for_server = std::sync::Arc::clone(&requests);
+        let endpoint_path = paths.krunkit_endpoint_path.clone();
+        let request_path = endpoint_path.clone();
+        let server = thread::spawn(move || {
+            let listener =
+                UnixListener::bind(&endpoint_path).expect("endpoint listener should bind");
+            let (mut stream, _) = listener.accept().expect("endpoint should accept request");
+            let mut buffer = [0_u8; 1024];
+            let read = stream.read(&mut buffer).expect("request should read");
+            let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            let state = if request.contains("\"HardStop\"") {
+                "HardStop"
+            } else {
+                "Stop"
+            };
+            requests_for_server
+                .lock()
+                .expect("request log should lock")
+                .push(state.to_owned());
+            let _ = send_signal(krunkit_pid, SIGKILL);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("response should write");
+            stream.flush().expect("response should flush");
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !request_path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(request_path.exists(), "endpoint should appear before stop");
+
+        let mut state = MachineStateRecord::initialized();
+        state.lifecycle = MachineLifecycle::Running;
+        state.manager = MachineManagerState::Ready;
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path,
+            efi_variable_store_path: paths.efi_variable_store_path.clone(),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_port: 20022,
+            rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        stop_machine(&paths, &config, &mut state).expect("machine stop should succeed");
+        server.join().expect("endpoint server should finish");
+
+        assert_eq!(
+            requests.lock().expect("request log should lock").clone(),
+            vec!["Stop".to_owned()]
+        );
+        assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+        assert_eq!(state.manager, MachineManagerState::HelpersResolved);
+        assert_eq!(state.last_error, None);
+        assert!(
+            wait_for_pid_exit(krunkit_pid, Duration::from_secs(2))
+                .expect("krunkit pid should become not alive"),
+            "krunkit process should exit during graceful provider stop"
+        );
+        assert!(
+            wait_for_pid_exit(gvproxy_pid, Duration::from_secs(2))
+                .expect("gvproxy pid should become not alive"),
+            "gvproxy process should be stopped during cleanup"
+        );
+        krunkit_reaper
+            .join()
+            .expect("krunkit reaper should observe process exit");
+        gvproxy_reaper
+            .join()
+            .expect("gvproxy reaper should observe process exit");
+    }
+
+    #[test]
+    fn request_krunkit_state_change_sends_hard_stop_payload() {
+        let _guard = machine_lifecycle_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let endpoint_path = temp_dir.path().join("krunkit.sock");
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests_for_server = std::sync::Arc::clone(&requests);
+        let request_path = endpoint_path.clone();
+        let server = thread::spawn(move || {
+            let listener =
+                UnixListener::bind(&endpoint_path).expect("endpoint listener should bind");
+            let (mut stream, _) = listener.accept().expect("endpoint should accept request");
+            let mut buffer = [0_u8; 1024];
+            let read = stream.read(&mut buffer).expect("request should read");
+            let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            let state = if request.contains("\"HardStop\"") {
+                "HardStop"
+            } else {
+                "Stop"
+            };
+            requests_for_server
+                .lock()
+                .expect("request log should lock")
+                .push(state.to_owned());
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("response should write");
+            stream.flush().expect("response should flush");
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !request_path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            request_path.exists(),
+            "endpoint should appear before request"
+        );
+
+        request_krunkit_state_change(&request_path, "HardStop")
+            .expect("hard-stop request should succeed");
+        server.join().expect("endpoint server should finish");
+
+        assert_eq!(
+            requests.lock().expect("request log should lock").clone(),
+            vec!["HardStop".to_owned()]
+        );
+    }
+
+    #[test]
+    fn wait_for_pid_exit_reports_timeout_while_process_is_still_running() {
+        let _guard = machine_lifecycle_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (pid, reaper) = spawn_reaped_process("exec sleep 30");
+
+        assert!(
+            !wait_for_pid_exit(pid, Duration::from_millis(50))
+                .expect("wait should report timeout for a running process")
+        );
+
+        force_stop_pid(pid, Duration::from_secs(2)).expect("force stop should succeed");
+        reaper
+            .join()
+            .expect("process reaper should observe process exit");
+    }
+
+    #[test]
+    fn launch_plan_reuses_recorded_managed_ssh_port_when_available() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        let mut state = MachineStateRecord::initialized();
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path: image_path.clone(),
+            efi_variable_store_path: paths.efi_variable_store_path.clone(),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_port: 20022,
+            rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        let plan =
+            MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
+        let allocation_state = load_machine_port_allocation_state(&config.roots)
+            .expect("port allocation state should load");
+
+        assert_eq!(plan.runtime.ssh_port, 20022);
+        assert_eq!(allocation_state.machine_ports.get("default"), Some(&20022));
+    }
+
+    #[test]
+    fn launch_plan_reassigns_recorded_ssh_port_when_it_is_busy() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        let listener = TcpListener::bind("127.0.0.1:20023")
+            .or_else(|_| TcpListener::bind("127.0.0.1:0"))
+            .expect("listener should bind");
+        let busy_port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let mut state = MachineStateRecord::initialized();
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path: image_path.clone(),
+            efi_variable_store_path: paths.efi_variable_store_path.clone(),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_port: busy_port,
+            rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        let plan =
+            MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
+        let allocation_state = load_machine_port_allocation_state(&config.roots)
+            .expect("port allocation state should load");
+
+        assert_ne!(plan.runtime.ssh_port, busy_port);
+        assert!(managed_machine_port_range_contains(plan.runtime.ssh_port));
+        assert_eq!(
+            allocation_state.machine_ports.get("default"),
+            Some(&plan.runtime.ssh_port)
+        );
+    }
+
+    #[test]
+    fn release_machine_ssh_port_removes_reserved_port() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let roots = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        with_port_allocation_lock(&roots, || {
+            let mut state = load_machine_port_allocation_state(&roots)?;
+            state.machine_ports.insert("default".to_owned(), 20024);
+            write_machine_port_allocation_state(&roots, &state)
+        })
+        .expect("reserved machine port should write");
+
+        release_machine_ssh_port(&roots, "default").expect("port release should succeed");
+
+        let allocation_state =
+            load_machine_port_allocation_state(&roots).expect("allocation state should load");
+        assert!(allocation_state.machine_ports.is_empty());
     }
 
     #[test]
@@ -2297,6 +4070,7 @@ mod tests {
             },
             image_path: PathBuf::from("/tmp/disk.raw"),
             efi_variable_store_path: paths.efi_variable_store_path.clone(),
+            machine_image_source: "docker://quay.io/podman/machine-os@sha256:test".to_owned(),
             ssh_port: 2222,
             rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
             ready_vsock_port: READY_VSOCK_PORT,
@@ -2331,6 +4105,7 @@ mod tests {
             },
             image_path,
             efi_variable_store_path: PathBuf::from("/tmp/efi"),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
             ssh_port: 2222,
             rest_uri: "unix:///tmp/krunkit.sock".to_owned(),
             ready_vsock_port: READY_VSOCK_PORT,
@@ -2360,6 +4135,7 @@ mod tests {
             },
             image_path,
             efi_variable_store_path: PathBuf::from("/tmp/efi"),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
             ssh_port: 2222,
             rest_uri: "unix:///tmp/krunkit.sock".to_owned(),
             ready_vsock_port: READY_VSOCK_PORT,
@@ -2413,6 +4189,20 @@ mod tests {
         format!("http://{}:{}{}", address.ip(), address.port(), request_path)
     }
 
+    fn spawn_reaped_process(command: &str) -> (i32, thread::JoinHandle<()>) {
+        let mut child = MachineCommandLine {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".to_owned(), command.to_owned()],
+        }
+        .spawn()
+        .expect("managed process should spawn");
+        let pid = child.id() as i32;
+        let reaper = thread::spawn(move || {
+            let _ = child.wait();
+        });
+        (pid, reaper)
+    }
+
     fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let address = listener
@@ -2442,24 +4232,59 @@ mod tests {
         let child_manifest_bytes =
             serde_json::to_vec(&child_manifest).expect("child manifest should serialize");
         let child_manifest_digest = format!("sha256:{:x}", Sha256::digest(&child_manifest_bytes));
+        let ignored_manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_IMAGE_MEDIA_TYPE,
+            "config": {
+                "mediaType": "application/vnd.oci.empty.v1+json",
+                "size": 2,
+                "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            },
+            "layers": [{
+                "mediaType": "application/vnd.neovex.machine.disk.layer.v1.tar+gzip",
+                "size": layer_body.len(),
+                "digest": layer_digest,
+                "annotations": {
+                    "org.opencontainers.image.title": "ignored.raw.gz"
+                }
+            }]
+        });
+        let ignored_manifest_bytes =
+            serde_json::to_vec(&ignored_manifest).expect("ignored manifest should serialize");
+        let ignored_manifest_digest =
+            format!("sha256:{:x}", Sha256::digest(&ignored_manifest_bytes));
         let index_manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": OCI_IMAGE_INDEX_MEDIA_TYPE,
-            "manifests": [{
-                "mediaType": OCI_IMAGE_MEDIA_TYPE,
-                "size": child_manifest_bytes.len(),
-                "digest": child_manifest_digest,
-                "platform": {
-                    "architecture": current_arch,
-                    "os": OCI_MACHINE_OS
+            "manifests": [
+                {
+                    "mediaType": OCI_IMAGE_MEDIA_TYPE,
+                    "size": ignored_manifest_bytes.len(),
+                    "digest": ignored_manifest_digest,
+                    "platform": {
+                        "architecture": current_arch,
+                        "os": OCI_MACHINE_OS
+                    },
+                    "annotations": {
+                        "disktype": "raw"
+                    }
                 },
-                "annotations": {
-                    "disktype": OCI_MACHINE_DISK_TYPE,
-                    "org.opencontainers.image.source": "https://github.com/agentstation/neovex-machine-os",
-                    "io.neovex.machine.attestation.repository": "agentstation/neovex-machine-os",
-                    "io.neovex.machine.neovex.version": "v1.2.3"
+                {
+                    "mediaType": OCI_IMAGE_MEDIA_TYPE,
+                    "size": child_manifest_bytes.len(),
+                    "digest": child_manifest_digest,
+                    "platform": {
+                        "architecture": current_arch,
+                        "os": OCI_MACHINE_OS
+                    },
+                    "annotations": {
+                        "disktype": MachineProvider::Krunkit.oci_artifact_disk_type(),
+                        "org.opencontainers.image.source": "https://github.com/agentstation/neovex-machine-os",
+                        "io.neovex.machine.attestation.repository": "agentstation/neovex-machine-os",
+                        "io.neovex.machine.neovex.version": "v1.2.3"
+                    }
                 }
-            }]
+            ]
         });
         let index_manifest_bytes =
             serde_json::to_vec(&index_manifest).expect("index manifest should serialize");
@@ -2486,6 +4311,11 @@ mod tests {
                         OCI_IMAGE_INDEX_MEDIA_TYPE,
                         index_manifest_bytes.clone(),
                     ),
+                    _ if path
+                        == format!("/v2/{repository}/manifests/{ignored_manifest_digest}") =>
+                    {
+                        (200, OCI_IMAGE_MEDIA_TYPE, ignored_manifest_bytes.clone())
+                    }
                     _ if path == format!("/v2/{repository}/manifests/{child_manifest_digest}") => {
                         (200, OCI_IMAGE_MEDIA_TYPE, child_manifest_bytes.clone())
                     }

@@ -50,7 +50,7 @@ const MYSQL_MIN_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MIN_CONNECTIONS";
 const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 
 #[derive(Debug, Parser)]
-#[command(name = "neovex", about = "Reactive document database")]
+#[command(name = "neovex", version, about = "Reactive document database")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -881,6 +881,17 @@ mod tests {
     fn cli_requires_explicit_serve_subcommand_for_server_flags() {
         assert!(Cli::try_parse_from(["neovex"]).is_err());
         assert!(Cli::try_parse_from(["neovex", "--compose-file", "./compose.dev.yaml"]).is_err());
+    }
+
+    #[test]
+    fn cli_supports_top_level_version_flag() {
+        let error = Cli::try_parse_from(["neovex", "--version"])
+            .expect_err("top-level version flag should short-circuit with display output");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            error.to_string(),
+            format!("neovex {}\n", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

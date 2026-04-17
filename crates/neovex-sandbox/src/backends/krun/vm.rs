@@ -20,6 +20,9 @@ use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
+use crate::backends::oci::materializer::{
+    MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
+};
 use crate::backends::oci::port_manager::PortManager;
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
@@ -164,7 +167,7 @@ impl KrunSandboxBackend {
                 Ok(manifest.handle)
             }
             KrunLaunchMode::Execute => self.execute_start(&launch_plan).inspect_err(|_| {
-                let _ = self.cleanup_manifest_buildah_artifacts(&launch_plan.manifest);
+                let _ = self.cleanup_manifest_launch_artifacts(&launch_plan.manifest);
             }),
         }
     }
@@ -204,8 +207,8 @@ impl KrunSandboxBackend {
                 manifest.last_exit_code = Some(0);
                 manifest.status = SandboxStatus::Stopped;
                 manifest.handle.status = SandboxStatus::Stopped;
-                self.cleanup_manifest_buildah_artifacts(&manifest)?;
-                manifest.buildah_container = None;
+                self.cleanup_manifest_launch_artifacts(&manifest)?;
+                manifest.launch_artifact = None;
                 self.write_manifest(&manifest)
             }
             KrunLaunchMode::Execute => self.execute_stop(&mut manifest),
@@ -225,7 +228,7 @@ impl KrunSandboxBackend {
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
         let prepared_launch = self.prepare_image_launch(&sandbox_id, image_reference, overrides)?;
-        self.plan_start_with_prepared_launch(spec, &sandbox_id, prepared_launch)
+        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
     }
 
     pub(crate) fn plan_start_from_build(
@@ -273,11 +276,34 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         prepared_launch: PreparedImageLaunch,
     ) -> Result<KrunLaunchPlan> {
+        self.plan_start_with_buildah_launch(spec, sandbox_id, prepared_launch)
+    }
+
+    fn plan_start_with_materialized_launch(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        prepared_launch: PreparedMaterializedImageLaunch,
+    ) -> Result<KrunLaunchPlan> {
         self.plan_start_with_id(
             spec,
             sandbox_id,
             Some(&prepared_launch.launch_defaults),
-            Some(prepared_launch.container),
+            Some(KrunLaunchArtifact::Rootfs(prepared_launch.artifact)),
+        )
+    }
+
+    fn plan_start_with_buildah_launch(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        prepared_launch: PreparedImageLaunch,
+    ) -> Result<KrunLaunchPlan> {
+        self.plan_start_with_id(
+            spec,
+            sandbox_id,
+            Some(&prepared_launch.launch_defaults),
+            Some(KrunLaunchArtifact::Buildah(prepared_launch.container)),
         )
     }
 
@@ -286,7 +312,7 @@ impl KrunSandboxBackend {
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         launch_defaults: Option<&OciImageLaunchDefaults>,
-        buildah_container: Option<BuildahContainer>,
+        launch_artifact: Option<KrunLaunchArtifact>,
     ) -> Result<KrunLaunchPlan> {
         if spec.backend != SandboxBackendKind::Krun {
             return Err(SandboxError::InvalidSpec {
@@ -328,19 +354,25 @@ impl KrunSandboxBackend {
                 conmon_path: self.config.conmon_path.clone(),
                 runtime_path: self.config.runtime_path.clone(),
                 buildah_path: self.config.buildah_path.clone(),
-                use_buildah_unshare: self.config.use_buildah_unshare,
+                use_buildah_unshare: launch_artifact
+                    .as_ref()
+                    .is_some_and(KrunLaunchArtifact::uses_buildah_unshare)
+                    && self.config.use_buildah_unshare,
                 log_level: self.config.log_level.clone(),
             },
             &conmon_layout,
             sandbox_id,
             &spec.name,
             &bundle_layout.bundle_dir,
-            buildah_container
+            launch_artifact
                 .as_ref()
-                .map(|c| c.container_name.as_str()),
+                .and_then(KrunLaunchArtifact::buildah_container_name),
             &krun_vm_config_prelude(
                 &resolved_launch.spec,
-                buildah_container.is_some() && self.config.use_buildah_unshare,
+                launch_artifact
+                    .as_ref()
+                    .is_some_and(KrunLaunchArtifact::uses_buildah_unshare)
+                    && self.config.use_buildah_unshare,
             )?,
         );
 
@@ -359,7 +391,7 @@ impl KrunSandboxBackend {
             handle,
             spec: resolved_launch.spec,
             image_metadata: resolved_launch.image_metadata,
-            buildah_container,
+            launch_artifact,
             bundle_layout,
             conmon_layout,
             conmon_launch,
@@ -379,9 +411,9 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        self.buildah_cli().prepare_image_launch(
-            &buildah_container_name(sandbox_id),
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        OciImageMaterializer::under_state_root(&self.config.state_root).prepare_image_launch(
+            sandbox_id,
             image_reference,
             overrides,
         )
@@ -411,10 +443,28 @@ impl KrunSandboxBackend {
         buildah.with_unshare(self.config.use_buildah_unshare)
     }
 
-    fn cleanup_manifest_buildah_artifacts(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        if let Some(container) = &manifest.buildah_container {
-            self.buildah_cli()
-                .cleanup_container(&container.container_name)?;
+    fn cleanup_manifest_launch_artifacts(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        let Some(artifact) = manifest.launch_artifact.as_ref() else {
+            return Ok(());
+        };
+        match artifact {
+            KrunLaunchArtifact::Buildah(container) => {
+                self.buildah_cli()
+                    .cleanup_container(&container.container_name)?;
+            }
+            KrunLaunchArtifact::Rootfs(rootfs) => {
+                if !rootfs.rootfs_path.exists() {
+                    return Ok(());
+                }
+                std::fs::remove_dir_all(&rootfs.rootfs_path).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to remove materialized krun rootfs {}: {error}",
+                            rootfs.rootfs_path.display()
+                        ),
+                    }
+                })?;
+            }
         }
         Ok(())
     }
@@ -442,7 +492,12 @@ impl KrunSandboxBackend {
     }
 
     fn materialize_krun_vm_config(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        if manifest.buildah_container.is_some() && self.config.use_buildah_unshare {
+        if manifest
+            .launch_artifact
+            .as_ref()
+            .is_some_and(KrunLaunchArtifact::uses_buildah_unshare)
+            && self.config.use_buildah_unshare
+        {
             return Ok(());
         }
 
@@ -523,8 +578,8 @@ impl KrunSandboxBackend {
 
         manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
         synchronize_handle_status(manifest, SandboxStatus::Stopped);
-        self.cleanup_manifest_buildah_artifacts(manifest)?;
-        manifest.buildah_container = None;
+        self.cleanup_manifest_launch_artifacts(manifest)?;
+        manifest.launch_artifact = None;
         self.write_manifest(manifest)
     }
 
@@ -708,7 +763,7 @@ struct KrunSandboxManifest {
     handle: SandboxHandle,
     spec: SandboxSpec,
     image_metadata: KrunImageMetadata,
-    buildah_container: Option<BuildahContainer>,
+    launch_artifact: Option<KrunLaunchArtifact>,
     bundle_layout: KrunBundleLayout,
     conmon_layout: OciConmonLayout,
     conmon_launch: OciConmonLaunchPlan,
@@ -753,6 +808,25 @@ struct KrunVmConfig {
 struct GuestUserIds {
     uid: u32,
     gid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum KrunLaunchArtifact {
+    Buildah(BuildahContainer),
+    Rootfs(MaterializedImageRootfs),
+}
+
+impl KrunLaunchArtifact {
+    fn buildah_container_name(&self) -> Option<&str> {
+        match self {
+            Self::Buildah(container) => Some(container.container_name.as_str()),
+            Self::Rootfs(_) => None,
+        }
+    }
+
+    fn uses_buildah_unshare(&self) -> bool {
+        matches!(self, Self::Buildah(_))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1404,8 +1478,11 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use flate2::{Compression, write::GzEncoder};
     use futures::executor::block_on;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
+    use tar::Builder;
     use tempfile::{NamedTempFile, TempDir};
 
     use neovex_core::TenantId;
@@ -1461,18 +1538,17 @@ mod tests {
     #[test]
     fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
+        let image_reference = sample_registry_image_reference();
         let mut config = KrunSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
         let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
         let handle = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("image-trait"),
-            "postgres:16",
+            &image_reference,
         )))
         .expect("plan-only image-backed start should succeed through the trait");
 
@@ -1787,15 +1863,14 @@ mod tests {
     }
 
     #[test]
-    fn start_from_image_plan_only_persists_and_then_cleans_up_buildah_artifacts() {
+    fn start_from_image_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let (buildah_path, log_path) = write_fake_buildah_script(&temp_dir);
+        let image_reference = sample_registry_image_reference();
 
         let mut config = KrunSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
 
         let backend = KrunSandboxBackend::new(config);
@@ -1810,7 +1885,7 @@ mod tests {
 
         let handle = block_on(
             backend.start_from_image(
-                SandboxImageLaunchSpec::new(spec, "postgres:16")
+                SandboxImageLaunchSpec::new(spec, &image_reference)
                     .with_process_overrides(SandboxImageProcessOverrides::default()),
             ),
         )
@@ -1825,8 +1900,17 @@ mod tests {
         let manifest_before_stop =
             fs::read_to_string(&manifest_path).expect("manifest should be readable before stop");
         assert!(
-            manifest_before_stop.contains("\"buildah_container\""),
-            "manifest should retain buildah container metadata while running"
+            manifest_before_stop.contains("\"launch_artifact\""),
+            "manifest should retain launch-artifact metadata while running"
+        );
+        let rootfs_path = temp_dir
+            .path()
+            .join("state")
+            .join("materialized-rootfs")
+            .join(handle.id.as_str());
+        assert!(
+            rootfs_path.exists(),
+            "image-backed plan should materialize a rootfs under the krun state root"
         );
 
         block_on(backend.stop(&handle.id)).expect("plan-only stop should succeed");
@@ -1834,34 +1918,24 @@ mod tests {
         let manifest_after_stop =
             fs::read_to_string(&manifest_path).expect("manifest should be readable after stop");
         assert!(
-            manifest_after_stop.contains("\"buildah_container\": null"),
-            "stop should clear buildah container metadata after cleanup"
+            manifest_after_stop.contains("\"launch_artifact\": null"),
+            "stop should clear launch-artifact metadata after cleanup"
         );
-
-        let log = fs::read_to_string(log_path).expect("fake buildah log should be readable");
-        let lines: Vec<_> = log.lines().collect();
-        assert_eq!(
-            lines,
-            vec![
-                format!("from --name {}-image postgres:16", handle.id.as_str()),
-                format!("mount {}-image", handle.id.as_str()),
-                format!("inspect --type container {}-image", handle.id.as_str()),
-                format!("umount {}-image", handle.id.as_str()),
-                format!("rm {}-image", handle.id.as_str()),
-            ]
+        assert!(
+            !rootfs_path.exists(),
+            "stop should remove the materialized rootfs after cleanup"
         );
     }
 
     #[test]
-    fn start_from_image_plan_only_includes_krun_vm_config_prelude_when_unshare_is_enabled() {
+    fn start_from_image_plan_only_skips_krun_vm_config_prelude_for_materialized_rootfs() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
+        let image_reference = sample_registry_image_reference();
 
         let mut config = KrunSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = true;
 
         let backend = KrunSandboxBackend::new(config);
@@ -1874,7 +1948,7 @@ mod tests {
         let launch_plan = backend
             .plan_start_from_image(
                 &spec,
-                "postgres:16",
+                &image_reference,
                 &SandboxImageProcessOverrides::default(),
             )
             .expect("image-backed plan should succeed");
@@ -1884,32 +1958,22 @@ mod tests {
             .conmon_launch
             .create_command
             .args
-            .last()
-            .expect("buildah unshare create command should have an inner shell script");
+            .join(" ");
         assert!(
-            script.contains(".krun_vm.json"),
-            "image-backed unshare create command should materialize /.krun_vm.json: {script}"
-        );
-        assert!(
-            script.contains("\"cpus\":2"),
-            "image-backed unshare create command should carry the requested cpu count: {script}"
-        );
-        assert!(
-            script.contains("\"ram_mib\":256"),
-            "image-backed unshare create command should carry the requested memory limit in MiB: {script}"
+            !script.contains(".krun_vm.json"),
+            "materialized rootfs launches should write krun vm config directly, not via a buildah unshare prelude: {script}"
         );
     }
 
     #[test]
     fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let (buildah_path, _log_path) = write_fake_buildah_script(&temp_dir);
+        let image_reference = sample_registry_image_reference();
 
         let mut config = KrunSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
         config.published_port_range = 15000..=15001;
 
@@ -1917,7 +1981,7 @@ mod tests {
 
         let first = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("first"),
-            "postgres:16",
+            &image_reference,
         )))
         .expect("first plan-only image-backed start should succeed");
         let first_inspected = block_on(backend.inspect(&first.id))
@@ -1928,7 +1992,7 @@ mod tests {
 
         let second = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("second"),
-            "postgres:16",
+            &image_reference,
         )))
         .expect("second plan-only image-backed start should succeed");
         let second_inspected = block_on(backend.inspect(&second.id))
@@ -1944,7 +2008,7 @@ mod tests {
 
         let third = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
             sparse_image_spec("third"),
-            "postgres:16",
+            &image_reference,
         )))
         .expect("third plan-only image-backed start should succeed");
         let third_inspected = block_on(backend.inspect(&third.id))
@@ -1962,7 +2026,7 @@ mod tests {
         )
         .expect("third bundle config should be readable");
         assert!(
-            third_bundle.contains("\"krun.port_map\": \"15000:5432\""),
+            third_bundle.contains("\"krun.port_map\": \"15000:8080\""),
             "auto-assigned bindings should rewrite the krun port map annotation"
         );
     }
@@ -2261,7 +2325,7 @@ mod tests {
                 "port_bindings": [],
             },
             "image_metadata": {},
-            "buildah_container": null,
+            "launch_artifact": null,
             "bundle_layout": {
                 "bundle_dir": "/tmp/bundle",
                 "config_path": "/tmp/bundle/config.json",
@@ -2395,7 +2459,7 @@ mod tests {
             ),
             spec,
             image_metadata: KrunImageMetadata::default(),
-            buildah_container: None,
+            launch_artifact: None,
             bundle_layout: super::KrunBundleLayout::new("/tmp/bundle"),
             conmon_layout: super::OciConmonLayout::new(
                 "/tmp/state",
@@ -2414,6 +2478,145 @@ mod tests {
             shutdown_requested: false,
             status: SandboxStatus::Starting,
         }
+    }
+
+    fn sample_registry_image_reference() -> String {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("fake OCI registry listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("fake OCI registry address should resolve");
+
+        let mut layer_archive = Vec::new();
+        {
+            let mut encoder = GzEncoder::new(&mut layer_archive, Compression::default());
+            {
+                let mut tar = Builder::new(&mut encoder);
+                let file_contents = b"#!/bin/sh\necho hello from demo\n";
+                let mut header = tar::Header::new_gnu();
+                header.set_mode(0o755);
+                header.set_size(file_contents.len() as u64);
+                header.set_cksum();
+                tar.append_data(&mut header, "usr/local/bin/demo", &file_contents[..])
+                    .expect("fake OCI layer file should append");
+
+                let passwd_contents = b"demo:x:1000:1000:Demo:/workspace:/bin/sh\n";
+                let mut passwd_header = tar::Header::new_gnu();
+                passwd_header.set_mode(0o644);
+                passwd_header.set_size(passwd_contents.len() as u64);
+                passwd_header.set_cksum();
+                tar.append_data(&mut passwd_header, "etc/passwd", &passwd_contents[..])
+                    .expect("fake OCI passwd should append");
+
+                let group_contents = b"demo:x:1000:\n";
+                let mut group_header = tar::Header::new_gnu();
+                group_header.set_mode(0o644);
+                group_header.set_size(group_contents.len() as u64);
+                group_header.set_cksum();
+                tar.append_data(&mut group_header, "etc/group", &group_contents[..])
+                    .expect("fake OCI group should append");
+                tar.finish().expect("fake OCI tar archive should finish");
+            }
+            encoder
+                .finish()
+                .expect("fake OCI gzip archive should finish");
+        }
+
+        let config = serde_json::json!({
+            "architecture": "amd64",
+            "os": "linux",
+            "config": {
+                "Entrypoint": ["/usr/local/bin/demo"],
+                "Cmd": ["serve"],
+                "Env": ["PATH=/usr/local/bin:/usr/bin", "SERVICE_MODE=prod"],
+                "User": "demo",
+                "WorkingDir": "/workspace",
+                "ExposedPorts": {
+                    "8080/tcp": {}
+                },
+                "Labels": {
+                    "app": "demo"
+                }
+            }
+        });
+        let config_bytes = serde_json::to_vec(&config).expect("fake OCI config should serialize");
+        let config_digest = format!("sha256:{:x}", Sha256::digest(&config_bytes));
+        let layer_digest = format!("sha256:{:x}", Sha256::digest(&layer_archive));
+        let child_manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "config": {
+                "mediaType": "application/vnd.oci.image.config.v1+json",
+                "size": config_bytes.len(),
+                "digest": config_digest
+            },
+            "layers": [{
+                "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": layer_archive.len(),
+                "digest": layer_digest
+            }]
+        });
+        let child_manifest_bytes =
+            serde_json::to_vec(&child_manifest).expect("fake OCI child manifest should serialize");
+        let child_manifest_digest = format!("sha256:{:x}", Sha256::digest(&child_manifest_bytes));
+        let index_manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "manifests": [{
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": child_manifest_bytes.len(),
+                "digest": child_manifest_digest,
+                "platform": {
+                    "architecture": if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" },
+                    "os": "linux"
+                }
+            }]
+        });
+        let index_manifest_bytes =
+            serde_json::to_vec(&index_manifest).expect("fake OCI index manifest should serialize");
+
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.expect("fake OCI registry connection should accept");
+                let mut buffer = [0_u8; 4096];
+                let read = stream
+                    .read(&mut buffer)
+                    .expect("fake OCI registry request should read");
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+
+                let (status, body) = match path {
+                    "/v2/" => (200, Vec::new()),
+                    "/v2/library/demo/manifests/latest" => (200, index_manifest_bytes.clone()),
+                    _ if path == format!("/v2/library/demo/manifests/{child_manifest_digest}") => {
+                        (200, child_manifest_bytes.clone())
+                    }
+                    _ if path == format!("/v2/library/demo/blobs/{config_digest}") => {
+                        (200, config_bytes.clone())
+                    }
+                    _ if path == format!("/v2/library/demo/blobs/{layer_digest}") => {
+                        (200, layer_archive.clone())
+                    }
+                    _ => (404, Vec::new()),
+                };
+
+                let response = format!(
+                    "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    if status == 200 { "OK" } else { "Not Found" },
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("fake OCI registry response head should write");
+                stream
+                    .write_all(&body)
+                    .expect("fake OCI registry response body should write");
+            }
+        });
+
+        format!("docker://localhost:{}/library/demo:latest", address.port())
     }
 
     fn configure_fake_buildah(config: &mut KrunSandboxBackendConfig, script_path: PathBuf) {

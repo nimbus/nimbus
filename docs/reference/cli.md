@@ -68,6 +68,14 @@ neovex machine rm
 ```
 
 ```bash
+neovex machine os apply <oci-ref-or-digest> [--restart]
+```
+
+```bash
+neovex machine os upgrade [--dry-run] [--restart]
+```
+
+```bash
 neovex serve --compose-file ./compose.yaml [--convex-app-dir ./app]
 ```
 
@@ -226,12 +234,16 @@ Current scope:
 - preserves `depends_on`, `healthcheck`, `volumes`, labels, and `x-neovex`
   metadata for lifecycle commands and recovery drills
 - warns on ignored fields such as `networks`, `privileged`, and `logging`
-- resolves lifecycle commands against backend-owned persisted krun manifests and
-  conmon logs under the project-scoped `control_data_dir`, not a separate
-  CLI-owned service database
-- the explicit `neovex service ...` lifecycle commands still reject
-  container-only or mixed-backend project-wide Compose operations until the
-  host-side forwarded machine-API service path lands
+- resolves lifecycle commands against backend-owned persisted sandbox state
+  under the project-scoped `control_data_dir`, not a separate CLI-owned
+  service database: krun manifests/logs locally for krun-backed projects, and
+  forwarded guest container manifests/logs on macOS for container-backed
+  projects
+- on macOS, container-backed `neovex service up/down/list/inspect/logs/ps`
+  commands now route through the forwarded guest machine API and guest
+  container-manifest state instead of assuming host-local krun state
+- mixed-backend project-wide Compose operations still reject because
+  `neovex service ...` requires one backend family per project-wide command
 - the server startup path can now load container-backed Compose managers on
   macOS through the forwarded guest machine API when the default machine API
   is reachable and reports `service_execution_ready`
@@ -241,7 +253,7 @@ Current scope:
 
 ## Machine Commands
 
-The current landed machine surface is the MAC2 CLI-and-state-model foundation:
+The current landed machine surface is the checked-in macOS machine contract:
 
 | Command | Meaning |
 | --- | --- |
@@ -251,6 +263,8 @@ The current landed machine surface is the MAC2 CLI-and-state-model foundation:
 | `neovex machine status` | print the current machine config, lifecycle state, derived runtime/socket/log paths, the configured machine-API forwarding contract, and guest machine-API reachability |
 | `neovex machine ssh [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running |
 | `neovex machine rm` | remove the persisted machine config, state, and short runtime-root layout when the machine is not running |
+| `neovex machine os apply <oci-ref-or-digest>` | record an explicit immutable OCI machine-image rollout and invalidate boot artifacts so the next boot recreates from that image |
+| `neovex machine os upgrade` | move back to the host-supported machine-image stream for this `neovex` version, with `--dry-run` for status-only checks |
 
 Current scope:
 
@@ -259,20 +273,23 @@ Current scope:
   and log paths
 - persists the machine provider, typed guest image source, guest SSH user,
   guest resources, and future virtiofs volume mappings
-- defaults that guest image source to the matching published raw-disk OCI
-  release reference
-  (`docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`)
-  instead of assuming macOS will build the guest image locally; moving aliases
-  such as `stable` remain convenience pointers, not the default host contract
+- on macOS `krunkit`, defaults the guest image source to the pinned Podman
+  machine-image digest owned by the host release
+  (`docker://quay.io/podman/machine-os@sha256:...`) instead of a floating tag
 - auto-generates a Neovex-owned Ignition file when no explicit
   `--ignition-file` override is configured, carrying the machine ready signal,
   guest `neovex.socket` plus `neovex.service`, and virtiofs mount-unit wiring
   into the guest
-- auto-materializes published raw-disk OCI machine-image references plus
-  `http(s)` image sources into the reserved machine-state raw disk path, with
-  OCI layer selection based on linux/arch plus `disktype=raw`, digest
-  verification, gzip/zstd decompression for OCI blobs, and gzip decompression
-  for direct URL downloads
+- makes `neovex machine start` the primary convergence path on macOS: cache
+  missing machine-image and guest-Linux-`neovex` artifacts, rebuild boot
+  artifacts when the recorded base image drifts from the desired digest,
+  hash-sync `/usr/local/bin/neovex` inside the guest, and only then report
+  success after the forwarded machine API is reachable
+- auto-materializes OCI machine-image references plus `http(s)` image sources
+  into the reserved machine-state raw disk path, with OCI artifact selection
+  based on linux/arch plus the provider disk type (`applehv` on macOS),
+  digest verification, gzip/zstd decompression for OCI blobs, and gzip
+  decompression for direct URL downloads
 - launches direct `krunkit` + `gvproxy` orchestration on macOS and waits for
   the machine-ready signal plus guest SSH reachability before reporting the
   machine manager as ready
@@ -283,8 +300,11 @@ Current scope:
   existence and actual API reachability separately, so host helpers, machine
   readiness, and guest control readiness do not get collapsed into one status
   bit
-- leaves guest-image packaging, the guest machine-API executable, and the OCI
-  build/publish lane to the remaining MAC4 work
+- keeps `neovex machine os apply` and `neovex machine os upgrade` as explicit,
+  host-managed machine-image rollout surfaces instead of ad hoc guest mutation
+- treats `neovex machine rm` as a full config/state-root removal, including the
+  per-machine image and guest-binary caches under the state root, so a clean
+  recreate path intentionally repulls or rehydrates artifacts on the next boot
 
 Related references:
 

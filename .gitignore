@@ -32,8 +32,8 @@ dist
 .neovex
 **/.neovex
 demos/convex/vendor/browser.bundle.js
-data/*.redb
-data/*.db
+# Local runtime and machine state
+data/
 
 # Private docs (pricing, strategy, competitive research)
 docs/private

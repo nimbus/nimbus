@@ -122,7 +122,8 @@ mod tests {
 
     use super::{ForwardedMachineApiSandboxBackend, MachineApiClient};
     use crate::machine::{
-        MachineApiListenMode, MachineApiState, bind_direct_listener, serve_machine_api,
+        MachineApiListenMode, MachineApiState, bind_direct_listener,
+        default_guest_helper_binary_dirs, serve_machine_api,
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -134,6 +135,7 @@ mod tests {
             control_data_dir: temp_dir.path().join("control"),
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: None,
+            helper_binary_dirs: default_guest_helper_binary_dirs(),
             service_backend: Some(std::sync::Arc::new(StubMachineApiSandboxBackend::default())),
             machine_port_forwarder: None,
         };

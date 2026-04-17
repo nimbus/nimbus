@@ -19,6 +19,9 @@ use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
+use crate::backends::oci::materializer::{
+    MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
+};
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, OciMachinePortForwarderConfig,
     OciNetworkConfig, OciNetworkLayout, create_persistent_network_namespace, expose_machine_ports,
@@ -176,7 +179,7 @@ impl ContainerSandboxBackend {
                 Ok(manifest.handle)
             }
             ContainerLaunchMode::Execute => self.execute_start(&manifest).inspect_err(|_| {
-                let _ = self.cleanup_manifest_buildah_artifacts(&manifest);
+                let _ = self.cleanup_manifest_launch_artifacts(&manifest);
             }),
         }
     }
@@ -213,8 +216,8 @@ impl ContainerSandboxBackend {
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
                 synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-                self.cleanup_manifest_buildah_artifacts(&manifest)?;
-                manifest.buildah_container = None;
+                self.cleanup_manifest_launch_artifacts(&manifest)?;
+                manifest.launch_artifact = None;
                 self.write_manifest(&manifest)
             }
             ContainerLaunchMode::Execute => self.execute_stop(&mut manifest),
@@ -234,7 +237,7 @@ impl ContainerSandboxBackend {
     ) -> Result<ContainerLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
         let prepared_launch = self.prepare_image_launch(&sandbox_id, image_reference, overrides)?;
-        self.plan_start_with_prepared_launch(spec, &sandbox_id, prepared_launch)
+        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
     }
 
     pub(crate) fn plan_start_from_build(
@@ -253,10 +256,24 @@ impl ContainerSandboxBackend {
             context_path,
             overrides,
         )?;
-        self.plan_start_with_prepared_launch(spec, &sandbox_id, prepared_launch)
+        self.plan_start_with_buildah_launch(spec, &sandbox_id, prepared_launch)
     }
 
-    fn plan_start_with_prepared_launch(
+    fn plan_start_with_materialized_launch(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        prepared_launch: PreparedMaterializedImageLaunch,
+    ) -> Result<ContainerLaunchPlan> {
+        self.plan_start_with_id(
+            spec,
+            sandbox_id,
+            Some(&prepared_launch.launch_defaults),
+            Some(ContainerLaunchArtifact::Rootfs(prepared_launch.artifact)),
+        )
+    }
+
+    fn plan_start_with_buildah_launch(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
@@ -266,7 +283,7 @@ impl ContainerSandboxBackend {
             spec,
             sandbox_id,
             Some(&prepared_launch.launch_defaults),
-            Some(prepared_launch.container),
+            Some(ContainerLaunchArtifact::Buildah(prepared_launch.container)),
         )
     }
 
@@ -275,7 +292,7 @@ impl ContainerSandboxBackend {
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         launch_defaults: Option<&OciImageLaunchDefaults>,
-        buildah_container: Option<BuildahContainer>,
+        launch_artifact: Option<ContainerLaunchArtifact>,
     ) -> Result<ContainerLaunchPlan> {
         if spec.backend != SandboxBackendKind::Container {
             return Err(SandboxError::InvalidSpec {
@@ -321,16 +338,19 @@ impl ContainerSandboxBackend {
                 conmon_path: self.config.conmon_path.clone(),
                 runtime_path: self.config.runtime_path.clone(),
                 buildah_path: self.config.buildah_path.clone(),
-                use_buildah_unshare: self.config.use_buildah_unshare,
+                use_buildah_unshare: launch_artifact
+                    .as_ref()
+                    .is_some_and(ContainerLaunchArtifact::uses_buildah_unshare)
+                    && self.config.use_buildah_unshare,
                 log_level: self.config.log_level.clone(),
             },
             &conmon_layout,
             sandbox_id,
             &resolved_launch.spec.name,
             &bundle_layout.bundle_dir,
-            buildah_container
+            launch_artifact
                 .as_ref()
-                .map(|container| container.container_name.as_str()),
+                .and_then(|artifact| artifact.buildah_container_name()),
             &[],
         );
 
@@ -351,7 +371,7 @@ impl ContainerSandboxBackend {
                 handle,
                 spec: resolved_spec,
                 image_metadata: resolved_launch.image_metadata,
-                buildah_container,
+                launch_artifact,
                 bundle_layout,
                 conmon_layout,
                 network_layout,
@@ -455,14 +475,12 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        BuildahCli::new(&self.config.buildah_path)
-            .with_unshare(self.config.use_buildah_unshare)
-            .prepare_image_launch(
-                &buildah_container_name(sandbox_id),
-                image_reference,
-                overrides,
-            )
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        OciImageMaterializer::under_state_root(&self.config.state_root).prepare_image_launch(
+            sandbox_id,
+            image_reference,
+            overrides,
+        )
     }
 
     fn prepare_built_image_launch(
@@ -484,16 +502,30 @@ impl ContainerSandboxBackend {
             )
     }
 
-    fn cleanup_manifest_buildah_artifacts(
-        &self,
-        manifest: &ContainerSandboxManifest,
-    ) -> Result<()> {
-        let Some(container) = manifest.buildah_container.as_ref() else {
+    fn cleanup_manifest_launch_artifacts(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
+        let Some(artifact) = manifest.launch_artifact.as_ref() else {
             return Ok(());
         };
-        BuildahCli::new(&self.config.buildah_path)
-            .with_unshare(self.config.use_buildah_unshare)
-            .cleanup_container(&container.container_name)
+        match artifact {
+            ContainerLaunchArtifact::Buildah(container) => {
+                BuildahCli::new(&self.config.buildah_path)
+                    .with_unshare(self.config.use_buildah_unshare)
+                    .cleanup_container(&container.container_name)
+            }
+            ContainerLaunchArtifact::Rootfs(rootfs) => {
+                if !rootfs.rootfs_path.exists() {
+                    return Ok(());
+                }
+                std::fs::remove_dir_all(&rootfs.rootfs_path).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to remove materialized rootfs {}: {error}",
+                            rootfs.rootfs_path.display()
+                        ),
+                    }
+                })
+            }
+        }
     }
 
     fn configure_network(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
@@ -548,10 +580,10 @@ impl ContainerSandboxBackend {
         {
             errors.push(error.to_string());
         }
-        if let Err(error) = self.cleanup_manifest_buildah_artifacts(manifest) {
+        if let Err(error) = self.cleanup_manifest_launch_artifacts(manifest) {
             errors.push(error.to_string());
         }
-        manifest.buildah_container = None;
+        manifest.launch_artifact = None;
         if errors.is_empty() {
             Ok(())
         } else {
@@ -660,7 +692,7 @@ struct ContainerSandboxManifest {
     handle: SandboxHandle,
     spec: SandboxSpec,
     image_metadata: ContainerImageMetadata,
-    buildah_container: Option<BuildahContainer>,
+    launch_artifact: Option<ContainerLaunchArtifact>,
     bundle_layout: ContainerBundleLayout,
     conmon_layout: OciConmonLayout,
     network_layout: OciNetworkLayout,
@@ -680,6 +712,25 @@ struct RuntimeStatePayload {
 struct ContainerResolvedLaunchSpec {
     spec: SandboxSpec,
     image_metadata: ContainerImageMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum ContainerLaunchArtifact {
+    Buildah(BuildahContainer),
+    Rootfs(MaterializedImageRootfs),
+}
+
+impl ContainerLaunchArtifact {
+    fn buildah_container_name(&self) -> Option<&str> {
+        match self {
+            Self::Buildah(container) => Some(container.container_name.as_str()),
+            Self::Rootfs(_) => None,
+        }
+    }
+
+    fn uses_buildah_unshare(&self) -> bool {
+        matches!(self, Self::Buildah(_))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1081,11 +1132,15 @@ mod tests {
     use neovex_core::TenantId;
     use tempfile::TempDir;
 
-    use super::{ContainerLaunchMode, ContainerSandboxBackend, ContainerSandboxBackendConfig};
+    use super::{
+        ContainerLaunchArtifact, ContainerLaunchMode, ContainerSandboxBackend,
+        ContainerSandboxBackendConfig,
+    };
     use crate::backend::SandboxBackendKind;
     use crate::backends::oci::buildah::{
         OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
     };
+    use crate::backends::oci::materializer::MaterializedImageRootfs;
     use crate::instance::SandboxId;
     use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
 
@@ -1157,5 +1212,54 @@ mod tests {
         assert_eq!(binding.name, "tcp-8080");
         assert_eq!(binding.host_port, 15000);
         assert_eq!(binding.guest_port, 8080);
+    }
+
+    #[test]
+    fn image_backed_plan_uses_direct_conmon_launch_for_materialized_rootfs() {
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let backend = ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(
+            temp_dir.path(),
+        ));
+        let rootfs_path = temp_dir.path().join("materialized-rootfs");
+        let launch_defaults = OciImageLaunchDefaults {
+            filesystem: SandboxFilesystemSpec::new(rootfs_path.clone()),
+            process: SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
+            exposed_ports: Vec::new(),
+            user: None,
+            stop_signal: None,
+            healthcheck: None,
+            labels: BTreeMap::new(),
+        };
+
+        let plan = backend
+            .plan_start_with_id(
+                &sample_spec(),
+                &SandboxId::new("db-01"),
+                Some(&launch_defaults),
+                Some(ContainerLaunchArtifact::Rootfs(MaterializedImageRootfs {
+                    image_reference: "docker.io/library/demo:latest".to_owned(),
+                    rootfs_path,
+                })),
+            )
+            .expect("image-backed plan should lower");
+
+        assert_eq!(
+            plan.manifest.conmon_launch.create_command.program,
+            PathBuf::from("conmon")
+        );
+        assert_eq!(
+            plan.manifest.conmon_launch.start_command.program,
+            PathBuf::from("crun")
+        );
+        assert!(
+            plan.manifest
+                .conmon_launch
+                .create_command
+                .args
+                .first()
+                .map(String::as_str)
+                != Some("unshare"),
+            "materialized rootfs launches should not be wrapped in buildah unshare"
+        );
     }
 }

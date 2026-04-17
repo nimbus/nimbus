@@ -1,6 +1,6 @@
 [package]
 name = "neovex-engine"
-version = "0.1.3"
+version = "0.1.9"
 edition = "2024"
 publish.workspace = true
 

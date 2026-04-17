@@ -6,10 +6,12 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-usage: recreate-neovex-machine.sh --image <path> [options]
+usage: recreate-neovex-machine.sh [options]
 
 Recreate a Neovex macOS machine using the shipped `neovex machine ...` surface.
-This is the Neovex-owned MAC3 repair lane for stale config/runtime state.
+This is the Neovex-owned macOS repair lane for stale config/runtime state.
+By default it follows the current host-managed machine-image contract recorded
+by `neovex machine init`; `--image` is only for explicit diagnostic overrides.
 
 options:
   --machine <name>             Machine name (default: default)
@@ -18,7 +20,8 @@ options:
   --output-dir <path>          Output directory for recreate artifacts
   --neovex <path>              Neovex binary path
                                (default: <repo>/target/debug/neovex)
-  --image <path>               Bootable local guest disk image (required)
+  --image <source>             Explicit machine image source override passed to
+                               `neovex machine init` for diagnostics only
   --ssh-identity <path>        SSH identity path for guest debugging
   --ignition-file <path>       Ignition file to serve over first-boot vsock
   --efi-store <path>           EFI variable-store path
@@ -34,7 +37,6 @@ examples:
   bash scripts/recreate-neovex-machine.sh \
     --home /tmp/neovex-home \
     --runtime-root /tmp/neovex \
-    --image /absolute/path/to/neovex-machine.raw \
     --ssh-identity /absolute/path/to/machine-key \
     --ignition-file /absolute/path/to/neovex-machine.ign
 EOF
@@ -176,12 +178,6 @@ if [[ -z "${home_dir}" ]]; then
   exit 64
 fi
 
-if [[ -z "${image_path}" ]]; then
-  echo "missing required --image argument" >&2
-  usage >&2
-  exit 64
-fi
-
 if [[ ${#volumes[@]} -eq 0 ]]; then
   volumes=( "/Users:/Users" )
 fi
@@ -207,7 +203,19 @@ print_line "home.dir" "${home_dir}"
 print_line "runtime.root" "${runtime_root}"
 print_line "runtime.layout" "flat root with ${machine_name}-*.sock/${machine_name}-*.log/${machine_name}-*.pid"
 print_line "neovex.bin" "${neovex_bin}"
-print_line "image.path" "${image_path}"
+if [[ -n "${image_path}" ]]; then
+  print_line "image.source" "${image_path}"
+else
+  print_line "image.source" "default (host-managed pinned machine image contract)"
+fi
+if [[ -n "${NEOVEX_MACHINE_GUEST_BINARY:-}" ]]; then
+  print_line "guest.binary.override" "${NEOVEX_MACHINE_GUEST_BINARY}"
+else
+  print_line "guest.binary.override" "<release asset>"
+fi
+if [[ -n "${NEOVEX_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then
+  print_line "machine.api.ready_timeout_secs" "${NEOVEX_MACHINE_API_READY_TIMEOUT_SECS}"
+fi
 
 if [[ "${skip_pre_diagnostics}" -eq 0 ]]; then
   bash "${script_dir}/collect-neovex-machine-diagnostics.sh" \
@@ -259,8 +267,11 @@ init_cmd=(
   --cpus "${cpus}"
   --memory-mib "${memory_mib}"
   --disk-gib "${disk_gib}"
-  --image "${image_path}"
 )
+
+if [[ -n "${image_path}" ]]; then
+  init_cmd+=( --image "${image_path}" )
+fi
 
 if [[ -n "${ssh_identity}" ]]; then
   init_cmd+=( --ssh-identity "${ssh_identity}" )
@@ -291,6 +302,14 @@ if [[ "${init_status}" -eq 0 ]]; then
     env
     "HOME=${home_dir}"
     "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
+  )
+  if [[ -n "${NEOVEX_MACHINE_GUEST_BINARY:-}" ]]; then
+    start_cmd+=( "NEOVEX_MACHINE_GUEST_BINARY=${NEOVEX_MACHINE_GUEST_BINARY}" )
+  fi
+  if [[ -n "${NEOVEX_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then
+    start_cmd+=( "NEOVEX_MACHINE_API_READY_TIMEOUT_SECS=${NEOVEX_MACHINE_API_READY_TIMEOUT_SECS}" )
+  fi
+  start_cmd+=(
     "${neovex_bin}"
     machine
     start

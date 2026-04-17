@@ -36,11 +36,17 @@ Use the repo docs for architecture and behavior details:
   directly to `docs/reference/microvm-service-baseline.md` after the three
   docs above. Open the archived plans only when a task needs historical
   execution detail or exact closeout evidence.
-- For the current macOS developer-machine workstream, open
-  `docs/plans/macos-machine-support-plan.md` after the microVM baseline.
-  That plan is the current active execution control plane; resume the earliest
-  `MAC*` item that is not `done`, or continue any item already marked
-  `in_progress`, before starting new macOS scope.
+- For current macOS developer-machine behavior, open
+  `docs/reference/macos-machine-flow.md` after the microVM baseline.
+  Open `docs/plans/archive/macos-machine-support-plan.md` only when a task
+  needs the historical MAC1-MAC7 execution record or exact proof-bundle paths.
+- For shared machine-lifecycle hardening, enterprise machine-management
+  reliability, or Windows-provider groundwork that reuses the existing machine
+  manager seams, open `docs/plans/machine-lifecycle-hardening-plan.md` after
+  the microVM baseline. That plan is the active shared control plane for
+  machine robustness; resume the earliest `MLH*` item that is not `done`, or
+  continue any item already marked `in_progress`, before starting new shared
+  machine-hardening scope.
 
 ## Context Window Discipline
 
@@ -51,14 +57,19 @@ Use the repo docs for architecture and behavior details:
   docs. Only load the archived plans if the task genuinely needs historical
   verification detail or phase-by-phase context.
 - For macOS developer-machine work, open
-  `docs/plans/macos-machine-support-plan.md` after the microVM baseline and
-  reread its `Current Assessed State`, `Current Review Findings`,
-  `Feature Preservation Matrix`, `Control Plan Rules`,
+  `docs/reference/macos-machine-flow.md` after the microVM baseline.
+  Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
+  the historical MAC1-MAC7 execution record, exact real-host proof paths, or
+  phase-by-phase closeout context.
+- For shared machine-lifecycle hardening work, open
+  `docs/plans/machine-lifecycle-hardening-plan.md` after the microVM baseline
+  and reread its `Current Assessed State`, `Current Review Findings`,
+  `Podman Alignment Matrix`, `Control Plan Rules`,
   `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log`
   before changing code.
-- For that workstream, treat the macOS plan plus the current git worktree as
-  the durable progress state between compactions. After each meaningful work
-  burst, update the plan ledger and execution log in the same change set.
+- If work spans a platform plan and the lifecycle hardening plan, treat the
+  platform plan as the architecture owner and the lifecycle plan as the shared
+  reliability owner; update both ledgers when both materially advance.
 - Treat the current git worktree plus the owning active plan, when there is
   one, as progress state. Do not rely on chat history to remember where work
   stopped.

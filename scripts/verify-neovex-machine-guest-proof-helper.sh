@@ -7,6 +7,17 @@ tmp_base="${tmp_base%/}"
 tmp_dir="$(mktemp -d "${tmp_base}/neovex-machine-guest-proof-verify.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
 trap 'rm -rf "${tmp_dir}"' EXIT
+expected_neovex_version="$(
+  sed -n 's/^version = "\(.*\)"$/\1/p' \
+    "${repo_root}/crates/neovex-bin/Cargo.toml" \
+    | head -n1
+)"
+
+if [[ -z "${expected_neovex_version}" ]]; then
+  echo "failed to resolve expected neovex version from crates/neovex-bin/Cargo.toml" >&2
+  exit 70
+fi
+export EXPECTED_NEOVEX_VERSION="${expected_neovex_version}"
 
 home_dir="${tmp_dir}/home"
 runtime_root="${tmp_dir}/runtime-root"
@@ -45,7 +56,7 @@ OUT
     rendered="$*"
     case "${rendered}" in
       "/usr/local/bin/neovex --version")
-        echo "neovex 0.1.3"
+        echo "neovex ${EXPECTED_NEOVEX_VERSION}"
         ;;
       *"sha256sum /usr/local/bin/neovex"*)
         echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /usr/local/bin/neovex"
@@ -55,8 +66,8 @@ OUT
 present buildah /usr/bin/buildah
 present conmon /usr/bin/conmon
 present crun /usr/bin/crun
-present netavark /usr/bin/netavark
-present aardvark-dns /usr/libexec/aardvark-dns
+present netavark /usr/libexec/podman/netavark
+present aardvark-dns /usr/libexec/podman/aardvark-dns
 present fuse-overlayfs /usr/bin/fuse-overlayfs
 OUT
         ;;
@@ -78,7 +89,7 @@ ActiveState=active
 SubState=running
 OUT
         ;;
-      *"findmnt --noheadings --output TARGET,SOURCE,FSTYPE,OPTIONS -T '/Users' || stat '/Users'"*)
+      *"findmnt --noheadings --output TARGET,SOURCE,FSTYPE,OPTIONS -T \"/Users\" || stat \"/Users\""*)
         echo "/Users neovex-users virtiofs rw,nosuid,nodev"
         ;;
       *"GET /healthz HTTP/1.0"*)
@@ -141,6 +152,7 @@ do
 done
 
 grep -F "image.artifact                     ${image_path}" "${summary_file}" >/dev/null
+grep -F "guest.binary_path                  /usr/local/bin/neovex" "${summary_file}" >/dev/null
 grep -E "^capture\\.machine_status[[:space:]]+ok path=${output_dir}/machine-status.txt cmd=${output_dir}/machine-status-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.guest_neovex_version[[:space:]]+ok path=${output_dir}/guest-neovex-version.txt cmd=${output_dir}/guest-neovex-version-command.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.guest_neovex_sha256[[:space:]]+ok path=${output_dir}/guest-neovex-sha256.txt cmd=${output_dir}/guest-neovex-sha256-command.txt$" "${summary_file}" >/dev/null
@@ -149,7 +161,7 @@ grep -E "^artifact\\.machine_log_tail[[:space:]]+present path=${runtime_root}/de
 grep -F "result                             captured" "${summary_file}" >/dev/null
 
 grep -F "manager: ready" "${output_dir}/machine-status.txt" >/dev/null
-grep -F "neovex 0.1.3" "${output_dir}/guest-neovex-version.txt" >/dev/null
+grep -F "neovex ${expected_neovex_version}" "${output_dir}/guest-neovex-version.txt" >/dev/null
 grep -F "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /usr/local/bin/neovex" "${output_dir}/guest-neovex-sha256.txt" >/dev/null
 grep -F "present buildah /usr/bin/buildah" "${output_dir}/guest-required-binaries.txt" >/dev/null
 grep -F "SubState=listening" "${output_dir}/guest-neovex-socket-status.txt" >/dev/null

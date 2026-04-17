@@ -3,18 +3,24 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use neovex::{Error, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec};
+use neovex::{
+    Error, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec, TenantId,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::protocol::{
     MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
+    MachineApiServiceProcessSnapshot, MachineApiServiceProcessSnapshotResponse,
     MachineApiServiceSandboxBuildStartRequest, MachineApiServiceSandboxImageStartRequest,
-    MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxStartResponse,
-    MachineApiServiceSandboxStopResponse,
+    MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
+    MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
+    MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
+    MachineApiServiceSandboxSummary,
 };
 
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
+const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(test)]
 const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
@@ -22,6 +28,8 @@ const HEALTHZ_PATH: &str = "/healthz";
 const CAPABILITIES_PATH: &str = "/v1/machine-api/capabilities";
 const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
 const BUILD_START_PATH: &str = "/v1/machine-api/service-sandboxes/build-start";
+const LIST_PATH: &str = "/v1/machine-api/service-sandboxes";
+const CURRENT_PATH: &str = "/v1/machine-api/service-sandboxes/current";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -107,6 +115,49 @@ impl MachineApiClient {
         }
     }
 
+    pub(crate) fn list_service_sandboxes(
+        &self,
+        tenant_id: Option<&TenantId>,
+    ) -> Result<Vec<MachineApiServiceSandboxSummary>, Error> {
+        let path = tenant_id
+            .map(|tenant_id| format!("{LIST_PATH}?tenant_id={tenant_id}"))
+            .unwrap_or_else(|| LIST_PATH.to_owned());
+        self.get_json::<MachineApiServiceSandboxListResponse>(&path)
+            .map(|response| response.sandboxes)
+    }
+
+    pub(crate) fn inspect_current_service_sandbox(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Result<MachineApiServiceSandboxLookupResponse, Error> {
+        self.get_json(&format!(
+            "{CURRENT_PATH}?tenant_id={tenant_id}&service_name={service_name}"
+        ))
+    }
+
+    pub(crate) fn read_service_sandbox_log_chunk(
+        &self,
+        sandbox_id: &SandboxId,
+        offset: u64,
+    ) -> Result<MachineApiServiceSandboxLogChunkResponse, Error> {
+        self.get_json(&format!(
+            "/v1/machine-api/service-sandboxes/{}/logs?offset={offset}",
+            sandbox_id.as_str()
+        ))
+    }
+
+    pub(crate) fn service_process_snapshot(
+        &self,
+        sandbox_id: &SandboxId,
+    ) -> Result<MachineApiServiceProcessSnapshot, Error> {
+        self.get_json::<MachineApiServiceProcessSnapshotResponse>(&format!(
+            "/v1/machine-api/service-sandboxes/{}/ps",
+            sandbox_id.as_str()
+        ))
+        .map(|response| response.snapshot)
+    }
+
     fn get_json<T>(&self, path: &str) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -140,7 +191,7 @@ impl MachineApiClient {
             "POST",
             path,
             Some(&encoded),
-            self.io_timeout,
+            SOCKET_MUTATION_IO_TIMEOUT,
         )?;
         let body = parse_http_json_body(&response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
@@ -156,8 +207,13 @@ impl MachineApiClient {
     where
         T: DeserializeOwned,
     {
-        let response =
-            read_unix_http_request(&self.socket_path, "POST", path, None, self.io_timeout)?;
+        let response = read_unix_http_request(
+            &self.socket_path,
+            "POST",
+            path,
+            None,
+            SOCKET_MUTATION_IO_TIMEOUT,
+        )?;
         let body = parse_http_json_body(&response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
@@ -193,6 +249,8 @@ fn read_unix_http_request(
     if !body.is_empty() {
         request.push_str("Content-Type: application/json\r\n");
         request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    } else if method == "POST" {
+        request.push_str("Content-Length: 0\r\n");
     }
     request.push_str("\r\n");
     stream.write_all(request.as_bytes()).map_err(|error| {
@@ -287,9 +345,11 @@ fn parse_http_json_body<'a>(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::os::unix::net::UnixListener as StdUnixListener;
+    use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -301,11 +361,15 @@ mod tests {
         TenantId,
     };
     use neovex_sandbox::SandboxFuture;
+    use neovex_sandbox::backends::container::{
+        ContainerLaunchMode, ContainerSandboxBackend, ContainerSandboxBackendConfig,
+    };
     use tempfile::{Builder, TempDir};
 
     use super::MachineApiClient;
     use crate::machine::api::{
-        MachineApiListenMode, MachineApiState, bind_direct_listener, serve_machine_api,
+        MachineApiListenMode, MachineApiState, bind_direct_listener,
+        default_guest_helper_binary_dirs, serve_machine_api,
     };
     use crate::machine::protocol::{MachineApiHealthResponse, MachineApiServiceExecutionMode};
 
@@ -318,6 +382,7 @@ mod tests {
             control_data_dir: temp_dir.path().join("control"),
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
+            helper_binary_dirs: default_guest_helper_binary_dirs(),
             service_backend: None,
             machine_port_forwarder: None,
         };
@@ -375,6 +440,7 @@ mod tests {
             control_data_dir: temp_dir.path().join("control"),
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
+            helper_binary_dirs: default_guest_helper_binary_dirs(),
             service_backend: Some(Arc::new(StubMachineApiSandboxBackend::default())),
             machine_port_forwarder: None,
         };
@@ -448,6 +514,85 @@ mod tests {
             .expect("machine API server should shut down cleanly");
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn client_reads_list_current_logs_and_process_snapshot_from_machine_api() {
+        let temp_dir = short_socket_tempdir();
+        let control_data_dir = temp_dir.path().join("control");
+        let manifest_state_root = control_data_dir
+            .join("service-sandboxes")
+            .join("container")
+            .join("state");
+        let socket_path = temp_dir.path().join("neovex.sock");
+        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+        let mut backend_config = ContainerSandboxBackendConfig::under_root(
+            control_data_dir.join("service-sandboxes").join("container"),
+        );
+        backend_config.launch_mode = ContainerLaunchMode::PlanOnly;
+        let state = MachineApiState {
+            control_data_dir,
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
+            helper_binary_dirs: default_guest_helper_binary_dirs(),
+            service_backend: Some(Arc::new(ContainerSandboxBackend::new(backend_config))),
+            machine_port_forwarder: None,
+        };
+        write_fake_runtime_binaries(temp_dir.path());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let server = tokio::spawn(serve_machine_api(listener, state, async move {
+            let _ = shutdown_rx.await;
+        }));
+        let client = MachineApiClient::new_for_test(socket_path);
+        let _ = wait_for_health(&client);
+
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let sandbox_id = SandboxId::new("db-01aaa");
+        let container_dir = write_container_manifest(
+            manifest_state_root.as_path(),
+            sandbox_id.as_str(),
+            tenant_id.as_str(),
+            "db",
+            SandboxStatus::Ready,
+        );
+        fs::write(container_dir.join("ctr.log"), "guest log line\n")
+            .expect("guest ctr.log should write");
+        fs::write(container_dir.join("pidfile"), "2002\n").expect("pidfile should write");
+        fs::write(container_dir.join("conmon.pid"), "1001\n").expect("conmon pidfile should write");
+
+        let summaries = client
+            .list_service_sandboxes(Some(&tenant_id))
+            .expect("sandbox list should succeed");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].service_name, "db");
+        assert_eq!(summaries[0].sandbox_id, sandbox_id);
+
+        let current = client
+            .inspect_current_service_sandbox(&tenant_id, "db")
+            .expect("current sandbox lookup should succeed")
+            .details
+            .expect("current sandbox should resolve");
+        assert_eq!(current.summary.sandbox_id, sandbox_id);
+        assert!(current.log_paths.ctr_log.ends_with("ctr.log"));
+
+        let logs = client
+            .read_service_sandbox_log_chunk(&sandbox_id, 0)
+            .expect("log chunk should read");
+        assert_eq!(logs.chunk, "guest log line\n");
+        assert_eq!(logs.next_offset, 15);
+
+        let snapshot = client
+            .service_process_snapshot(&sandbox_id)
+            .expect("process snapshot should read");
+        assert_eq!(snapshot.runtime_pid, Some(2002));
+        assert_eq!(snapshot.conmon_pid, Some(1001));
+
+        let _ = shutdown_tx.send(());
+        server
+            .await
+            .expect("machine API server task should join")
+            .expect("machine API server should shut down cleanly");
+    }
+
     #[test]
     fn client_reports_missing_socket_cleanly() {
         let client = MachineApiClient::new("/tmp/neovex-missing.sock");
@@ -463,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_service_sandbox_sends_a_bodyless_post_request() {
+    fn stop_service_sandbox_sends_a_content_length_zero_post_request() {
         let temp_dir = short_socket_tempdir();
         let socket_path = temp_dir.path().join("neovex.sock");
         let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
@@ -520,8 +665,8 @@ mod tests {
             "{request}"
         );
         assert!(
-            !request.contains("Content-Length"),
-            "bodyless stop request should not advertise a content length: {request}"
+            request.contains("Content-Length: 0\r\n"),
+            "bodyless stop request should advertise Content-Length: 0: {request}"
         );
         assert!(
             !request.contains("{}"),
@@ -577,6 +722,117 @@ mod tests {
             .prefix("neovex-mac-")
             .tempdir_in("/tmp")
             .expect("short temp dir should exist")
+    }
+
+    fn write_container_manifest(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        service_name: &str,
+        status: SandboxStatus,
+    ) -> std::path::PathBuf {
+        let container_dir = state_root.join("containers").join(sandbox_id);
+        let exit_dir = state_root.join("exits");
+        let persist_dir = state_root.join("persist").join(sandbox_id);
+        let bundle_dir = state_root.join("bundles").join(sandbox_id);
+        let network_root = state_root.join("networks");
+        let run_root = network_root.join("run");
+        let netns_root = network_root.join("netns");
+        let container_network_dir = network_root.join("containers").join(sandbox_id);
+        fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
+        fs::create_dir_all(&exit_dir).expect("exit directory should exist");
+        fs::create_dir_all(&persist_dir).expect("persist directory should exist");
+        fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
+        fs::create_dir_all(&container_network_dir)
+            .expect("container network directory should exist");
+        let handle = SandboxHandle::new(
+            SandboxId::new(sandbox_id),
+            service_name,
+            SandboxBackendKind::Container,
+            status,
+            vec![PublishedEndpoint::new(
+                "http",
+                PublishedEndpointProtocol::Tcp,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+            )],
+        );
+        let manifest = serde_json::json!({
+            "handle": handle,
+            "spec": {
+                "tenant_id": tenant_id,
+                "name": service_name,
+                "backend": "container",
+                "filesystem": {
+                    "rootfs": "/tmp/rootfs",
+                    "readonly": true
+                },
+                "process": {
+                    "args": ["/bin/server"],
+                    "env": ["PATH=/usr/bin"],
+                    "cwd": "/",
+                    "terminal": false
+                },
+                "resources": neovex::SandboxResourceLimits::default(),
+                "lifecycle": {
+                    "restart_policy": "never"
+                },
+                "port_bindings": [SandboxPortBinding::tcp("http", 18080, 8080)]
+            },
+            "image_metadata": {},
+            "buildah_container": null,
+            "bundle_layout": {
+                "bundle_dir": bundle_dir,
+                "config_path": bundle_dir.join("config.json")
+            },
+            "conmon_layout": {
+                "state_root": state_root,
+                "container_state_dir": container_dir,
+                "exit_dir": exit_dir,
+                "persist_dir": persist_dir,
+                "ctr_log": container_dir.join("ctr.log"),
+                "oci_log": container_dir.join("oci.log"),
+                "pidfile": container_dir.join("pidfile"),
+                "conmon_pidfile": container_dir.join("conmon.pid"),
+                "exit_status_file": exit_dir.join(sandbox_id),
+                "manifest_path": container_dir.join("manifest.json")
+            },
+            "network_layout": {
+                "network_root": network_root,
+                "run_root": run_root,
+                "netns_root": netns_root,
+                "container_network_dir": container_network_dir,
+                "netns_path": netns_root.join(sandbox_id),
+                "status_path": container_network_dir.join("status.json")
+            },
+            "conmon_launch": {
+                "create_command": {
+                    "program": "/bin/true",
+                    "args": []
+                },
+                "state_command": {
+                    "program": "/bin/true",
+                    "args": []
+                },
+                "start_command": {
+                    "program": "/bin/true",
+                    "args": []
+                },
+                "delete_command": {
+                    "program": "/bin/true",
+                    "args": []
+                }
+            },
+            "last_exit_code": null,
+            "launch_mode": "plan_only",
+            "shutdown_requested": matches!(status, SandboxStatus::Stopped),
+            "status": status
+        });
+        fs::write(
+            container_dir.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+        container_dir
     }
 
     #[derive(Default)]
