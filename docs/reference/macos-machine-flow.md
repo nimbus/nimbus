@@ -8,6 +8,13 @@ Current source-backed reference for how Neovex:
 - splits control-plane responsibility between the macOS host and the Linux
   guest
 
+The release ownership and host-consumption paths below are the current
+checked-in `neovex-machine-os` flow. The settled current macOS contract is
+narrower: use Podman's published machine image by pinned immutable reference or
+digest for the shipped macOS bring-up path, and layer Neovex guest bootstrap
+on top. A Neovex-owned image remains later follow-on work rather than the
+current shipped contract.
+
 Reviewed against:
 
 - `.github/workflows/release.yml`
@@ -29,21 +36,31 @@ The current macOS architecture is a hybrid control plane:
   `ctx.services.*` activation path
 - the Linux guest owns a narrow machine API and standard-container execution
   lane for service workloads
-- the guest VM image is built and published by
-  `agentstation/neovex-machine-os`
-- the host `neovex` binary consumes that image by version-pinned GHCR
-  reference
+- the current bring-up image comes from Podman's published machine-image
+  stream on Quay, while `agentstation/neovex-machine-os` remains the later
+  image-ownership track
+- the host `neovex` release owns the desired Podman image reference/digest and
+  the matching Linux guest `neovex` asset for the local host architecture
 
-The default image reference recorded by `neovex machine init` is:
+The checked-in macOS default image reference recorded by `neovex machine init`
+is currently:
 
 ```text
-docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}
+docker://quay.io/podman/machine-os@sha256:02ce56eb3a353f3d909eeb6742db7052e13fcad01937ef9536d41178c4865000
 ```
 
-That version pin is intentional: the default macOS guest image should track
-the matching host binary release.
+Current contract note:
 
-## Flow 1: Host Release To Guest Image Release
+- Podman's published image is the current bring-up contract for macOS
+- the host `neovex` release owns the desired image digest and the
+  matching Linux guest `neovex` binary asset
+- `neovex machine start` is the primary convergence path: cache missing
+  artifacts, boot or rebuild from the desired image, sync the guest binary by
+  hash, and validate the forwarded machine API before reporting success
+- Neovex-owned image publishing remains later follow-on work instead of the
+  current shipped macOS contract
+
+## Flow 1: Current Checked-In Host Release To Guest Image Release
 
 ```mermaid
 flowchart TD
@@ -54,9 +71,9 @@ flowchart TD
     D --> F["create agentstation/neovex GitHub Release"]
     F --> G["dispatch native agentstation/neovex-machine-os release<br/>release_tag=vX.Y.Z publish=true"]
     G --> H["neovex-machine-os build workflow"]
-    H --> I["download neovex linux arm64 binary"]
-    I --> J["build Fedora bootc guest image"]
-    J --> K["emit raw disk and neovex-machine-os.raw.gz"]
+    H --> I["build/publish machine-os raw guest artifact<br/>current checked-in repo flow"]
+    I --> J["emit bootable raw-image metadata for the macOS release flow"]
+    J --> K["prove parity against Podman machine image when needed"]
     K --> L["wrap raw disk as OCI layout<br/>annotations include disktype=raw"]
     L --> M["publish to GHCR<br/>ghcr.io/agentstation/neovex-machine-os:vX.Y.Z"]
     M --> N["create neovex-machine-os GitHub Release"]
@@ -82,25 +99,42 @@ The host repo uses the machine-os workflow twice for different reasons:
 That keeps the release ownership aligned with the repo boundary, which mirrors
 Podman's `containers/podman` plus `containers/podman-machine-os` split.
 
-## Flow 2: How The Guest Image Is Packaged And Uploaded
+## Flow 2: Current Checked-In Machine Image Packaging Flow
 
 ```mermaid
 flowchart LR
-    A["neovex linux arm64 binary"] --> B["machine-os build.sh"]
-    B --> C["bootc-based guest image"]
-    C --> D["raw disk"]
-    D --> E["neovex-machine-os.raw.gz"]
-    E --> F["package-oci.sh"]
-    F --> G["OCI image layout"]
-    G --> H["manifest annotations"]
-    H --> I["disktype=raw"]
-    H --> J["org.opencontainers.image.source"]
-    H --> K["io.neovex.machine.attestation.repository"]
-    H --> L["io.neovex.machine.neovex.version"]
-    G --> M["publish.sh"]
+    A["Current neovex-machine-os recipe"] --> B["current repo-owned machine artifact packaging flow"]
+    B --> C["package-oci.sh"]
+    C --> D["OCI image layout"]
+    D --> E["manifest annotations"]
+    E --> I["disktype=raw"]
+    E --> J["org.opencontainers.image.source"]
+    E --> K["io.neovex.machine.attestation.repository"]
+    E --> L["io.neovex.machine.neovex.version"]
+    D --> M["publish.sh"]
     M --> N["skopeo copy"]
     N --> O["docker://ghcr.io/agentstation/neovex-machine-os:vX.Y.Z"]
 ```
+
+Current decision:
+
+- Podman's published machine image is the current macOS bring-up contract
+- Neovex guest bootstrap is layered on top of that image for the current
+  closeout path
+- the checked-in `neovex-machine-os` packaging flow above is therefore future
+  image-ownership work, not the current shipped macOS contract
+- any separate `fedora-bootc` image pipeline work in
+  `agentstation/neovex-machine-os` remains a future supply-side direction, not
+  the current shipped macOS contract
+
+Current implementation note:
+
+- as of 2026-04-16, the checked-in macOS default already points at the pinned
+  immutable Podman digest above
+- the full start-time convergence contract has now been proved end to end,
+  including guest-binary sync, forwarded machine-API readiness, host service
+  control, runtime `ctx.services.<name>.port`, and the supported recreate
+  drill on isolated roots
 
 ### Important Packaging Contract
 
@@ -121,36 +155,43 @@ image registry instead of inventing a separate image service.
 ```mermaid
 flowchart TD
     A["neovex machine init"] --> B["config.json records image source"]
-    B --> C["docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}"]
+    B --> C["docker://quay.io/podman/machine-os:<pinned-ref-or-digest>"]
     C --> D["neovex machine start"]
-    D --> E["resolve_bootable_image_path()"]
-    E --> F{"image source kind"}
-    F -->|OciReference| G["materialize_oci_image()"]
-    F -->|HttpUrl| H["materialize_http_image()"]
-    F -->|LocalDisk| I["use local disk directly"]
+    D --> E["converge desired artifacts"]
+    E --> F["ensure machine image artifact is cached"]
+    E --> G["ensure matching linux guest neovex asset is cached"]
+    F --> H["resolve_bootable_image_path()"]
+    H --> I{"image source kind"}
+    I -->|OciReference| J["materialize_oci_image()"]
+    I -->|HttpUrl| K["materialize_http_image()"]
+    I -->|LocalDisk| L["use local disk directly"]
 
-    G --> J["pull OCI manifest/index"]
-    J --> K["select linux current-arch manifest with disktype=raw"]
-    K --> L["pull one disk layer blob into image cache"]
-    L --> M["verify digest"]
-    M --> N["log OCI metadata and check attestation hints"]
-    N --> O["decompress cached blob if raw.gz or raw.zst"]
-    O --> P["persist materialized raw disk"]
+    J --> M["pull OCI manifest/index"]
+    M --> N["select linux current-arch manifest with disktype=raw"]
+    N --> O["pull one disk layer blob into image cache"]
+    O --> P["verify digest"]
+    P --> Q["decompress cached blob if raw.gz or raw.zst"]
+    Q --> R["persist materialized raw disk"]
 
-    H --> Q["download to temp file"]
-    Q --> R["decompress gzip if needed"]
-    R --> P
+    K --> S["download to temp file"]
+    S --> T["decompress gzip if needed"]
+    T --> R
 
-    I --> S["launch uses local raw disk path"]
-    P --> T["krunkit boots from materialized raw disk"]
+    L --> U["launch uses local raw disk path"]
+    R --> V["boot or rebuild machine from desired image"]
+    U --> V
+    V --> W["sync guest /usr/local/bin/neovex by hash"]
+    W --> X["validate forwarded machine API readiness"]
+    X --> Y["krunkit-backed machine is ready"]
 ```
 
 ### Where The Image Comes From
 
-By default, it comes from GHCR:
+By default on the current macOS contract, it comes from Podman's
+published machine-image stream:
 
 ```text
-ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}
+quay.io/podman/machine-os
 ```
 
 The host supports three source kinds:
@@ -159,7 +200,9 @@ The host supports three source kinds:
 - `http(s)` URL
 - local raw disk path
 
-The OCI reference is the canonical release path.
+The OCI reference is the canonical release path. The target contract is an
+immutable pinned Podman digest owned by the host `neovex` release, not a
+floating tag.
 
 ### Where The Image Lands On Disk
 
@@ -239,7 +282,7 @@ flowchart TD
     H --> I["guest /run/neovex/neovex.sock"]
     I --> J["guest neovex machine api"]
     J --> K["guest ContainerSandboxBackend"]
-    K --> L["buildah + conmon + crun + netavark + aardvark-dns"]
+    K --> L["OCI materializer + conmon + crun + netavark + aardvark-dns"]
     L --> M["guest standard Linux container"]
     M --> N["published localhost port through gvproxy"]
     N --> O["host returns bound service endpoint"]
@@ -258,7 +301,7 @@ Host:
 Guest:
 
 - machine API
-- build-backed and image-backed service sandbox execution
+- image-backed service sandbox execution through in-process OCI materialization
 - standard-container runtime binaries
 - published port plumbing for service workloads
 
@@ -289,18 +332,45 @@ Linux production:
 - no outer machine VM
 - service workloads can be real per-service microVMs
 
+## Proof Helpers
+
+The repo now owns two checked-in macOS proof collectors for this flow:
+
+- `make collect-neovex-machine-guest-proof`
+  captures guest-image and guest machine-API proof through `neovex machine ssh`
+- `make collect-neovex-machine-service-proof`
+  captures host `<machine>-api.sock` health/capabilities, direct forwarded
+  machine-API sandbox listing, host `neovex service up/list/inspect/ps/logs/down`,
+  and an optional localhost published-port probe
+
+The repo also owns two checked-in operator drill helpers for the same contract:
+
+- `make collect-neovex-machine-diagnostics`
+  captures the persisted config/state records plus the flat short runtime-root
+  socket, pid, and log inventory for an isolated machine root
+- `make recreate-neovex-machine`
+  performs the supported stop/remove/init/start repair drill on isolated roots;
+  by default it follows the current pinned machine-image contract, while
+  `IMAGE=...` remains an explicit diagnostic override only
+
 ## Practical Summary
 
 If you want the shortest accurate explanation:
 
-1. `neovex` releases the host binary.
-2. That release triggers a matching `neovex-machine-os` guest-image release.
-3. The guest image is published to GHCR as a raw-disk OCI artifact tagged with
-   the same version.
-4. `neovex machine init` records that version-pinned GHCR reference.
-5. `neovex machine start` pulls the OCI artifact, selects the `disktype=raw`
-   layer, materializes a local raw disk, and boots it with `krunkit`.
+1. A `neovex` host release owns two desired macOS artifacts: a pinned Podman
+   machine-image reference or digest and a matching Linux guest `neovex`
+   binary asset for the local host architecture.
+2. `neovex machine init` records the machine contract; the checked-in default
+   currently uses Podman's machine image stream on Quay.
+3. `neovex machine start` checks the local caches, pulls any missing image or
+   guest-binary artifact, and materializes the bootable raw disk.
+4. If the machine's recorded base image already matches the desired digest, the
+   host reuses the machine; if it does not match, the host performs a
+   controlled rebuild or recreate from the desired image.
+5. After boot, the host hash-checks and syncs
+   `/usr/local/bin/neovex` inside the guest. On FCOS that is the writable
+   `/var/usrlocal/bin/neovex` path with executable labeling, and then the host
+   validates the forwarded machine API.
 6. The host Neovex server talks to the guest machine API through a forwarded
    Unix socket, and the guest starts standard Linux containers for declared
    services.
-

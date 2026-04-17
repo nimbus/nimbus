@@ -1,7 +1,12 @@
 use neovex::SandboxBackendKind;
 #[cfg(unix)]
-use neovex::{SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec};
+use neovex::{
+    PublishedEndpoint, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
+    SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits, SandboxStatus, TenantId,
+};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::path::PathBuf;
 
 #[cfg(unix)]
 pub(crate) const PROTOCOL_VERSION: &str = "v1alpha1";
@@ -71,6 +76,89 @@ pub(crate) struct MachineApiServiceSandboxInspectResponse {
 pub(crate) struct MachineApiServiceSandboxStopResponse {
     pub(crate) sandbox_id: SandboxId,
     pub(crate) stopped: bool,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceSandboxSummary {
+    pub(crate) sandbox_id: SandboxId,
+    pub(crate) tenant_id: TenantId,
+    pub(crate) service_name: String,
+    pub(crate) status: SandboxStatus,
+    pub(crate) published_endpoints: Vec<PublishedEndpoint>,
+    pub(crate) restart_count: u32,
+    pub(crate) last_exit_code: Option<i32>,
+    pub(crate) shutdown_requested: bool,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceSandboxLogPaths {
+    pub(crate) ctr_log: PathBuf,
+    pub(crate) oci_log: PathBuf,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceSandboxDetails {
+    pub(crate) summary: MachineApiServiceSandboxSummary,
+    pub(crate) resources: SandboxResourceLimits,
+    pub(crate) lifecycle: SandboxLifecycleSpec,
+    pub(crate) port_bindings: Vec<SandboxPortBinding>,
+    pub(crate) log_paths: MachineApiServiceSandboxLogPaths,
+    pub(crate) state_dir: PathBuf,
+    pub(crate) manifest_path: PathBuf,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceSandboxListResponse {
+    pub(crate) sandboxes: Vec<MachineApiServiceSandboxSummary>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceSandboxLookupResponse {
+    pub(crate) tenant_id: TenantId,
+    pub(crate) service_name: String,
+    pub(crate) details: Option<MachineApiServiceSandboxDetails>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceSandboxLogChunkResponse {
+    pub(crate) sandbox_id: SandboxId,
+    pub(crate) offset: u64,
+    pub(crate) next_offset: u64,
+    pub(crate) chunk: String,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceProcessSnapshot {
+    pub(crate) sandbox_id: SandboxId,
+    pub(crate) tenant_id: TenantId,
+    pub(crate) service_name: String,
+    pub(crate) status: SandboxStatus,
+    pub(crate) runtime_pidfile: PathBuf,
+    pub(crate) conmon_pidfile: PathBuf,
+    pub(crate) runtime_pid: Option<u32>,
+    pub(crate) conmon_pid: Option<u32>,
+    pub(crate) process_rows: Vec<MachineApiServiceProcessRow>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceProcessRow {
+    pub(crate) pid: u32,
+    pub(crate) ppid: u32,
+    pub(crate) command: String,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiServiceProcessSnapshotResponse {
+    pub(crate) snapshot: MachineApiServiceProcessSnapshot,
 }
 
 #[cfg(unix)]

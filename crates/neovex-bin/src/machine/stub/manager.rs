@@ -45,6 +45,7 @@ pub(super) fn start_machine(
 
 pub(super) fn stop_machine(
     paths: &MachinePaths,
+    _config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
     if matches!(

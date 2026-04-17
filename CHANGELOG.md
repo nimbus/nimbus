@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-04-17
+
+### CI/CD
+
+- Verify release tags against crate, package, lockfile, and changelog versions by @jackspirou
+
+### Documentation
+
+- Archive the completed macOS machine support plan and promote the stable macOS flow reference by @jackspirou
+
+### Fixed
+
+- Align shipped `neovex --version` metadata with the next release tag across Rust crates and JS workspaces by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.8...v0.1.9
+
 ## [0.1.8] - 2026-04-16
 
 ### CI/CD

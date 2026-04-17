@@ -9,6 +9,7 @@ phase-by-phase closeout evidence live in the archived plans:
 - [`docs/plans/archive/vmm-infrastructure-plan.md`](../plans/archive/vmm-infrastructure-plan.md)
 - [`docs/plans/archive/microvm-runtime-plan.md`](../plans/archive/microvm-runtime-plan.md)
 - [`docs/plans/archive/service-control-plane-plan.md`](../plans/archive/service-control-plane-plan.md)
+- [`docs/plans/archive/macos-machine-support-plan.md`](../plans/archive/macos-machine-support-plan.md)
 
 ## Scope
 
@@ -59,7 +60,7 @@ macOS host
 Neovex does not add a second host-side orchestration path on macOS, and it
 does not rely on nested per-service microVMs there for v1.
 
-Important current gap:
+Current macOS completion notes:
 
 - the workspace now carries a generic backend-selection seam (`Container` plus
   `Krun`) and Compose/control-plane carry-through for backend choice
@@ -67,13 +68,18 @@ Important current gap:
 - the host server startup path can now select a forwarded guest machine-API
   backend for container-backed Compose projects on macOS when the guest
   machine API advertises `service_execution_ready`
-- the explicit `neovex service ...` lifecycle commands are still krun-shaped
-  today and continue to reject container-only or mixed-backend project-wide
-  Compose operations until the MAC6 host-command path lands
-- so the macOS developer target no longer lacks the remote backend seam, but
-  it still needs the live guest artifact, forwarded-socket proof, and
-  transparent host command UX before the Podman-aligned macOS flow can be
-  called complete
+- the explicit `neovex service ...` lifecycle commands now share that
+  forwarded guest path on macOS for container-backed projects: `up`, `down`,
+  `list`, `inspect`, `logs`, and `ps` talk to the guest machine API instead of
+  host-local krun state, while Linux production and krun-backed projects stay
+  unchanged
+- mixed-backend project-wide operations still reject until the repo chooses a
+  broader multi-backend UX contract, so operators must target one backend
+  family per project-wide command
+- the current macOS developer-machine contract has now landed the live guest
+  artifact, forwarded-socket proof, localhost published-port proof, and
+  end-to-end real-host validation; use the archived macOS machine-support
+  plan for the exact bundle paths and execution history
 
 ## Transport And Probe Semantics
 
@@ -181,6 +187,8 @@ Supported CLI commands today:
 - `neovex machine status`
 - `neovex machine ssh`
 - `neovex machine rm`
+- `neovex machine os apply`
+- `neovex machine os upgrade`
 
 Server startup now uses the explicit `neovex serve` subcommand. `service` is
 the managed-service namespace. The current command taxonomy is:
@@ -189,10 +197,12 @@ the managed-service namespace. The current command taxonomy is:
 - `neovex service ...` for managed service lifecycle
 - `neovex machine ...` for macOS machine lifecycle
 
-The current `machine` surface includes the CLI/state-model foundation plus the
-first direct `krunkit` + `gvproxy` host-manager seam. Guest image/bootstrap
-completion, host-local control plumbing, and transparent developer UX remain
-owned by the active macOS machine-support plan.
+The current `machine` surface now includes the direct `krunkit` + `gvproxy`
+host-manager seam, the pinned-Podman-image macOS convergence contract, the
+host-managed guest-`neovex` binary sync path, and the explicit `machine os
+apply` / `machine os upgrade` rollout surfaces. Historical execution detail
+and the exact real-host closeout bundles remain in the archived macOS
+machine-support plan.
 
 ## Key References
 

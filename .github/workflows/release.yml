@@ -21,6 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify tag matches workspace/package versions
+        run: bash scripts/verify-release-version-contract.sh "${{ github.ref_name }}"
+
       - name: Require machine-os release app credentials
         env:
           MACHINE_OS_RELEASE_APP_ID: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}

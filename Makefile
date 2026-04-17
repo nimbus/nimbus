@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof collect-neovex-machine-service-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -67,6 +67,11 @@ bench-libsql-replica-provider:
 deny:
 	$(SINGLE_FLIGHT) --key cargo-deny-check -- cargo deny check
 
+# Verify that release tags, crate/package versions, and changelog entry agree
+verify-release-version-contract:
+	@test -n "$(VERSION)" || (echo "set VERSION=vX.Y.Z or VERSION=X.Y.Z" && exit 1)
+	bash scripts/verify-release-version-contract.sh "$(VERSION)"
+
 # Focused verification harness slice
 verify-harness:
 	bash scripts/verification-harness.sh pr $(if $(SURFACE),$(SURFACE),all)
@@ -129,6 +134,12 @@ collect-neovex-machine-diagnostics:
 collect-neovex-machine-guest-proof:
 	bash scripts/collect-neovex-machine-guest-proof.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(IMAGE),--image "$(IMAGE)",) $(if $(GUEST_VOLUME_PATH),--guest-volume-path "$(GUEST_VOLUME_PATH)",) $(if $(GUEST_SOCKET_PATH),--guest-socket-path "$(GUEST_SOCKET_PATH)",) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",)
 
+# Collect forwarded machine-API and host `neovex service ...` proof from a booted Neovex machine
+collect-neovex-machine-service-proof:
+	@test -n "$(COMPOSE_FILE)" || (echo "set COMPOSE_FILE=/absolute/path/to/compose.yaml" && exit 1)
+	@test -n "$(SERVICE)" || (echo "set SERVICE=<service-name>" && exit 1)
+	bash scripts/collect-neovex-machine-service-proof.sh --compose-file "$(COMPOSE_FILE)" --service "$(SERVICE)" $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(CURL),--curl "$(CURL)",) $(if $(PUBLISHED_URL),--published-url "$(PUBLISHED_URL)",)
+
 # Check whether a Podman/libkrun machine tmp root will overflow Darwin's unix-socket path budget
 check-podman-machine-socket-paths:
 	@test -n "$(MACHINE)" || (echo "set MACHINE=<podman-machine-name>" && exit 1)
@@ -146,8 +157,7 @@ recreate-podman-machine:
 
 # Recreate a Neovex machine with the shipped machine CLI and capture diagnostics artifacts
 recreate-neovex-machine:
-	@test -n "$(IMAGE)" || (echo "set IMAGE=/absolute/path/to/bootable-machine-image" && exit 1)
-	bash scripts/recreate-neovex-machine.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) --image "$(IMAGE)" $(if $(SSH_IDENTITY),--ssh-identity "$(SSH_IDENTITY)",) $(if $(IGNITION_FILE),--ignition-file "$(IGNITION_FILE)",) $(if $(EFI_STORE),--efi-store "$(EFI_STORE)",) $(if $(CPUS),--cpus "$(CPUS)",) $(if $(MEMORY_MIB),--memory-mib "$(MEMORY_MIB)",) $(if $(DISK_GIB),--disk-gib "$(DISK_GIB)",) $(if $(VOLUME),--volume "$(VOLUME)",) $(if $(SKIP_PRE_DIAGNOSTICS),--skip-pre-diagnostics,) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",)
+	bash scripts/recreate-neovex-machine.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(IMAGE),--image "$(IMAGE)",) $(if $(SSH_IDENTITY),--ssh-identity "$(SSH_IDENTITY)",) $(if $(IGNITION_FILE),--ignition-file "$(IGNITION_FILE)",) $(if $(EFI_STORE),--efi-store "$(EFI_STORE)",) $(if $(CPUS),--cpus "$(CPUS)",) $(if $(MEMORY_MIB),--memory-mib "$(MEMORY_MIB)",) $(if $(DISK_GIB),--disk-gib "$(DISK_GIB)",) $(if $(VOLUME),--volume "$(VOLUME)",) $(if $(SKIP_PRE_DIAGNOSTICS),--skip-pre-diagnostics,) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",)
 
 # Prepare a deterministic Linux-host LH1-LH6 execution bundle
 prepare-linux-vmm-validation-bundle:
@@ -210,6 +220,10 @@ verify-neovex-machine-recreate-helper:
 # Verify the Neovex machine guest-proof helper against deterministic fake guest artifacts
 verify-neovex-machine-guest-proof-helper:
 	bash scripts/verify-neovex-machine-guest-proof-helper.sh
+
+# Verify the Neovex machine service-proof helper against deterministic fake host artifacts
+verify-neovex-machine-service-proof-helper:
+	bash scripts/verify-neovex-machine-service-proof-helper.sh
 
 # machine-os build/package/publish targets moved to agentstation/neovex-machine-os
 

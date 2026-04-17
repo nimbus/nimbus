@@ -181,7 +181,7 @@ do
   fi
 done
 
-grep -F "image.path                         ${image_path}" "${summary_file}" >/dev/null
+grep -F "image.source                       ${image_path}" "${summary_file}" >/dev/null
 grep -E "^recreate\\.init[[:space:]]+ok path=.*neovex-machine-init\\.txt$" "${summary_file}" >/dev/null
 grep -E "^recreate\\.start[[:space:]]+ok path=.*neovex-machine-start\\.txt$" "${summary_file}" >/dev/null
 grep -E "^capture\\.post_diagnostics[[:space:]]+ok path=.*post-diagnostics$" "${summary_file}" >/dev/null

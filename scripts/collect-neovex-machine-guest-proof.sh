@@ -27,6 +27,8 @@ options:
                                  (default: <repo>/target/debug/neovex)
   --image <path>                 Optional built guest image artifact path to record
   --guest-volume-path <path>     Guest virtiofs target to prove (default: /Users)
+  --guest-binary-path <path>     Guest neovex binary path
+                                 (default: /usr/local/bin/neovex)
   --guest-socket-path <path>     Guest machine-API socket (default: /run/neovex/neovex.sock)
   --log-lines <count>            Number of host machine-log lines to capture
   -h, --help                     Show this help
@@ -105,6 +107,7 @@ output_dir=""
 neovex_bin="${repo_root}/target/debug/neovex"
 image_artifact=""
 guest_volume_path="/Users"
+guest_binary_path="/usr/local/bin/neovex"
 guest_socket_path="/run/neovex/neovex.sock"
 log_lines=120
 
@@ -136,6 +139,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --guest-volume-path)
       guest_volume_path="${2:?missing guest volume path}"
+      shift 2
+      ;;
+    --guest-binary-path)
+      guest_binary_path="${2:?missing guest binary path}"
       shift 2
       ;;
     --guest-socket-path)
@@ -192,6 +199,7 @@ print_line "runtime.root" "${runtime_root}"
 print_line "runtime.machine_log" "${machine_log}"
 print_line "neovex.bin" "${neovex_bin}"
 print_line "guest.volume_path" "${guest_volume_path}"
+print_line "guest.binary_path" "${guest_binary_path}"
 print_line "guest.socket_path" "${guest_socket_path}"
 print_line "image.artifact" "${image_artifact:-<unspecified>}"
 
@@ -211,7 +219,7 @@ capture_command \
 
 ssh_base=("${base_cmd[@]}" machine ssh --)
 
-version_cmd=("${ssh_base[@]}" /usr/local/bin/neovex --version)
+version_cmd=("${ssh_base[@]}" "${guest_binary_path}" --version)
 capture_command \
   "capture.guest_neovex_version" \
   "${output_dir}/guest-neovex-version-command.txt" \
@@ -220,9 +228,7 @@ capture_command \
 
 version_sha_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  'sha256sum /usr/local/bin/neovex'
+  "/bin/sh -lc 'sha256sum ${guest_binary_path}'"
 )
 capture_command \
   "capture.guest_neovex_sha256" \
@@ -232,15 +238,25 @@ capture_command \
 
 runtime_bins_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  'for bin in buildah conmon crun netavark aardvark-dns fuse-overlayfs; do
-     if path=$(command -v "$bin" 2>/dev/null); then
-       printf "present %s %s\n" "$bin" "$path"
+  "/bin/sh -lc 'helper_dirs=\"/usr/local/libexec/podman /usr/local/lib/podman /usr/libexec/podman /usr/lib/podman\"; for bin in buildah conmon crun netavark aardvark-dns fuse-overlayfs; do
+     path=\"\"
+     if resolved=\$(command -v \"\$bin\" 2>/dev/null); then
+       path=\"\$resolved\"
      else
-       printf "missing %s\n" "$bin"
+       for dir in \$helper_dirs; do
+         candidate=\"\$dir/\$bin\"
+         if [ -x \"\$candidate\" ]; then
+           path=\"\$candidate\"
+           break
+         fi
+       done
      fi
-   done'
+     if [ -n \"\$path\" ]; then
+       printf \"present %s %s\n\" \"\$bin\" \"\$path\"
+     else
+       printf \"missing %s\n\" \"\$bin\"
+     fi
+   done'"
 )
 capture_command \
   "capture.guest_required_binaries" \
@@ -250,9 +266,7 @@ capture_command \
 
 socket_status_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  'systemctl show --no-pager --property=Id,LoadState,UnitFileState,ActiveState,SubState neovex.socket || true'
+  "/bin/sh -lc 'systemctl show --no-pager --property=Id,LoadState,UnitFileState,ActiveState,SubState neovex.socket || true'"
 )
 capture_command \
   "capture.guest_neovex_socket_status" \
@@ -262,9 +276,7 @@ capture_command \
 
 service_status_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  'systemctl show --no-pager --property=Id,LoadState,UnitFileState,ActiveState,SubState neovex.service || true'
+  "/bin/sh -lc 'systemctl show --no-pager --property=Id,LoadState,UnitFileState,ActiveState,SubState neovex.service || true'"
 )
 capture_command \
   "capture.guest_neovex_service_status" \
@@ -274,9 +286,7 @@ capture_command \
 
 virtiofs_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  "findmnt --noheadings --output TARGET,SOURCE,FSTYPE,OPTIONS -T '${guest_volume_path}' || stat '${guest_volume_path}'"
+  "/bin/sh -lc 'findmnt --noheadings --output TARGET,SOURCE,FSTYPE,OPTIONS -T \"${guest_volume_path}\" || stat \"${guest_volume_path}\"'"
 )
 capture_command \
   "capture.guest_virtiofs_mount" \
@@ -286,9 +296,7 @@ capture_command \
 
 health_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  "printf 'GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - UNIX-CONNECT:${guest_socket_path}"
+  "/bin/sh -lc 'printf \"GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" | sudo socat - UNIX-CONNECT:${guest_socket_path}'"
 )
 capture_command \
   "capture.guest_machine_api_health" \
@@ -298,9 +306,7 @@ capture_command \
 
 capabilities_cmd=(
   "${ssh_base[@]}"
-  /bin/sh
-  -lc
-  "printf 'GET /v1/machine-api/capabilities HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | socat - UNIX-CONNECT:${guest_socket_path}"
+  "/bin/sh -lc 'printf \"GET /v1/machine-api/capabilities HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" | sudo socat - UNIX-CONNECT:${guest_socket_path}'"
 )
 capture_command \
   "capture.guest_machine_api_capabilities" \

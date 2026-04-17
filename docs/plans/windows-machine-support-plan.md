@@ -6,7 +6,8 @@ develop on Windows and deploy to Linux production hosts.
 Reviewed against:
 
 - `docs/reference/microvm-service-baseline.md`
-- `docs/plans/macos-machine-support-plan.md`
+- `docs/reference/macos-machine-flow.md`
+- `docs/plans/archive/macos-machine-support-plan.md`
 - `docs/plans/distribution-plan.md`
 - `crates/neovex-bin/src/machine/mod.rs`
 - `crates/neovex-bin/src/machine/stub/`
@@ -76,11 +77,15 @@ Reviewed against:
 - **Activation gate:** not met — requires macOS plan (`MAC5`+) to stabilize the
   hybrid host-resident control-plane pattern and the forwarded machine-API seam,
   since Windows reuses that same architecture with a different VM provider and
-  transport layer
+  transport layer. That macOS gate is now satisfied by the archived MAC1-MAC7
+  closeout record; Windows remains deferred only because this plan itself has
+  not been promoted.
 - **Related plans:**
-  - `docs/plans/macos-machine-support-plan.md` — active macOS developer-machine
-    execution plan; Windows shares the hybrid control-plane architecture and the
-    forwarded machine-API contract
+  - `docs/reference/macos-machine-flow.md` — current macOS developer-machine
+    contract reference; Windows shares the hybrid control-plane architecture
+    and the forwarded machine-API contract
+  - `docs/plans/archive/macos-machine-support-plan.md` — completed macOS
+    execution record with the exact proof and sequencing Windows can reuse
   - `docs/reference/microvm-service-baseline.md` — current landed Linux
     microVM and service-control baseline
   - `docs/plans/distribution-plan.md` — packaging/distribution umbrella; this
@@ -101,6 +106,12 @@ Reviewed against:
   every release (`.github/workflows/release.yml`). V8/deno_core compiles on
   Windows today via GitHub Actions `windows-latest` runners. The remaining work
   is machine lifecycle, transport, and developer workflow — not compilation.
+- Shared machine-image policy is now more explicit too: the active macOS/MAC4
+  decision is FCOS-first for raw-disk VM providers, but that does not change
+  WSL2's provider-specific tarball and shell-bootstrap contract. The shared
+  `agentstation/neovex-machine-os` repo may carry separate artifact families
+  for FCOS raw/vhdx providers, WSL tar roots, and future `fedora-bootc`
+  experiments without collapsing them into one runtime contract.
 - The machine module stubs all lifecycle operations with explicit errors on
   non-Unix hosts. The sandbox backends gate on Linux at runtime.
 - The distribution plan lists Windows as `Future` with `WSL2` as the execution
@@ -493,9 +504,10 @@ WSL-guest-path translation for compose-backed guest operations because the
 host-resident Neovex control plane currently keeps those paths as host
 `PathBuf`s.
 
-**Guest image artifact**: neovex-machine-os currently produces Raw format for
-macOS (OCI artifact with `disktype=raw` annotation). WSL2 needs a Tar rootfs
-artifact. The cross-repo build contract needs a WSL-specific image variant
+**Guest image artifact**: neovex-machine-os may ship multiple provider-specific
+artifact families. macOS currently targets a Raw FCOS-based artifact; WSL2
+still needs a Tar rootfs artifact. The cross-repo build contract therefore
+needs a WSL-specific image variant
 that includes:
 - the `neovex` Linux binary (for guest machine API)
 - `neovex.socket` and `neovex.service` systemd units
@@ -878,7 +890,7 @@ with the specific patterns to mirror:
 Source of truth:
 1. the current git worktree
 2. this plan's `Roadmap Status Ledger` and `Execution Log`
-3. `docs/plans/macos-machine-support-plan.md` (architectural precedent)
+3. `docs/reference/macos-machine-flow.md` (architectural precedent)
 4. `docs/reference/microvm-service-baseline.md`
 5. `docs/plans/distribution-plan.md`
 6. the reviewed Podman source files listed at the top of this document
@@ -994,7 +1006,7 @@ This plan does not cover:
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
 | WIN1 | todo | Architecture lock: finalize this plan, update distribution-plan Windows row, add `ServiceHostPlatform::Windows` | macOS MAC5+ stabilization |
-| WIN2 | todo | WSL2 machine provider: `wsl --import`, shell-script bootstrap, nested systemd, Tar image, SSH port allocation, machine config persistence | WIN1 |
+| WIN2 | todo | WSL2 machine provider: shared lifecycle prerequisites are now landed (`MLH3`-`MLH7`); remaining work is the Windows-specific `wsl --import` / shell-bootstrap / nested-systemd / named-transport implementation on top of that hardened seam | WIN1 |
 | WIN3 | todo | win-sshproxy integration: named pipe creation, TID lifecycle, pipe-to-SSH tunnel, 3-layer readiness check, stale process cleanup | WIN2 |
 | WIN4 | todo | Host machine-API client over named pipe: `ForwardedMachineApiSandboxBackend` with named pipe transport, `ServiceHostPlatform::Windows` backend loader | WIN3 |
 | WIN5 | todo | WSL2 networking: characterize NAT vs mirrored mode, validate published ports reach Windows localhost, document user-mode networking fallback | WIN2 |
@@ -1290,3 +1302,21 @@ Acceptance criteria:
   developer flow. This keeps the Windows plan Podman-aligned on machine
   topology and transport while remaining tailored to Neovex's host-resident
   control plane.
+- 2026-04-16: The shared machine-lifecycle hardening control plan completed
+  `MLH3` through `MLH7`, which materially advances `WIN2` even though the
+  Windows provider implementation itself is still pending. Neovex now has the
+  shared file-locked SSH port allocator, atomic/versioned machine records,
+  explicit state rebuild policy, provider capability contract
+  (`uses_provider_networking`, `requires_exclusive_active`, `image_format`,
+  `bootstrap_mode`), and a phased startup orchestrator already landed in the
+  existing machine module. Durable conclusion: `WIN2` can now focus on the
+  Windows-specific WSL2 provider, named-transport, and bootstrap plumbing
+  instead of re-solving shared lifecycle seams. Verification inherited from the
+  shared hardening closeout: `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`; `cargo test -p neovex-bin machine::`.
+- 2026-04-16: Updated the Windows companion plan after the macOS machine-image
+  decision was locked. Durable rule: the shared machine-os repo may ship
+  different artifact families per provider, but WSL2 remains Tar plus shell
+  bootstrap, while the macOS FCOS-first raw-image decision and any separate
+  `fedora-bootc` experiments stay outside the Windows provider contract.
+  Verification: docs-only plan update.

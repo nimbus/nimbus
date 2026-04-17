@@ -23,7 +23,8 @@ Reviewed against:
 ## Status
 
 - **Status:** `active`
-- **Primary owner:** this plan
+- **Primary owner:** this plan; all `MAC1` through `MAC7` roadmap items are now
+  done, and this file remains the closeout record until the archive sweep
 - **Activation gate:** met on 2026-04-13 after the Linux microVM runtime and
   Compose-backed service control plane were archived into the stable baseline
 - **Related plans:**
@@ -40,22 +41,29 @@ Reviewed against:
 - Linux production support is complete and stable in the landed baseline:
   Neovex starts krun-backed service microVMs on Linux and exposes them through
   the server-owned `ctx.services.*` surface.
-- macOS support is not complete. The repo now implements the `neovex machine ...`
-  command surface, typed machine config/state/runtime-root model, and the
-  direct `krunkit` + `gvproxy` host-manager seam. MAC3 is now effectively a
-  host-manager problem rather than a guest-image problem: a clean Fedora
-  CoreOS raw disk decompressed from Podman's libkrun cache boots under the
-  Neovex manager on the current Mac host, reaches machine-ready, reaches guest
-  SSH, and stops/removes cleanly without Podman owning the runtime. The
-  remaining blocker is MAC4: the guest image contract still needs a
-  Neovex-owned artifact that actually installs `/usr/local/bin/neovex`.
+- macOS developer support is now complete for the current v1 contract. The
+  repo ships the `neovex machine ...` command surface, typed
+  config/state/runtime-root model, direct `krunkit` + `gvproxy` host-manager
+  seam, pinned Podman machine-image digest on macOS, host-managed Linux guest
+  `neovex` asset sync into FCOS's writable `/usr/local/bin`, forwarded guest
+  machine-API readiness, host-resident `neovex serve` / `neovex service ...`
+  flows, published localhost ports, and a checked-in repair drill that now
+  defaults to the supported pinned-image contract instead of a bespoke local
+  raw-disk path. Real closeout evidence lives under
+  `/tmp/neovex-mac-closeout.FNcv0I` for first boot, cached reuse, forwarded
+  service control, runtime-level `ctx.services.<name>.port`, and machine
+  recreate/recovery proof.
+- Historical bullets below describe how the work landed. Where they mention
+  earlier blockers or remaining `MAC*` gaps, read them as execution history,
+  not current state.
 - The stable machine topology decision remains unchanged: macOS is a developer
   delivery surface only, Neovex still boots exactly one Linux machine VM, and
   service workloads inside that guest still run as standard Linux containers.
 - What changed after the DX review is the **control-plane placement** for the
   remaining work. `MAC5` and `MAC6` now target a hybrid model where the
   authoritative Neovex API/runtime/storage loop stays on the macOS host while
-  the guest owns only a narrow service-runtime seam for buildah/conmon/crun.
+  the guest owns only a narrow service-runtime seam for OCI materialization,
+  conmon/crun, and Podman-style networking helpers.
 - The current docs did still overstate `vsock` in some Channel 4 wording.
   Source review shows Podman's Apple machine path is more specific than that:
   `vsock` is real on macOS, but it is not the general-purpose host↔guest API
@@ -77,22 +85,32 @@ Reviewed against:
 - The repo now also owns the first Neovex-specific guest bootstrap generator
   for MAC4: when a machine config does not point at an explicit ignition file,
   `neovex-bin` renders a Neovex-owned ignition payload with Podman-aligned
-  ready signaling, guest `neovex.socket` plus `neovex.service` units, and
-  virtiofs mount units derived from the recorded machine volumes.
+  ready signaling, the current temporary `neovex.socket` plus
+  `neovex.service` guest bootstrap units, and virtiofs mount units derived
+  from the recorded machine volumes.
 - The machine-image supply side is no longer owned in this repo. The guest
   image recipe, Linux build helpers, OCI packaging/publish scripts, and build
   workflow now live in `agentstation/neovex-machine-os`, which is the Neovex
   equivalent of Podman's `containers/podman-machine-os`. This repo keeps the
   guest bootstrap assets, image-consumption logic, and host integration seams.
-- The current host release contract is version-pinned, not alias-driven.
-  `neovex machine init` defaults to
-  `docker://ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`, and
-  the host `v*` release workflow now first runs the external machine-os
-  reusable workflow as a contract build and then dispatches the native
-  `agentstation/neovex-machine-os` release with that same tag. That keeps the
-  matching guest image release owned by the machine-image repo instead of the
-  host repo. Moving aliases such as `stable` remain convenience pointers, not
-  the default host contract.
+- The durable machine-image decision is now explicit: Podman's published
+  machine image is the active bring-up contract for MAC4. The checked-in
+  macOS default now targets an immutable pinned Podman digest owned by the
+  host `neovex` release. Neovex layers
+  only machine-specific bootstrap on top of that image: SSH keys, mounts,
+  writable directories, and guest units. The versioned Linux guest `neovex`
+  binary is part of the host-managed convergence path, not Ignition. A
+  Neovex-owned image remains later follow-on work once the Podman-based macOS
+  flow is complete. The longer-term supply-side direction in
+  `agentstation/neovex-machine-os` remains `fedora-bootc`-shaped, but it is
+  not the current macOS closeout contract until it can preserve the same
+  FCOS/ignition/libkrun semantics.
+- The checked-in `agentstation/neovex-machine-os` GHCR flow remains a separate
+  follow-on image-ownership track rather than the current macOS default. The
+  host `v*` release workflow still proves the cross-repo image contract, but
+  current MAC4 bring-up and operator guidance must describe the pinned Podman
+  digest plus host-managed guest-binary sync rather than the old
+  `ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}` default.
 - Historical references to `images/neovex-machine-os/`,
   `scripts/build-neovex-machine-os.sh`, and the old local workflow in the
   execution log below are pre-split evidence. They remain useful as historical
@@ -130,8 +148,9 @@ Reviewed against:
   model in `neovex machine` config: published OCI reference by default, with
   explicit local raw-disk and `http(s)` override shapes preserved for
   diagnostics. The missing MAC4 step is not the config model anymore. It is
-  now the Neovex-owned guest artifact itself: a built/published image that
-  includes the guest executable and can answer behind `neovex.socket`.
+  now the Podman-based guest provisioning contract itself: a reliable way to
+  land the guest executable and answer behind `neovex.socket` on top of the
+  pinned Podman base image.
 - That typed model already reuses a reserved materialized disk path under the
   machine state root when one exists, so the eventual downloader/cache lane has
   a stable target to populate instead of inventing another one later.
@@ -171,10 +190,27 @@ Reviewed against:
   toolchain, machine-readable `systemctl show` output for `neovex.socket` and
   `neovex.service`, machine-API health/capabilities, the shared virtiofs
   mount, and the host machine log tail. On the successful Podman-reference
-  boot, that helper now proves the current base FCOS fixture has `conmon`,
-  `crun`, `fuse-overlayfs`, and a working `/Users` virtiofs mount, but does
-  not yet have `/usr/local/bin/neovex`, `/run/neovex/neovex.sock`, `buildah`,
-  `netavark`, or `aardvark-dns`.
+  boot with the host-managed guest-binary sync path, that helper now proves
+  the current base FCOS fixture has `/usr/local/bin/neovex`,
+  `/run/neovex/neovex.sock`, `conmon`, `crun`, `fuse-overlayfs`, and a working
+  `/Users` virtiofs mount. With the current Podman-helper discovery alignment
+  landed in the guest machine API, live host proof now also shows
+  `netavark` and `aardvark-dns` resolving from `/usr/libexec/podman/`, and the
+  image-backed guest execution lane now materializes OCI rootfs content
+  directly instead of shelling out to `buildah`. The remaining MAC5/MAC6 gap
+  is no longer guest image contents; it is host-side macOS service dispatch,
+  where `neovex service up` still routes default `backend: krun` projects into
+  the local Linux-only krun executor instead of a forwarded guest-aware path.
+- The repo now also owns a MAC5/MAC6 host-flow proof helper:
+  `scripts/collect-neovex-machine-service-proof.sh`, plus
+  `scripts/verify-neovex-machine-service-proof-helper.sh` and the
+  `make collect-neovex-machine-service-proof` /
+  `make verify-neovex-machine-service-proof-helper` entrypoints. That gives
+  the control plane a repeatable host-local lane for proving forwarded
+  `<machine>-api.sock` health/capabilities, direct guest service-sandbox
+  listing through that socket, host `neovex service up/list/inspect/ps/logs/down`,
+  and an optional localhost published-port probe without inventing a second
+  operator workflow outside the shipped CLI.
 - The Linux machine-image build summary is now more suitable as a durable
   artifact contract for MAC4 closeout. `images/neovex-machine-os/build.sh`
   records sha256s for the staged Linux `neovex` binary, the checked-in recipe
@@ -315,17 +351,21 @@ Reviewed against:
   architecturally, but because vendoring that GPL-licensed helper into this
   repo is the wrong dependency shape, the Neovex build lane now resolves that
   helper by pinned upstream commit instead.
-- The same runner lesson applies to CI as well: Podman does not pretend this
-  image class is a generic hosted-ubuntu build. Neovex now mirrors that
-  reality by using hosted CI only for contract verification while reserving
-  the real guest-image build lane for a dedicated Linux ARM64 runner.
-- The current base FCOS fixture is now characterized with host proof rather
-  than assumption. Under the successful Podman-reference boot it exposes
-  `conmon`, `crun`, and `fuse-overlayfs`, and the `/Users` virtiofs mount is
-  live, but `/usr/local/bin/neovex`, `/run/neovex/neovex.sock`, `buildah`,
-  `netavark`, and `aardvark-dns` are absent. That means MAC4 still needs both
-  the guest Neovex daemon and at least part of the standard-container runtime
-  package contract in the Neovex-owned image.
+- The same runner lesson applies to CI as well, but the concrete Neovex answer
+  is now narrower than "copy Podman's full disk-builder lane verbatim." MAC4
+  now uses Podman's published machine image as the active contract, so the
+  machine-os repo is no longer on the immediate closeout critical path. That
+  keeps hosted-runner compatibility and supply-side flexibility as
+  implementation details instead of turning them into runtime dead paths.
+- Any existing `fedora-bootc` raw-image work remains useful only as a future
+  research or Linux-oriented supply-side track until it can prove the same
+  FCOS/ignition/runtime semantics. It is not the shipping macOS v1 contract.
+- The plain FCOS diagnostic fixture characterized earlier is still useful as a
+  host-lifecycle proof aid, but it is no longer the active macOS closeout
+  contract. The current MAC4 contract instead uses Podman's published machine
+  image and then layers the Neovex guest payload on top. Any runtime package
+  gaps should therefore be verified first against Podman's actual published
+  image before introducing any Neovex-specific image divergence.
 - The same naming lesson applies inside the sandbox crate: the guest standard-
   container backend should not have to depend on modules living under a
   `krun/` path just because krun landed first. The shared OCI runtime plumbing
@@ -396,12 +436,13 @@ Reviewed against:
   `service_execution_ready` based on real guest runtime availability instead
   of a permanent placeholder. That contract is now materially more useful: it
   advertises the target `standard_containers` execution mode, the `container`
-  backend family, the required guest runtime binaries
-  (`buildah`, `conmon`, `crun`, `netavark`, `aardvark-dns`,
-  `fuse-overlayfs`), and explicit blockers when those binaries are missing or
-  when the configured guest machine-port forwarder is not reachable. That is
-  the correct MAC4/MAC5 shape because it gives the host/guest seam a stable
-  bootstrap contract without pretending that forwarded host-local publishing
+  backend family, the required guest runtime binaries for image-backed service
+  execution (`conmon`, `crun`, `netavark`, `aardvark-dns`) plus the separate
+  build-backed helper requirement (`buildah`, `fuse-overlayfs`), and explicit
+  blockers when those binaries are missing or when the configured guest
+  machine-port forwarder is not reachable. That is the correct MAC4/MAC5
+  shape because it gives the host/guest seam a stable bootstrap contract
+  without pretending that forwarded host-local publishing
   is ready when the guest cannot actually reach `gvproxy`.
 - The first host-side machine-API client scaffold is now landed too. That
   matters because MAC5 no longer starts from raw stringly socket I/O: the host
@@ -495,12 +536,131 @@ Resulting direction:
 - `vsock` remains a capability we can adopt deliberately where it improves the
   architecture, rather than a default requirement everywhere.
 
+## Machine Image Decision
+
+As of 2026-04-16, the active MAC4 machine-image decision is:
+
+- use Podman's published machine image as the current macOS bring-up image,
+  pinned by immutable reference or digest
+- let the host `neovex` release own both desired artifacts for macOS:
+  the pinned Podman image reference/digest and the matching Linux guest
+  `neovex` binary asset for the host architecture
+- keep Ignition/bootstrap narrow so first boot lands SSH keys, writable
+  Neovex directories, guest units, readiness wiring, mounts, and other
+  machine-specific configuration, but does not fetch or install a versioned
+  guest `neovex` binary
+- make `neovex machine start` the primary convergence path: cache missing
+  image and guest-binary artifacts, boot or rebuild the machine as needed,
+  sync the guest binary by hash, and validate the forwarded machine API before
+  reporting success
+- treat base-image drift as a controlled machine rebuild boundary rather than
+  an ad hoc guest mutation; treat guest-binary drift as an in-place sync under
+  `/usr/local/bin/neovex` on FCOS, which is backed by writable
+  `/var/usrlocal/bin/neovex`
+- keep the guest runtime aligned with what Podman already ships in that image
+  wherever possible; do not introduce Neovex-specific image divergence unless a
+  concrete missing requirement is proven
+- keep Ignition and bootstrap narrow to the guest payload and machine-specific
+  configuration; do not normalize an OS-switch or extra bootstrap reboot
+- defer a Neovex-owned image until after the Podman-based macOS closeout path
+  is working and verified end to end
+- keep the `fedora-bootc` work in `agentstation/neovex-machine-os` as a future
+  supply-side direction once it can preserve the same FCOS/ignition/libkrun
+  runtime semantics
+
+Why this is the chosen path:
+
+- it keeps the runtime contract aligned with Podman's battle-tested FCOS,
+  ignition, libkrun, and gvproxy model on macOS
+- it uses the same published image Podman already proves in the field instead
+  of reopening guest-image supply work before the host/guest seam is complete
+- it gives Neovex one concrete current path: bootstrap on the Podman image
+  first, then revisit image ownership later
+- it preserves a clean separation between machine-specific bootstrap, the
+  current Podman image contract, and the future image-ownership track
+
+Durable rules:
+
+- Podman's `quay.io/podman/machine-os` image is the active MAC4 bring-up
+  contract for now, not just a one-off diagnostic fixture
+- the host `neovex` release owns the desired Podman image digest and desired
+  Linux guest `neovex` asset for macOS, and `neovex machine start` is the
+  primary operator-facing convergence path for both
+- any Neovex-owned image is later replacement work, not the current MAC4 gate
+- the current contract is "bootstrap on Podman's published image", not
+  "finish building a Neovex-owned image before macOS can work"
+- generated Ignition must stay version-agnostic: it prepares the machine for
+  Neovex, but it does not encode the guest binary version or fetch logic
+- if the recorded machine image digest differs from the desired pinned digest,
+  the host must rebuild or recreate the machine from the desired image instead
+  of mutating the guest OS in place
+- do not treat a plain `fedora-bootc` raw disk as the current macOS machine
+  image contract
+- do not let "works on hosted GitHub runners" justify a guest contract that no
+  longer matches Podman's FCOS/ignition assumptions
+- do not normalize a first-boot rebase or extra bootstrap reboot as part of
+  the target macOS architecture
+- if Neovex later adds a dedicated raw-disk build lane, that is a follow-on
+  packaging or ownership choice, not the architectural boundary for MAC4
+
+Current implementation note:
+
+- as of 2026-04-16, the checked-in macOS default now points at the pinned
+  immutable Podman digest owned by the host release
+- the current bootstrap generator already injects `neovex.socket` and
+  `neovex.service` through Ignition and prepares `/var/lib/neovex` control/data
+  roots, while the current manager resolves, downloads, and caches the
+  matching Linux guest `neovex` release asset under the machine state root
+  before syncing it into FCOS's executable `/usr/local/bin` path; the
+  remaining work is tightening that into a fully documented convergence
+  contract with controlled rebuild semantics for base-image drift and
+  forwarded-machine-API proof
+
+### Host-Managed Convergence Path
+
+The primary macOS operator path should be "run `neovex machine start` and let
+the host converge the machine", not "manually juggle a separate first-boot
+upgrade workflow."
+
+Target convergence contract:
+
+- the host `neovex` release records the desired Podman machine-image digest and
+  the desired Linux guest `neovex` asset for the local host architecture
+- `neovex machine start` checks the local caches first and pulls whichever
+  artifacts are missing
+- if no machine exists yet, the host boots the machine from the desired pinned
+  image and then syncs the guest binary
+- if a machine exists and its recorded base image matches the desired pinned
+  digest, the host reuses that machine and only syncs the guest binary when
+  the hash differs
+- if a machine exists but its recorded base image differs from the desired
+  pinned digest, the host performs a controlled rebuild or recreate from the
+  desired image, then syncs the guest binary
+- startup does not succeed until guest SSH, guest binary sync, and forwarded
+  machine-API readiness all succeed
+
+Durable rules:
+
+- the guest binary lifecycle and base-image lifecycle are both host-owned, but
+  they are not implemented the same way
+- guest-binary drift is fixed in place under `/usr/local/bin/neovex` without a
+  reboot; on FCOS that path is the writable `/var/usrlocal/bin/neovex`
+- base-image drift is a machine rebuild boundary, even if the top-level user
+  experience stays "run `neovex machine start`"
+- the supported image reference must be immutable; do not let the current
+  macOS contract float on a mutable Podman tag
+- do not tell operators to `dnf update` or mutate the guest ad hoc as the
+  supported Neovex macOS path
+- an explicit `neovex machine os apply <oci-ref-or-digest>` override may
+  remain as a diagnostic or rollout surface, but it is not the primary
+  day-to-day macOS developer workflow
+
 ## Feature Preservation Matrix
 
 | Concern | Linux production baseline | macOS developer target | Must preserve |
 | --- | --- | --- | --- |
 | Service isolation | per-service krun microVMs | one machine VM + standard guest containers | same server/service API |
-| Host runtime stack | `conmon -> patched crun -> libkrun` | `krunkit + gvproxy` on host, `buildah/conmon/crun` in guest | Linux path stays unchanged |
+| Host runtime stack | `conmon -> patched crun -> libkrun` | `krunkit + gvproxy` on host, OCI materializer + `conmon/crun/netavark/aardvark-dns` in guest | Linux path stays unchanged |
 | Host app/runtime locality | local Neovex server owns runtime + storage | host Neovex server still owns runtime + storage on macOS | fast local edit-run-observe loop |
 | Remote control seam | n/a | host talks to a narrow guest Neovex machine API | do not grow a generic remote engine |
 | Sandbox backend selection | generic backend vocabulary exists, but only `krun` executes today | guest must not require krun/KVM | add a guest-side container launch family without regressing Linux |
@@ -677,7 +837,7 @@ macOS host
 
 Linux guest VM
   ├── neovex.socket / neovex.service
-  ├── buildah + conmon + crun
+  ├── OCI materializer + conmon + crun + netavark + aardvark-dns
   └── services run as standard crun containers
 ```
 
@@ -761,7 +921,7 @@ macOS shell
       -> host Neovex resolves Compose/service state
       -> send the service-control request to the guest machine API
       -> guest machine API uses guest Linux container runtime pieces
-         (buildah + conmon + crun)
+         (OCI materializer + conmon + crun + netavark + aardvark-dns)
       -> host reuses/presents forwarded ports and control sockets
 ```
 
@@ -863,10 +1023,10 @@ This plan does not cover:
 | MAC1 | done | Lock the macOS architecture, transport vocabulary, and probe model docs | none |
 | MAC2 | done | Add `neovex machine ...` CLI surface and host-side config/runtime roots | MAC1 |
 | MAC3 | done | Implement direct host machine lifecycle around `krunkit` + `gvproxy` | MAC2 |
-| MAC4 | in_progress | Cross-repo machine-image release contract and explicit OCI metadata are landed; remaining work is real guest-image boot/bootstrap proof and guest `neovex.sock` machine API closeout | MAC2 |
-| MAC5 | in_progress | In progress: host-side forwarded sandbox backend/loader landed; live forwarded-socket and published-port proof remain | MAC3, MAC4 |
-| MAC6 | in_progress | In progress: explicit `neovex serve` landed; mac-aware serve/service flow and real host proof remain | MAC5 |
-| MAC7 | todo | Close out packaging, diagnostics, and real-host validation evidence | MAC3, MAC4, MAC5, MAC6 |
+| MAC4 | done | Closed the host-managed macOS convergence contract on the pinned Podman digest: a fresh isolated boot now proves first boot, guest SSH, guest `neovex --version`, guest machine-API health, and forwarded `<machine>-api.sock` readiness using a matching Linux guest asset synced into FCOS's executable `/usr/local/bin` path without an extra bootstrap reboot | MAC2 |
+| MAC5 | done | Closed the forwarded control and published-port path on the pinned Podman digest: fresh isolated macOS proof now reaches host `<machine>-api.sock`, `service up/list/inspect/ps/logs/down`, machine-API sandbox listing, and published localhost service health on `http://127.0.0.1:18080/healthz` without a guest `buildah` dependency | MAC3, MAC4 |
+| MAC6 | done | Closed the macOS host-resident DX proof: a clean end-to-end app root now proves `neovex serve` readiness, tenant creation, runtime `services:activate` returning `ctx.services.db.port = 18080`, live localhost reachability on that port, and teardown on tenant deletion without moving the authoritative Neovex server into the guest | MAC5 |
+| MAC7 | done | Closed the install/recovery/runbook closeout on the same isolated macOS root: the recreate helper now defaults to the host-managed pinned Podman image contract, the CLI/baseline/distribution docs match that contract, and `/tmp/neovex-mac-closeout.FNcv0I` now contains first-boot, cached-reuse, forwarded-service, runtime-level `ctx.services.<name>.port`, and real recovery-drill bundles | MAC3, MAC4, MAC5, MAC6 |
 
 ## Implementation Checkpoints
 
@@ -932,30 +1092,88 @@ Acceptance criteria:
 
 Repo outputs:
 
-- guest image build recipe
-- guest bootstrap/systemd units
-- documented mount strategy and guest package contract
+- pinned Podman machine-image reference/digest contract for the current macOS
+  bring-up path
+- generated Ignition assets plus a host-managed cache/sync path that land
+  Neovex on top of that image without encoding versioned guest binaries into
+  Ignition
+- documented mount strategy and guest runtime expectations against Podman's
+  published image
 - guest-side machine API plus standard-container backend or equivalent
   launch-family selection contract
 
 Required host-local outputs:
 
-- built image artifact path
+- pinned OCI reference and digest actually used for bring-up
+- materialized raw disk path
 - first-boot log proof
 - guest SSH proof
 - guest `neovex --version` proof
-- published OCI reference and digest for the machine artifact
-- versioned release tag plus any moving alias used for host consumption
+- guest machine-API health proof
 
 Acceptance criteria:
 
-- the guest image boots reproducibly
+- the pinned Podman image boots reproducibly under the Neovex manager
+- the Neovex bootstrap path lands the guest machine API prerequisites and
+  guest units without an extra OS-switch reboot
+- `neovex machine start` caches missing machine-image and guest-binary
+  artifacts automatically before it tries to report success
+- when the base image matches, `neovex machine start` reuses the machine and
+  only syncs the guest binary if its hash differs
+- when the base image drifts from the desired pinned digest,
+  `neovex machine start` performs a controlled rebuild or recreate from the
+  desired image instead of mutating the guest OS ad hoc
 - the guest machine API is installed and runnable inside the guest
 - the guest machine API can activate standard guest containers without
   requiring nested krun/KVM
 - host project paths are available inside the guest through `virtiofs`
-- the built guest artifact is publishable to a versioned GHCR reference with
-  recorded digest/provenance
+- the exact Podman image reference/digest, materialized disk, and resulting
+  guest proof are recorded deterministically
+- the host-managed convergence path is explicit, version-aware, and
+  operator-friendly
+
+Immediate implementation plan:
+
+1. Base-image contract
+   Pin the Podman machine image by immutable reference or digest and treat it
+   as the active MAC4 bring-up image. Use it to prove host lifecycle,
+   ignition, SSH, forwarded control-socket plumbing, and guest runtime
+   expectations under the same image Podman already ships.
+2. Artifact cache contract
+   Make the host own both desired artifacts for macOS: the pinned Podman image
+   and the matching Linux guest `neovex` binary. Cache both locally with
+   deterministic keys so startup can converge from cache before hitting the
+   network again.
+3. Guest payload contract
+   Keep generated Ignition narrow and version-agnostic: SSH identity, readiness
+   units, mounts, writable Neovex directories, `neovex.socket`, and
+   `neovex.service`. Do not fetch or install a versioned guest binary from
+   Ignition.
+4. Start-time convergence
+   Make `neovex machine start` compare the current machine contract against the
+   desired host-owned contract. Reuse an existing machine when the base image
+   digest matches, sync the guest binary in place when only the binary drifts,
+   and rebuild or recreate the machine when the base image drifts.
+5. Guest runtime verification
+   Verify what the Podman image already carries for the standard-container
+   runtime contract and rely on that directly wherever possible. If a concrete
+   runtime gap remains, record it explicitly before introducing image
+   divergence.
+6. Host lifecycle and proof
+   Keep the host manager focused on direct boot plus readiness proof for the
+   Podman image contract, not a first-boot OS switch. Operator-facing status
+   and error messages should distinguish machine-ready, guest-SSH-ready,
+   guest-binary-sync-ready, rebuild-required, and guest machine-API-ready
+   without special bootstrap-reboot logic.
+7. Future manual overrides and image ownership
+   Keep any explicit `machine os apply` override secondary to the primary
+   convergence path, and only revisit a Neovex-owned image after the
+   Podman-based macOS flow is working and verified end to end.
+8. Future image ownership
+   Revisit a Neovex-owned image only after the Podman-based macOS flow is
+   working and verified end to end. Any later image-owned contract must
+   preserve the same Podman-aligned runtime model, and the `fedora-bootc` work
+   remains a separate future direction until it proves that parity.
 
 ### MAC5 — Control channel and port publishing
 
@@ -1052,6 +1270,223 @@ Acceptance criteria:
 
 ## Execution Log
 
+- 2026-04-17: Closed MAC7 on the same isolated macOS proof root at
+  `/tmp/neovex-mac-closeout.FNcv0I`. Tightened the checked-in recovery lane so
+  `scripts/recreate-neovex-machine.sh` and `make recreate-neovex-machine` now
+  default to the supported host-managed pinned Podman image contract, keep
+  `IMAGE=...` as an explicit diagnostic override only, and record the guest
+  Linux `neovex` override plus machine-API timeout env in the captured command
+  bundle. Updated the closeout docs in
+  `docs/reference/cli.md`,
+  `docs/reference/microvm-service-baseline.md`,
+  `docs/reference/macos-machine-flow.md`,
+  `docs/README.md`,
+  and `docs/plans/distribution-plan.md`
+  so the operator story consistently matches the current implementation:
+  pinned `quay.io/podman/machine-os@sha256:...`, host-managed guest-binary
+  sync, explicit `machine os apply` / `machine os upgrade`, host-resident
+  `neovex serve`, and the supported repair drill. Focused verification passed
+  with:
+  `bash scripts/verify-neovex-machine-recreate-helper.sh`;
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`.
+  Real host proof then reran the repair drill on the same isolated roots via
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime NEOVEX_MACHINE_GUEST_BINARY=/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex NEOVEX_MACHINE_API_READY_TIMEOUT_SECS=120 bash scripts/recreate-neovex-machine.sh --home /tmp/neovex-mac-closeout.FNcv0I/home --runtime-root /tmp/neovex-mac-closeout.FNcv0I/runtime --output-dir /tmp/neovex-mac-closeout.FNcv0I/recovery-proof-final --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex --ssh-identity /tmp/neovex-mac-closeout.FNcv0I/id_ed25519`.
+  The first sandboxed attempt failed exactly at Quay manifest resolution,
+  which confirmed the recovery drill really exercises the pinned-image pull
+  path; the unrestricted rerun succeeded and captured:
+  `/tmp/neovex-mac-closeout.FNcv0I/recovery-proof-final/summary.txt`,
+  `neovex-machine-start-command.txt`,
+  `neovex-machine-start.txt`,
+  `neovex-machine-status.txt`,
+  and `post-diagnostics/summary.txt`.
+  Those artifacts prove a real stop/remove/init/start repair cycle on the
+  supported default contract, with `machine_image_contract.recorded_matches_desired:
+  true`, `machine_api.reachable: true`,
+  `service_execution_ready: true`,
+  and the expected Podman-aligned guest runtime binaries present through the
+  forwarded machine API. Stopped the isolated machine again afterward with
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine stop`
+  so the proof root remains clean. Durable conclusion: MAC7 is now done and
+  the current macOS plan is closed out with real first-boot, reuse,
+  service-control, runtime, and recovery evidence.
+- 2026-04-17: Closed the remaining MAC6 runtime-level proof on the same
+  isolated macOS root at `/tmp/neovex-mac-closeout.FNcv0I`. Created one clean
+  end-to-end app root at
+  `/tmp/neovex-mac-closeout.FNcv0I/ctx-services-app` with:
+  `compose.yaml`,
+  `.neovex/convex/functions.json`,
+  `.neovex/convex/http_routes.json`,
+  `.neovex/convex/bundle.mjs`,
+  and `.neovex/convex/bundle.sha256`,
+  where the runtime query `services:activate` is exactly
+  `async (ctx) => ctx.services.db.port`. Re-started the cached pinned Podman
+  machine on the same isolated roots, launched host `neovex serve` with
+  `RUST_LOG=info`, and captured a real host-side runtime proof bundle at
+  `/tmp/neovex-mac-closeout.FNcv0I/ctx-services-proof`.
+  The concrete host artifacts are:
+  `serve.log` showing `neovex listening on 0.0.0.0:18082`,
+  `serve-health.txt` showing `GET /health -> 200 {"ok":true}`,
+  `create-tenant.txt` showing `POST /api/tenants -> 201 {"id":"demo"}`,
+  `activate-query.txt` showing
+  `POST /convex/demo/query {"name":"services:activate","args":{}} -> 200 18080`,
+  `service-health-via-port.txt` showing `GET http://127.0.0.1:18080/healthz`
+  returns `200 ok`,
+  `delete-tenant.txt` showing `DELETE /api/tenants/demo -> 204`,
+  and `service-gone-after-delete.txt` showing the published port disappears
+  after tenant teardown. Durable conclusion: MAC6 is now closed. Neovex on
+  macOS now has real evidence for machine readiness, guest machine-API
+  readiness, host `neovex serve` readiness, guest service readiness, and the
+  Linux-contract `ctx.services.<name>.port` behavior through the host-resident
+  server. The next exact item is MAC7: package the verified contract into the
+  final install/recovery/runbook and archive/baseline closeout.
+- 2026-04-17: Closed the live MAC5 stop/published-port seam and materially
+  advanced MAC6 on a fresh isolated macOS proof root at
+  `/tmp/neovex-mac-closeout.FNcv0I`. The guest standard-container lane now
+  follows Podman's battle-tested behavior more closely in two places:
+  `crates/neovex-sandbox/src/backends/oci/network.rs` now pre-allocates and
+  persists host-local static IPs before calling `netavark`, mirrors Podman's
+  structured stdout error parsing for `netavark` failures, and preserves
+  helper-dir discovery for `/usr/libexec/podman/*`; and
+  `crates/neovex-bin/src/machine/client.rs` now sends `Content-Length: 0` on
+  bodyless POST requests and uses a longer mutation timeout so guest
+  `service-sandboxes.stop` calls do not falsely surface as empty responses
+  during real teardown. Also tightened the proof tooling itself:
+  `scripts/collect-neovex-machine-guest-proof.sh` now searches Podman helper
+  directories before reporting guest binaries missing, and
+  `scripts/verify-neovex-machine-guest-proof-helper.sh` was updated to match
+  the current collector contract.
+  Focused repo verification passed with:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin stop_service_sandbox_sends_a_content_length_zero_post_request -- --nocapture`;
+  `cargo test -p neovex-sandbox backends::oci::network::tests -- --nocapture`;
+  `bash scripts/verify-neovex-machine-guest-proof-helper.sh`;
+  `bash scripts/verify-neovex-machine-service-proof-helper.sh`.
+  Real-host proof then:
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine init --ssh-identity /tmp/neovex-mac-closeout.FNcv0I/id_ed25519`;
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime NEOVEX_MACHINE_GUEST_BINARY=/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex NEOVEX_MACHINE_API_READY_TIMEOUT_SECS=120 /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine start`;
+  `bash scripts/collect-neovex-machine-guest-proof.sh --home /tmp/neovex-mac-closeout.FNcv0I/home --runtime-root /tmp/neovex-mac-closeout.FNcv0I/runtime --output-dir /tmp/neovex-mac-closeout.FNcv0I/guest-proof-final --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex`;
+  `bash scripts/collect-neovex-machine-service-proof.sh --home /tmp/neovex-mac-closeout.FNcv0I/home --runtime-root /tmp/neovex-mac-closeout.FNcv0I/runtime --output-dir /tmp/neovex-mac-closeout.FNcv0I/service-proof-current --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex --compose-file /tmp/neovex-mac-service-proof-compose.yaml --service demo --published-url http://127.0.0.1:18080/healthz`;
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine stop`;
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime NEOVEX_MACHINE_GUEST_BINARY=/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex NEOVEX_MACHINE_API_READY_TIMEOUT_SECS=120 /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine start`;
+  `env HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime ./target/debug/neovex serve --compose-file /tmp/neovex-mac-service-proof-compose.yaml --data-dir /tmp/neovex-mac-closeout.FNcv0I/serve-data --control-data-dir /tmp/neovex-mac-closeout.FNcv0I/serve-control --port 18082`.
+  Durable conclusion: MAC5 is now closed with real host evidence. The fresh
+  first boot proves the pinned Podman digest pull plus guest-binary sync, the
+  cached-image restart proves the reuse path when `recorded_matches_desired:
+  true`, `guest-proof-final` captures guest `neovex 0.1.3` and sha256
+  `de7cccbef8f75a5e903b24e3e44e2c1931e9663eb13c206f09697d1ab95a347b` at
+  `/usr/local/bin/neovex`, and `service-proof-current` proves machine API
+  health, `service up/list/inspect/ps/logs/down`, and published localhost
+  service reachability all succeed on macOS. The remaining MAC6 gap is
+  narrower and explicit: capture one runtime-level `ctx.services.<name>.port`
+  proof through host `neovex serve`, then finish MAC7 archival/baseline
+  closeout.
+- 2026-04-16: Replaced the remaining guest `buildah` dependency for
+  image-backed macOS service execution with a Neovex-owned OCI materializer
+  aligned to Podman's in-process image path instead of the external `buildah`
+  CLI. `crates/neovex-sandbox/src/backends/oci/materializer.rs` now caches OCI
+  blobs by digest, verifies them, extracts a materialized rootfs with whiteout
+  handling, and is safe to call from inside an existing Tokio runtime.
+  `crates/neovex-sandbox/src/backends/krun/vm.rs` now uses that materialized
+  rootfs path for image-backed guest sandboxes while leaving build-backed
+  launches on the existing buildah seam, so the active macOS v1 contract stays
+  Podman-aligned without introducing a direct Podman dependency. Focused local
+  verification passed with:
+  `cargo check -p neovex-sandbox`;
+  `cargo test -p neovex-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`;
+  `cargo test -p neovex-sandbox start_from_image_plan_only -- --nocapture`;
+  `cargo test -p neovex-sandbox materializer_can_run_inside_an_existing_tokio_runtime -- --nocapture`;
+  `cargo check -p neovex-bin`.
+  Real-host proof then rebuilt the host binary plus the Linux arm64 guest
+  binary at
+  `/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex`,
+  restarted the isolated proof VM rooted at
+  `/tmp/neovex-mac4-versionproof.lHXHRO`, and re-ran
+  `scripts/collect-neovex-machine-service-proof.sh` into
+  `/tmp/neovex-mac4-versionproof.lHXHRO/service-proof-materialized-image`.
+  That live run proves the specific `buildah` blocker is gone: the machine API
+  still reports `service_execution_ready: true`, guest `neovex --version`
+  remains reachable over SSH, and `service up` no longer fails on missing
+  `buildah` or nested-runtime panics. The next real blocker is higher in the
+  host stack: default Compose `backend: krun` services on macOS still route to
+  the local krun executor and fail with `krun execution requires a Linux
+  host`, so MAC5/MAC6 now hinge on resolving that service-dispatch mismatch
+  rather than guest runtime-image contents.
+- 2026-04-16: Tightened the live MAC5/MAC6 runtime diagnosis on the real macOS
+  proof machine by aligning guest helper-binary discovery with Podman's actual
+  guest contract. `crates/neovex-bin/src/machine/api.rs` now searches Podman
+  helper directories (`/usr/local/libexec/podman`, `/usr/local/lib/podman`,
+  `/usr/libexec/podman`, `/usr/lib/podman`) before plain `PATH` lookup when it
+  reports required guest runtime binaries and when it seeds the guest
+  container-backend config. That keeps the guest machine-API capability probe
+  and the actual service runtime on the same contract instead of advertising a
+  stricter Neovex-only `PATH` requirement. Focused verification passed with:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin capability_response_ -- --test-threads=1`;
+  `cargo test -p neovex-bin apply_resolved_runtime_paths_updates_backend_config_from_helper_dirs -- --test-threads=1`;
+  `cargo test -p neovex-bin client_reads_health_and_capabilities_from_machine_api_socket -- --test-threads=1`;
+  `cargo test -p neovex-bin host_loader_accepts_container_projects_with_ready_forwarded_machine_api_on_macos -- --test-threads=1`.
+  Real-host proof then rebuilt the Linux arm64 guest binary locally at
+  `/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex`,
+  restarted the isolated proof VM rooted at
+  `/tmp/neovex-mac4-versionproof.lHXHRO`, and re-ran the forwarded service
+  proof into `/tmp/neovex-mac4-versionproof.lHXHRO/service-proof-helperdirs`.
+  The live machine status and `machine-api-capabilities.txt` now prove that the
+  current pinned Podman image exposes `netavark` and `aardvark-dns` at
+  `/usr/libexec/podman/netavark` and `/usr/libexec/podman/aardvark-dns`, while
+  SSH inspection with `rpm -q` confirms those packages are installed and
+  `buildah` is not. The remaining MAC5/MAC6 blocker is therefore narrower and
+  more trustworthy: `service up` still fails with `No such file or directory
+  (os error 2)` only because Neovex currently shells out to the external
+  `buildah` CLI and the active Podman proof image does not ship it.
+- 2026-04-16: Re-ran the active MAC4 convergence path from fresh isolated
+  macOS roots using the pinned Podman digest plus the published
+  `v0.1.8` Linux guest asset and corrected the next real blocker. A clean
+  first boot now proves the earlier `useradd: cannot lock /etc/group`
+  emergency-mode failure was not a stable ignition-contract bug; it was a
+  poisoned artifact after a failed host-side start. The fresh proof reached
+  machine-ready, guest SSH, and guest-binary sync, but forwarded
+  machine-API readiness failed because `systemd` could not `exec`
+  `/var/lib/neovex/bin/neovex` (`status=203/EXEC`, `Permission denied`) on
+  FCOS. Live guest inspection showed the copied binary landed with
+  `var_lib_t`, while FCOS's writable `/usr/local` path is the symlinked
+  `/var/usrlocal` tree with executable `bin_t` labeling. Updated the active
+  MAC4 contract accordingly: host-managed guest-binary sync now targets
+  `/usr/local/bin/neovex`, backed by `/var/usrlocal/bin/neovex`, and the
+  guest-proof helpers now probe that path. Durable conclusion: the remaining
+  MAC4 work is no longer "why doesn't Ignition boot?" but "finish the
+  forwarded machine-API readiness proof on top of the corrected FCOS
+  executable path." Verification during diagnosis:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine:: -- --test-threads=1`,
+  `cargo test -p neovex-bin remote_shell_command_single_quotes_guest_scripts_for_ssh -- --test-threads=1`,
+  `bash scripts/verify-neovex-machine-guest-proof-helper.sh`,
+  plus fresh isolated host boot/SSH/systemd proof under `/tmp/neovex-mac4-fresh.rcYPF1`
+  and `/tmp/neovex-mac4-live.f1HfVQ`.
+- 2026-04-16: Reframed the active MAC4 contract around one host-managed
+  convergence path instead of two operator-facing upgrade stories. The plan
+  now makes the host `neovex` release authoritative for both desired macOS
+  artifacts: the pinned Podman machine-image digest and the matching Linux
+  guest `neovex` asset for the local host architecture. `neovex machine start`
+  is now the primary operator-facing path: it should cache missing artifacts,
+  reuse a machine when the recorded base image already matches the desired
+  digest, rebuild or recreate the machine when the base image drifts, sync
+  the guest executable by hash, and require forwarded machine-API readiness
+  before reporting success. Ignition is now explicitly documented as
+  version-agnostic and limited to SSH keys, mounts, writable directories, and
+  guest units rather than versioned guest-binary delivery. Updated the MAC4
+  roadmap summary, machine-image decision, convergence-path guidance,
+  acceptance criteria, implementation plan, and
+  `docs/reference/macos-machine-flow.md` to match the current code shape in
+  `crates/neovex-bin/src/machine/{mod.rs,manager.rs,bootstrap.rs}`. Durable
+  conclusion: the next implementation slice should tighten the checked-in
+  Podman `6.0` tag into an immutable digest, harden artifact cache keys and
+  machine rebuild semantics, and then prove the full end-to-end convergence
+  contract on the current Mac host. Verification: docs-only review against the
+  current worktree.
 - 2026-04-13: Created the dedicated macOS machine-support control plane after
   the Linux microVM and service-control plans were archived. Verified against
   the local Podman source that the current docs needed one important transport
@@ -2006,3 +2441,153 @@ Acceptance criteria:
   `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-build-helper.sh`;
   `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-oci-layout-helper.sh`;
   `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-publish-helper.sh`.
+- 2026-04-16: The shared machine-lifecycle hardening control plan completed
+  `MLH1` through `MLH7`. For the macOS path, that means provider-aligned
+  krunkit graceful stop sequencing, startup signal cleanup that no longer
+  leaves state stuck in `Starting`, versioned config/state records with rebuild
+  policy, atomic per-machine record locking, shared SSH port allocation, and a
+  capability-driven phased machine startup flow are now all landed in
+  `crates/neovex-bin/src/machine/`. Durable conclusion: `MAC7` no longer needs
+  to absorb basic machine-lifecycle robustness work; the remaining macOS scope
+  is real guest-image proof, forwarded-socket/service validation, diagnostics,
+  packaging, and closeout evidence on top of a hardened shared lifecycle seam.
+  Verification inherited from the shared hardening closeout:
+  `cargo fmt --all --check`; `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin machine::`.
+- 2026-04-16: Advanced the first real MAC6 host-command bridge on top of the
+  MAC5 forwarded machine-API seam. `crates/neovex-bin/src/service/mod.rs` now
+  resolves container-backed Compose projects on macOS through the forwarded
+  guest machine API instead of stopping at the host loader: `neovex service up`
+  can start container-backed services through the guest backend, and
+  `service list` / `inspect` / `logs` / `ps` / `down` now use guest-manifest
+  state, guest `ctr.log`, and guest pidfiles through typed machine-API
+  operations while leaving Linux/krun behavior unchanged. The guest contract
+  also tightened underneath that UX slice: `neovex-sandbox` now exposes a
+  container-manifest state view, and the machine API/client surface now owns
+  list/current/log/ps operations instead of making the host infer guest state
+  from local krun paths. Durable conclusion: the repo no longer has a
+  macOS-only gap where `serve` understood forwarded guest execution but
+  explicit `service ...` commands did not; the remaining MAC5/MAC6 work is
+  real-host forwarded-socket and localhost published-port proof plus the
+  matching `neovex serve` host validation once the guest artifact lane is
+  ready. Verification:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin machine::api::tests:: -- --test-threads=1`;
+  `cargo test -p neovex-bin machine::client::tests:: -- --test-threads=1`;
+  `cargo test -p neovex-bin service::tests:: -- --test-threads=1`;
+  `cargo test -p neovex-sandbox backends::container::state::tests:: -- --test-threads=1`.
+- 2026-04-16: Added the first repo-owned MAC5/MAC6 host proof collector for
+  the forwarded guest control path instead of leaving that evidence in ad hoc
+  shell history. The repo now has
+  `scripts/collect-neovex-machine-service-proof.sh`,
+  `scripts/verify-neovex-machine-service-proof-helper.sh`,
+  `make collect-neovex-machine-service-proof`, and
+  `make verify-neovex-machine-service-proof-helper`. That helper records the
+  operator-facing bundle the remaining macOS closeout needs: `neovex machine status`,
+  direct host `<machine>-api.sock` health/capabilities, direct forwarded
+  guest service-sandbox listing, host `neovex service up/list/inspect/ps/logs/down`,
+  and an optional localhost published-port probe against one service. Durable
+  conclusion: MAC5/MAC6/MAC7 now have a checked-in real-host evidence lane for
+  the forwarded service workflow, but the repo still needs one successful run
+  against a guest image that actually carries the guest `neovex` machine API
+  plus the remaining explicit `neovex serve` startup proof before closeout.
+  Verification:
+  `bash -n scripts/collect-neovex-machine-service-proof.sh`;
+  `bash -n scripts/verify-neovex-machine-service-proof-helper.sh`;
+  `bash scripts/verify-neovex-machine-service-proof-helper.sh`.
+- 2026-04-16: Re-ran the live macOS host proof against Podman's local source
+  tree and found one concrete libkrun contract drift in
+  `crates/neovex-bin/src/machine/manager.rs`: Neovex was emitting
+  `virtio-vsock,port=...,socketURL=...` for the ready and ignition devices
+  without the explicit `,listen` mode that Podman's vfkit/libkrun path
+  generates. Neovex now emits the Podman-aligned `,listen` mode for both
+  host-owned vsock sockets, and the focused machine-manager regression tests
+  lock that contract down. Real-host proof outside the sandbox improved in the
+  expected way: during startup the host now keeps `default-gvproxy.sock`
+  alongside the krunkit peer socket, and `default-ignition.sock` serves the
+  generated ignition payload on a pristine first-boot disk. The remaining
+  blocker is now more precise, not smaller: even with the corrected host vsock
+  role, the guest still does not consume the served ignition on first boot, so
+  the injected SSH key never becomes valid, the forwarded
+  `<machine>-api.sock` never answers, the guest reaches a plain `fedora login:`
+  prompt, and `gvproxy` still exits before readiness. Durable conclusion:
+  MAC4 is no longer blocked on the host-side ready/ignition vsock listen-mode
+  contract; the next MAC4 slice is guest-image bootstrap analysis around why
+  the Fedora guest is not consuming the ignition served over the corrected
+  libkrun vsock path, and MAC5/MAC6 closeout remains blocked on that guest
+  bootstrap/auth seam. Verification:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin launch_plan_requires_bootable_local_disk_image -- --nocapture`;
+  `cargo test -p neovex-bin build_virtio_vsock_listen_arg_matches_podman_listen_mode -- --nocapture`;
+  outside-sandbox macOS proof with isolated roots under
+  `/tmp/neovex-debug-proof5.XS0dSu`.
+- 2026-04-16: Tightened the remaining MAC4 diagnosis and the operator-facing
+  startup failure message so the repo no longer blames `gvproxy` alone when
+  the guest image contract is the real problem. Comparing
+  `/Users/jack/src/github.com/agentstation/neovex-machine-os` against
+  `/Users/jack/src/github.com/containers/podman-machine-os` showed that
+  Neovex's guest-image repo is still centered on `quay.io/fedora/fedora-bootc:42`
+  plus `bootc-image-builder`, while Podman's battle-tested path uses Fedora
+  CoreOS plus `custom-coreos-disk-images` for the AppleHV/libkrun-capable
+  artifact contract. That explains the live proof boundary cleanly: the host
+  now serves the ignition payload over the corrected libkrun vsock path, but
+  the guest still reaches `fedora login:` without applying the SSH key or
+  readying `neovex.sock`. `crates/neovex-bin/src/machine/manager.rs` now
+  appends a Podman-aligned compatibility hint when startup fails after the
+  guest reaches a console login prompt, so operators are told to verify the
+  guest image contract instead of chasing a generic `gvproxy exited before
+  machine readiness` symptom. Durable conclusion: the next real MAC4
+  implementation step is a cross-repo rebase of `agentstation/neovex-machine-os`
+  onto Podman's Fedora CoreOS/custom-coreos-disk-images shape; the host repo
+  should only carry diagnostics and compatibility surfacing for that gap.
+  Verification:
+  `cargo fmt --all --check`;
+  `cargo check -p neovex-bin`;
+  `cargo test -p neovex-bin annotate_machine_start_error_hints_when_guest_reaches_login_prompt -- --nocapture`;
+  `cargo test -p neovex-bin annotate_machine_start_error_leaves_unrelated_failures_unchanged -- --nocapture`.
+- 2026-04-16: Corrected the MAC4 machine-image decision so the active plan no
+  longer mixes today's bring-up contract with later image-ownership work.
+  Durable rule is now explicit: macOS closes out first on Podman's published
+  machine image, pinned by immutable reference or digest, with host-managed
+  Neovex bootstrap layered on top. A Neovex-owned image is later replacement
+  work rather than the current MAC4 gate, and any existing `fedora-bootc`
+  supply-side work remains separate future direction until it proves the same
+  Podman-aligned runtime semantics. Updated the MAC4 ledger summary, machine
+  image decision section, supported-upgrade guidance, and implementation plan
+  to match that contract. Verification: docs-only plan update.
+- 2026-04-16: Closed the remaining MAC4 proof gap with a fresh isolated macOS
+  run rooted at `/tmp/neovex-mac4-versionproof.lHXHRO`. To avoid waiting on a
+  new public release, the host repo now also supports a practical local proof
+  lane for the matching Linux guest binary: enabled vendored OpenSSL in the
+  workspace TLS dependencies, installed the `aarch64-unknown-linux-gnu` Rust
+  target, and built a Linux arm64 guest binary locally on the current Mac with
+  `zig`-backed cross wrappers plus `/usr/bin/ar`. The resulting guest artifact
+  and tarball were staged at `/tmp/neovex-linux-arm64-proof/`, with guest
+  binary sha256 `60ba857fd5258b6bd12347da92c72c0eb773016254b94e045917b911c17561e0`
+  and archive sha256 `d25b03e52cc5228a799e66cdff4c7196fbbe5b249d3d4b84f6c4e557d6c7e5fa`.
+  A fresh `neovex machine init` plus `neovex machine start` under that proof
+  root, using `NEOVEX_MACHINE_GUEST_BINARY=/tmp/neovex-linux-arm64-proof/neovex`,
+  now reaches `running` / `ready`, records the pinned Podman digest as the
+  desired and recorded machine image, and proves forwarded machine-API
+  readiness on `/tmp/neovex-mac4-versionproof.lHXHRO/runtime/default-api.sock`.
+  The guest proof bundle at `/tmp/neovex-mac4-versionproof.lHXHRO/guest-proof`
+  now captures guest `neovex --version` as `neovex 0.1.3`, guest sha256,
+  guest socket/service state, virtiofs mount presence, and guest machine-API
+  health/capabilities. The follow-on host service proof bundle at
+  `/tmp/neovex-mac4-versionproof.lHXHRO/service-proof` shows the next blocker
+  precisely: host machine/API health and `service config` pass, but
+  `service up` fails with `No such file or directory (os error 2)` while
+  invoking buildah, and the machine-API capability report confirms that the
+  current Podman proof image still lacks `buildah`, `netavark`, and
+  `aardvark-dns`. Durable conclusion: MAC4 is now closed in this repo; the
+  remaining MAC5/MAC6 blocker is guest runtime-image content, which belongs to
+  the image-ownership track rather than more host-manager convergence work.
+  Verification:
+  `cargo build --release -p neovex-bin --target aarch64-unknown-linux-gnu`
+  (outside sandbox, with `zig` wrappers);
+  `cargo build -p neovex-bin`;
+  `env HOME=/tmp/neovex-mac4-versionproof.lHXHRO/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac4-versionproof.lHXHRO/runtime NEOVEX_MACHINE_GUEST_BINARY=/tmp/neovex-linux-arm64-proof/neovex NEOVEX_MACHINE_API_READY_TIMEOUT_SECS=120 target/debug/neovex machine start`;
+  `bash scripts/collect-neovex-machine-guest-proof.sh --home /tmp/neovex-mac4-versionproof.lHXHRO/home --runtime-root /tmp/neovex-mac4-versionproof.lHXHRO/runtime --output-dir /tmp/neovex-mac4-versionproof.lHXHRO/guest-proof --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex`;
+  `bash scripts/collect-neovex-machine-service-proof.sh --home /tmp/neovex-mac4-versionproof.lHXHRO/home --runtime-root /tmp/neovex-mac4-versionproof.lHXHRO/runtime --output-dir /tmp/neovex-mac4-versionproof.lHXHRO/service-proof --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex --compose-file /tmp/neovex-mac-service-proof-compose.yaml --service demo`.

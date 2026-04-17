@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=exec
 KillMode=process
 WorkingDirectory={guest_neovex_data_dir}
+Environment=HOME={guest_neovex_data_dir}
 ExecStart={guest_neovex_bin} machine api --socket-activation --control-data-dir {guest_neovex_control_dir}
 Restart=on-failure
 RestartSec=2

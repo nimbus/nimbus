@@ -5,12 +5,20 @@ This directory prefers a small-number-of-plans model with clear ownership.
 ## Active execution plans
 
 - `docs/plans/encryption-at-rest-plan.md`
-  - canonical execution plan for per-tenant encryption at rest via the
-    retained redb embedded provider
-- `docs/plans/macos-machine-support-plan.md`
-  - canonical execution plan for the Podman-aligned macOS developer-machine
-    architecture: one Linux guest VM, standard guest containers, `neovex machine ...`,
-    host-local control channel, and real-host verification
+  - canonical execution plan for optional, enterprise-ready encryption at
+    rest across Neovex-owned local persistence: embedded SQLite, retained
+    redb, the retained redb control plane, and local libsql replica caches
+- `docs/plans/machine-lifecycle-hardening-plan.md`
+  - canonical shared control plan for enterprise-grade machine lifecycle
+    reliability across macOS and the future Windows provider: provider-owned
+    stop sequencing, startup signal handling, file-locked SSH port allocation,
+    atomic config/state writes, record versioning, provider capability flags,
+    and phased networking orchestration
+- `docs/plans/machine-cli-dx-plan.md`
+  - canonical execution plan for machine CLI developer experience: `--version`,
+    user-facing help text, Podman-aligned flag names and short aliases,
+    combined init+start flow, machine name positional arg, `--format` output,
+    `list`/`inspect`/`set`/`cp` subcommands, `--quiet` flag
 
 ## Stable implementation baselines
 
@@ -18,6 +26,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - concise current baseline for the landed krun-backed microVM runtime,
     service activation, Compose-backed `neovex service ...` surface, and the
     Linux-versus-macOS platform model
+- `docs/reference/macos-machine-flow.md`
+  - concise current reference for the settled macOS developer-machine contract:
+    pinned Podman image digest, host-managed guest binary sync, forwarded
+    machine API, host-resident `neovex serve`, and proof-helper entrypoints
 
 - `docs/plans/install-script-plan.md`
   - canonical execution plan for the neovex install script (Channel 1):
@@ -26,15 +38,22 @@ This directory prefers a small-number-of-plans model with clear ownership.
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
 
-## Deferred plans with defined scope
+## Pending plans
 
-- `docs/plans/machine-lifecycle-hardening-plan.md`
-  - canonical execution plan for Podman-aligned machine lifecycle robustness:
-    graceful guest shutdown, signal handling during startup, file-locked SSH
-    port allocation, atomic config writes, config schema versioning, provider
-    capability flags, pre/post-start networking phases; activation gate is
-    macOS MAC6 complete; shared infrastructure for both macOS and Windows
-    machine paths
+- `docs/plans/nimbus-rename-satellite-repos-plan.md`
+  - prerequisite plan for renaming internals of satellite repositories
+    (`nimbus-machine-os`, `nimbus-crun`) and creating a new `nimbus/homebrew-tap`
+    before the main repo rename: guest image paths, systemd units, OCI media
+    types, OCI annotations, build scripts, workflow inputs, Homebrew cask, and
+    cross-repo interface coordination
+- `docs/plans/nimbus-rename-plan.md`
+  - canonical execution plan for renaming the project from "neovex" to "nimbus"
+    and relocating all repositories from the `agentstation` GitHub organization
+    to `nimbus`: GitHub repo transfers, Rust crate renames, JS package renames,
+    CI/CD workflow updates, script renames, Makefile updates, config/doc bulk
+    replacement, and verification; depends on the satellite repos plan above
+
+## Deferred plans with defined scope
 
 - `docs/plans/windows-machine-support-plan.md`
   - canonical execution plan for the Podman-aligned Windows developer-machine
@@ -136,6 +155,10 @@ completed plans unless explicitly asked to review historical work.
   - completed Convex compatibility and demo baseline; records the landed
     browser/client ergonomics, repo-owned demo variants, served browser bundle,
     and external `convex-demos` overlay workflow
+- `docs/plans/archive/macos-machine-support-plan.md`
+  - completed macOS developer-machine closeout plan; records the MAC1-MAC7
+    execution history, real-host proof bundles, and the final Podman-aligned
+    macOS developer contract
 
 ## How To Use This Folder
 
@@ -143,8 +166,14 @@ completed plans unless explicitly asked to review historical work.
 - For the landed krun-backed microVM and service-control architecture, start
   with `docs/reference/microvm-service-baseline.md` rather than opening the
   archived plans first.
-- For the current macOS developer-machine workstream, open
-  `docs/plans/macos-machine-support-plan.md` after the baseline.
+- For current macOS developer-machine behavior, start with
+  `docs/reference/microvm-service-baseline.md` and
+  `docs/reference/macos-machine-flow.md`.
+- Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
+  the historical MAC1-MAC7 execution record or exact proof-bundle paths.
+- For shared machine-lifecycle hardening or enterprise machine-management
+  reliability work, open `docs/plans/machine-lifecycle-hardening-plan.md`
+  after the baseline and the relevant platform plan.
 - Do not resume a plan from `docs/plans/archive/` unless you were explicitly
   asked to review historical work.
 - If no active plan owns the work, promote or author a new active plan instead

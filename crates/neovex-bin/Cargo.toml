@@ -1,6 +1,6 @@
 [package]
 name = "neovex-bin"
-version = "0.1.3"
+version = "0.1.9"
 edition = "2024"
 publish.workspace = true
 description = "Self-hosted JavaScript backend runtime with V8"
@@ -17,14 +17,17 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 clap.workspace = true
+fs2.workspace = true
 libc.workspace = true
 neovex = { path = "../neovex" }
 neovex-sandbox = { path = "../neovex-sandbox" }
 reqwest.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 sha2.workspace = true
+signal-hook-registry.workspace = true
 shell-words.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

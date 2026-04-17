@@ -12,7 +12,9 @@ const CORE_USER: &str = "core";
 const GUEST_NEOVEX_DATA_DIR: &str = "/var/lib/neovex";
 const GUEST_NEOVEX_CONTROL_DIR: &str = "/var/lib/neovex/control";
 const GUEST_NEOVEX_DB_DIR: &str = "/var/lib/neovex/data";
-const GUEST_NEOVEX_BIN: &str = "/usr/local/bin/neovex";
+// On FCOS, /usr/local is a writable symlink to /var/usrlocal and carries an
+// executable label, unlike /var/lib where systemd will not exec guest-managed binaries.
+pub(super) const GUEST_NEOVEX_BIN: &str = "/usr/local/bin/neovex";
 pub(super) const GUEST_NEOVEX_SOCKET: &str = "/run/neovex/neovex.sock";
 const VIRTIOFS_SELINUX_CONTEXT: &str = "system_u:object_r:nfs_t:s0";
 const READY_SERVICE_TEMPLATE: &str = include_str!("assets/ready.service.tmpl");
@@ -239,12 +241,13 @@ mod tests {
 
     use super::*;
     use crate::machine::{
-        MachineGuestConfig, MachineImageSource, MachineProvider, MachineResources,
-        MachineRootLayout,
+        CURRENT_MACHINE_CONFIG_VERSION, MachineGuestConfig, MachineImageSource, MachineProvider,
+        MachineResources, MachineRootLayout,
     };
 
     fn sample_config(temp_dir: &TempDir) -> MachineConfigRecord {
         MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
             name: "default".to_owned(),
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {
@@ -308,6 +311,13 @@ mod tests {
                 .as_str()
                 .is_some_and(|contents| contents.contains("machine api --socket-activation"))
         }));
+        assert!(
+            !ignition["storage"]["directories"]
+                .as_array()
+                .expect("storage directories should render")
+                .iter()
+                .any(|directory| directory["path"] == "/var/lib/neovex/bin")
+        );
     }
 
     #[test]

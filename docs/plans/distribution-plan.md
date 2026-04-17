@@ -14,8 +14,10 @@ target platforms and package channels.
 - **Related plans:**
   - `docs/reference/microvm-service-baseline.md` — current landed runtime and
     service-control baseline
-  - `docs/plans/macos-machine-support-plan.md` — active execution plan for the
-    macOS developer-machine architecture and implementation
+  - `docs/reference/macos-machine-flow.md` — current macOS developer-machine
+    contract reference
+  - `docs/plans/archive/macos-machine-support-plan.md` — completed macOS
+    execution record with exact closeout evidence for Channel 4
   - `docs/plans/archive/vmm-infrastructure-plan.md` — historical VMM
     foundation execution record with Linux/macOS validation evidence
   - `docs/plans/install-script-plan.md` — execution plan for Channel 1
@@ -658,8 +660,9 @@ needed). Triggered on push to main (path-filtered), `crun/v*` tags, and
 
 ### Phase D4: Homebrew + Machine VM (macOS)
 
-macOS is a development environment, not production. The neovex server runs
-inside a Linux machine VM (same model as Podman). See Channel 4 above.
+macOS is a development environment, not production. Neovex follows Podman's
+one-machine-VM model for service execution, but the authoritative Neovex
+server/runtime/storage loop stays on the macOS host. See Channel 4 above.
 
 #### Phase D4a: Homebrew formula + krunkit integration
 
@@ -677,37 +680,42 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
 - `neovex machine start` boots a Fedora CoreOS VM
 - SSH into the VM works; virtiofs mounts work
 
-#### Phase D4b: Guest VM image
+#### Phase D4b: Current machine-image contract
 
-**Goal:** Custom machine image with neovex + all deps pre-installed.
+**Goal:** Ship the current macOS machine-image contract intentionally and keep
+future image ownership separate.
 
 **Scope:**
-- Build Fedora bootc 42 image with neovex + all Linux deps
-- Publish as raw-disk OCI artifact at `ghcr.io/agentstation/neovex-machine-os`
-- Publish immutable version tags first, then attach moving aliases such as
-  `stable` and optionally `latest`
-- `neovex machine init` pulls and caches by digest
-- Ignition provisioning: SSH keys, neovex systemd unit, virtiofs mounts
-- Dedicated Linux ARM64 GitHub Actions lane in
-  `agentstation/neovex-machine-os`; macOS consumes the published artifact, it
-  does not build the guest image locally
-- **Cross-repo release contract:** neovex `v*` releases call the reusable
-  machine-os workflow with the same `v*` tag so the default host image
-  reference `ghcr.io/agentstation/neovex-machine-os:v{CARGO_PKG_VERSION}`
-  always resolves to a matching guest image. Standalone machine-os `v*` tags
-  must embed the same neovex version they publish.
+- Current macOS v1 contract uses Podman's published machine image directly at
+  an immutable `quay.io/podman/machine-os@sha256:...` reference owned by the
+  host `neovex` release
+- `neovex machine start` is the primary convergence path:
+  cache missing machine-image and guest-binary artifacts, rebuild boot
+  artifacts when the recorded base image drifts, hash-sync the guest
+  `/usr/local/bin/neovex`, and validate the forwarded machine API before
+  reporting success
+- Ignition stays machine-specific and version-agnostic: SSH keys, writable
+  Neovex dirs, guest units, virtiofs mounts, readiness wiring
+- explicit `neovex machine os apply` / `neovex machine os upgrade` surfaces
+  remain host-managed rollout controls rather than ad hoc guest mutation
+- a Neovex-owned FCOS-derived image in `agentstation/neovex-machine-os`
+  remains the later ownership/supply-side track once it preserves the same
+  Podman-aligned FCOS/ignition/libkrun semantics
 
 **Acceptance criteria:**
-- `neovex machine init` downloads the custom image
-- the published machine image has a versioned GHCR reference plus recorded
-  digest/provenance
-- `neovex serve` runs inside the VM with all deps available
-- a neovex `v0.1.0` release triggers a matching
-  `ghcr.io/agentstation/neovex-machine-os:v0.1.0` guest-image publish
+- `neovex machine init` records the pinned Podman digest instead of a floating
+  tag
+- `neovex machine start` can repopulate a clean machine root from the pinned
+  image and a matching guest Linux `neovex` asset
+- the macOS recovery drill is documented against the supported default
+  contract, not a bespoke local raw-disk workflow
+- future Neovex-owned image work stays explicitly separated from the current
+  shipped macOS v1 contract
 
 #### Phase D4c: API forwarding + port forwarding
 
-**Goal:** `neovex serve` on macOS is transparent — same as Linux.
+**Goal:** `neovex serve` on macOS feels transparent while remaining a
+host-resident server.
 
 **Scope:**
 - host-local control socket/channel for the guest Neovex API
@@ -718,7 +726,8 @@ inside a Linux machine VM (same model as Podman). See Channel 4 above.
   remain distinct probe stages
 
 **Acceptance criteria:**
-- `neovex serve` on macOS starts machine and proxies transparently
+- `neovex serve` on macOS starts the machine, stays host-resident, and proxies
+  transparently to the guest machine API
 - WebSocket subscriptions work through the macOS guest-control proxy
 - postgres:16 service accessible at `localhost:5432` from macOS
 

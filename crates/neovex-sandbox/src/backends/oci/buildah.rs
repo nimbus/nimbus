@@ -209,6 +209,7 @@ impl BuildahCli {
         self.pull(container_name, &localhost_image_reference(image_name))
     }
 
+    #[cfg(test)]
     pub fn prepare_image_launch(
         &self,
         container_name: &str,
@@ -514,6 +515,19 @@ struct BuildahImageEnvelope {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+struct ImageConfigBlobPayload {
+    #[serde(default, alias = "Config", alias = "config")]
+    config: BuildahImageFields,
+    #[serde(
+        default,
+        alias = "ContainerConfig",
+        alias = "containerConfig",
+        alias = "container_config"
+    )]
+    container_config: BuildahImageFields,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 struct BuildahImageFields {
     #[serde(
         default,
@@ -737,17 +751,78 @@ fn parse_inspect_output(stdout: &[u8]) -> Result<OciImageConfig> {
     Ok(OciImageConfig::from_payload(payload))
 }
 
+pub(crate) fn parse_image_config_blob(blob: &[u8]) -> Result<OciImageConfig> {
+    let value: Value =
+        serde_json::from_slice(blob).map_err(|error| SandboxError::OperationFailed {
+            message: format!("failed to parse OCI image config JSON: {error}"),
+        })?;
+
+    match value {
+        Value::Object(map)
+            if map.contains_key("config")
+                || map.contains_key("Config")
+                || map.contains_key("container_config")
+                || map.contains_key("containerConfig")
+                || map.contains_key("ContainerConfig") =>
+        {
+            let payload = serde_json::from_value::<ImageConfigBlobPayload>(Value::Object(map))
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!("failed to decode OCI image config payload: {error}"),
+                })?;
+            Ok(OciImageConfig::from_fields(
+                payload.config,
+                payload.container_config,
+            ))
+        }
+        Value::Object(map) => {
+            let fields = serde_json::from_value::<BuildahImageFields>(Value::Object(map)).map_err(
+                |error| SandboxError::OperationFailed {
+                    message: format!("failed to decode OCI image config fields: {error}"),
+                },
+            )?;
+            Ok(OciImageConfig::from_fields(
+                fields,
+                BuildahImageFields::default(),
+            ))
+        }
+        _ => Err(SandboxError::OperationFailed {
+            message: "OCI image config JSON was not an object".to_owned(),
+        }),
+    }
+}
+
+pub(crate) fn resolve_image_user_from_rootfs(
+    rootfs: &Path,
+    user: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(user) = user.map(str::trim).filter(|u| !u.is_empty()) else {
+        return Ok(None);
+    };
+
+    if is_numeric_user_spec(user) {
+        return Ok(Some(user.to_owned()));
+    }
+
+    let passwd_content = read_host_rootfs_file(rootfs, "etc/passwd")?;
+    let group_content = read_host_rootfs_file(rootfs, "etc/group").ok();
+    resolve_user_from_content(user, &passwd_content, group_content.as_deref())
+}
+
 impl OciImageConfig {
     fn from_payload(payload: BuildahInspectPayload) -> Self {
-        let oci = payload
-            .oci_v1
-            .map(|payload| payload.config)
-            .unwrap_or_default();
-        let docker = payload
-            .docker
-            .map(|payload| payload.config)
-            .unwrap_or_default();
+        Self::from_fields(
+            payload
+                .oci_v1
+                .map(|payload| payload.config)
+                .unwrap_or_default(),
+            payload
+                .docker
+                .map(|payload| payload.config)
+                .unwrap_or_default(),
+        )
+    }
 
+    fn from_fields(oci: BuildahImageFields, docker: BuildahImageFields) -> Self {
         let mut labels = docker.labels;
         labels.extend(oci.labels);
 
@@ -840,6 +915,17 @@ fn prefer_vec(primary: Vec<String>, fallback: Vec<String>) -> Vec<String> {
     } else {
         primary
     }
+}
+
+fn read_host_rootfs_file(rootfs: &Path, relative_path: &str) -> Result<String> {
+    std::fs::read_to_string(rootfs.join(relative_path)).map_err(|error| {
+        SandboxError::OperationFailed {
+            message: format!(
+                "failed to read {relative_path} from extracted rootfs {}: {error}",
+                rootfs.display()
+            ),
+        }
+    })
 }
 
 fn merge_map_keys(

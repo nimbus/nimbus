@@ -10,19 +10,22 @@ and where to go next.
   product entrypoint, install, verification, licensing, docs map
 - [ARCHITECTURE.md](../ARCHITECTURE.md):
   stable architecture, crate map, and invariants
+- [Storage encryption architecture](architecture/storage/encryption.md):
+  stable design baseline for optional encryption at rest across Neovex-owned
+  local persistence
 - [Current capabilities](reference/current-capabilities.md):
   snapshot of the current implemented surface
 - [MicroVM and service-control baseline](reference/microvm-service-baseline.md):
   concise current baseline for the landed krun-backed microVM runtime,
   `ctx.services.*` integration, and `neovex service ...` control surface
 - [macOS machine image and control flows](reference/macos-machine-flow.md):
-  current source-backed diagrams for host release -> guest image release,
-  GHCR publish, macOS image pull/materialization, and host/guest service
-  execution flow
+  current source-backed diagrams for the pinned Podman/Quay macOS bring-up
+  image, the later Neovex-owned image track, macOS image pull/materialization,
+  and host/guest service execution flow
 - [HTTP and WebSocket API](reference/http-api.md):
   native and optional Convex route catalog
 - [CLI reference](reference/cli.md):
-  server flags and runtime-limit defaults
+  server flags plus the current service and machine command surface
 - [krun VMM host validation](reference/krun-vmm-host-validation.md):
   Linux-side build, install, and evidence capture runbook for historical
   patched-crun VMM validation and regression reruns
@@ -32,8 +35,8 @@ and where to go next.
   why Neovex embeds V8 via deno_core fork, why the workerd model is not
   pursued, and what future paths exist
 - [macOS host-vs-guest control-plane rationale](research/macos-host-vs-guest-control-plane-rationale.md):
-  why macOS should prefer a guest-resident authoritative Neovex server over a
-  host-resident hybrid control plane for v1
+  historical tradeoffs behind rejected macOS control-plane shapes and why the
+  current host-resident hybrid control plane won for v1
 - [Versioned serving snapshot design note](research/versioned-serving-snapshot-design-note.md):
   implementation-grade north-star for the next server-side read-surface
   promotion after the `SA8` materialized-serving slice
@@ -45,6 +48,8 @@ and where to go next.
 
 ## Layout
 
+- `architecture/`: stable architecture deep dives that extend
+  `ARCHITECTURE.md`
 - `reference/`: stable operator and developer reference docs
 - `convex/`: Convex-surface behavior and compatibility notes
 - `plans/`: plan index plus active and deferred execution plans

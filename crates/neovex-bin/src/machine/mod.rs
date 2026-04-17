@@ -1,12 +1,15 @@
 use std::env;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use clap::{Args, Subcommand};
+use fs2::FileExt;
 use neovex::Error;
+use semver::Version;
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 #[cfg(unix)]
 mod api;
@@ -37,24 +40,115 @@ mod protocol;
 
 #[cfg(test)]
 pub(crate) use self::api::{
-    MachineApiListenMode, MachineApiState, bind_direct_listener, serve_machine_api,
+    MachineApiListenMode, MachineApiState, bind_direct_listener, default_guest_helper_binary_dirs,
+    serve_machine_api,
 };
 pub(crate) use self::backend::ForwardedMachineApiSandboxBackend;
 pub(crate) use self::client::MachineApiClient;
 use self::manager::{
     MACHINE_API_FORWARD_TRANSPORT, MACHINE_API_FORWARD_USER, MachineRuntimeState,
-    build_ssh_command, refresh_machine_state, start_machine, stop_machine,
+    build_ssh_command, refresh_machine_state, release_machine_ssh_port, start_machine,
+    stop_machine,
 };
 use self::protocol::MachineApiCapabilityResponse;
+pub(crate) use self::protocol::MachineApiServiceSandboxDetails;
 
 const DEFAULT_MACHINE_NAME: &str = "default";
-/// The default machine image reference, derived from the crate version at build time.
-/// neovex v0.0.1 → `docker://ghcr.io/agentstation/neovex-machine-os:v0.0.1`
+const DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/agentstation/neovex-machine-os";
+const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
+const LEGACY_PODMAN_MACHINE_IMAGE_TAG: &str = "6.0";
+const DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST: &str =
+    "sha256:02ce56eb3a353f3d909eeb6742db7052e13fcad01937ef9536d41178c4865000";
+
+fn current_machine_release_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
 fn default_machine_image() -> String {
-    format!(
-        "docker://ghcr.io/agentstation/neovex-machine-os:v{}",
-        env!("CARGO_PKG_VERSION")
+    default_machine_image_for_provider(MachineProvider::Krunkit)
+}
+
+fn default_machine_image_for_provider(provider: MachineProvider) -> String {
+    match provider {
+        MachineProvider::Krunkit if cfg!(target_os = "macos") => format!(
+            "docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@{DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST}"
+        ),
+        MachineProvider::Krunkit | MachineProvider::Wsl2 => format!(
+            "docker://{DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY}:{}",
+            current_machine_release_tag()
+        ),
+    }
+}
+
+fn legacy_podman_machine_image_for_provider(provider: MachineProvider) -> Option<String> {
+    match provider {
+        MachineProvider::Krunkit if cfg!(target_os = "macos") => Some(format!(
+            "docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}:{LEGACY_PODMAN_MACHINE_IMAGE_TAG}"
+        )),
+        MachineProvider::Krunkit | MachineProvider::Wsl2 => None,
+    }
+}
+
+fn machine_image_reference_repository(reference: &str) -> String {
+    let stripped = reference.trim_start_matches("docker://");
+    let without_digest = stripped.split('@').next().unwrap_or(stripped);
+    let last_component = without_digest.rsplit('/').next().unwrap_or(without_digest);
+    if last_component.contains(':') {
+        without_digest
+            .rsplit_once(':')
+            .map(|(repository, _)| repository)
+            .unwrap_or(without_digest)
+            .to_owned()
+    } else {
+        without_digest.to_owned()
+    }
+}
+
+fn machine_image_reference_version_label(reference: &str) -> String {
+    let stripped = reference.trim_start_matches("docker://");
+    if let Some((_, digest)) = stripped.rsplit_once('@') {
+        return digest.to_owned();
+    }
+    let last_component = stripped.rsplit('/').next().unwrap_or(stripped);
+    if let Some((_, tag)) = last_component.rsplit_once(':') {
+        return tag.to_owned();
+    }
+    stripped.to_owned()
+}
+
+fn uses_host_managed_machine_image_contract(config: &MachineConfigRecord) -> bool {
+    if !(cfg!(target_os = "macos") && config.provider == MachineProvider::Krunkit) {
+        return false;
+    }
+
+    matches!(
+        &config.guest.image_source,
+        MachineImageSource::OciReference { reference }
+            if matches!(
+                machine_image_reference_repository(reference).as_str(),
+                DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY | DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY
+            )
     )
+}
+
+fn desired_machine_image_source(config: &MachineConfigRecord) -> MachineImageSource {
+    let follows_release_default = matches!(
+        &config.guest.image_source,
+        MachineImageSource::OciReference { reference }
+            if reference == &default_machine_image_for_provider(config.provider)
+                || legacy_podman_machine_image_for_provider(config.provider)
+                    .as_ref()
+                    .is_some_and(|legacy| legacy == reference)
+                || machine_image_reference_repository(reference)
+                    == DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY
+    );
+    if follows_release_default {
+        MachineImageSource::OciReference {
+            reference: default_machine_image_for_provider(config.provider),
+        }
+    } else {
+        config.guest.image_source.clone()
+    }
 }
 const DEFAULT_MACHINE_SSH_USER: &str = "core";
 const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/neovex";
@@ -62,6 +156,8 @@ const MACHINE_RUNTIME_ROOT_ENV: &str = "NEOVEX_MACHINE_RUNTIME_ROOT";
 const DEFAULT_MACHINE_CPUS: u8 = 2;
 const DEFAULT_MACHINE_MEMORY_MIB: u32 = 2048;
 const DEFAULT_MACHINE_DISK_GIB: u32 = 20;
+const CURRENT_MACHINE_CONFIG_VERSION: u32 = 1;
+const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Args)]
 pub(crate) struct MachineCommand {
@@ -83,9 +179,46 @@ enum MachineSubcommand {
     Ssh(MachineSshCommand),
     /// Remove the local machine config, state, and runtime roots.
     Rm(MachineRmCommand),
+    /// Manage the pinned machine OS image contract for this host.
+    Os(MachineOsCommand),
     /// Internal guest machine API daemon for macOS machine support.
     #[command(hide = true)]
     Api(MachineApiCommand),
+}
+
+#[derive(Debug, Args)]
+struct MachineOsCommand {
+    #[command(subcommand)]
+    command: MachineOsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum MachineOsSubcommand {
+    /// Apply a specific immutable OCI image reference or digest as the next machine OS.
+    Apply(MachineOsApplyCommand),
+    /// Upgrade the machine OS to the supported image that matches this neovex host version.
+    Upgrade(MachineOsUpgradeCommand),
+}
+
+#[derive(Debug, Args)]
+struct MachineOsApplyCommand {
+    /// OCI image reference or digest to apply on the next machine boot.
+    image: String,
+
+    /// Stop and restart the machine immediately if it is running.
+    #[arg(long)]
+    restart: bool,
+}
+
+#[derive(Debug, Args)]
+struct MachineOsUpgradeCommand {
+    /// Only report whether an upgrade is available in the current supported release stream.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Stop and restart the machine immediately if an upgrade is applied while it is running.
+    #[arg(long)]
+    restart: bool,
 }
 
 #[derive(Debug, Args)]
@@ -162,13 +295,24 @@ struct MachineApiCommand {
 }
 
 pub(crate) async fn run_machine_command(command: MachineCommand) -> Result<(), Error> {
-    let roots = MachineRootLayout::resolve()?;
+    let roots = resolve_roots_for_command(&command)?;
     run_machine_command_with_layout(command, &roots).await
+}
+
+fn resolve_roots_for_command(command: &MachineCommand) -> Result<MachineRootLayout, Error> {
+    match &command.command {
+        MachineSubcommand::Api(_) => MachineRootLayout::resolve()
+            .or_else(|_| Ok(MachineRootLayout::guest_api_default(resolve_runtime_root()))),
+        _ => MachineRootLayout::resolve(),
+    }
 }
 
 pub(crate) fn require_default_machine_api_client() -> Result<MachineApiClient, Error> {
     let roots = MachineRootLayout::resolve()?;
-    let (paths, _, state) = load_initialized_machine(&roots)?;
+    let (paths, state) = with_default_machine_lock(&roots, || {
+        let (paths, _, state) = load_initialized_machine(&roots)?;
+        Ok((paths, state))
+    })?;
     if !matches!(state.lifecycle, MachineLifecycle::Running) {
         return Err(Error::InvalidInput(format!(
             "machine '{}' is {} and its guest machine API is not available; run `neovex machine start` first",
@@ -200,12 +344,25 @@ async fn run_machine_command_with_layout(
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
     match command.command {
-        MachineSubcommand::Init(init) => run_machine_init(init, roots),
-        MachineSubcommand::Start(start) => run_machine_start(start, roots),
-        MachineSubcommand::Stop(stop) => run_machine_stop(stop, roots),
-        MachineSubcommand::Status(status) => run_machine_status(status, roots),
-        MachineSubcommand::Ssh(ssh) => run_machine_ssh(ssh, roots),
-        MachineSubcommand::Rm(remove) => run_machine_rm(remove, roots),
+        MachineSubcommand::Init(init) => {
+            with_default_machine_lock(roots, || run_machine_init(init, roots))
+        }
+        MachineSubcommand::Start(start) => {
+            with_default_machine_lock(roots, || run_machine_start(start, roots))
+        }
+        MachineSubcommand::Stop(stop) => {
+            with_default_machine_lock(roots, || run_machine_stop(stop, roots))
+        }
+        MachineSubcommand::Status(status) => {
+            with_default_machine_lock(roots, || run_machine_status(status, roots))
+        }
+        MachineSubcommand::Ssh(ssh) => {
+            with_default_machine_lock(roots, || run_machine_ssh(ssh, roots))
+        }
+        MachineSubcommand::Rm(remove) => {
+            with_default_machine_lock(roots, || run_machine_rm(remove, roots))
+        }
+        MachineSubcommand::Os(os) => with_default_machine_lock(roots, || run_machine_os(os, roots)),
         MachineSubcommand::Api(api) => api::run_machine_api_command(api, roots).await,
     }
 }
@@ -222,6 +379,7 @@ fn run_machine_init(command: MachineInitCommand, roots: &MachineRootLayout) -> R
 
     paths.ensure_directories()?;
     let config = MachineConfigRecord {
+        version: CURRENT_MACHINE_CONFIG_VERSION,
         name: DEFAULT_MACHINE_NAME.to_owned(),
         provider: MachineProvider::Krunkit,
         guest: MachineGuestConfig {
@@ -263,9 +421,9 @@ fn run_machine_start(
     _command: MachineStartCommand,
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
-    let (paths, config, mut state) = load_initialized_machine(roots)?;
+    let (paths, mut config, mut state) = load_initialized_machine(roots)?;
     paths.ensure_runtime_directories()?;
-    start_machine(&paths, &config, &mut state)?;
+    start_machine(&paths, &mut config, &mut state)?;
     print!(
         "{}",
         render_machine_view(
@@ -280,7 +438,7 @@ fn run_machine_start(
 
 fn run_machine_stop(_command: MachineStopCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let (paths, config, mut state) = load_initialized_machine(roots)?;
-    stop_machine(&paths, &mut state)?;
+    stop_machine(&paths, &config, &mut state)?;
     print!(
         "{}",
         render_machine_view(
@@ -298,8 +456,8 @@ fn run_machine_status(
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
     let paths = roots.paths(DEFAULT_MACHINE_NAME);
-    let config = read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)?;
-    let mut state = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)?;
+    let config = load_machine_config_if_exists(&paths.config_path)?;
+    let mut state = load_machine_state_if_exists(&paths.state_path)?;
     if let Some(state) = state.as_mut() {
         refresh_machine_state(&paths, state)?;
     }
@@ -339,8 +497,8 @@ fn run_machine_ssh(command: MachineSshCommand, roots: &MachineRootLayout) -> Res
 
 fn run_machine_rm(_command: MachineRmCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let paths = roots.paths(DEFAULT_MACHINE_NAME);
-    let config = read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)?;
-    let state = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)?;
+    let config = load_machine_config_if_exists(&paths.config_path)?;
+    let state = load_machine_state_if_exists(&paths.state_path)?;
 
     if let Some(state) = state.as_ref()
         && matches!(
@@ -355,6 +513,7 @@ fn run_machine_rm(_command: MachineRmCommand, roots: &MachineRootLayout) -> Resu
         )));
     }
 
+    release_machine_ssh_port(roots, DEFAULT_MACHINE_NAME)?;
     remove_dir_if_exists(&paths.config_dir)?;
     remove_dir_if_exists(&paths.state_dir)?;
     remove_machine_runtime_artifacts(&paths)?;
@@ -372,22 +531,331 @@ fn run_machine_rm(_command: MachineRmCommand, roots: &MachineRootLayout) -> Resu
     Ok(())
 }
 
+fn run_machine_os(command: MachineOsCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    match command.command {
+        MachineOsSubcommand::Apply(apply) => run_machine_os_apply(apply, roots),
+        MachineOsSubcommand::Upgrade(upgrade) => run_machine_os_upgrade(upgrade, roots),
+    }
+}
+
+fn run_machine_os_apply(
+    command: MachineOsApplyCommand,
+    roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    let (paths, mut config, mut state) = load_initialized_machine(roots)?;
+    let target_source = parse_machine_os_apply_source(&command.image)?;
+    let outcome = apply_machine_os_change(
+        &paths,
+        &mut config,
+        &mut state,
+        target_source,
+        command.restart,
+    )?;
+
+    let result = if outcome.changed {
+        MachineOsCommandResult::Applied
+    } else {
+        MachineOsCommandResult::AlreadyCurrent
+    };
+    print!(
+        "{}",
+        render_machine_os_apply_view(result, &paths, &outcome, command.restart)?
+    );
+    Ok(())
+}
+
+fn run_machine_os_upgrade(
+    command: MachineOsUpgradeCommand,
+    roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    let (paths, mut config, mut state) = load_initialized_machine(roots)?;
+    let plan = plan_machine_os_upgrade(&config)?;
+    if command.dry_run || !plan.update_available {
+        let result = if plan.update_available {
+            MachineOsCommandResult::UpgradeCheck
+        } else {
+            MachineOsCommandResult::AlreadyCurrent
+        };
+        print!(
+            "{}",
+            render_machine_os_upgrade_view(result, &paths, &plan, command.dry_run, false, false)?
+        );
+        return Ok(());
+    }
+
+    let outcome = apply_machine_os_change(
+        &paths,
+        &mut config,
+        &mut state,
+        MachineImageSource::OciReference {
+            reference: plan.target_image.clone(),
+        },
+        command.restart,
+    )?;
+    print!(
+        "{}",
+        render_machine_os_upgrade_view(
+            MachineOsCommandResult::Upgraded,
+            &paths,
+            &plan,
+            false,
+            command.restart,
+            outcome.restarted,
+        )?
+    );
+    Ok(())
+}
+
 fn load_initialized_machine(
     roots: &MachineRootLayout,
 ) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
     let paths = roots.paths(DEFAULT_MACHINE_NAME);
-    let config =
-        read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)?.ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "machine '{}' is not initialized; run `neovex machine init` first",
-                DEFAULT_MACHINE_NAME
-            ))
-        })?;
-    let mut state = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)?
+    let config = load_machine_config_if_exists(&paths.config_path)?.ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{}' is not initialized; run `neovex machine init` first",
+            DEFAULT_MACHINE_NAME
+        ))
+    })?;
+    let mut state = load_machine_state_if_exists(&paths.state_path)?
         .unwrap_or_else(MachineStateRecord::initialized);
     refresh_machine_state(&paths, &mut state)?;
     write_json_file(&paths.state_path, &state)?;
     Ok((paths, config, state))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MachineOsApplyOutcome {
+    previous_image: String,
+    current_image: String,
+    changed: bool,
+    restarted: bool,
+    lifecycle: MachineLifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MachineOsUpgradePlan {
+    current_image: String,
+    current_version: String,
+    target_image: String,
+    target_version: String,
+    update_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MachineOsUpgradeStream {
+    repository: &'static str,
+    additional_supported_repositories: &'static [&'static str],
+    target_image: String,
+    target_version: String,
+    follows_host_release: bool,
+}
+
+fn apply_machine_os_change(
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    target_source: MachineImageSource,
+    restart: bool,
+) -> Result<MachineOsApplyOutcome, Error> {
+    let previous_image = describe_machine_image_source(&config.guest.image_source);
+    let current_image = describe_machine_image_source(&target_source);
+    if config.guest.image_source == target_source {
+        return Ok(MachineOsApplyOutcome {
+            previous_image,
+            current_image,
+            changed: false,
+            restarted: false,
+            lifecycle: state.lifecycle,
+        });
+    }
+
+    if matches!(state.lifecycle, MachineLifecycle::Starting) {
+        return Err(Error::Conflict(format!(
+            "machine '{}' is starting; wait for startup to finish before applying a machine OS change",
+            DEFAULT_MACHINE_NAME
+        )));
+    }
+    let was_running = matches!(state.lifecycle, MachineLifecycle::Running);
+    if was_running && !restart {
+        return Err(Error::Conflict(format!(
+            "machine '{}' is running; rerun with `--restart` to apply a machine OS change safely",
+            DEFAULT_MACHINE_NAME
+        )));
+    }
+    if was_running {
+        stop_machine(paths, config, state)?;
+    }
+
+    config.guest.image_source = target_source;
+    invalidate_materialized_machine_os(paths)?;
+    *state = MachineStateRecord::initialized();
+    write_json_file(&paths.config_path, config)?;
+    write_json_file(&paths.state_path, state)?;
+
+    let restarted = if restart {
+        start_machine(paths, config, state)?;
+        true
+    } else {
+        false
+    };
+
+    Ok(MachineOsApplyOutcome {
+        previous_image,
+        current_image,
+        changed: true,
+        restarted,
+        lifecycle: state.lifecycle,
+    })
+}
+
+fn plan_machine_os_upgrade(config: &MachineConfigRecord) -> Result<MachineOsUpgradePlan, Error> {
+    let reference = current_machine_oci_reference(config)?;
+    let stream = default_machine_os_upgrade_stream(config);
+    let repository = machine_image_reference_repository(reference.as_str());
+    let repository_supported = repository == stream.repository
+        || stream
+            .additional_supported_repositories
+            .contains(&repository.as_str());
+    if !repository_supported {
+        return Err(Error::InvalidInput(format!(
+            "machine os upgrade only supports the default release stream '{}'; current image source is '{}'. Use `neovex machine os apply <oci-ref-or-digest>` for explicit rollouts instead.",
+            stream.repository, reference
+        )));
+    }
+    if cfg!(target_os = "macos") && config.provider == MachineProvider::Krunkit {
+        let current_version = machine_image_reference_version_label(&reference);
+        let update_available = reference != stream.target_image;
+        return Ok(MachineOsUpgradePlan {
+            current_image: reference.clone(),
+            current_version: current_version.clone(),
+            target_image: stream.target_image,
+            target_version: stream.target_version.clone(),
+            update_available,
+        });
+    }
+
+    let (_, current_tag) = split_tagged_machine_image_reference(reference.as_str())?;
+    let current_version = parse_machine_release_version(&current_tag)?;
+    let target_version = parse_machine_release_version(&stream.target_version)?;
+    if stream.follows_host_release && current_version > target_version {
+        return Err(Error::Conflict(format!(
+            "configured machine image version {} is newer than the supported machine stream version {}. Install a matching neovex build or use `neovex machine os apply <oci-ref-or-digest>` explicitly.",
+            current_tag, stream.target_version
+        )));
+    }
+
+    Ok(MachineOsUpgradePlan {
+        current_image: reference,
+        current_version: current_tag.clone(),
+        target_image: stream.target_image,
+        target_version: stream.target_version.clone(),
+        update_available: current_tag != stream.target_version,
+    })
+}
+
+fn default_machine_os_upgrade_stream(config: &MachineConfigRecord) -> MachineOsUpgradeStream {
+    match config.provider {
+        MachineProvider::Krunkit if cfg!(target_os = "macos") => MachineOsUpgradeStream {
+            repository: DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY,
+            additional_supported_repositories: &[DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY],
+            target_image: default_machine_image_for_provider(config.provider),
+            target_version: DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST.to_owned(),
+            follows_host_release: false,
+        },
+        MachineProvider::Krunkit | MachineProvider::Wsl2 => MachineOsUpgradeStream {
+            repository: DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY,
+            additional_supported_repositories: &[],
+            target_image: default_machine_image_for_provider(config.provider),
+            target_version: current_machine_release_tag(),
+            follows_host_release: true,
+        },
+    }
+}
+
+fn parse_machine_os_apply_source(value: &str) -> Result<MachineImageSource, Error> {
+    match MachineImageSource::parse(value)? {
+        source @ MachineImageSource::OciReference { .. } => Ok(source),
+        MachineImageSource::HttpUrl { .. } => Err(Error::InvalidInput(
+            "machine os apply requires an OCI image reference or digest; HTTP URLs are only supported for diagnostic machine init overrides".to_owned(),
+        )),
+        MachineImageSource::LocalDisk { .. } => Err(Error::InvalidInput(
+            "machine os apply requires an OCI image reference or digest; local raw disks are only supported for diagnostic machine init overrides".to_owned(),
+        )),
+    }
+}
+
+fn current_machine_oci_reference(config: &MachineConfigRecord) -> Result<String, Error> {
+    match &config.guest.image_source {
+        MachineImageSource::OciReference { reference } => Ok(reference.clone()),
+        MachineImageSource::HttpUrl { url } => Err(Error::InvalidInput(format!(
+            "machine os upgrade only supports OCI image sources, but this machine uses HTTP override '{}'. Use `neovex machine os apply <oci-ref-or-digest>` to return to a supported release stream.",
+            url
+        ))),
+        MachineImageSource::LocalDisk { path } => Err(Error::InvalidInput(format!(
+            "machine os upgrade only supports OCI image sources, but this machine uses local disk '{}'. Use `neovex machine os apply <oci-ref-or-digest>` to return to a supported release stream.",
+            path.display()
+        ))),
+    }
+}
+
+fn split_tagged_machine_image_reference(reference: &str) -> Result<(String, String), Error> {
+    let stripped = reference.trim_start_matches("docker://");
+    if stripped.contains('@') {
+        return Err(Error::InvalidInput(format!(
+            "machine os upgrade requires a tagged OCI reference in the supported release stream, but '{}' is digest-pinned. Use `neovex machine os apply <oci-ref-or-digest>` for explicit pinned rollouts.",
+            reference
+        )));
+    }
+    let Some(last_component) = stripped.rsplit('/').next() else {
+        return Err(Error::InvalidInput(format!(
+            "machine image reference '{}' is not a valid tagged OCI reference",
+            reference
+        )));
+    };
+    let Some((_, tag)) = last_component.rsplit_once(':') else {
+        return Err(Error::InvalidInput(format!(
+            "machine image reference '{}' is missing a release tag. Use `neovex machine os apply <oci-ref-or-digest>` for explicit pinned rollouts.",
+            reference
+        )));
+    };
+    let repository = stripped
+        .rsplit_once(':')
+        .map(|(repository, _)| repository)
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "machine image reference '{}' is not a valid tagged OCI reference",
+                reference
+            ))
+        })?;
+    Ok((repository.to_owned(), tag.to_owned()))
+}
+
+fn parse_machine_release_version(tag: &str) -> Result<Version, Error> {
+    let normalized = tag.strip_prefix('v').unwrap_or(tag);
+    let normalized = match normalized.matches('.').count() {
+        0 => format!("{normalized}.0.0"),
+        1 => format!("{normalized}.0"),
+        _ => normalized.to_owned(),
+    };
+    Version::parse(&normalized).map_err(|error| {
+        Error::InvalidInput(format!(
+            "machine image tag '{}' is not a supported semantic version tag: {error}",
+            tag
+        ))
+    })
+}
+
+fn describe_machine_image_source(source: &MachineImageSource) -> String {
+    match source {
+        MachineImageSource::OciReference { reference } => reference.clone(),
+        MachineImageSource::HttpUrl { url } => url.clone(),
+        MachineImageSource::LocalDisk { path } => path.display().to_string(),
+    }
+}
+
+fn invalidate_materialized_machine_os(paths: &MachinePaths) -> Result<(), Error> {
+    remove_file_if_exists(&paths.materialized_image_path)?;
+    remove_file_if_exists(&paths.efi_variable_store_path)
 }
 
 fn render_machine_view(
@@ -396,6 +864,47 @@ fn render_machine_view(
     config: Option<&MachineConfigRecord>,
     state: Option<&MachineStateRecord>,
 ) -> Result<String, Error> {
+    let machine_image_contract = config.map(|config| {
+        let desired_source = desired_machine_image_source(config);
+        let configured_image = describe_machine_image_source(&config.guest.image_source);
+        let desired_image = describe_machine_image_source(&desired_source);
+        let recorded_image = state
+            .and_then(|state| state.runtime.as_ref())
+            .map(|runtime| runtime.machine_image_source.clone())
+            .filter(|recorded| !recorded.is_empty());
+        let recorded_matches_desired = recorded_image.as_deref() == Some(desired_image.as_str());
+        let materialized_image_exists = paths.materialized_image_path.is_file();
+        let efi_store_exists = paths.efi_variable_store_path.exists();
+        let rebuild_reason = if recorded_image.is_none()
+            && (materialized_image_exists || efi_store_exists)
+        {
+            Some(
+                "boot artifacts exist, but no recorded base-image identity is available".to_owned(),
+            )
+        } else if !recorded_matches_desired {
+            recorded_image.as_ref().map(|recorded| {
+                format!(
+                    "recorded base image '{}' differs from desired '{}'",
+                    recorded, desired_image
+                )
+            })
+        } else {
+            None
+        };
+        MachineImageContractStatusView {
+            host_managed: uses_host_managed_machine_image_contract(config),
+            configured_image,
+            desired_image,
+            recorded_image,
+            recorded_matches_desired,
+            materialized_image_path: paths.materialized_image_path.clone(),
+            materialized_image_exists,
+            efi_store_path: paths.efi_variable_store_path.clone(),
+            efi_store_exists,
+            rebuild_required: rebuild_reason.is_some(),
+            rebuild_reason,
+        }
+    });
     let view = MachineStatusView {
         result,
         initialized: config.is_some(),
@@ -415,11 +924,62 @@ fn render_machine_view(
         roots: roots_view(paths),
         paths: paths.clone(),
         runtime: state.and_then(|state| state.runtime.clone()),
+        machine_image_contract,
         machine_api: machine_api_status_view(paths, config),
         last_error: state.and_then(|state| state.last_error.clone()),
     };
     serde_yaml::to_string(&view)
         .map_err(|error| Error::Internal(format!("failed to serialize machine status: {error}")))
+}
+
+fn render_machine_os_apply_view(
+    result: MachineOsCommandResult,
+    paths: &MachinePaths,
+    outcome: &MachineOsApplyOutcome,
+    restart_requested: bool,
+) -> Result<String, Error> {
+    let view = MachineOsApplyStatusView {
+        result,
+        name: paths.name.clone(),
+        previous_image: outcome.previous_image.clone(),
+        current_image: outcome.current_image.clone(),
+        image_changed: outcome.changed,
+        restart_requested,
+        restarted: outcome.restarted,
+        lifecycle: outcome.lifecycle,
+    };
+    serde_yaml::to_string(&view).map_err(|error| {
+        Error::Internal(format!(
+            "failed to serialize machine os apply status: {error}"
+        ))
+    })
+}
+
+fn render_machine_os_upgrade_view(
+    result: MachineOsCommandResult,
+    paths: &MachinePaths,
+    plan: &MachineOsUpgradePlan,
+    dry_run: bool,
+    restart_requested: bool,
+    restarted: bool,
+) -> Result<String, Error> {
+    let view = MachineOsUpgradeStatusView {
+        result,
+        name: paths.name.clone(),
+        current_image: plan.current_image.clone(),
+        current_version: plan.current_version.clone(),
+        target_image: plan.target_image.clone(),
+        target_version: plan.target_version.clone(),
+        update_available: plan.update_available,
+        dry_run,
+        restart_requested,
+        restarted,
+    };
+    serde_yaml::to_string(&view).map_err(|error| {
+        Error::Internal(format!(
+            "failed to serialize machine os upgrade status: {error}"
+        ))
+    })
 }
 
 fn machine_api_status_view(
@@ -538,21 +1098,55 @@ fn parse_machine_volume(value: &str) -> Result<MachineVolume, String> {
 }
 
 fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            Error::Internal(format!(
-                "failed to create parent directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
+    let parent = path.parent().ok_or_else(|| {
+        Error::Internal(format!(
+            "failed to resolve parent directory for {}",
+            path.display()
+        ))
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create parent directory {}: {error}",
+            parent.display()
+        ))
+    })?;
     let bytes = serde_json::to_vec_pretty(value).map_err(|error| {
         Error::Internal(format!("failed to serialize {}: {error}", path.display()))
     })?;
-    fs::write(path, bytes)
-        .map_err(|error| Error::Internal(format!("failed to write {}: {error}", path.display())))
+    let mut temp_file = NamedTempFile::new_in(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create temporary file for {}: {error}",
+            path.display()
+        ))
+    })?;
+    temp_file.write_all(&bytes).map_err(|error| {
+        Error::Internal(format!(
+            "failed to write temporary file for {}: {error}",
+            path.display()
+        ))
+    })?;
+    temp_file.flush().map_err(|error| {
+        Error::Internal(format!(
+            "failed to flush temporary file for {}: {error}",
+            path.display()
+        ))
+    })?;
+    temp_file.as_file().sync_all().map_err(|error| {
+        Error::Internal(format!(
+            "failed to sync temporary file for {}: {error}",
+            path.display()
+        ))
+    })?;
+    temp_file.into_temp_path().persist(path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to atomically replace {}: {}",
+            path.display(),
+            error.error
+        ))
+    })
 }
 
+#[cfg(test)]
 fn read_json_file_if_exists<T>(path: &Path) -> Result<Option<T>, Error>
 where
     T: for<'de> Deserialize<'de>,
@@ -569,6 +1163,141 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+struct MachineRecordVersionProbe {
+    #[serde(default)]
+    version: u32,
+}
+
+fn read_file_if_exists(path: &Path) -> Result<Option<Vec<u8>>, Error> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Error::Internal(format!(
+            "failed to read {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn probe_machine_record_version(
+    path: &Path,
+    bytes: &[u8],
+    record_kind: &str,
+) -> Result<u32, Error> {
+    serde_json::from_slice::<MachineRecordVersionProbe>(bytes)
+        .map(|probe| probe.version)
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "{record_kind} at {} is unreadable and cannot determine its schema version: {error}",
+                path.display()
+            ))
+        })
+}
+
+fn parse_machine_record<T>(path: &Path, bytes: &[u8], record_kind: &str) -> Result<T, Error>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    serde_json::from_slice(bytes).map_err(|error| {
+        Error::InvalidInput(format!(
+            "{record_kind} at {} is unreadable: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn load_machine_config_if_exists(path: &Path) -> Result<Option<MachineConfigRecord>, Error> {
+    let Some(bytes) = read_file_if_exists(path)? else {
+        return Ok(None);
+    };
+
+    let version = probe_machine_record_version(path, &bytes, "machine config")?;
+    match version {
+        CURRENT_MACHINE_CONFIG_VERSION => {
+            let config =
+                parse_machine_record::<MachineConfigRecord>(path, &bytes, "machine config")?;
+            Ok(Some(config))
+        }
+        0 => {
+            let mut config =
+                parse_machine_record::<MachineConfigRecord>(path, &bytes, "machine config")?;
+            config.version = CURRENT_MACHINE_CONFIG_VERSION;
+            write_json_file(path, &config)?;
+            Ok(Some(config))
+        }
+        newer if newer > CURRENT_MACHINE_CONFIG_VERSION => Err(Error::InvalidInput(format!(
+            "machine config at {} uses newer schema version {}; this neovex build supports version {}. Upgrade neovex or recreate the machine.",
+            path.display(),
+            newer,
+            CURRENT_MACHINE_CONFIG_VERSION
+        ))),
+        older => Err(Error::InvalidInput(format!(
+            "machine config at {} uses unsupported schema version {}; this neovex build supports version {}. Recreate the machine with `neovex machine rm` then `neovex machine init`.",
+            path.display(),
+            older,
+            CURRENT_MACHINE_CONFIG_VERSION
+        ))),
+    }
+}
+
+fn rebuild_machine_state(
+    path: &Path,
+    reason: impl Into<String>,
+) -> Result<MachineStateRecord, Error> {
+    let state = MachineStateRecord::rebuilt(reason);
+    write_json_file(path, &state)?;
+    Ok(state)
+}
+
+fn load_machine_state_if_exists(path: &Path) -> Result<Option<MachineStateRecord>, Error> {
+    let Some(bytes) = read_file_if_exists(path)? else {
+        return Ok(None);
+    };
+
+    let version = match probe_machine_record_version(path, &bytes, "machine state") {
+        Ok(version) => version,
+        Err(error) => return rebuild_machine_state(path, error.to_string()).map(Some),
+    };
+
+    match version {
+        CURRENT_MACHINE_STATE_VERSION => {
+            match parse_machine_record::<MachineStateRecord>(path, &bytes, "machine state") {
+                Ok(state) => Ok(Some(state)),
+                Err(error) => rebuild_machine_state(path, error.to_string()).map(Some),
+            }
+        }
+        0 => match parse_machine_record::<MachineStateRecord>(path, &bytes, "machine state") {
+            Ok(mut state) => {
+                state.version = CURRENT_MACHINE_STATE_VERSION;
+                write_json_file(path, &state)?;
+                Ok(Some(state))
+            }
+            Err(error) => rebuild_machine_state(path, error.to_string()).map(Some),
+        },
+        newer if newer > CURRENT_MACHINE_STATE_VERSION => rebuild_machine_state(
+            path,
+            format!(
+                "machine state at {} used newer schema version {}; rebuilt with version {}",
+                path.display(),
+                newer,
+                CURRENT_MACHINE_STATE_VERSION
+            ),
+        )
+        .map(Some),
+        older => rebuild_machine_state(
+            path,
+            format!(
+                "machine state at {} used unsupported schema version {}; rebuilt with version {}",
+                path.display(),
+                older,
+                CURRENT_MACHINE_STATE_VERSION
+            ),
+        )
+        .map(Some),
+    }
+}
+
 fn remove_dir_if_exists(path: &Path) -> Result<(), Error> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
@@ -578,6 +1307,56 @@ fn remove_dir_if_exists(path: &Path) -> Result<(), Error> {
             path.display()
         ))),
     }
+}
+
+struct MachineRecordLock {
+    _file: fs::File,
+}
+
+fn with_default_machine_lock<T>(
+    roots: &MachineRootLayout,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    let _lock = lock_machine_records(roots, DEFAULT_MACHINE_NAME)?;
+    operation()
+}
+
+fn lock_machine_records(
+    roots: &MachineRootLayout,
+    machine_name: &str,
+) -> Result<MachineRecordLock, Error> {
+    let lock_path = roots.lock_path(machine_name);
+    let parent = lock_path.parent().ok_or_else(|| {
+        Error::Internal(format!(
+            "failed to resolve parent directory for machine lock {}",
+            lock_path.display()
+        ))
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create machine lock directory {}: {error}",
+            parent.display()
+        ))
+    })?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to open machine lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    file.lock_exclusive().map_err(|error| {
+        Error::Internal(format!(
+            "failed to acquire machine lock {}: {error}",
+            lock_path.display()
+        ))
+    })?;
+    Ok(MachineRecordLock { _file: file })
 }
 
 fn remove_dir_if_empty(path: &Path) -> Result<(), Error> {
@@ -676,6 +1455,14 @@ impl MachineRootLayout {
         })
     }
 
+    fn guest_api_default(runtime_root: PathBuf) -> Self {
+        Self {
+            config_root: PathBuf::from("/var/lib/neovex/machine/config"),
+            state_root: PathBuf::from("/var/lib/neovex/machine/state"),
+            runtime_root,
+        }
+    }
+
     #[cfg(test)]
     fn new(config_root: PathBuf, state_root: PathBuf, runtime_root: PathBuf) -> Self {
         Self {
@@ -683,6 +1470,18 @@ impl MachineRootLayout {
             state_root,
             runtime_root,
         }
+    }
+
+    fn lock_path(&self, name: &str) -> PathBuf {
+        self.state_root.join(format!("{name}.lock"))
+    }
+
+    fn port_allocation_state_path(&self) -> PathBuf {
+        self.state_root.join("port-alloc.dat")
+    }
+
+    fn port_allocation_lock_path(&self) -> PathBuf {
+        self.state_root.join("port-alloc.lck")
     }
 
     fn paths(&self, name: &str) -> MachinePaths {
@@ -716,6 +1515,8 @@ impl MachineRootLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MachineConfigRecord {
+    #[serde(default)]
+    version: u32,
     name: String,
     provider: MachineProvider,
     guest: MachineGuestConfig,
@@ -814,6 +1615,8 @@ impl MachineVolume {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MachineStateRecord {
+    #[serde(default)]
+    version: u32,
     lifecycle: MachineLifecycle,
     manager: MachineManagerState,
     runtime: Option<MachineRuntimeState>,
@@ -823,10 +1626,21 @@ struct MachineStateRecord {
 impl MachineStateRecord {
     fn initialized() -> Self {
         Self {
+            version: CURRENT_MACHINE_STATE_VERSION,
             lifecycle: MachineLifecycle::Stopped,
             manager: MachineManagerState::Unconfigured,
             runtime: None,
             last_error: None,
+        }
+    }
+
+    fn rebuilt(reason: impl Into<String>) -> Self {
+        Self {
+            version: CURRENT_MACHINE_STATE_VERSION,
+            lifecycle: MachineLifecycle::Stopped,
+            manager: MachineManagerState::Stale,
+            runtime: None,
+            last_error: Some(reason.into()),
         }
     }
 }
@@ -835,6 +1649,73 @@ impl MachineStateRecord {
 #[serde(rename_all = "kebab-case")]
 enum MachineProvider {
     Krunkit,
+    Wsl2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MachineImageFormat {
+    Raw,
+    Tar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MachineBootstrapMode {
+    Ignition,
+    ShellScript,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MachineProviderCapabilities {
+    uses_provider_networking: bool,
+    requires_exclusive_active: bool,
+    image_format: MachineImageFormat,
+    bootstrap_mode: MachineBootstrapMode,
+    oci_artifact_disk_type: &'static str,
+}
+
+const KRUNKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
+    uses_provider_networking: false,
+    requires_exclusive_active: true,
+    image_format: MachineImageFormat::Raw,
+    bootstrap_mode: MachineBootstrapMode::Ignition,
+    oci_artifact_disk_type: "applehv",
+};
+
+const WSL2_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
+    uses_provider_networking: true,
+    requires_exclusive_active: false,
+    image_format: MachineImageFormat::Tar,
+    bootstrap_mode: MachineBootstrapMode::ShellScript,
+    oci_artifact_disk_type: "wsl",
+};
+
+impl MachineProvider {
+    fn capabilities(self) -> MachineProviderCapabilities {
+        match self {
+            Self::Krunkit => KRUNKIT_PROVIDER_CAPABILITIES,
+            Self::Wsl2 => WSL2_PROVIDER_CAPABILITIES,
+        }
+    }
+
+    fn uses_provider_networking(self) -> bool {
+        self.capabilities().uses_provider_networking
+    }
+
+    fn requires_exclusive_active(self) -> bool {
+        self.capabilities().requires_exclusive_active
+    }
+
+    fn image_format(self) -> MachineImageFormat {
+        self.capabilities().image_format
+    }
+
+    fn bootstrap_mode(self) -> MachineBootstrapMode {
+        self.capabilities().bootstrap_mode
+    }
+
+    fn oci_artifact_disk_type(self) -> &'static str {
+        self.capabilities().oci_artifact_disk_type
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -881,6 +1762,15 @@ enum MachineCommandResult {
     Uninitialized,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum MachineOsCommandResult {
+    Applied,
+    UpgradeCheck,
+    Upgraded,
+    AlreadyCurrent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct MachineRootsView {
     config_root: PathBuf,
@@ -902,8 +1792,24 @@ struct MachineStatusView {
     roots: MachineRootsView,
     paths: MachinePaths,
     runtime: Option<MachineRuntimeState>,
+    machine_image_contract: Option<MachineImageContractStatusView>,
     machine_api: MachineApiStatusView,
     last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineImageContractStatusView {
+    host_managed: bool,
+    configured_image: String,
+    desired_image: String,
+    recorded_image: Option<String>,
+    recorded_matches_desired: bool,
+    materialized_image_path: PathBuf,
+    materialized_image_exists: bool,
+    efi_store_path: PathBuf,
+    efi_store_exists: bool,
+    rebuild_required: bool,
+    rebuild_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -920,6 +1826,32 @@ struct MachineApiStatusView {
     listen_mode: Option<String>,
     capabilities: Option<MachineApiCapabilityResponse>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineOsApplyStatusView {
+    result: MachineOsCommandResult,
+    name: String,
+    previous_image: String,
+    current_image: String,
+    image_changed: bool,
+    restart_requested: bool,
+    restarted: bool,
+    lifecycle: MachineLifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineOsUpgradeStatusView {
+    result: MachineOsCommandResult,
+    name: String,
+    current_image: String,
+    current_version: String,
+    target_image: String,
+    target_version: String,
+    update_available: bool,
+    dry_run: bool,
+    restart_requested: bool,
+    restarted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1000,6 +1932,43 @@ mod tests {
         Machine(MachineCommand),
     }
 
+    fn expected_default_machine_image() -> String {
+        if cfg!(target_os = "macos") {
+            format!(
+                "docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@{DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST}"
+            )
+        } else {
+            format!(
+                "docker://{DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY}:{}",
+                env!("CARGO_PKG_VERSION")
+            )
+        }
+    }
+
+    fn supported_stream_current_image_for_upgrade_test() -> String {
+        if cfg!(target_os = "macos") {
+            "docker://quay.io/podman/machine-os:5.9".to_owned()
+        } else {
+            "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned()
+        }
+    }
+
+    fn supported_stream_digest_image_for_upgrade_test() -> String {
+        if cfg!(target_os = "macos") {
+            format!("docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@sha256:abc123")
+        } else {
+            "docker://ghcr.io/agentstation/neovex-machine-os@sha256:abc123".to_owned()
+        }
+    }
+
+    fn expected_upgrade_target_version() -> String {
+        if cfg!(target_os = "macos") {
+            DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST.to_owned()
+        } else {
+            current_machine_release_tag()
+        }
+    }
+
     #[test]
     fn parses_machine_init_defaults_to_version_pinned_release_image() {
         let cli = RootCli::parse_from(["neovex", "machine", "init"]);
@@ -1009,11 +1978,7 @@ mod tests {
 
         match machine.command {
             MachineSubcommand::Init(init) => {
-                let expected = format!(
-                    "docker://ghcr.io/agentstation/neovex-machine-os:v{}",
-                    env!("CARGO_PKG_VERSION")
-                );
-                assert_eq!(init.image, expected);
+                assert_eq!(init.image, expected_default_machine_image());
             }
             _ => panic!("expected init subcommand"),
         }
@@ -1075,6 +2040,53 @@ mod tests {
     }
 
     #[test]
+    fn parses_machine_os_subcommands() {
+        let cli = RootCli::parse_from([
+            "neovex",
+            "machine",
+            "os",
+            "apply",
+            "ghcr.io/agentstation/neovex-machine-os:v9.9.9",
+            "--restart",
+        ]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine os apply should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Os(os) => match os.command {
+                MachineOsSubcommand::Apply(apply) => {
+                    assert_eq!(apply.image, "ghcr.io/agentstation/neovex-machine-os:v9.9.9");
+                    assert!(apply.restart);
+                }
+                _ => panic!("expected machine os apply subcommand"),
+            },
+            _ => panic!("expected machine os subcommand"),
+        }
+
+        let cli = RootCli::parse_from([
+            "neovex",
+            "machine",
+            "os",
+            "upgrade",
+            "--dry-run",
+            "--restart",
+        ]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine os upgrade should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Os(os) => match os.command {
+                MachineOsSubcommand::Upgrade(upgrade) => {
+                    assert!(upgrade.dry_run);
+                    assert!(upgrade.restart);
+                }
+                _ => panic!("expected machine os upgrade subcommand"),
+            },
+            _ => panic!("expected machine os subcommand"),
+        }
+    }
+
+    #[test]
     fn parses_machine_ssh_with_guest_command() {
         let cli = RootCli::parse_from(["neovex", "machine", "ssh", "uname", "-a"]);
         let Some(RootCommand::Machine(machine)) = cli.command else {
@@ -1118,6 +2130,36 @@ mod tests {
     }
 
     #[test]
+    fn hidden_machine_api_subcommand_falls_back_without_home() {
+        let original_home = std::env::var_os("HOME");
+        // SAFETY: this test runs in the serialized machine lane and restores HOME before returning.
+        unsafe { std::env::remove_var("HOME") };
+
+        let roots = resolve_roots_for_command(&MachineCommand {
+            command: MachineSubcommand::Api(MachineApiCommand {
+                socket_path: Some(PathBuf::from("/tmp/neovex.sock")),
+                socket_activation: false,
+                control_data_dir: Some(PathBuf::from("/tmp/neovex-control")),
+            }),
+        })
+        .expect("hidden machine api should fall back without HOME");
+
+        if let Some(home) = original_home {
+            // SAFETY: see comment above; restore process-local HOME for later tests.
+            unsafe { std::env::set_var("HOME", home) };
+        }
+
+        assert_eq!(
+            roots.config_root,
+            PathBuf::from("/var/lib/neovex/machine/config")
+        );
+        assert_eq!(
+            roots.state_root,
+            PathBuf::from("/var/lib/neovex/machine/state")
+        );
+    }
+
+    #[test]
     fn machine_paths_use_short_runtime_root_and_typed_socket_layout() {
         let layout = MachineRootLayout::new(
             PathBuf::from("/tmp/config-root"),
@@ -1138,6 +2180,10 @@ mod tests {
         assert_eq!(
             paths.krunkit_log_path,
             PathBuf::from("/tmp/neovex/default-krunkit.log")
+        );
+        assert_eq!(
+            layout.lock_path("default"),
+            PathBuf::from("/tmp/state-root/default.lock")
         );
     }
 
@@ -1187,6 +2233,7 @@ mod tests {
             .expect("state should read")
             .expect("state should exist");
 
+        assert_eq!(config.version, CURRENT_MACHINE_CONFIG_VERSION);
         assert_eq!(config.provider, MachineProvider::Krunkit);
         assert_eq!(config.resources.cpus, DEFAULT_MACHINE_CPUS);
         assert_eq!(
@@ -1199,8 +2246,498 @@ mod tests {
         assert_eq!(config.guest.ssh_identity_path, None);
         assert_eq!(config.guest.ignition_file_path, None);
         assert_eq!(config.guest.efi_variable_store_path, None);
+        assert_eq!(state.version, CURRENT_MACHINE_STATE_VERSION);
         assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
         assert!(paths.runtime_dir.exists());
+    }
+
+    #[test]
+    fn write_json_file_atomically_replaces_existing_state_record() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let path = temp_dir.path().join("status.json");
+        let first = MachineStateRecord::initialized();
+        let second = MachineStateRecord::rebuilt("rewritten for atomic replace test");
+
+        write_json_file(&path, &first).expect("first state write should succeed");
+        write_json_file(&path, &second).expect("second state write should succeed");
+
+        let stored = read_json_file_if_exists::<MachineStateRecord>(&path)
+            .expect("stored state should read")
+            .expect("stored state should exist");
+
+        assert_eq!(stored, second);
+        assert_eq!(stored.version, CURRENT_MACHINE_STATE_VERSION);
+        assert_eq!(stored.manager, MachineManagerState::Stale);
+    }
+
+    #[test]
+    fn machine_remove_releases_reserved_machine_port() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: default_machine_image().to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                }),
+            },
+            &layout,
+        )
+        .expect("machine init should succeed");
+        fs::write(
+            layout.port_allocation_state_path(),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "machine_ports": {
+                    DEFAULT_MACHINE_NAME: 20022
+                }
+            }))
+            .expect("port allocation state should serialize"),
+        )
+        .expect("port allocation state should write");
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Rm(MachineRmCommand {}),
+            },
+            &layout,
+        )
+        .expect("machine rm should succeed");
+
+        let allocation_state = fs::read(layout.port_allocation_state_path())
+            .expect("port allocation state should still read after release");
+        let json: serde_json::Value =
+            serde_json::from_slice(&allocation_state).expect("port allocation state should parse");
+        assert_eq!(
+            json["machine_ports"]
+                .as_object()
+                .expect("machine ports should be an object")
+                .len(),
+            0
+        );
+        assert!(!paths.config_dir.exists());
+        assert!(!paths.state_dir.exists());
+    }
+
+    #[test]
+    fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                }),
+            },
+            &layout,
+        )
+        .expect("machine init should succeed");
+
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        fs::write(&paths.materialized_image_path, b"old-image").expect("image path should write");
+        fs::write(&paths.efi_variable_store_path, b"old-efi").expect("efi store should write");
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Os(MachineOsCommand {
+                    command: MachineOsSubcommand::Apply(MachineOsApplyCommand {
+                        image: format!(
+                            "docker://{DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY}:{}",
+                            current_machine_release_tag()
+                        ),
+                        restart: false,
+                    }),
+                }),
+            },
+            &layout,
+        )
+        .expect("machine os apply should succeed");
+
+        let config = read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)
+            .expect("config should read")
+            .expect("config should exist");
+        let state = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)
+            .expect("state should read")
+            .expect("state should exist");
+
+        assert_eq!(
+            config.guest.image_source,
+            MachineImageSource::OciReference {
+                reference: format!(
+                    "docker://{DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY}:{}",
+                    current_machine_release_tag()
+                ),
+            }
+        );
+        assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+        assert_eq!(state.manager, MachineManagerState::Unconfigured);
+        assert!(!paths.materialized_image_path.exists());
+        assert!(!paths.efi_variable_store_path.exists());
+    }
+
+    #[test]
+    fn machine_os_upgrade_plan_uses_supported_stream_target() {
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: DEFAULT_MACHINE_NAME.to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::OciReference {
+                    reference: supported_stream_current_image_for_upgrade_test(),
+                },
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+            },
+            volumes: Vec::new(),
+            roots: MachineRootLayout::new(
+                PathBuf::from("/tmp/config"),
+                PathBuf::from("/tmp/state"),
+                PathBuf::from("/tmp/runtime"),
+            ),
+        };
+
+        let plan = plan_machine_os_upgrade(&config).expect("upgrade plan should resolve");
+
+        assert_eq!(
+            plan.current_image,
+            supported_stream_current_image_for_upgrade_test()
+        );
+        assert_eq!(
+            plan.current_version,
+            if cfg!(target_os = "macos") {
+                "5.9"
+            } else {
+                "v0.1.0"
+            }
+        );
+        assert_eq!(plan.target_image, default_machine_image());
+        assert_eq!(plan.target_version, expected_upgrade_target_version());
+        assert!(plan.update_available);
+    }
+
+    #[test]
+    fn host_managed_macos_stream_converges_to_pinned_podman_digest() {
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: DEFAULT_MACHINE_NAME.to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::OciReference {
+                    reference: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned(),
+                },
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+            },
+            volumes: Vec::new(),
+            roots: MachineRootLayout::new(
+                PathBuf::from("/tmp/config"),
+                PathBuf::from("/tmp/state"),
+                PathBuf::from("/tmp/runtime"),
+            ),
+        };
+
+        let desired = desired_machine_image_source(&config);
+
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                desired,
+                MachineImageSource::OciReference {
+                    reference: default_machine_image(),
+                }
+            );
+        } else {
+            assert_eq!(desired, config.guest.image_source);
+        }
+    }
+
+    #[test]
+    fn explicit_podman_override_does_not_get_rewritten_to_default_digest() {
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: DEFAULT_MACHINE_NAME.to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::OciReference {
+                    reference: "docker://quay.io/podman/machine-os@sha256:customoverride"
+                        .to_owned(),
+                },
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+            },
+            volumes: Vec::new(),
+            roots: MachineRootLayout::new(
+                PathBuf::from("/tmp/config"),
+                PathBuf::from("/tmp/state"),
+                PathBuf::from("/tmp/runtime"),
+            ),
+        };
+
+        assert_eq!(
+            desired_machine_image_source(&config),
+            config.guest.image_source
+        );
+    }
+
+    #[test]
+    fn machine_os_upgrade_handles_digest_pinned_supported_streams() {
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: DEFAULT_MACHINE_NAME.to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::OciReference {
+                    reference: supported_stream_digest_image_for_upgrade_test(),
+                },
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+            },
+            volumes: Vec::new(),
+            roots: MachineRootLayout::new(
+                PathBuf::from("/tmp/config"),
+                PathBuf::from("/tmp/state"),
+                PathBuf::from("/tmp/runtime"),
+            ),
+        };
+
+        if cfg!(target_os = "macos") {
+            let plan =
+                plan_machine_os_upgrade(&config).expect("macOS digest streams should resolve");
+            assert_eq!(
+                plan.current_image,
+                supported_stream_digest_image_for_upgrade_test()
+            );
+            assert_eq!(plan.current_version, "sha256:abc123");
+            assert_eq!(plan.target_image, default_machine_image());
+            assert_eq!(plan.target_version, expected_upgrade_target_version());
+            assert!(plan.update_available);
+        } else {
+            let error =
+                plan_machine_os_upgrade(&config).expect_err("linux digest streams should fail");
+            assert!(error.to_string().contains("digest-pinned"));
+        }
+    }
+
+    #[test]
+    fn load_machine_config_upgrades_versionless_record_and_rewrites_it() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        fs::create_dir_all(&paths.config_dir).expect("config dir should exist");
+        let legacy_config = serde_json::json!({
+            "name": DEFAULT_MACHINE_NAME,
+            "provider": "krunkit",
+            "guest": {
+                "image_source": {
+                    "kind": "oci-reference",
+                    "reference": default_machine_image(),
+                },
+                "ssh_user": DEFAULT_MACHINE_SSH_USER,
+                "ssh_identity_path": null,
+                "ignition_file_path": null,
+                "efi_variable_store_path": null,
+            },
+            "resources": {
+                "cpus": DEFAULT_MACHINE_CPUS,
+                "memory_mib": DEFAULT_MACHINE_MEMORY_MIB,
+                "disk_gib": DEFAULT_MACHINE_DISK_GIB,
+            },
+            "volumes": [],
+            "roots": {
+                "config_root": layout.config_root,
+                "state_root": layout.state_root,
+                "runtime_root": layout.runtime_root,
+            },
+        });
+        fs::write(
+            &paths.config_path,
+            serde_json::to_vec_pretty(&legacy_config).expect("legacy config should serialize"),
+        )
+        .expect("legacy config should write");
+
+        let config = load_machine_config_if_exists(&paths.config_path)
+            .expect("config load should succeed")
+            .expect("config should exist");
+        let rewritten = read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)
+            .expect("rewritten config should read")
+            .expect("rewritten config should exist");
+
+        assert_eq!(config.version, CURRENT_MACHINE_CONFIG_VERSION);
+        assert_eq!(rewritten.version, CURRENT_MACHINE_CONFIG_VERSION);
+        assert_eq!(config.guest.ssh_user, DEFAULT_MACHINE_SSH_USER);
+        assert_eq!(rewritten.resources.memory_mib, DEFAULT_MACHINE_MEMORY_MIB);
+    }
+
+    #[test]
+    fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        fs::create_dir_all(&paths.config_dir).expect("config dir should exist");
+        let newer_config = serde_json::json!({
+            "version": CURRENT_MACHINE_CONFIG_VERSION + 1,
+            "name": DEFAULT_MACHINE_NAME,
+            "provider": "krunkit",
+            "guest": {
+                "image_source": {
+                    "kind": "oci-reference",
+                    "reference": default_machine_image(),
+                },
+                "ssh_user": DEFAULT_MACHINE_SSH_USER,
+                "ssh_identity_path": null,
+                "ignition_file_path": null,
+                "efi_variable_store_path": null,
+            },
+            "resources": {
+                "cpus": DEFAULT_MACHINE_CPUS,
+                "memory_mib": DEFAULT_MACHINE_MEMORY_MIB,
+                "disk_gib": DEFAULT_MACHINE_DISK_GIB,
+            },
+            "volumes": [],
+            "roots": {
+                "config_root": layout.config_root,
+                "state_root": layout.state_root,
+                "runtime_root": layout.runtime_root,
+            },
+        });
+        fs::write(
+            &paths.config_path,
+            serde_json::to_vec_pretty(&newer_config).expect("newer config should serialize"),
+        )
+        .expect("newer config should write");
+
+        let error = load_machine_config_if_exists(&paths.config_path)
+            .expect_err("newer config version should fail");
+
+        assert!(error.to_string().contains("uses newer schema version"));
+        assert!(
+            error
+                .to_string()
+                .contains(&(CURRENT_MACHINE_CONFIG_VERSION + 1).to_string())
+        );
+    }
+
+    #[test]
+    fn load_machine_state_upgrades_versionless_record_and_rewrites_it() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        fs::create_dir_all(&paths.state_dir).expect("state dir should exist");
+        let legacy_state = serde_json::json!({
+            "lifecycle": "running",
+            "manager": "ready",
+            "runtime": null,
+            "last_error": null,
+        });
+        fs::write(
+            &paths.state_path,
+            serde_json::to_vec_pretty(&legacy_state).expect("legacy state should serialize"),
+        )
+        .expect("legacy state should write");
+
+        let state = load_machine_state_if_exists(&paths.state_path)
+            .expect("state load should succeed")
+            .expect("state should exist");
+        let rewritten = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)
+            .expect("rewritten state should read")
+            .expect("rewritten state should exist");
+
+        assert_eq!(state.version, CURRENT_MACHINE_STATE_VERSION);
+        assert_eq!(state.lifecycle, MachineLifecycle::Running);
+        assert_eq!(rewritten.version, CURRENT_MACHINE_STATE_VERSION);
+        assert_eq!(rewritten.manager, MachineManagerState::Ready);
+    }
+
+    #[test]
+    fn load_machine_state_rebuilds_unreadable_record_with_explicit_error() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        fs::create_dir_all(&paths.state_dir).expect("state dir should exist");
+        fs::write(&paths.state_path, b"{not-json").expect("corrupt state should write");
+
+        let state = load_machine_state_if_exists(&paths.state_path)
+            .expect("state load should succeed by rebuilding")
+            .expect("rebuilt state should exist");
+        let rewritten = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)
+            .expect("rebuilt state should read")
+            .expect("rebuilt state should exist");
+
+        assert_eq!(state.version, CURRENT_MACHINE_STATE_VERSION);
+        assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+        assert_eq!(state.manager, MachineManagerState::Stale);
+        assert!(state.runtime.is_none());
+        assert!(
+            state
+                .last_error
+                .as_deref()
+                .is_some_and(|message| message.contains("machine state"))
+        );
+        assert_eq!(rewritten, state);
     }
 
     #[test]
@@ -1359,6 +2896,7 @@ mod tests {
         );
         let paths = layout.paths(DEFAULT_MACHINE_NAME);
         let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
             name: DEFAULT_MACHINE_NAME.to_owned(),
             provider: MachineProvider::Krunkit,
             guest: MachineGuestConfig {

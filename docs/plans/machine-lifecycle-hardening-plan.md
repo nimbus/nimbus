@@ -7,6 +7,8 @@ through source-backed review of Podman's machine infrastructure.
 
 Reviewed against:
 
+- `docs/reference/microvm-service-baseline.md` — landed Linux production and
+  service-control baseline that the developer-machine paths must preserve
 - `crates/neovex-bin/src/machine/manager.rs` — current krunkit+gvproxy
   orchestration
 - `crates/neovex-bin/src/machine/mod.rs` — machine config/state types,
@@ -16,7 +18,10 @@ Reviewed against:
 - `crates/neovex-bin/src/machine/backend.rs` — forwarded sandbox backend
 - `crates/neovex-bin/src/service/mod.rs` — `ServiceHostPlatform` and backend
   routing
-- `docs/plans/macos-machine-support-plan.md` — active macOS execution plan
+- `docs/reference/macos-machine-flow.md` — current macOS developer-machine
+  contract reference
+- `docs/plans/archive/macos-machine-support-plan.md` — completed macOS
+  execution record and closeout evidence
 - `docs/plans/windows-machine-support-plan.md` — deferred Windows execution
   plan
 - Podman source (source-backed review, not documentation):
@@ -45,18 +50,22 @@ Reviewed against:
 
 ## Status
 
-- **Status:** `deferred`
+- **Status:** `active`
 - **Primary owner:** this plan
-- **Activation gate:** macOS `MAC6` complete — the transparent developer UX
-  should be working before we harden the lifecycle underneath it. These items
-  are not blockers for basic macOS functionality but are blockers for
-  production-quality machine management.
+- **Activation gate:** promoted to the active shared machine-hardening control
+  plane on 2026-04-16 by explicit enterprise-readiness direction. These items
+  are now the source of truth for machine-lifecycle reliability work across
+  macOS and the future Windows provider, while the platform plans continue to
+  own platform-specific architecture and UX.
 - **Related plans:**
-  - `docs/plans/macos-machine-support-plan.md` — active macOS plan; this
-    hardening plan should be executed between `MAC6` and `MAC7` or as a
-    follow-up after `MAC7`
-  - `docs/plans/windows-machine-support-plan.md` — deferred Windows plan;
-    `WIN2` should build on the hardened infrastructure from this plan
+  - `docs/reference/macos-machine-flow.md` — current macOS delivery contract;
+    that reference owns the developer-machine topology, guest-image contract,
+    and user-facing workflow, while this plan owns the shared reliability and
+    lifecycle hardening seams underneath it
+  - `docs/plans/archive/macos-machine-support-plan.md` — completed macOS
+    execution record with the proof and sequencing that informed this plan
+  - `docs/plans/windows-machine-support-plan.md` — deferred Windows platform
+    plan; `WIN2` should build on the hardened infrastructure from this plan
 
 ## Current Assessed State
 
@@ -318,21 +327,37 @@ provider type directly.
 Source of truth:
 1. the current git worktree
 2. this plan's `Roadmap Status Ledger` and `Execution Log`
-3. `docs/plans/macos-machine-support-plan.md` (macOS execution context)
-4. `docs/plans/windows-machine-support-plan.md` (Windows execution context)
-5. the reviewed Podman source files listed at the top of this document
+3. `docs/reference/microvm-service-baseline.md` (landed Linux/service baseline)
+4. `docs/reference/macos-machine-flow.md` (current macOS contract)
+5. `docs/plans/windows-machine-support-plan.md` (Windows execution context)
+6. the reviewed Podman source files listed at the top of this document
 
 General rules:
 
+- This is the active shared control plan for machine-lifecycle hardening.
+  Treat it as the durable source of truth for new agents, handoff, and
+  compaction whenever the work touches machine robustness or shared provider
+  orchestration.
 - These items harden existing infrastructure. They do not change the macOS or
-  Windows architecture — those are owned by their respective plans.
-- Do not block macOS `MAC4`-`MAC6` on these items. They are robustness
-  improvements, not functional requirements for the first working macOS flow.
-- Items that are shared between macOS and Windows (port allocation, config
-  persistence, config versioning, provider flags, networking phases) should
-  land before `WIN2` so the Windows provider builds on hardened infrastructure.
-- Items that are macOS-specific (provider-driven krunkit stop hardening and
-  signal handling) should land before `MAC7` closeout.
+  Windows architecture — those are owned by their respective platform plans.
+- Before changing code for this workstream, reread `Current Assessed State`,
+  `Current Review Findings`, `Podman Alignment Matrix`,
+  `Control Plan Rules`, `Verification Contract`, `Roadmap Status Ledger`, and
+  `Execution Log`.
+- Resume the earliest `MLH*` item that is not `done`, or continue any item
+  already marked `in_progress`, before starting new machine-lifecycle scope
+  unless the user explicitly reprioritizes the ledger.
+- Shared hardening items (port allocation, config persistence, record
+  versioning, provider flags, networking phases) should land before `WIN2` so
+  the Windows provider builds on hardened infrastructure instead of inventing
+  its own side path.
+- macOS-facing hardening items (provider-driven krunkit stop sequencing and
+  startup signal handling) should land before machine-workstream closeout so
+  the developer UX carries enterprise-grade reliability, not just basic
+  functionality.
+- When work materially advances both this plan and a platform-specific plan,
+  update both ledgers in the same change set. The platform plan owns topology;
+  this plan owns reliability hardening.
 - Every code change must pass `cargo fmt --all --check`, focused `cargo check`,
   and focused tests for the touched machine manager seams.
 - Every substantive work burst must update this plan's ledger and execution log
@@ -402,13 +427,13 @@ This plan does not cover:
 
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
-| MLH1 | todo | Provider-specific graceful stop sequencing: macOS krunkit stop stays on the control seam with bounded wait/hard-stop; future WSL exits nested systemd before terminate | none |
-| MLH2 | todo | Signal handling during startup: SIGINT/SIGTERM handler kills children, transitions to Stopped | none |
-| MLH3 | todo | Global SSH port allocation: file-locked pool, conflict reassignment on startup, release on removal | none |
-| MLH4 | todo | Atomic config/state writes: temp file + rename under a per-machine lock spanning both records | none |
-| MLH5 | todo | Machine record versioning: versioned config plus explicit state compatibility/rebuild policy | none |
-| MLH6 | todo | Provider capability flags: `uses_provider_networking`, `requires_exclusive_active`, `image_format` on `MachineProvider` | none |
-| MLH7 | todo | Explicit pre/post-start networking phases: factor `start_machine` into phased orchestration | MLH6 |
+| MLH1 | done | `stop_machine()` now routes through provider-specific stop sequencing; the krunkit path issues `/vm/state` `Stop`, waits on the provider process, escalates with `/vm/state` `HardStop` only when needed, and uses a Podman-aligned configurable grace budget before gvproxy cleanup | none |
+| MLH2 | done | Startup now installs scoped SIGINT/SIGTERM monitoring; interrupted startup kills spawned children, clears runtime artifacts, persists `Stopped`, and avoids leaving machine state stuck in `Starting` | none |
+| MLH3 | done | SSH ports now allocate from a shared file-locked pool under the machine state root, reuse the recorded machine port when it is still valid, reassign on startup when the old port is busy or outside the managed range, and release by machine name on removal | none |
+| MLH4 | done | Machine config/state writes now use atomic temp-file replacement, and machine command entrypoints plus default machine-API client loading hold a per-machine lock under the shared state root so config/status reads and writes stay coherent | none |
+| MLH5 | done | Machine config/state records now carry explicit schema versions; legacy versionless records upgrade on load, newer config versions fail clearly, and unreadable or incompatible state rebuilds with an explicit stale error instead of a raw parse failure | none |
+| MLH6 | done | `MachineProvider` now carries explicit capability values for networking ownership, exclusivity, image format, and bootstrap mode, with Podman-aligned `Krunkit` values plus a staged `Wsl2` capability contract for future Windows work | none |
+| MLH7 | done | `start_machine()` now runs through explicit bootstrap, pre-start networking, VM start, machine-ready, post-start networking, and readiness-check phases dispatched from provider capabilities while preserving the current macOS flow | MLH6 |
 
 ## Implementation Checkpoints
 
@@ -601,3 +626,87 @@ prep for Windows but also clean up the macOS code.
   with an explicit state rebuild policy. This keeps Neovex aligned with
   Podman's battle-tested machine-management seams without introducing
   unnecessary divergence on the krunkit path.
+- 2026-04-16: Promoted this document from a deferred follow-on plan to the
+  active shared machine-lifecycle hardening control plane. Clarified that new
+  agents should treat this ledger plus the git worktree as the durable progress
+  state for enterprise-readiness reliability work, while the macOS and Windows
+  plans remain the architecture owners for their respective platform flows.
+- 2026-04-16: Completed `MLH5` in `crates/neovex-bin/src/machine/`. Added
+  `CURRENT_MACHINE_CONFIG_VERSION` / `CURRENT_MACHINE_STATE_VERSION` plus
+  explicit `version` fields on machine config/state records; versionless
+  current-shape records now upgrade in place on load; newer config versions now
+  fail with an operator-friendly compatibility error; and unreadable or
+  unsupported state now rebuilds into a `Stopped` + `Stale` record with the
+  rebuild reason persisted in `last_error`. Focused regression coverage now
+  exercises versionless upgrade, newer-version rejection, and corrupt-state
+  rebuild behavior. Verification: `cargo fmt --all --check`,
+  `cargo check -p neovex-bin`, `cargo test -p neovex-bin machine::`. Recommended
+  next item: `MLH4` so the new record contract lands on top of atomic,
+  machine-level coherent writes instead of direct `fs::write()`.
+- 2026-04-16: Completed `MLH4` in `crates/neovex-bin/src/machine/`. Replaced
+  direct record writes with atomic `NamedTempFile` write + flush + sync +
+  persist semantics, added a per-machine advisory lock file under the shared
+  machine state root (`<state-root>/<name>.lock`), and wrapped the default
+  machine command entrypoints plus `require_default_machine_api_client()` in
+  that lock so config/state reads and writes participate in one machine-level
+  coherence contract. Focused regression coverage now checks the state-root
+  lock path and atomic replacement behavior in addition to the existing
+  machine tests. Verification: `cargo fmt --all --check`,
+  `cargo check -p neovex-bin`, `cargo test -p neovex-bin machine::`. Recommended
+  next item: `MLH3` so the same shared state root now used for locking becomes
+  the durable home for file-locked SSH port allocation.
+- 2026-04-16: Completed `MLH3` in `crates/neovex-bin/src/machine/`. Added a
+  shared SSH port allocator under the machine state root using
+  `port-alloc.dat` plus `port-alloc.lck`, reserved by machine name under a
+  global advisory lock. `MachineLaunchPlan::build()` now reuses the recorded
+  machine port when it is still within the managed range and actually
+  available, but automatically reassigns when the recorded port is busy or
+  outside the managed pool; `neovex machine rm` now releases the reservation.
+  Focused regression coverage now exercises recorded-port reuse, busy-port
+  reassignment, direct release, and removal-triggered release in addition to
+  the existing machine tests. Verification: `cargo fmt --all --check`,
+  `cargo check -p neovex-bin`, `cargo test -p neovex-bin machine::`. Recommended
+  next item: `MLH2` so interrupted startup no longer leaves partially launched
+  helper state even though record writes and port allocation are now coherent.
+- 2026-04-16: Completed `MLH2` in `crates/neovex-bin/src/machine/`. Startup now
+  installs a scoped SIGINT/SIGTERM monitor using `signal-hook-registry`,
+  checks that monitor inside the gvproxy socket wait loop, ready-signal wait
+  loop, and SSH-readiness loop, and treats interruption as an explicit
+  cancelled-start path instead of a generic failure. On cancellation, Neovex
+  now kills spawned children, removes runtime artifacts, restores state to
+  `Stopped`, and persists the repaired record instead of leaving the machine in
+  `Starting`. Focused regression coverage now exercises cancelled wait-path
+  behavior plus interrupted-start cleanup and state repair. Verification:
+  `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine::`. Recommended next item: `MLH1` so the
+  same enterprise-grade lifecycle handling applies on shutdown, not just
+  startup interruption.
+- 2026-04-16: Completed `MLH1` in `crates/neovex-bin/src/machine/`. The
+  macOS krunkit path now follows Podman's libkrun/vfkit stop shape: issue the
+  provider control-plane `Stop` request first, wait on the provider process for
+  a configurable grace budget (`NEOVEX_MACHINE_STOP_TIMEOUT_SECS`, default
+  90s), escalate with provider-level `HardStop` only when the graceful wait
+  expires, and only then clean up gvproxy. Focused regression coverage now
+  exercises graceful control-seam shutdown, hard-stop request payloads, and the
+  timeout/force-stop helpers without relying on flaky integration races.
+  Verification: `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine::`. Recommended next item: `MLH6` so the
+  provider-specific decisions move into explicit capabilities before the
+  Windows provider lands.
+- 2026-04-16: Completed `MLH6` and `MLH7` in
+  `crates/neovex-bin/src/machine/`. `MachineProvider` now owns explicit
+  Podman-aligned capability values for networking ownership, exclusivity, image
+  format, and bootstrap mode; `Krunkit` uses host-launched networking plus raw
+  disk + ignition, and a staged `Wsl2` capability contract now exists without
+  changing the current macOS behavior. `start_machine()` is refactored into
+  explicit bootstrap, pre-start networking, VM start, machine-ready,
+  post-start networking, and readiness-check phases that dispatch from those
+  capability values. The current macOS flow is preserved, but the orchestrator
+  no longer needs platform-specific branching smeared through one block of
+  startup code. Focused regression coverage now exercises the provider
+  capability contract alongside the existing launch, stop, and readiness
+  seams. Verification: `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine::`. Recommended next item: none; the shared
+  `MLH1`-`MLH7` roadmap is complete, so follow-on work should resume in the
+  owning platform plans (`MAC4`-`MAC7`, `WIN1`-`WIN2`) rather than opening new
+  lifecycle-hardening items here.
