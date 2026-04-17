@@ -1,8 +1,10 @@
 use neovex::SandboxBackendKind;
 use neovex::{
-    PublishedEndpoint, SandboxBuildLaunchSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-    SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits, SandboxStatus, TenantId,
+    PublishedEndpoint, SandboxId, SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits,
+    SandboxStatus, TenantId,
 };
+#[cfg(unix)]
+use neovex::{SandboxBuildLaunchSpec, SandboxHandle, SandboxImageLaunchSpec};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
