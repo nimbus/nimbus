@@ -7,8 +7,8 @@ use neovex::Error;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineStateRecord,
-    write_json_file,
+    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
+    MachineStateRecord, write_json_file,
 };
 
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
@@ -19,6 +19,8 @@ pub(super) struct MachineRuntimeState {
     pub(super) helper_binaries: MachineHelperBinaryPaths,
     pub(super) image_path: PathBuf,
     pub(super) efi_variable_store_path: PathBuf,
+    #[serde(default)]
+    pub(super) machine_image_source: String,
     pub(super) ssh_port: u16,
     pub(super) rest_uri: String,
     pub(super) ready_vsock_port: u32,
@@ -85,6 +87,13 @@ pub(super) fn build_ssh_command(
     _state: &MachineStateRecord,
 ) -> Result<Command, Error> {
     Err(unsupported_machine_host_error())
+}
+
+pub(super) fn release_machine_ssh_port(
+    _roots: &MachineRootLayout,
+    _machine_name: &str,
+) -> Result<(), Error> {
+    Ok(())
 }
 
 #[cfg(test)]

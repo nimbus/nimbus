@@ -1,6 +1,6 @@
 [package]
 name = "neovex-bin"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 publish.workspace = true
 description = "Self-hosted JavaScript backend runtime with V8"
