@@ -72,10 +72,10 @@ The current shipped macOS machine contract is still Podman-aligned:
 
 ```mermaid
 flowchart LR
-    Host["macOS host: neovex"] -->| "boot pinned Podman machine image" | Guest["Linux guest: Podman FCOS image"]
-    Host -->| "Ignition file + SSH identity" | Guest
-    Host -->| "hash-sync /usr/local/bin/neovex" | Guest
-    Host -->| "validate forwarded machine API" | Guest
+    Host["macOS host: neovex"] -->|"boot pinned Podman machine image"| Guest["Linux guest: Podman FCOS image"]
+    Host -->|"Ignition file + SSH identity"| Guest
+    Host -->|"hash-sync /usr/local/bin/neovex"| Guest
+    Host -->|"validate forwarded machine API"| Guest
 ```
 
 ### Current bootstrap assumptions
