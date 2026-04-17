@@ -3135,7 +3135,10 @@ mod tests {
             reference: "docker://quay.io/podman/machine-os:6.0".to_owned(),
         };
 
-        assert!(requires_host_guest_neovex_sync(&config));
+        assert_eq!(
+            requires_host_guest_neovex_sync(&config),
+            cfg!(target_os = "macos")
+        );
     }
 
     #[test]
@@ -3148,10 +3151,14 @@ mod tests {
             reference: "docker://quay.io/podman/machine-os:6.0".to_owned(),
         };
 
-        let error = validate_machine_bootstrap_contract(&config)
-            .expect_err("podman machine-os should require ssh identity");
-
-        assert!(error.to_string().contains("--ssh-identity"));
+        if cfg!(target_os = "macos") {
+            let error = validate_machine_bootstrap_contract(&config)
+                .expect_err("podman machine-os should require ssh identity");
+            assert!(error.to_string().contains("--ssh-identity"));
+        } else {
+            validate_machine_bootstrap_contract(&config)
+                .expect("non-macOS hosts should not require macOS SSH bootstrapping");
+        }
     }
 
     #[test]

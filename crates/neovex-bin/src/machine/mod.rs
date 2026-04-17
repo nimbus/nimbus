@@ -1940,7 +1940,7 @@ mod tests {
         } else {
             format!(
                 "docker://{DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY}:{}",
-                env!("CARGO_PKG_VERSION")
+                current_machine_release_tag()
             )
         }
     }
@@ -2473,16 +2473,12 @@ mod tests {
 
         let desired = desired_machine_image_source(&config);
 
-        if cfg!(target_os = "macos") {
-            assert_eq!(
-                desired,
-                MachineImageSource::OciReference {
-                    reference: default_machine_image(),
-                }
-            );
-        } else {
-            assert_eq!(desired, config.guest.image_source);
-        }
+        assert_eq!(
+            desired,
+            MachineImageSource::OciReference {
+                reference: default_machine_image(),
+            }
+        );
     }
 
     #[test]

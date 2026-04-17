@@ -296,7 +296,7 @@ fn canonicalize_materialized_journal_snapshot(
 
 fn canonicalize_schema(schema: &Schema) -> Vec<TableSchema> {
     let mut tables = schema.tables.values().cloned().collect::<Vec<_>>();
-    tables.sort_by(|left, right| left.table.to_string().cmp(&right.table.to_string()));
+    tables.sort_by_key(|left| left.table.to_string());
     tables
 }
 
