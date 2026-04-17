@@ -1476,10 +1476,12 @@ impl MachineRootLayout {
         self.state_root.join(format!("{name}.lock"))
     }
 
+    #[cfg(any(unix, test))]
     fn port_allocation_state_path(&self) -> PathBuf {
         self.state_root.join("port-alloc.dat")
     }
 
+    #[cfg(any(unix, test))]
     fn port_allocation_lock_path(&self) -> PathBuf {
         self.state_root.join("port-alloc.lck")
     }
@@ -1652,18 +1654,21 @@ enum MachineProvider {
     Wsl2,
 }
 
+#[cfg(any(unix, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MachineImageFormat {
     Raw,
     Tar,
 }
 
+#[cfg(any(unix, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MachineBootstrapMode {
     Ignition,
     ShellScript,
 }
 
+#[cfg(any(unix, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MachineProviderCapabilities {
     uses_provider_networking: bool,
@@ -1673,6 +1678,7 @@ struct MachineProviderCapabilities {
     oci_artifact_disk_type: &'static str,
 }
 
+#[cfg(any(unix, test))]
 const KRUNKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
     uses_provider_networking: false,
     requires_exclusive_active: true,
@@ -1681,6 +1687,7 @@ const KRUNKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProvid
     oci_artifact_disk_type: "applehv",
 };
 
+#[cfg(any(unix, test))]
 const WSL2_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
     uses_provider_networking: true,
     requires_exclusive_active: false,
@@ -1690,6 +1697,7 @@ const WSL2_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderC
 };
 
 impl MachineProvider {
+    #[cfg(any(unix, test))]
     fn capabilities(self) -> MachineProviderCapabilities {
         match self {
             Self::Krunkit => KRUNKIT_PROVIDER_CAPABILITIES,
@@ -1697,22 +1705,27 @@ impl MachineProvider {
         }
     }
 
+    #[cfg(any(unix, test))]
     fn uses_provider_networking(self) -> bool {
         self.capabilities().uses_provider_networking
     }
 
+    #[cfg(any(unix, test))]
     fn requires_exclusive_active(self) -> bool {
         self.capabilities().requires_exclusive_active
     }
 
+    #[cfg(any(unix, test))]
     fn image_format(self) -> MachineImageFormat {
         self.capabilities().image_format
     }
 
+    #[cfg(any(unix, test))]
     fn bootstrap_mode(self) -> MachineBootstrapMode {
         self.capabilities().bootstrap_mode
     }
 
+    #[cfg(any(unix, test))]
     fn oci_artifact_disk_type(self) -> &'static str {
         self.capabilities().oci_artifact_disk_type
     }
