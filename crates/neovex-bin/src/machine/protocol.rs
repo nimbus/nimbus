@@ -44,27 +44,32 @@ pub(crate) struct MachineApiRequiredBinaryStatus {
     pub(crate) resolved_path: Option<String>,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxImageStartRequest {
     pub(crate) launch: SandboxImageLaunchSpec,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxBuildStartRequest {
     pub(crate) launch: SandboxBuildLaunchSpec,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxStartResponse {
     pub(crate) handle: SandboxHandle,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxInspectResponse {
     pub(crate) sandbox_id: SandboxId,
     pub(crate) handle: Option<SandboxHandle>,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxStopResponse {
     pub(crate) sandbox_id: SandboxId,
@@ -100,6 +105,7 @@ pub(crate) struct MachineApiServiceSandboxDetails {
     pub(crate) manifest_path: PathBuf,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceSandboxListResponse {
     pub(crate) sandboxes: Vec<MachineApiServiceSandboxSummary>,
@@ -140,11 +146,13 @@ pub(crate) struct MachineApiServiceProcessRow {
     pub(crate) command: String,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiServiceProcessSnapshotResponse {
     pub(crate) snapshot: MachineApiServiceProcessSnapshot,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineApiErrorResponse {
     pub(crate) error: String,
