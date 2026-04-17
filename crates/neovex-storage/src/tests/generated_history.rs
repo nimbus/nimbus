@@ -16,7 +16,7 @@ fn generated_task_fields(
 }
 
 fn normalize_generated_task_documents(mut documents: Vec<Document>) -> Vec<GeneratedTaskRecord> {
-    documents.sort_by(|left, right| left.id.cmp(&right.id));
+    documents.sort_by_key(|left| left.id);
     let mut records = documents
         .into_iter()
         .map(|document| GeneratedTaskRecord {
@@ -36,7 +36,7 @@ fn normalize_generated_task_documents(mut documents: Vec<Document>) -> Vec<Gener
                 .expect("generated task rank should be present"),
         })
         .collect::<Vec<_>>();
-    records.sort_by(|left, right| left.title.cmp(&right.title));
+    records.sort_by_key(|left| left.title.clone());
     records
 }
 
