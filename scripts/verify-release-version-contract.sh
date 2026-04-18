@@ -44,7 +44,32 @@ extract_cargo_version() {
   sed -n 's/^version = "\(.*\)"$/\1/p' "$1" | head -n1
 }
 
+manifest_uses_workspace_version() {
+  grep -Eq '^version\.workspace = true$' "$1"
+}
+
+extract_workspace_package_version() {
+  awk '
+    /^\[workspace\.package\]$/ { in_workspace_package = 1; next }
+    /^\[/ { in_workspace_package = 0 }
+    in_workspace_package && /^version = "/ {
+      gsub(/^version = "|\"$/, "", $0)
+      print
+      exit
+    }
+  ' "$1"
+}
+
+workspace_version="$(extract_workspace_package_version "${repo_root}/Cargo.toml")"
+if [[ "${workspace_version}" != "${expected_version}" ]]; then
+  record_mismatch "workspace.package version" "${workspace_version}"
+fi
+
 for manifest in "${repo_root}"/crates/*/Cargo.toml; do
+  if manifest_uses_workspace_version "${manifest}"; then
+    continue
+  fi
+
   actual_version="$(extract_cargo_version "${manifest}")"
   if [[ "${actual_version}" != "${expected_version}" ]]; then
     record_mismatch "crate $(basename "$(dirname "${manifest}")")" "${actual_version}"
