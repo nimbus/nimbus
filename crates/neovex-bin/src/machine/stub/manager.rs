@@ -1,3 +1,4 @@
+use std::env;
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
@@ -127,6 +128,23 @@ pub(super) fn release_machine_ssh_port(
 pub(super) fn inspect_desired_guest_neovex_binary(
     paths: &MachinePaths,
 ) -> DesiredGuestNeovexBinaryStatus {
+    if let Some(path) = env::var_os("NEOVEX_MACHINE_GUEST_BINARY").map(PathBuf::from) {
+        let desired_exists = path.is_file();
+        return DesiredGuestNeovexBinaryStatus {
+            install_path: PathBuf::from("/usr/local/bin/neovex"),
+            source: GuestNeovexBinarySourceKind::ExplicitOverride,
+            source_detail: format!("$NEOVEX_MACHINE_GUEST_BINARY={}", path.display()),
+            desired_path: path,
+            desired_exists,
+            desired_version: None,
+            desired_hash: None,
+            release_archive_path: None,
+            release_archive_exists: None,
+            release_url: None,
+            error: Some(unsupported_machine_host_error().to_string()),
+        };
+    }
+
     DesiredGuestNeovexBinaryStatus {
         install_path: PathBuf::from("/usr/local/bin/neovex"),
         source: GuestNeovexBinarySourceKind::ReleaseAsset,
