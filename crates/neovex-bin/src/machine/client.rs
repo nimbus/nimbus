@@ -491,7 +491,20 @@ mod tests {
             capabilities.supported_operations,
             vec!["healthz".to_owned(), "capabilities".to_owned()]
         );
-        assert_eq!(capabilities.binary_statuses.len(), 6);
+        assert_eq!(
+            capabilities
+                .binary_statuses
+                .iter()
+                .map(|status| status.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["conmon", "crun", "netavark", "aardvark-dns"]
+        );
+        assert!(
+            capabilities
+                .binary_statuses
+                .iter()
+                .all(|status| status.present)
+        );
         assert_eq!(
             capabilities.service_execution_blockers,
             vec!["guest machine API does not yet expose service lifecycle operations".to_owned()]
@@ -928,6 +941,8 @@ mod tests {
         fs::create_dir_all(&exit_dir).expect("exit directory should exist");
         fs::create_dir_all(&persist_dir).expect("persist directory should exist");
         fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
+        fs::create_dir_all(&run_root).expect("network run directory should exist");
+        fs::create_dir_all(&netns_root).expect("network netns directory should exist");
         fs::create_dir_all(&container_network_dir)
             .expect("container network directory should exist");
         let handle = SandboxHandle::new(
@@ -987,7 +1002,9 @@ mod tests {
                 "netns_root": netns_root,
                 "container_network_dir": container_network_dir,
                 "netns_path": netns_root.join(sandbox_id),
-                "status_path": container_network_dir.join("status.json")
+                "status_path": container_network_dir.join("status.json"),
+                "ipam_state_path": run_root.join("ipam-state.json"),
+                "ipam_lock_path": run_root.join("ipam.lock")
             },
             "conmon_launch": {
                 "create_command": {
