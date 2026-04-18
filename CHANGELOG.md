@@ -7,16 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.11] - 2026-04-18
 
-### Fixed
+### Build
 
-- Bundle pinned upstream `gvproxy` inside the macOS darwin release archive and guard that archive layout in CI by @jackspirou
-- Harden macOS machine convergence so the host prefers a matching local Linux guest binary, repairs guest socket activation after sync, and keeps helper lookup aligned with Podman's explicit helper-directory model by @jackspirou
-- Tighten the guest machine API and service-control contract around operation-specific readiness, build-backed service flows, and host `serve` auto-start on macOS by @jackspirou
-- Replace the guest `buildah`-driven build lane with the in-tree Podman-aligned OCI Dockerfile builder and stale-state cleanup path by @jackspirou
+- Add linux distribution release tooling by @jackspirou
 
-### Release
+### Documentation
 
-- Prepare v0.1.11 by @jackspirou
+- Fix mermaid edge label syntax in bootc evaluation by @jackspirou
+- Add bootc adoption evaluation research by @jackspirou
+- Update CHANGELOG.md for v0.1.10 by @github-actions[bot]
+
+### Cargo
+
+- Inherit workspace package metadata by @jackspirou
+
+### Dist
+
+- Ship bundled gvproxy for macos by @jackspirou
+
+### Engine
+
+- Relax concurrent materialized load assertion by @jackspirou
+
+### Machine
+
+- Fix stale client fixtures and clippy by @jackspirou
+- Harden macos convergence path by @jackspirou
+- Harden guest api and service control by @jackspirou
+
+### Sandbox
+
+- Fix windows process handle typing by @jackspirou
+- Make pid liveness probing windows-safe by @jackspirou
+- Add podman-aligned oci builder by @jackspirou
+
+### Server
+
+- Collapse index read tracking match guards by @jackspirou
 
 
 
