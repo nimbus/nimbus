@@ -52,33 +52,45 @@ impl ConvexHostBridge {
                     end_inclusive = true;
                     has_bound = true;
                 }
-                FilterOp::Gt if is_scalar_filter_value(&filter.value) => {
-                    if should_replace_lower_bound(start.as_ref(), Some(&filter.value), false) {
-                        start = Some(filter.value.clone());
-                        start_inclusive = false;
-                        has_bound = true;
-                    }
+                FilterOp::Gt
+                    if is_scalar_filter_value(&filter.value)
+                        && should_replace_lower_bound(
+                            start.as_ref(),
+                            Some(&filter.value),
+                            false,
+                        ) =>
+                {
+                    start = Some(filter.value.clone());
+                    start_inclusive = false;
+                    has_bound = true;
                 }
-                FilterOp::Gte if is_scalar_filter_value(&filter.value) => {
-                    if should_replace_lower_bound(start.as_ref(), Some(&filter.value), true) {
-                        start = Some(filter.value.clone());
-                        start_inclusive = true;
-                        has_bound = true;
-                    }
+                FilterOp::Gte
+                    if is_scalar_filter_value(&filter.value)
+                        && should_replace_lower_bound(
+                            start.as_ref(),
+                            Some(&filter.value),
+                            true,
+                        ) =>
+                {
+                    start = Some(filter.value.clone());
+                    start_inclusive = true;
+                    has_bound = true;
                 }
-                FilterOp::Lt if is_scalar_filter_value(&filter.value) => {
-                    if should_replace_upper_bound(end.as_ref(), Some(&filter.value), false) {
-                        end = Some(filter.value.clone());
-                        end_inclusive = false;
-                        has_bound = true;
-                    }
+                FilterOp::Lt
+                    if is_scalar_filter_value(&filter.value)
+                        && should_replace_upper_bound(end.as_ref(), Some(&filter.value), false) =>
+                {
+                    end = Some(filter.value.clone());
+                    end_inclusive = false;
+                    has_bound = true;
                 }
-                FilterOp::Lte if is_scalar_filter_value(&filter.value) => {
-                    if should_replace_upper_bound(end.as_ref(), Some(&filter.value), true) {
-                        end = Some(filter.value.clone());
-                        end_inclusive = true;
-                        has_bound = true;
-                    }
+                FilterOp::Lte
+                    if is_scalar_filter_value(&filter.value)
+                        && should_replace_upper_bound(end.as_ref(), Some(&filter.value), true) =>
+                {
+                    end = Some(filter.value.clone());
+                    end_inclusive = true;
+                    has_bound = true;
                 }
                 _ => {}
             }
