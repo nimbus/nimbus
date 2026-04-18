@@ -12,6 +12,7 @@ mod backend;
 mod endpoint;
 mod error;
 mod instance;
+mod process;
 mod spec;
 
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};

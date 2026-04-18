@@ -27,6 +27,7 @@ use crate::backends::oci::port_manager::PortManager;
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
+use crate::process::pid_is_alive;
 use crate::spec::{
     SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
     SandboxRestartPolicy, SandboxSpec,
@@ -1416,15 +1417,6 @@ fn wait_for_path(path: &Path, timeout: Duration) -> bool {
         thread::sleep(Duration::from_millis(200));
     }
     path.exists()
-}
-
-fn pid_is_alive(pid: u32) -> bool {
-    let result = unsafe { libc::kill(pid as i32, 0) };
-    result == 0
-        || matches!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EPERM)
-        )
 }
 
 fn read_exit_code(path: &Path) -> Result<i32> {
