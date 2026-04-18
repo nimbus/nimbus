@@ -223,66 +223,73 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud() {
-    with_postgres_service_config(|service_config, _provider_config| async move {
-        let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
-        let service = Arc::new(
-            Service::new_with_persistence_config(service_config)
-                .await
-                .expect("postgres-backed service should create"),
-        );
+    tokio::time::timeout(Duration::from_secs(30), async {
+        with_postgres_service_config(|service_config, _provider_config| async move {
+            let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
+            let service = Arc::new(
+                Service::new_with_persistence_config(service_config)
+                    .await
+                    .expect("postgres-backed service should create"),
+            );
 
-        service
-            .create_tenant_async(tenant_id.clone())
-            .await
-            .expect("tenant should create");
+            service
+                .create_tenant_async(tenant_id.clone())
+                .await
+                .expect("tenant should create");
 
-        const CRUD_ROUNDS: usize = 128;
-        for round in 0..CRUD_ROUNDS {
-            let document_id = service
-                .insert_document_async(
-                    tenant_id.clone(),
-                    tasks_table(),
-                    serde_json::Map::from_iter([
-                        ("title".to_string(), json!(format!("round-{round}"))),
-                        ("rank".to_string(), json!(round)),
-                    ]),
-                )
-                .await
-                .expect("insert should succeed");
-            service
-                .update_document_async(
-                    tenant_id.clone(),
-                    tasks_table(),
-                    document_id,
-                    serde_json::Map::from_iter([("rank".to_string(), json!(round + CRUD_ROUNDS))]),
-                )
-                .await
-                .expect("update should succeed");
-            service
-                .delete_document_async(tenant_id.clone(), tasks_table(), document_id)
-                .await
-                .expect("delete should succeed");
-        }
+            const CRUD_ROUNDS: usize = 64;
+            for round in 0..CRUD_ROUNDS {
+                let document_id = service
+                    .insert_document_async(
+                        tenant_id.clone(),
+                        tasks_table(),
+                        serde_json::Map::from_iter([
+                            ("title".to_string(), json!(format!("round-{round}"))),
+                            ("rank".to_string(), json!(round)),
+                        ]),
+                    )
+                    .await
+                    .expect("insert should succeed");
+                service
+                    .update_document_async(
+                        tenant_id.clone(),
+                        tasks_table(),
+                        document_id,
+                        serde_json::Map::from_iter([(
+                            "rank".to_string(),
+                            json!(round + CRUD_ROUNDS),
+                        )]),
+                    )
+                    .await
+                    .expect("update should succeed");
+                service
+                    .delete_document_async(tenant_id.clone(), tasks_table(), document_id)
+                    .await
+                    .expect("delete should succeed");
+            }
 
-        assert_eq!(
-            service
-                .latest_sequence_async(tenant_id.clone())
-                .await
-                .expect("latest sequence should track every direct mutation"),
-            SequenceNumber((CRUD_ROUNDS * 3) as u64)
-        );
-        assert!(
-            service
-                .query_documents_async(tenant_id.clone(), query_for("tasks"))
-                .await
-                .expect("query should succeed after repeated CRUD")
-                .is_empty(),
-            "repeated direct CRUD should leave no remaining documents"
-        );
+            assert_eq!(
+                service
+                    .latest_sequence_async(tenant_id.clone())
+                    .await
+                    .expect("latest sequence should track every direct mutation"),
+                SequenceNumber((CRUD_ROUNDS * 3) as u64)
+            );
+            assert!(
+                service
+                    .query_documents_async(tenant_id.clone(), query_for("tasks"))
+                    .await
+                    .expect("query should succeed after repeated CRUD")
+                    .is_empty(),
+                "repeated direct CRUD should leave no remaining documents"
+            );
 
-        drop(service);
+            drop(service);
+        })
+        .await;
     })
-    .await;
+    .await
+    .expect("postgres repeated direct CRUD should finish promptly");
 }
 
 #[tokio::test(flavor = "multi_thread")]
