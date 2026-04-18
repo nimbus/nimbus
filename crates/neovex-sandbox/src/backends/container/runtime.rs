@@ -12,9 +12,9 @@ use ulid::Ulid;
 use super::bundle::{ContainerBundleLayout, write_bundle_config};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::backends::oci::buildah::{
-    BuildahCli, BuildahContainer, ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
-    PreparedImageLaunch,
+    BuildahCli, ImageHealthcheck, MountedRootfsSession, OciExposedPort, OciImageLaunchDefaults,
 };
+use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
@@ -256,7 +256,7 @@ impl ContainerSandboxBackend {
             context_path,
             overrides,
         )?;
-        self.plan_start_with_buildah_launch(spec, &sandbox_id, prepared_launch)
+        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
     }
 
     fn plan_start_with_materialized_launch(
@@ -270,20 +270,6 @@ impl ContainerSandboxBackend {
             sandbox_id,
             Some(&prepared_launch.launch_defaults),
             Some(ContainerLaunchArtifact::Rootfs(prepared_launch.artifact)),
-        )
-    }
-
-    fn plan_start_with_buildah_launch(
-        &self,
-        spec: &SandboxSpec,
-        sandbox_id: &SandboxId,
-        prepared_launch: PreparedImageLaunch,
-    ) -> Result<ContainerLaunchPlan> {
-        self.plan_start_with_id(
-            spec,
-            sandbox_id,
-            Some(&prepared_launch.launch_defaults),
-            Some(ContainerLaunchArtifact::Buildah(prepared_launch.container)),
         )
     }
 
@@ -340,7 +326,7 @@ impl ContainerSandboxBackend {
                 buildah_path: self.config.buildah_path.clone(),
                 use_buildah_unshare: launch_artifact
                     .as_ref()
-                    .is_some_and(ContainerLaunchArtifact::uses_buildah_unshare)
+                    .is_some_and(ContainerLaunchArtifact::uses_mount_session_unshare)
                     && self.config.use_buildah_unshare,
                 log_level: self.config.log_level.clone(),
             },
@@ -350,7 +336,7 @@ impl ContainerSandboxBackend {
             &bundle_layout.bundle_dir,
             launch_artifact
                 .as_ref()
-                .and_then(|artifact| artifact.buildah_container_name()),
+                .and_then(ContainerLaunchArtifact::mount_session_name),
             &[],
         );
 
@@ -465,7 +451,15 @@ impl ContainerSandboxBackend {
             Some("stopped") => Ok(SandboxStatus::Stopped),
             Some("paused") => Ok(SandboxStatus::Stopping),
             Some(_) => Ok(SandboxStatus::Failed),
-            None if manifest.conmon_layout.pidfile.exists() => Ok(SandboxStatus::Starting),
+            None if manifest.conmon_layout.pidfile.exists() => {
+                if pid_is_alive(read_pid(&manifest.conmon_layout.pidfile)?) {
+                    Ok(SandboxStatus::Starting)
+                } else if manifest.shutdown_requested {
+                    Ok(SandboxStatus::Stopped)
+                } else {
+                    Ok(SandboxStatus::Failed)
+                }
+            }
             None => Ok(manifest.status),
         }
     }
@@ -490,16 +484,14 @@ impl ContainerSandboxBackend {
         dockerfile_path: &Path,
         context_path: &Path,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        BuildahCli::new(&self.config.buildah_path)
-            .with_unshare(self.config.use_buildah_unshare)
-            .prepare_built_image_launch(
-                image_name,
-                &buildah_container_name(sandbox_id),
-                dockerfile_path,
-                context_path,
-                overrides,
-            )
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        OciDockerfileBuilder::under_state_root(&self.config.state_root).prepare_built_image_launch(
+            sandbox_id,
+            image_name,
+            dockerfile_path,
+            context_path,
+            overrides,
+        )
     }
 
     fn cleanup_manifest_launch_artifacts(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
@@ -507,10 +499,10 @@ impl ContainerSandboxBackend {
             return Ok(());
         };
         match artifact {
-            ContainerLaunchArtifact::Buildah(container) => {
+            ContainerLaunchArtifact::MountedRootfs(session) => {
                 BuildahCli::new(&self.config.buildah_path)
                     .with_unshare(self.config.use_buildah_unshare)
-                    .cleanup_container(&container.container_name)
+                    .cleanup_rootfs_session(&session.session_name)
             }
             ContainerLaunchArtifact::Rootfs(rootfs) => {
                 if !rootfs.rootfs_path.exists() {
@@ -575,10 +567,8 @@ impl ContainerSandboxBackend {
         {
             errors.push(error.to_string());
         }
-        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref()
-            && let Err(error) = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings)
-        {
-            errors.push(error.to_string());
+        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
+            let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
         }
         if let Err(error) = self.cleanup_manifest_launch_artifacts(manifest) {
             errors.push(error.to_string());
@@ -716,20 +706,20 @@ struct ContainerResolvedLaunchSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerLaunchArtifact {
-    Buildah(BuildahContainer),
+    MountedRootfs(MountedRootfsSession),
     Rootfs(MaterializedImageRootfs),
 }
 
 impl ContainerLaunchArtifact {
-    fn buildah_container_name(&self) -> Option<&str> {
+    fn mount_session_name(&self) -> Option<&str> {
         match self {
-            Self::Buildah(container) => Some(container.container_name.as_str()),
+            Self::MountedRootfs(session) => Some(session.session_name.as_str()),
             Self::Rootfs(_) => None,
         }
     }
 
-    fn uses_buildah_unshare(&self) -> bool {
-        matches!(self, Self::Buildah(_))
+    fn uses_mount_session_unshare(&self) -> bool {
+        matches!(self, Self::MountedRootfs(_))
     }
 }
 
@@ -788,10 +778,6 @@ fn slugify(name: &str) -> String {
         }
     }
     slug.trim_matches('-').to_owned()
-}
-
-fn buildah_container_name(sandbox_id: &SandboxId) -> String {
-    format!("{}-image", sandbox_id.as_str())
 }
 
 fn resolve_launch_spec(
@@ -1096,6 +1082,15 @@ fn wait_for_path(path: &Path, timeout: Duration) -> bool {
     path.exists()
 }
 
+fn pid_is_alive(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    result == 0
+        || matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        )
+}
+
 fn read_exit_code(path: &Path) -> Result<i32> {
     let exit_status =
         std::fs::read_to_string(path).map_err(|error| SandboxError::OperationFailed {
@@ -1127,7 +1122,11 @@ fn render_command_failure(stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::thread;
 
     use neovex_core::TenantId;
     use tempfile::TempDir;
@@ -1141,7 +1140,8 @@ mod tests {
         OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
     };
     use crate::backends::oci::materializer::MaterializedImageRootfs;
-    use crate::instance::SandboxId;
+    use crate::backends::oci::network::OciMachinePortForwarderConfig;
+    use crate::instance::{SandboxId, SandboxStatus};
     use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
 
     fn sample_spec() -> SandboxSpec {
@@ -1261,5 +1261,76 @@ mod tests {
                 != Some("unshare"),
             "materialized rootfs launches should not be wrapped in buildah unshare"
         );
+    }
+
+    #[test]
+    fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let backend = ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(
+            temp_dir.path(),
+        ));
+        let mut manifest = backend
+            .plan_start_with_id(&sample_spec(), &SandboxId::new("db-01"), None, None)
+            .expect("plan should lower")
+            .manifest;
+        let state_stub = temp_dir.path().join("crun-state");
+        std::fs::write(&state_stub, "#!/bin/sh\nexit 1\n").expect("state stub should write");
+        let mut permissions = std::fs::metadata(&state_stub)
+            .expect("state stub metadata should resolve")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&state_stub, permissions)
+            .expect("state stub permissions should update");
+        manifest.conmon_launch.state_command.program = state_stub;
+        std::fs::write(&manifest.conmon_layout.pidfile, "999999\n").expect("pidfile should write");
+
+        assert_eq!(
+            backend
+                .detect_runtime_status(&manifest)
+                .expect("status should resolve"),
+            SandboxStatus::Failed
+        );
+    }
+
+    #[test]
+    fn release_execution_artifacts_ignores_machine_forwarder_unexpose_failures() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection should arrive");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.0 500 Internal Server Error\r\nContent-Length: 16\r\n\r\nproxy not found",
+                )
+                .expect("response should write");
+        });
+
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+        config.machine_port_forwarder = Some(OciMachinePortForwarderConfig {
+            host: "127.0.0.1".to_owned(),
+            port,
+            path_prefix: "/services/forwarder".to_owned(),
+        });
+        let backend = ContainerSandboxBackend::new(config);
+        let mut manifest = backend
+            .plan_start_with_id(
+                &sample_spec().with_port_binding(SandboxPortBinding::tcp("db", 5432, 5432)),
+                &SandboxId::new("db-01"),
+                None,
+                None,
+            )
+            .expect("plan should lower")
+            .manifest;
+
+        backend
+            .release_execution_artifacts(&mut manifest)
+            .expect("cleanup should ignore unexpose failures");
+        server.join().expect("server thread should join");
     }
 }

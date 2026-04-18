@@ -70,6 +70,7 @@ impl BuildahCli {
     /// Wrap a command in `buildah unshare -- sh -c 'buildah mount <container> >/dev/null && <command>'`.
     /// This ensures the buildah overlay rootfs mount exists in the same user
     /// namespace session that runs the wrapped command.
+    #[cfg(test)]
     pub fn wrap_unshare_with_mount(
         &self,
         container_name: &str,
@@ -129,6 +130,7 @@ impl BuildahCli {
         }
     }
 
+    #[cfg(test)]
     pub fn create_from_image_command(
         &self,
         container_name: &str,
@@ -141,12 +143,14 @@ impl BuildahCli {
             .arg(image_reference.to_owned())
     }
 
+    #[cfg(test)]
     pub fn mount_command(&self, container_name: &str) -> CommandSpec {
         self.launcher_command()
             .arg("mount")
             .arg(container_name.to_owned())
     }
 
+    #[cfg(test)]
     pub fn inspect_command(&self, container_name: &str) -> CommandSpec {
         self.launcher_command()
             .arg("inspect")
@@ -167,6 +171,7 @@ impl BuildahCli {
             .arg(container_name.to_owned())
     }
 
+    #[cfg(test)]
     pub fn build_command(
         &self,
         image_name: &str,
@@ -182,59 +187,63 @@ impl BuildahCli {
             .arg(context_path.to_string_lossy().into_owned())
     }
 
-    pub fn pull(&self, container_name: &str, image_reference: &str) -> Result<BuildahContainer> {
+    #[cfg(test)]
+    pub fn pull(&self, session_name: &str, image_reference: &str) -> Result<MountedRootfsSession> {
         self.run_checked(
-            &self.create_from_image_command(container_name, image_reference),
+            &self.create_from_image_command(session_name, image_reference),
             false,
             "create a working container from an image",
         )?;
-        Ok(BuildahContainer {
-            container_name: container_name.to_owned(),
+        Ok(MountedRootfsSession {
+            session_name: session_name.to_owned(),
             image_reference: image_reference.to_owned(),
         })
     }
 
+    #[cfg(test)]
     pub fn build(
         &self,
         image_name: &str,
-        container_name: &str,
+        session_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
-    ) -> Result<BuildahContainer> {
+    ) -> Result<MountedRootfsSession> {
         self.run_checked(
             &self.build_command(image_name, dockerfile_path, context_path),
             false,
             "build an OCI image from a Dockerfile",
         )?;
-        self.pull(container_name, &localhost_image_reference(image_name))
+        self.pull(session_name, &localhost_image_reference(image_name))
     }
 
     #[cfg(test)]
     pub fn prepare_image_launch(
         &self,
-        container_name: &str,
+        session_name: &str,
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        let container = self.pull(container_name, image_reference)?;
-        self.prepare_launch_for_container(container, overrides)
+    ) -> Result<PreparedMountedImageLaunch> {
+        let mount_session = self.pull(session_name, image_reference)?;
+        self.prepare_launch_for_mount_session(mount_session, overrides)
     }
 
+    #[cfg(test)]
     pub fn prepare_built_image_launch(
         &self,
         image_name: &str,
-        container_name: &str,
+        session_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        let container = self.build(image_name, container_name, dockerfile_path, context_path)?;
-        self.prepare_launch_for_container(container, overrides)
+    ) -> Result<PreparedMountedImageLaunch> {
+        let mount_session = self.build(image_name, session_name, dockerfile_path, context_path)?;
+        self.prepare_launch_for_mount_session(mount_session, overrides)
     }
 
-    pub fn mount_container(&self, container_name: &str) -> Result<PathBuf> {
+    #[cfg(test)]
+    pub fn mount_rootfs_session(&self, session_name: &str) -> Result<PathBuf> {
         let stdout = self.run_capture_stdout(
-            &self.mount_command(container_name),
+            &self.mount_command(session_name),
             self.use_unshare,
             "mount a working container rootfs",
         )?;
@@ -245,50 +254,50 @@ impl BuildahCli {
                 (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
             })
             .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!(
-                    "buildah mount for container {container_name} produced no mount path"
-                ),
+                message: format!("buildah mount for session {session_name} produced no mount path"),
             })?;
         Ok(mount_path)
     }
 
-    pub fn inspect_container(&self, container_name: &str) -> Result<OciImageConfig> {
+    #[cfg(test)]
+    pub fn inspect_rootfs_session(&self, session_name: &str) -> Result<OciImageConfig> {
         let stdout = self.run_capture_stdout(
-            &self.inspect_command(container_name),
+            &self.inspect_command(session_name),
             false,
             "inspect a working container image config",
         )?;
         parse_inspect_output(stdout.as_bytes())
     }
 
-    pub fn unmount_container(&self, container_name: &str) -> Result<()> {
+    pub fn unmount_rootfs_session(&self, session_name: &str) -> Result<()> {
         self.run_checked(
-            &self.unmount_command(container_name),
+            &self.unmount_command(session_name),
             self.use_unshare,
             "unmount a working container rootfs",
         )
     }
 
-    pub fn remove_container(&self, container_name: &str) -> Result<()> {
+    pub fn remove_rootfs_session(&self, session_name: &str) -> Result<()> {
         self.run_checked(
-            &self.remove_command(container_name),
+            &self.remove_command(session_name),
             self.use_unshare,
             "remove a working container",
         )
     }
 
-    pub fn cleanup_container(&self, container_name: &str) -> Result<()> {
-        self.unmount_container(container_name)?;
-        self.remove_container(container_name)
+    pub fn cleanup_rootfs_session(&self, session_name: &str) -> Result<()> {
+        self.unmount_rootfs_session(session_name)?;
+        self.remove_rootfs_session(session_name)
     }
 
-    fn prepare_launch_for_container(
+    #[cfg(test)]
+    fn prepare_launch_for_mount_session(
         &self,
-        container: BuildahContainer,
+        mount_session: MountedRootfsSession,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        let rootfs = self.mount_container(&container.container_name)?;
-        let image_config = self.inspect_container(&container.container_name)?;
+    ) -> Result<PreparedMountedImageLaunch> {
+        let rootfs = self.mount_rootfs_session(&mount_session.session_name)?;
+        let image_config = self.inspect_rootfs_session(&mount_session.session_name)?;
 
         // Resolve any named user (e.g., "www-data") to numeric uid:gid while
         // the rootfs overlay mount is still accessible.  In rootless mode, the
@@ -296,7 +305,7 @@ impl BuildahCli {
         // /etc/passwd and /etc/group from inside that session here, before the
         // mount disappears.
         let resolved_user = self.resolve_image_user(
-            &container.container_name,
+            &mount_session.session_name,
             overrides.user.as_deref().or(image_config.user.as_deref()),
             &rootfs,
         )?;
@@ -308,8 +317,8 @@ impl BuildahCli {
 
         let launch_defaults =
             config_with_resolved_user.resolve_launch_defaults(rootfs, &process_overrides)?;
-        Ok(PreparedImageLaunch {
-            container,
+        Ok(PreparedMountedImageLaunch {
+            mount_session,
             launch_defaults,
         })
     }
@@ -317,9 +326,10 @@ impl BuildahCli {
     /// Resolve an image USER string to numeric "uid:gid" by reading
     /// /etc/passwd and /etc/group from inside the container's rootfs.
     /// Runs inside `buildah unshare` so the overlay mount is accessible.
+    #[cfg(test)]
     fn resolve_image_user(
         &self,
-        container_name: &str,
+        session_name: &str,
         user: Option<&str>,
         rootfs: &Path,
     ) -> Result<Option<String>> {
@@ -334,35 +344,36 @@ impl BuildahCli {
 
         // Read /etc/passwd from inside the rootfs via buildah unshare to
         // resolve named users to numeric uid:gid.
-        let passwd_content = self.read_rootfs_file(container_name, rootfs, "etc/passwd")?;
-        let group_content = self.read_rootfs_file_optional(container_name, rootfs, "etc/group");
+        let passwd_content = self.read_rootfs_file(session_name, rootfs, "etc/passwd")?;
+        let group_content = self.read_rootfs_file_optional(session_name, rootfs, "etc/group");
 
         resolve_user_from_content(user, &passwd_content, group_content.as_deref())
     }
 
+    #[cfg(test)]
     fn read_rootfs_file(
         &self,
-        container_name: &str,
+        session_name: &str,
         rootfs: &Path,
         relative_path: &str,
     ) -> Result<String> {
         let file_path = rootfs.join(relative_path);
         let cat_command = CommandSpec::new("cat").arg(file_path.to_string_lossy().into_owned());
         let buildah = BuildahCli::new(self.path.clone()).with_unshare(self.use_unshare);
-        let wrapped = buildah.wrap_unshare_with_mount(container_name, &cat_command);
+        let wrapped = buildah.wrap_unshare_with_mount(session_name, &cat_command);
         let output =
             wrapped
                 .as_command()
                 .output()
                 .map_err(|error| SandboxError::OperationFailed {
                     message: format!(
-                        "failed to read {relative_path} from container {container_name}: {error}"
+                        "failed to read {relative_path} from session {session_name}: {error}"
                     ),
                 })?;
         if !output.status.success() {
             return Err(SandboxError::OperationFailed {
                 message: format!(
-                    "failed to read {relative_path} from container {container_name}: {}",
+                    "failed to read {relative_path} from session {session_name}: {}",
                     String::from_utf8_lossy(&output.stderr).trim()
                 ),
             });
@@ -370,13 +381,14 @@ impl BuildahCli {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
+    #[cfg(test)]
     fn read_rootfs_file_optional(
         &self,
-        container_name: &str,
+        session_name: &str,
         rootfs: &Path,
         relative_path: &str,
     ) -> Option<String> {
-        self.read_rootfs_file(container_name, rootfs, relative_path)
+        self.read_rootfs_file(session_name, rootfs, relative_path)
             .ok()
     }
 
@@ -395,6 +407,7 @@ impl BuildahCli {
         })
     }
 
+    #[cfg(test)]
     fn run_capture_stdout(
         &self,
         command: &CommandSpec,
@@ -444,14 +457,15 @@ impl BuildahCli {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BuildahContainer {
-    pub container_name: String,
+pub struct MountedRootfsSession {
+    pub session_name: String,
     pub image_reference: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PreparedImageLaunch {
-    pub container: BuildahContainer,
+pub struct PreparedMountedImageLaunch {
+    pub mount_session: MountedRootfsSession,
     pub launch_defaults: OciImageLaunchDefaults,
 }
 
@@ -500,6 +514,7 @@ pub struct ImageHealthcheck {
     pub retries: Option<u32>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 struct BuildahInspectPayload {
     #[serde(default, rename = "OCIv1")]
@@ -508,6 +523,7 @@ struct BuildahInspectPayload {
     docker: Option<BuildahImageEnvelope>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 struct BuildahImageEnvelope {
     #[serde(default, alias = "Config", alias = "config")]
@@ -709,10 +725,12 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+#[cfg(test)]
 fn localhost_image_reference(image_name: &str) -> String {
     format!("localhost/{image_name}")
 }
 
+#[cfg(test)]
 fn parse_inspect_output(stdout: &[u8]) -> Result<OciImageConfig> {
     let value: Value =
         serde_json::from_slice(stdout).map_err(|error| SandboxError::OperationFailed {
@@ -809,6 +827,7 @@ pub(crate) fn resolve_image_user_from_rootfs(
 }
 
 impl OciImageConfig {
+    #[cfg(test)]
     fn from_payload(payload: BuildahInspectPayload) -> Self {
         Self::from_fields(
             payload
@@ -1355,21 +1374,21 @@ mod tests {
         let pulled = buildah
             .pull("postgres-working", "postgres:16")
             .expect("pull should succeed");
-        assert_eq!(pulled.container_name, "postgres-working");
+        assert_eq!(pulled.session_name, "postgres-working");
         assert_eq!(pulled.image_reference, "postgres:16");
 
         let mount_path = buildah
-            .mount_container("postgres-working")
+            .mount_rootfs_session("postgres-working")
             .expect("mount should succeed");
         assert_eq!(mount_path, PathBuf::from("/tmp/fake-rootfs"));
 
         let inspected = buildah
-            .inspect_container("postgres-working")
+            .inspect_rootfs_session("postgres-working")
             .expect("inspect should succeed");
         assert_eq!(inspected.cmd, vec!["postgres"]);
 
         buildah
-            .cleanup_container("postgres-working")
+            .cleanup_rootfs_session("postgres-working")
             .expect("cleanup should succeed");
 
         let log = fs::read_to_string(log_path).expect("fake buildah log should be readable");
@@ -1411,8 +1430,8 @@ mod tests {
             )
             .expect("prepared launch should succeed");
 
-        assert_eq!(prepared.container.container_name, "postgres-working");
-        assert_eq!(prepared.container.image_reference, "postgres:16");
+        assert_eq!(prepared.mount_session.session_name, "postgres-working");
+        assert_eq!(prepared.mount_session.image_reference, "postgres:16");
         assert_eq!(
             prepared.launch_defaults.filesystem.rootfs,
             PathBuf::from("/tmp/fake-rootfs")
@@ -1514,7 +1533,10 @@ mod tests {
             )
             .expect("prepared built launch should succeed");
 
-        assert_eq!(prepared.container.image_reference, "localhost/neovex-api");
+        assert_eq!(
+            prepared.mount_session.image_reference,
+            "localhost/neovex-api"
+        );
         assert_eq!(
             prepared.launch_defaults.filesystem.rootfs,
             PathBuf::from("/tmp/fake-rootfs")

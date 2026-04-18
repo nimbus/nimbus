@@ -15,6 +15,7 @@ neovex-core = { path = "../neovex-core" }
 oci-client = "0.16"
 serde.workspace = true
 serde_json.workspace = true
+shell-words.workspace = true
 sha2.workspace = true
 tar = "0.4"
 thiserror.workspace = true
