@@ -74,7 +74,7 @@ Verified Homebrew packaging boundary on the current host:
 - Homebrew `podman-desktop` `1.26.2` installs the GUI app bundle; the cask does
   not declare `krunkit` as a Homebrew dependency.
 - Therefore, if neovex chooses `krunkit` as its macOS machine provider, the
-  neovex formula must depend on `krunkit` directly instead of inheriting that
+  neovex Homebrew package must depend on `krunkit` directly instead of inheriting that
   dependency from Podman packaging.
 - This evidence is intentionally scoped to the Homebrew formula and cask,
   because Channel 4 is a Homebrew delivery plan. Do not treat it as proof
@@ -87,7 +87,7 @@ Verified upstream Podman installer boundary from source:
 - `containers/podman` `v5.8.1` `pkg/machine/provider/platform_darwin.go`
   supports both `applehv` and `libkrun` on Apple Silicon, but falls back to
   `applehv` when no provider is configured.
-- So the official Podman `.pkg` and the Homebrew formula have different
+- So the official Podman `.pkg` and the Homebrew cask/formula surfaces have different
   packaging contracts. neovex should document the Homebrew contract we plan to
   ship, while still using Podman's upstream source as architecture guidance.
 
@@ -372,7 +372,7 @@ Current implementation note:
 2. **libkrun.** Already in neovex's dependency chain for microVMs on Linux.
 3. **Podman-aligned.** Podman's machine code supports both `applehv` and
    `libkrun` on Apple Silicon. Podman's upstream macOS `.pkg` installer
-   bundles `krunkit`, but the Homebrew formula does not, so neovex can depend
+   bundles `krunkit`, but the Homebrew Podman formula does not, so neovex can depend
    on `krunkit` directly instead of inheriting the Homebrew Podman formula's
    bundled provider choice.
 4. **Full device support.** virtiofs, vsock, virtio-net, virtio-blk,
@@ -390,42 +390,31 @@ Provider-selection note:
 
 #### Guest VM image
 
-**Base:** Fedora bootc 42 (aarch64).
-**Custom layer:** neovex + all Linux deps (neovex, neovex-crun, conmon,
-buildah, libkrun, libkrunfw, catatonit, passt, fuse-overlayfs,
-containers-common).
-**Build:** `podman build` → `podman save --format oci-archive` →
-`bootc-image-builder --type raw --rootfs ext4` → gzip.
-**Distribution:** raw-disk OCI artifact at
-`ghcr.io/agentstation/neovex-machine-os`, with `disktype=raw` manifest
-selection for the bootable guest disk.
-Provisioned via Ignition (SSH keys, neovex systemd unit, virtiofs mounts).
+**Current macOS v1 contract:** use Podman's published machine image directly,
+by pinned immutable reference owned by the host `neovex` release:
 
-**Repo split:** The guest image source now lives in
-`agentstation/neovex-machine-os`, mirroring Podman's
-`containers/podman` + `containers/podman-machine-os` model. The host repo
-(`agentstation/neovex`) owns the binary/CLI/server release and uses the
-machine-image repo in two reusable-workflow phases on `v*` releases: a
-a staging build before the host release, then a publish/release call that
-reuses the staged machine-image bundle after the host release succeeds. That
-keeps the GitHub Actions shape modern by removing the extra cross-repo
-`workflow_dispatch` hop and by avoiding a second machine-image rebuild while
-still preserving machine-image release ownership in
-`agentstation/neovex-machine-os`.
-Because reusable workflows still execute in the caller's context, the
-publish/release call must pass GitHub App credentials (`release_app_id` plus
-`MACHINE_OS_RELEASE_APP_PRIVATE_KEY`) so the called workflow can mint its own
-installation token, publish GHCR artifacts, and create a GitHub Release in
-the separate machine-image repo. This keeps attestation ownership split cleanly:
-`agentstation/neovex` attests the host binary/CLI/server, while
-`agentstation/neovex-machine-os` attests and releases the guest image in its
-own repo. Consumers still reference the image only by GHCR reference, so the
-split stays transparent to operators.
+- base image: `quay.io/podman/machine-os@sha256:...`
+- selection rule: provider-specific OCI artifact selection (`disktype=applehv`
+  on the current macOS krunkit path), not a floating tag and not the older
+  generic `disktype=raw` assumption
+- convergence owner: `neovex machine start`, which caches the machine image,
+  caches the matching Linux guest `neovex` binary, boots or rebuilds from the
+  pinned image, hash-syncs `/usr/local/bin/neovex`, repairs guest socket
+  activation, and validates the forwarded machine API before reporting success
+- provisioning scope: narrow Ignition only (SSH keys, guest units, virtiofs
+  mounts, readiness wiring)
 
-The Podman machine-os source is also a useful negative reference here: its
-guest image build script installs plain container tooling (`crun`, `podman`,
-`netavark`, `aardvark-dns`) rather than a guest-side `krun` runtime path. Our
-macOS guest should follow that same standard-container pattern.
+**Future supply-side track:** `agentstation/neovex-machine-os` remains the
+later Neovex-owned image pipeline once it preserves the same Podman-aligned
+FCOS/ignition/libkrun semantics. That repo split still mirrors Podman's
+`containers/podman` + `containers/podman-machine-os` ownership model, but it
+is not the current shipped macOS dependency contract.
+
+The Podman machine-os source remains the canonical implementation reference for
+the guest package shape: standard container tooling (`crun`, `conmon`,
+`netavark`, `aardvark-dns`) rather than a guest-side `krun` runtime path.
+Neovex's current macOS guest should stay aligned with that same
+standard-container pattern.
 
 #### Communication
 
@@ -439,10 +428,13 @@ macOS guest should follow that same standard-container pattern.
 - **Port forwarding:** gvproxy forwards ports from macOS localhost to the
   guest VM. Same as Podman's port forwarding model on macOS.
 
-#### Homebrew formula
+#### Homebrew cask
 
 Dependency contract:
-- `neovex` depends on `krunkit` directly.
+- `neovex` owns `krunkit` as an explicit Homebrew dependency on macOS.
+- `neovex` bundles `gvproxy` inside the macOS release archive under
+  `libexec/gvproxy`, following Podman's pkg-installer pattern instead of
+  treating Homebrew `podman` as a transitive dependency manager.
 - Do not rely on a preexisting Homebrew `podman` or `podman-desktop`
   installation to make `krunkit` available on `PATH`.
 - `podman-desktop` may still be useful as a GUI, but it is not neovex's
@@ -457,44 +449,47 @@ Dependency contract:
   requirement.
 
 ```ruby
-class Neovex < Formula
+ cask "neovex" do
+  name "neovex"
   desc "Reactive document database with microVM runtime"
   homepage "https://neovex.dev"
-  url "https://github.com/agentstation/neovex/releases/download/v0.1.0/neovex-darwin-arm64.tar.gz"
-  sha256 "..."
+  version "0.1.0"
 
-  depends_on "krunkit"  # Machine VM (libkrun / Hypervisor.framework)
-  depends_on :macos
-  depends_on arch: :arm64  # Apple Silicon only
+  binary "neovex"
 
-  def install
-    bin.install "neovex"
-    libexec.install "gvproxy"  # Bundled networking
+  on_macos do
+    depends_on arch: :arm64
+    depends_on macos: ">= :sonoma"
+    depends_on formula: "slp/krunkit/krunkit"
+
+    on_arm do
+      url "https://github.com/agentstation/neovex/releases/download/v#{version}/neovex_darwin_arm64.tar.gz"
+      sha256 "..."
+    end
   end
 end
 ```
 
 ```bash
-brew tap agentstation/neovex
-brew install neovex
+brew install agentstation/tap/neovex
 # Installs: neovex CLI, krunkit, gvproxy
 
-neovex machine init   # Downloads guest image (~800MB, one-time)
-neovex serve          # Auto-starts machine if needed, proxies to VM
+neovex machine init   # One-time: record the default machine contract
+neovex serve          # Auto-starts that initialized machine if needed
 ```
 
 #### Developer experience
 
 ```bash
-neovex machine init     # one-time: download image, configure
-neovex machine start    # boot the VM (~3-5s)
+neovex machine init     # one-time: record image/resources/SSH contract
+neovex machine start    # optional explicit boot (~3-5s)
 neovex machine stop     # graceful shutdown (via krunkit REST API)
 neovex machine rm       # delete VM and disk image
 neovex machine ssh      # debug: SSH into the VM
 neovex machine status   # show VM state, resource usage
 ```
 
-`neovex serve` on macOS auto-starts the machine if not running.
+`neovex serve` on macOS auto-starts the initialized machine if not running.
 
 #### Optional Docker compatibility
 
@@ -507,7 +502,7 @@ ownership of the system Docker socket.
 #### Evaluated alternatives
 
 - **vfkit (Virtualization.framework)** — Go binary, bundled with Podman
-  Homebrew formula. Has Rosetta 2 for x86_64 containers which krunkit
+  Homebrew formula and pkg installer. Has Rosetta 2 for x86_64 containers which krunkit
   lacks. Consider if x86_64 image compat becomes important.
 - **Apple Containerization (`apple/container`, WWDC 2025)** — Apple's
   open-source container runtime. Each container gets its own VM. Sub-second
@@ -517,7 +512,7 @@ ownership of the system Docker socket.
 - [containers/krunkit](https://github.com/containers/krunkit)
 - [containers/gvisor-tap-vsock](https://github.com/containers/gvisor-tap-vsock)
 - [containers/podman/pkg/machine/](https://github.com/containers/podman/tree/main/pkg/machine)
-- [Homebrew formulae docs](https://docs.brew.sh/Formula-Cookbook)
+- [Homebrew cask docs](https://docs.brew.sh/Cask-Cookbook)
 
 ### Channel 5: Binary Tarball (Manual Install)
 
@@ -622,7 +617,11 @@ containers where `libkrun-devel` is available from repos (no source build
 needed). Triggered on push to main (path-filtered), `crun/v*` tags, and
 `workflow_dispatch`.
 
-**neovex binary CI status:** `todo`
+**neovex binary CI status:** `done` — `.github/workflows/release.yml`
+verifies the tag/version contract, builds and publishes Neovex release assets
+for Linux `x86_64` + `arm64`, macOS `arm64`, and Windows `x86_64`, attaches
+provenance/checksums, dispatches the matching machine-os publish workflow, and
+updates the Homebrew cask on tagged releases.
 
 **Acceptance criteria:**
 - `git tag crun/v1.27 && git push --tags` triggers neovex-crun build and
@@ -637,7 +636,29 @@ needed). Triggered on push to main (path-filtered), `crun/v*` tags, and
 **Goal:** `apt install neovex` works on Debian 13 and Ubuntu 24.04+.
 
 **Scope:**
-- Build .deb packages: neovex, neovex-crun, libkrun, libkrunfw
+- Shared package-build foundation now exists in-repo:
+  `scripts/build-linux-release-packages.sh`,
+  `scripts/verify-build-linux-release-packages-helper.sh`, and
+  `.github/workflows/linux-packages.yml` render and build candidate `.deb`
+  artifacts for `neovex` and `neovex-crun` from released binaries
+- Shared static apt-repo builder now exists in-repo:
+  `scripts/build-apt-repository.sh`,
+  `scripts/verify-build-apt-repository-helper.sh`, and
+  `.github/workflows/apt-repo.yml` build a multi-arch apt repository tree
+  with `Packages`, `Release`, `InRelease`, detached signatures, and exported
+  public keyring material from those `.deb` artifacts; the same manual
+  workflow can optionally upload and deploy that static bundle through GitHub
+  Pages
+- Shared Linux distribution release contract now exists in-repo:
+  `packaging/linux-distribution-contract.env` plus
+  `.github/workflows/linux-distribution-release.yml` mirror each published
+  Neovex GitHub release into the Linux package/repo lanes using that single
+  checked-in `neovex-crun`/channel contract instead of requiring ad hoc
+  operator inputs
+- Final Debian/Ubuntu channel still needs the hosted apt repository layer:
+  final custom-domain publication for that signed static repo bundle
+- Resolve Debian/Ubuntu ownership for `libkrun` / `libkrunfw` before claiming
+  `apt install neovex` as a supported path
 - Host apt repository (GitHub Pages or Cloudflare R2)
 - GPG-sign packages
 - Install script (Channel 1) adds the repo and installs
@@ -651,8 +672,25 @@ needed). Triggered on push to main (path-filtered), `crun/v*` tags, and
 **Goal:** `dnf install neovex` works on Fedora 40+.
 
 **Scope:**
-- Build .rpm packages: neovex, neovex-crun
+- Shared package-build foundation now exists in-repo:
+  `scripts/build-linux-release-packages.sh`,
+  `scripts/verify-build-linux-release-packages-helper.sh`, and
+  `.github/workflows/linux-packages.yml` render and build candidate `.rpm`
+  artifacts for `neovex` and `neovex-crun` from released binaries
+- Shared Fedora/COPR source-package bridge now exists in-repo:
+  `scripts/build-fedora-release-srpms.sh`,
+  `scripts/verify-build-fedora-release-srpms-helper.sh`, and
+  `.github/workflows/copr-srpms.yml` wrap those same released binaries into
+  deterministic source bundles and `.src.rpm` artifacts suitable for direct
+  `copr-cli build ... <path-to-srpm>` submission
+- Shared Linux distribution release contract now exists in-repo:
+  `packaging/linux-distribution-contract.env` plus
+  `.github/workflows/linux-distribution-release.yml` mirror each published
+  Neovex GitHub release into the Debian/Fedora packaging workflows from the
+  same released assets instead of maintaining a separate distro-build stack
 - libkrun/libkrunfw already in Fedora repos — just depend on them
+- Final Fedora channel still needs the live COPR project/publication contract,
+  `dnf copr enable ...` install docs, and first real repo proof
 - Publish via COPR (free RPM build service)
 
 **Acceptance criteria:**
@@ -664,19 +702,23 @@ macOS is a development environment, not production. Neovex follows Podman's
 one-machine-VM model for service execution, but the authoritative Neovex
 server/runtime/storage loop stays on the macOS host. See Channel 4 above.
 
-#### Phase D4a: Homebrew formula + krunkit integration
+#### Phase D4a: Homebrew cask + krunkit integration
 
-**Goal:** `brew install neovex` works. `neovex machine start` boots a VM.
+**Goal:** `brew install agentstation/tap/neovex` works. `neovex machine start`
+boots a VM.
 
 **Scope:**
 - Build neovex macOS CLI for `aarch64-apple-darwin`
-- Create Homebrew formula depending on krunkit; bundle gvproxy
+- Create Homebrew cask for Apple Silicon depending on `slp/krunkit/krunkit`;
+  bundle `gvproxy` in the macOS release archive under `libexec/gvproxy`
 - `neovex machine init/start/stop`: spawn krunkit with virtiofs,
   virtio-net/gvproxy, and any required machine-level ready/bootstrap devices
 - Graceful shutdown via krunkit REST API
 
 **Acceptance criteria:**
-- `brew install neovex` installs CLI + krunkit + gvproxy on M1+ Mac
+- `brew install agentstation/tap/neovex` installs the CLI on Apple Silicon
+  macOS, owns `slp/krunkit/krunkit` explicitly, and ships bundled
+  `libexec/gvproxy`
 - `neovex machine start` boots a Fedora CoreOS VM
 - SSH into the VM works; virtiofs mounts work
 
@@ -726,7 +768,8 @@ host-resident server.
   remain distinct probe stages
 
 **Acceptance criteria:**
-- `neovex serve` on macOS starts the machine, stays host-resident, and proxies
+- `neovex serve` on macOS starts the initialized machine, stays host-resident,
+  and proxies
   transparently to the guest machine API
 - WebSocket subscriptions work through the macOS guest-control proxy
 - postgres:16 service accessible at `localhost:5432` from macOS
@@ -751,12 +794,12 @@ host-resident server.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| D1: CI build pipeline | `in_progress` | Neovex compiles | neovex-crun done (amd64+arm64), neovex binary todo |
-| D2: Apt repo (Debian/Ubuntu) | `todo` | D1 | cargo-deb or nfpm |
-| D3: COPR (Fedora) | `todo` | D1 | COPR build service |
-| D4a: Homebrew + krunkit | `todo` | D1 | Apple Silicon, macOS 14+ |
-| D4b: Guest VM image | `in_progress` | D4a | split to `agentstation/neovex-machine-os`; host `v*` release now calls the reusable image workflow |
-| D4c: API + port forwarding | `todo` | D4b | host-local control channel, gvproxy, layered probes |
+| D1: CI build pipeline | `done` | Neovex compiles | release workflow now publishes Neovex binary assets plus checksums/provenance on `v*` tags; neovex-crun is already green on amd64+arm64 |
+| D2: Apt repo (Debian/Ubuntu) | `in_progress` | D1 | shared `nfpm` package builder, signed static apt-repo builder, and release-driven mirror workflow landed; GitHub Pages deploy path exists, but final `apt.neovex.dev` cutover and Debian `libkrun` ownership remain |
+| D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, and release-driven mirror workflow landed; live COPR publication and first `dnf copr enable ...` proof still remain |
+| D4a: Homebrew + krunkit | `done` | D1 | Apple Silicon, macOS 14+ cask ships bundled `gvproxy`, owns `krunkit`, and has real local install/start/ssh proof |
+| D4b: Guest VM image | `done` | D4a | current macOS v1 contract is the pinned Podman machine image plus host-managed guest-binary sync; `agentstation/neovex-machine-os` remains the future Neovex-owned supply-side track |
+| D4c: API + port forwarding | `done` | D4b | `neovex serve` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, `ctx.services` activation, localhost service reachability, native `/ws` push, and tenant teardown on the real host |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 
 ---
@@ -777,4 +820,16 @@ host-resident server.
 | 2026-04-12 | D4a prep | `documented` | Promoted that recreate/reset guidance from narrative advice into a checked-in operator path and validated it against the real long-lived machine on this Mac. The repo now owns `scripts/recreate-podman-machine.sh`, `scripts/verify-podman-machine-recreate-helper.sh`, `make recreate-podman-machine`, and `make verify-podman-machine-recreate-helper`, so Channel 4 has a durable Podman-aligned repair entrypoint instead of ad hoc shell history. A live run at `/tmp/neovex-libkrun-users-only-recreate` first preserved the stale-state failure under `pre-diagnostics/summary.txt` (`podman info --debug` failed and the API/gvproxy sockets were missing), then removed and recreated `neovex-libkrun-users-only` under the same `/tmp/podman` short-root contract and returned `result ready info=ok ssh=ok` in `readiness/summary.txt`. | `bash -n scripts/recreate-podman-machine.sh`; `bash -n scripts/verify-podman-machine-recreate-helper.sh`; `bash scripts/verify-podman-machine-recreate-helper.sh`; `make verify-podman-machine-recreate-helper`; `bash scripts/recreate-podman-machine.sh --machine neovex-libkrun-users-only --connection neovex-libkrun-users-only --provider libkrun --tmp-root /tmp/podman --output-dir /tmp/neovex-libkrun-users-only-recreate --cpus 2 --memory 2048 --disk-size 20 --volume /Users:/Users`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/summary.txt`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/pre-diagnostics/summary.txt`; `sed -n '1,220p' /tmp/neovex-libkrun-users-only-recreate/readiness/summary.txt`; `cargo fmt --all --check` | Keep Channel 4 aligned with the proven short-root recreate path: prefer the checked-in helper when a macOS machine wedges, and treat the recreated `users-only` result as stronger local evidence than the earlier stale-state failure |
 | 2026-04-14 | D4b | `done` | Machine-os CI workflow (`.github/workflows/neovex-machine-os.yml`) migrated from self-hosted ARM64 runners to GitHub-hosted `ubuntu-24.04-arm`. Pipeline switched from rpm-ostree + custom-coreos-disk-images to `podman save --format oci-archive` + `bootc-image-builder`. Base image changed from Fedora CoreOS to `fedora-bootc:42`. Publishes raw-disk OCI artifact to GHCR on `machine-os/v*` tags with `actions/attest@v4` provenance. Consumer-side attestation verification added to `manager.rs`. | CI run green on `ubuntu-24.04-arm`; `actions/attest@v4` provenance attached; machine manager queries GitHub Attestations API after SHA256 verification | D4b acceptance criteria met: versioned GHCR reference, digest/provenance, dedicated ARM64 build lane |
 | 2026-04-14 | D1 | `in_progress` | neovex-crun CI workflow (`.github/workflows/neovex-crun.yml`) implemented and verified green. Three jobs: verify (patch syntax + help entrypoints on `ubuntu-latest`), build (matrix amd64 on `ubuntu-latest` + arm64 on `ubuntu-24.04-arm`, inside `fedora:43` containers with `libkrun-devel` from repos), publish (on `crun/v*` tags with `actions/attest@v4` provenance + GitHub Release). Fixed existing `verify-neovex-crun-patch.yml` CRUN_VERSION from 1.22 to 1.27. Linux aarch64 platform support partially unlocked via both machine-os and neovex-crun CI. | CI run `24417536553` green: verify success, build amd64 success, build arm64 success, publish skipped (no tag) | neovex binary CI workflow still needed to complete D1; then `crun/v*` tag push to validate publish job end-to-end |
+| 2026-04-17 | D1 | `done` | Closed the stale Neovex binary-release gap. The main release workflow succeeded for `v0.1.10` after the Windows type-gating and cache-failure fixes, and the published release now carries the expected asset set: `neovex_linux_x86_64.tar.gz`, `neovex_linux_arm64.tar.gz`, `neovex_darwin_arm64.tar.gz`, `neovex_windows_x86_64.zip`, plus `checksums-sha256.txt`. The same workflow also attaches build provenance, dispatches the matching `neovex-machine-os` publish workflow, and updates the Homebrew cask, so the general binary CI/publish lane is no longer a plan gap. | `gh run list --workflow release.yml --limit 10 --json databaseId,displayTitle,headBranch,status,conclusion,url`; successful release run `24578780644` (`https://github.com/agentstation/neovex/actions/runs/24578780644`) on tag `v0.1.10`; `gh release view v0.1.10 --json tagName,isPrerelease,isDraft,assets,url`; published release `https://github.com/agentstation/neovex/releases/tag/v0.1.10` with uploaded Linux/macOS/Windows assets plus checksums | Resume the remaining distribution backlog at D2/D3/D5, or keep tightening release ergonomics and packaging evidence where the new landed pipeline exposed rough edges |
+| 2026-04-18 | D1 | `documented` | Hardened the binary-release lane so the shipped archive contract is enforced in CI instead of living only in docs and post-release spot checks. The repo now owns `scripts/verify-release-archive-layout.sh`, `scripts/verify-release-archive-layout-helper.sh`, and `make verify-release-archive-layout-helper`; `.github/workflows/release.yml` runs that layout check immediately after artifact download, before checksums, GitHub Release creation, or Homebrew cask updates. The guard now fails the release if the macOS tarball ever drops the bundled `libexec/gvproxy`, if the unix archives lose `README.md` or `LICENSE`, or if the Windows zip drifts from the expected `neovex.exe` layout. This mirrors the same packaging discipline Podman uses in its macOS pkginstaller flow: helper binaries are part of the shipped payload, and packaging correctness is something the release pipeline should verify, not something operators have to rediscover after install. A real download of the already-published `v0.1.10` release assets then confirmed the value of the new guard: the current public `neovex_darwin_arm64.tar.gz` still contains only `neovex`, `README.md`, and `LICENSE`, so it predates the bundled-`gvproxy` fix and the next tagged release must republish the darwin asset before the public Homebrew cask can be considered aligned with the checked-in macOS contract. | `bash -n scripts/verify-release-archive-layout.sh`; `bash -n scripts/verify-release-archive-layout-helper.sh`; `bash scripts/verify-release-archive-layout-helper.sh`; focused review against `/Users/jack/src/github.com/containers/podman/contrib/pkginstaller/Makefile` and `/Users/jack/src/github.com/containers/podman/contrib/pkginstaller/package.sh`; real-release check: `gh release download v0.1.10 --repo agentstation/neovex --pattern 'neovex_*' --dir /tmp/neovex-release-assets.9PrBZQ`; `bash scripts/verify-release-archive-layout.sh --artifacts-dir /tmp/neovex-release-assets.9PrBZQ` failed with missing `libexec/gvproxy` in the darwin archive as expected for the pre-fix tag | Cut the next Neovex release from the fixed workflow so the public darwin asset and Homebrew cask finally match the documented macOS helper contract; after that, resume the higher-leverage D2/D3 live publication work |
+| 2026-04-17 | D4a | `done` | Closed the macOS Homebrew packaging contract in code and on the live host. `crates/neovex-bin/src/machine/manager.rs` now prefers a packaged `libexec/gvproxy` beside the running `neovex` binary before falling back to Podman helper paths, and `.github/workflows/release.yml` now bundles Podman-aligned `gvproxy` `v0.8.8` (matching `containers/podman`'s current `go.mod`), emits an Apple-Silicon-only cask with explicit `slp/krunkit/krunkit` dependency ownership, and clears quarantine recursively across the staged cask payload instead of just the top-level `neovex` binary. Real host proof then used a temporary local tap/cask (`local/neovex-proof/neovex-dev`) at `/tmp/neovex-d4a-proof.ZGW6fC` so the packaged layout could be exercised without touching the user's real Homebrew `neovex`: `neovex-version.txt` showed `neovex 0.1.10`, `cask-symlink.txt` resolved to `/opt/homebrew/Caskroom/neovex-dev/0.1.10/neovex`, `path-gvproxy.txt` stayed empty under `PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`, `machine-status-running.txt` recorded `runtime.helper_binaries.gvproxy: /opt/homebrew/Caskroom/neovex-dev/0.1.10/libexec/gvproxy`, and `machine ssh` reached the guest and showed the `/Users` virtiofs mount. Because this was an unsigned local proof cask rather than a published release, macOS Gatekeeper still required explicit operator allow actions for both `neovex` and `gvproxy`; the shipped cask template now clears quarantine on the whole staged payload so that helper-specific prompt does not remain in the generated release contract. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; `cargo test -p neovex-bin bundled_helper_candidates_cover_root_and_bin_layouts -- --nocapture`; `cargo test -p neovex-bin helper_resolution_prefers_packaged_candidates_before_fallbacks -- --nocapture`; local packaging prep at `/tmp/neovex-d4a-proof.ZGW6fC`: tarball contents `neovex`, `libexec/gvproxy`, `README.md`, `LICENSE`; `brew tap local/neovex-proof /tmp/neovex-d4a-proof.ZGW6fC/homebrew-neovex-proof`; `brew install --cask local/neovex-proof/neovex-dev`; `readlink /opt/homebrew/bin/neovex-dev`; `HOME=/tmp/neovex-mac-closeout.FNcv0I/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/neovex-dev --version`; `... neovex-dev machine start`; `... neovex-dev machine ssh -- /bin/sh -lc 'uname -a; mount | grep virtiofs'`; `... neovex-dev machine stop`; `brew uninstall --cask neovex-dev`; `brew untap local/neovex-proof` | Resume D1 and reconcile whether the now-landed release workflow evidence is enough to mark the general neovex binary CI pipeline done, or close the next remaining distribution item with a similar proof-first pass |
+| 2026-04-18 | D4a | `documented` | Turned the earlier one-off local cask validation into a checked-in operator collector and re-ran it on the live host. The repo now owns `scripts/collect-neovex-homebrew-cask-proof.sh` plus `make collect-neovex-homebrew-cask-proof`, which package the local release `neovex` plus bundled `libexec/gvproxy` into a temporary proof cask, install it under an isolated Homebrew tap/token, and then capture the packaged `neovex --version`, symlink target, bundled-helper discovery, `machine init`, `machine start`, `machine status`, guest `neovex --version`, guest SSH `/Users` virtiofs proof, and `machine stop` against isolated machine roots without touching the user's shipped `neovex` cask token or default machine state. The fresh checked-in proof bundle at `/tmp/neovex-d4a-proof-checkedin` recorded `host-neovex-version.txt` and `guest-neovex-version.txt` as `neovex 0.1.10`, `cask-symlink.txt` resolving to `/opt/homebrew/Caskroom/neovex-dev/0.1.10/neovex`, `path-gvproxy.txt` staying empty under `PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`, `machine-status-running.txt` recording `runtime.helper_binaries.gvproxy: /opt/homebrew/Caskroom/neovex-dev/0.1.10/libexec/gvproxy`, and `machine-ssh-mounts.txt` proving `/Users` virtiofs reachability before the helper cleaned up the temporary tap/cask again. | `bash -n scripts/collect-neovex-homebrew-cask-proof.sh`; `cargo check -p neovex-bin`; real-host proof via `make collect-neovex-homebrew-cask-proof OUTPUT_DIR=/tmp/neovex-d4a-proof-checkedin` | Keep the checked-in cask collector as the durable D4a packaging/install evidence path so future macOS release changes can be revalidated without reconstructing the proof from shell history |
+| 2026-04-18 | D4a | `documented` | Tightened the machine-helper trust boundary to match Podman's darwin `helper_binaries_dir` model more closely. The macOS machine manager now resolves `krunkit` and `gvproxy` only from explicit per-binary overrides, `NEOVEX_MACHINE_HELPER_BINARY_DIR`, packaged `libexec` helpers, or the same class of named Podman/Homebrew helper directories Podman searches on darwin; ambient `PATH` is no longer treated as a valid machine-helper source. That keeps the shipped cask path canonical, preserves explicit escape hatches for local proof/development work, and removes a surprising fallback that could let an unrelated shell-installed helper shadow the intended packaged or Homebrew-managed binary. The hardening first passed the no-ambient-`PATH` rerun at `/tmp/neovex-d4a-proof-no-path`, then passed the Podman-default-directory rerun at `/tmp/neovex-d4a-proof-podman-dirs`; both bundles again recorded `runtime.helper_binaries.gvproxy: /opt/homebrew/Caskroom/neovex-dev/0.1.10/libexec/gvproxy`, guest `neovex 0.1.10`, machine API readiness, and `/Users` virtiofs reachability before the temporary tap/cask cleanup. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; `cargo test -p neovex-bin helper -- --nocapture`; new regressions: `cargo test -p neovex-bin helper_resolution_does_not_fall_back_to_path -- --nocapture` and `cargo test -p neovex-bin known_helper_candidates_mirror_podman_darwin_defaults -- --nocapture`; Podman source review of `vendor/go.podman.io/common/pkg/config/config_darwin.go`; real-host proof via `make collect-neovex-homebrew-cask-proof OUTPUT_DIR=/tmp/neovex-d4a-proof-podman-dirs` | Keep machine-helper resolution explicit and predictable; if future non-Homebrew packaging needs another location, add it as a named supported directory rather than reopening ambient `PATH` fallback |
+| 2026-04-18 | D4a | `documented` | Tightened the helper-discovery contract to match Podman's macOS packaging model more closely. The machine manager now keeps per-binary overrides (`NEOVEX_MACHINE_GVPROXY`, `NEOVEX_MACHINE_KRUNKIT`) and honors a Podman-style helper-directory override (`NEOVEX_MACHINE_HELPER_BINARY_DIR`) before it searches packaged `libexec` helpers and known Podman/Homebrew helper locations. This was the intermediate step that moved ambient `PATH` from implicit behavior into an explicit last-resort escape hatch; the later D4a hardening row on the same date then removed `PATH` fallback entirely. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; `cargo test -p neovex-bin helper -- --nocapture` | Keep the shipped macOS contract centered on bundled helpers plus explicit overrides; if future packaging needs another location, add it as a named supported directory instead of relying on shell `PATH` |
+| 2026-04-18 | D4a | `documented` | Corrected the remaining manual macOS install guidance so it no longer strands the bundled helper. `README.md`, `docs/reference/cli.md`, and `docs/reference/macos-machine-flow.md` now all say the same thing: on macOS, a direct tarball install must preserve the relative `prefix/bin/neovex` plus `prefix/libexec/gvproxy` layout, or set `NEOVEX_MACHINE_HELPER_BINARY_DIR` explicitly. The old one-line example that moved only `neovex` into `/usr/local/bin` was removed because it created a subtly broken machine-helper layout that no longer matches the supported Homebrew/cask contract or the Podman-aligned helper-discovery rules. | docs review plus focused diff of `README.md`, `docs/reference/cli.md`, and `docs/reference/macos-machine-flow.md` against the landed helper-discovery contract | Keep all user-facing macOS install guidance centered on preserving the shipped helper layout; if a future standalone installer is added, it should create the same relative binary/libexec shape automatically |
+| 2026-04-18 | D2/D3 | `in_progress` | Landed the shared Linux package-build foundation instead of splitting Debian and Fedora packaging into two unrelated paths. The repo now owns `scripts/build-linux-release-packages.sh`, `scripts/verify-build-linux-release-packages-helper.sh`, `make build-linux-release-packages`, `make verify-build-linux-release-packages-helper`, and manual workflow `.github/workflows/linux-packages.yml`. That foundation stages release payloads for `neovex` and `neovex-crun`, renders deterministic `nfpm` manifests for both `deb` and `rpm`, builds real candidate packages from released binaries for `amd64` / `arm64`, and emits package-level SHA-256 checksums beside the generated artifacts. This materially advances both distro channels, but it does not yet publish a signed apt repository or a COPR-backed Fedora install channel, so both phases stay `in_progress` rather than `done`. | `bash -n scripts/build-linux-release-packages.sh`; `bash -n scripts/verify-build-linux-release-packages-helper.sh`; `PATH=/tmp/neovex-nfpm-bin:$PATH bash scripts/verify-build-linux-release-packages-helper.sh`; `actionlint .github/workflows/linux-packages.yml`; `cargo fmt --all --check`; direct real-package proof with temporary stubs under `/tmp/neovex-linux-packages-debug.Z2zWOq/out`: `PATH=/tmp/neovex-nfpm-bin:$PATH bash scripts/build-linux-release-packages.sh --output-dir /tmp/neovex-linux-packages-debug.Z2zWOq/out --neovex-binary /tmp/neovex-linux-packages-debug.Z2zWOq/neovex --neovex-crun-binary /tmp/neovex-linux-packages-debug.Z2zWOq/neovex-crun --version 0.1.10 --crun-version 0.1.4 --arch amd64` produced `.deb`, `.rpm`, and `checksums-sha256.txt` successfully | Push D2 next by deciding the Debian/Ubuntu repo/signing contract and `libkrun` / `libkrunfw` ownership; then mirror the same release artifacts into COPR for D3 instead of inventing a second packaging stack |
+| 2026-04-18 | D2 | `in_progress` | Landed the signed static apt-repo bundle path on top of the earlier `.deb` package builder. The repo now owns `scripts/build-apt-repository.sh`, `scripts/verify-build-apt-repository-helper.sh`, `make build-apt-repository`, `make verify-build-apt-repository-helper`, and manual workflow `.github/workflows/apt-repo.yml`. That D2 slice turns prebuilt `.deb` artifacts into a multi-arch repository tree with `pool/`, `dists/`, `Packages`, `Packages.gz`, `Release`, `InRelease`, detached `Release.gpg`, and exported public keyring material; the workflow can also optionally upload and deploy the static repo bundle through GitHub Pages, with `APT_REPOSITORY_CNAME` available for the later custom-domain handoff. Real verification from the current macOS host ran the helper through Docker-backed Ubuntu so Debian's `apt-ftparchive` and `gnupg` could build and verify the signed metadata path end to end. D2 still remains `in_progress` because the repo is not yet cut over at `apt.neovex.dev`, and Debian/Ubuntu ownership of `libkrun` / `libkrunfw` is still unresolved. | `bash -n scripts/build-apt-repository.sh`; `bash -n scripts/verify-build-apt-repository-helper.sh`; `bash scripts/verify-build-apt-repository-helper.sh` (Docker-backed Ubuntu path on the current macOS host; produced `verified: apt repository builder produced signed metadata via docker`); `actionlint .github/workflows/apt-repo.yml`; `cargo fmt --all --check` | Cut the repo over behind `apt.neovex.dev` next by enabling the Pages deploy path plus the custom-domain/DNS side, and decide whether Debian `libkrun` / `libkrunfw` ship as Neovex-owned `.deb` packages or stay outside the supported apt path until that supply-side gap is closed |
+| 2026-04-18 | D3 | `in_progress` | Added the Fedora/COPR bridge on top of the shared Linux release-artifact contract instead of creating a second Fedora-specific compile pipeline. The repo now owns `scripts/build-fedora-release-srpms.sh`, `scripts/verify-build-fedora-release-srpms-helper.sh`, `make build-fedora-release-srpms`, `make verify-build-fedora-release-srpms-helper`, and manual workflow `.github/workflows/copr-srpms.yml`. That path wraps the released `neovex_linux_x86_64.tar.gz`, `neovex_linux_arm64.tar.gz`, `neovex-crun-linux-amd64`, and `neovex-crun-linux-arm64` artifacts into deterministic source bundles plus `neovex` / `neovex-crun` `.src.rpm` files suitable for direct `copr-cli build` submission. The docker-backed helper also rebuilds installable x86_64 and aarch64 RPMs inside Fedora 42 userspace, verifies the expected dependency metadata, and proves the installed stubs execute after `dnf install` from the rebuilt local RPMs. The live COPR project, credentials, and first published `dnf copr enable ... && dnf install neovex` proof remain open, so D3 stays `in_progress`. | `bash -n scripts/build-fedora-release-srpms.sh`; `bash -n scripts/verify-build-fedora-release-srpms-helper.sh`; `bash scripts/verify-build-fedora-release-srpms-helper.sh`; `actionlint .github/workflows/copr-srpms.yml`; `cargo fmt --all --check` | Use the new workflow to submit the SRPMs to the real `agentstation/neovex` COPR project, then capture a fresh-Fedora install proof and document the final `dnf copr enable ...` operator path |
+| 2026-04-18 | D2/D3 release mirror | `in_progress` | Promoted the Linux packaging lanes from manual-only helpers to a release-driven mirror pipeline. The repo now owns the checked-in contract at `packaging/linux-distribution-contract.env`, reusable-call support in `.github/workflows/linux-packages.yml`, `.github/workflows/apt-repo.yml`, and `.github/workflows/copr-srpms.yml`, plus the new tag/release-triggered orchestrator `.github/workflows/linux-distribution-release.yml`. That mirror workflow resolves the pinned `neovex-crun` version and default channel targets once, then reuses the already-published Neovex GitHub release assets to build Linux packages, the apt repository bundle, and Fedora/COPR SRPMs without asking the operator to restate those downstream inputs. Publication still stays explicit: GitHub Pages deploy and COPR submission remain gated behind repo variables/secrets, so the next closeout step is to run the mirror lane against a real release with those publication switches enabled and then capture fresh operator install proof from the public channels. | `actionlint .github/workflows/linux-packages.yml`; `actionlint .github/workflows/apt-repo.yml`; `actionlint .github/workflows/copr-srpms.yml`; `actionlint .github/workflows/linux-distribution-release.yml`; `cargo fmt --all --check` | Run the release-driven mirror lane against `v0.1.10` or the next tag with the publication toggles enabled, then capture `apt.neovex.dev` and `dnf copr enable ...` proof from fresh Linux VMs |
 | 2026-04-15 | D4b | `documented` | The machine-image repo split has now landed. The guest image source and workflow moved out of the neovex monorepo into `agentstation/neovex-machine-os`, and the host `v*` release workflow now calls the external reusable build workflow with the same version tag. Follow-on hardening then converted the repo boundary into an explicit artifact contract: standalone machine-os `v*` tags now resolve the matching Neovex release tag instead of `latest`, the packaged OCI artifact carries source/attestation/version annotations, and the host machine manager reads those annotations before falling back to the older dual-repo attestation lookup. Durable conclusion: the host repo should treat machine-image production as an external dependency with a versioned, machine-readable cross-repo release contract, not as a future monorepo refactor. | repo review of `agentstation/neovex/.github/workflows/release.yml`; repo review of `agentstation/neovex-machine-os/.github/workflows/build.yml`; repo review of `agentstation/neovex-machine-os/scripts/package-oci.sh`; focused `cargo check -p neovex-bin`; `bash /Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/verify-oci-layout-helper.sh`; `cargo fmt --all --check` | Keep host docs version-pinned (`v{CARGO_PKG_VERSION}`), keep publishing explicit OCI metadata, and continue removing host-side fallbacks once all live machine images carry the new annotations |
+| 2026-04-17 | D4c | `done` | Closed the host-resident macOS API-forwarding and port-forwarding gap in `crates/neovex-bin/src/machine/mod.rs` and `crates/neovex-bin/src/service/mod.rs`. The default-machine path now has an explicit `ensure_default_machine_api_client_started()` helper that reuses the existing per-machine lock and `machine start` convergence path, and the host-backed `serve` loader now uses it only for macOS container-backed Compose projects instead of failing with "run `neovex machine start` first". Real-host proof on the existing isolated root at `/tmp/neovex-mac-closeout.FNcv0I/serve-proof-d4c-autostart` then started from a stopped machine, launched `neovex serve` directly, captured `serve-health.txt` (`GET /health -> 200 {"ok":true}`), `machine-status-after-serve.txt` (`lifecycle: running`, `machine_api.reachable: true`, `service_execution_ready: true`), `activate-query.txt` (`POST /convex/demo/query {"name":"services:activate","args":{}} -> 200 18080`), `service-health-via-port.txt` (`GET http://127.0.0.1:18080/healthz -> 200 ok`), `websocket-messages.jsonl` (initial empty `subscription_result` plus a pushed `subscription_result` after `websocket-insert.txt`), and `delete-tenant*.txt` plus `service-after-delete.txt` to prove tenant teardown withdraws the localhost service again. | `cargo fmt --all --check`; `cargo test -p neovex-bin macos_host_loader_auto_starts_default_machine_only_for_container_projects -- --nocapture`; `cargo test -p neovex-bin host_loader_accepts_default_projects_with_ready_forwarded_machine_api_on_macos -- --nocapture`; `cargo test -p neovex-bin macos_service_commands_use_forwarded_machine_api_for_container_projects -- --nocapture`; `cargo check -p neovex-bin`; real-host commands under `HOME=/tmp/neovex-mac-closeout.FNcv0I/home` and `NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-closeout.FNcv0I/runtime`: `target/debug/neovex machine status`; `target/debug/neovex serve --compose-file /tmp/neovex-mac-closeout.FNcv0I/ctx-services-app/compose.yaml --convex-app-dir /tmp/neovex-mac-closeout.FNcv0I/ctx-services-app --data-dir /tmp/neovex-mac-closeout.FNcv0I/serve-data-d4c --control-data-dir /tmp/neovex-mac-closeout.FNcv0I/serve-control-d4c --port 18084`; `curl -i -sS http://127.0.0.1:18084/health`; `curl -i -sS -X POST http://127.0.0.1:18084/api/tenants --data '{"id":"demo"}'`; `curl -i -sS -X POST http://127.0.0.1:18084/convex/demo/query --data '{"name":"services:activate","args":{}}'`; `curl -i -sS http://127.0.0.1:18080/healthz`; `curl -i -sS -X POST http://127.0.0.1:18084/api/tenants --data '{"id":"demo-ws"}'`; `node /tmp/neovex-mac-closeout.FNcv0I/serve-proof-d4c-autostart/websocket-proof.mjs ...`; `curl -i -sS -X DELETE http://127.0.0.1:18084/api/tenants/demo`; `curl -i -sS -X DELETE http://127.0.0.1:18084/api/tenants/demo-ws`; `target/debug/neovex machine stop` | Resume D4a packaging/install closeout and D1 binary-release automation against the now fully proved macOS runtime contract |

@@ -710,3 +710,234 @@ prep for Windows but also clean up the macOS code.
   `MLH1`-`MLH7` roadmap is complete, so follow-on work should resume in the
   owning platform plans (`MAC4`-`MAC7`, `WIN1`-`WIN2`) rather than opening new
   lifecycle-hardening items here.
+- 2026-04-17: Follow-on shared hardening in `crates/neovex-bin/src/machine/`
+  tightened the guest machine-API capability contract after the Podman-aligned
+  macOS guest proved image-start-ready without `buildah`, but the flat
+  `required_binaries` payload still made that look like a runtime defect.
+  Replaced that payload with explicit `binary_statuses` plus
+  `operation_statuses`, bumped the guest machine-API protocol to `v1alpha2`,
+  and taught the host client to fail version skew with an operator-friendly
+  "host expects X / guest reported Y" error that points local developers at
+  `NEOVEX_MACHINE_GUEST_BINARY`. Verification:
+  `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine::api:: -- --nocapture`,
+  `cargo test -p neovex-bin machine::client:: -- --nocapture`,
+  `cargo test -p neovex-bin service:: -- --nocapture`. Live macOS proof on the
+  isolated temp root `/tmp/neovex-bootstrap-smoke.s7lYjJ` confirmed the new
+  mismatch error during `target/debug/neovex machine start`:
+  `guest machine API protocol mismatch ... host expects v1alpha2, guest reported v1alpha1`.
+  The same change set also taught macOS guest-binary sync to prefer a locally
+  built workspace Linux guest binary under `target/<triple>/{release,debug}/neovex`
+  before falling back to the tagged release asset, so source-built hosts stop
+  silently pulling stale guest binaries when local guest artifacts exist.
+  Focused regression coverage now exercises local release-vs-debug preference
+  and workspace-root discovery in `machine::manager::tests`. Full live proof of
+  the new `v1alpha2` capability payload remains blocked on
+  rebuilding the aarch64 Linux guest binary locally; this host currently lacks
+  `aarch64-linux-gnu-gcc`, so `cargo build --release --target aarch64-unknown-linux-gnu -p neovex-bin`
+  fails before producing a matching guest override binary.
+- 2026-04-17: Closed that proof gap on the same isolated macOS temp root
+  `/tmp/neovex-bootstrap-smoke.s7lYjJ` without touching the Homebrew-installed
+  Neovex state. Installed `cargo-zigbuild` into `/tmp/cargo-zigbuild`,
+  redirected Zig and cargo-zigbuild caches into `/tmp`, and built a matching
+  Linux guest artifact with
+  `cargo zigbuild --release --target aarch64-unknown-linux-gnu -p neovex-bin`
+  while overriding the archiver to `/usr/bin/ar` and `/usr/bin/ranlib` plus
+  `LIBZ_SYS_STATIC=1` for the bundled zlib cross build. Rebuilt the host debug
+  CLI with `cargo build -p neovex-bin`, then restarted the isolated macOS
+  machine with `NEOVEX_MACHINE_GUEST_BINARY=/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex`
+  to remove any ambiguity about the staged guest binary. The successful run
+  returned `lifecycle: running`, `manager: ready`, and a forwarded machine API
+  capability payload with `protocol_version: v1alpha2`,
+  `service_execution_ready: true`, `service-sandboxes.image-start:
+  available=true`, and `service-sandboxes.build-start: available=false` with
+  the expected `buildah` blocker. Direct forwarded-socket proof on
+  `/tmp/neovex-bootstrap-smoke.s7lYjJ/runtime/default-api.sock` returned
+  `200` on `/healthz` with
+  `{"status":"ok","role":"guest-machine-api","protocol_version":"v1alpha2",...}`.
+  Guest-side proof via `target/debug/neovex machine ssh` reported
+  `neovex 0.1.10` and current boot ID
+  `f46c2819-bb64-49fa-aa4e-d506f4f96590`; no extra bootstrap reboot was needed
+  for the successful convergence run.
+- 2026-04-17: Follow-on hardening in the same shared machine seam closed two
+  fresh-root macOS reliability gaps. First, the new
+  `scripts/verify-build-neovex-machine-guest-binary-helper.sh` test harness
+  was corrected so it no longer writes fake `cargo` outputs into the real
+  workspace `target/`; the helper now supports a test-only
+  `NEOVEX_MACHINE_GUEST_BUILD_REPO_ROOT` override, and the verify lane writes
+  only into temp fake repos. Second, `sync_guest_neovex_binary()` now always
+  repairs guest socket activation after binary staging by running
+  `systemctl daemon-reload`, `stop`, `reset-failed`, removing the stale guest
+  Unix socket path, and `start`ing `neovex.socket` before host API readiness
+  checks continue. That closes the first-boot race on stock Podman FCOS images
+  where `neovex.socket`/`neovex.service` could hit `start-limit-hit` before the
+  host had finished staging the guest binary. Verification:
+  `bash scripts/verify-build-neovex-machine-guest-binary-helper.sh`,
+  `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin client_reports_guest_protocol_mismatch_cleanly -- --nocapture`,
+  `cargo test -p neovex-bin guest_binary_lookup -- --nocapture`,
+  `cargo test -p neovex-bin podman_machine_os_ -- --nocapture`,
+  `cargo test -p neovex-bin ensure_guest_neovex_socket_shell_repairs_first_boot_failures -- --nocapture`,
+  `cargo build -p neovex-bin`, and
+  `bash scripts/build-neovex-machine-guest-binary.sh --cache-root /tmp/neovex-machine-guest-build-real`.
+  Fresh-root live proof on
+  `/tmp/neovex-bootstrap-auto-proof.FkWnBv` then succeeded without
+  `NEOVEX_MACHINE_GUEST_BINARY`: `machine init --ssh-identity ...` followed by
+  `machine start` returned `lifecycle: running`, `manager: ready`,
+  recorded the pinned Podman digest as the current machine-image identity, and
+  exposed a reachable forwarded machine API at
+  `/tmp/neovex-bootstrap-auto-proof.FkWnBv/runtime/default-api.sock` with
+  `/healthz` returning
+  `{"status":"ok","role":"guest-machine-api","protocol_version":"v1alpha2",...}`.
+  Guest SSH proof on the same root reported `neovex 0.1.10`,
+  boot ID `ee6e4fd4-3a1e-4341-8657-7257ca2ef181`, and
+  `neovex.socket` plus `neovex.service` both `ActiveState=active`; no extra
+  bootstrap reboot was needed. The remaining macOS functional gap is still the
+  intentionally unavailable `service-sandboxes.build-start` lane until the
+  Podman-aligned build path lands without introducing a direct Podman product
+  dependency. The broader UX gap that `machine start` still requires a prior
+  `machine init` remains in the owning macOS plan rather than this shared
+  lifecycle plan.
+- 2026-04-17: Began the follow-on runtime cleanup for that remaining macOS
+  `service-sandboxes.build-start` gap by removing `buildah`-specific launch
+  artifact terminology from the shared sandbox backends without changing
+  behavior. `crates/neovex-sandbox/src/backends/oci/buildah.rs` now returns a
+  generic mounted-rootfs session (`MountedRootfsSession` /
+  `PreparedMountedImageLaunch`) instead of leaking `BuildahContainer` /
+  `PreparedImageLaunch` into the rest of the runtime. Both
+  `backends/container/runtime.rs` and `backends/krun/vm.rs` now persist
+  `MountedRootfs` launch artifacts and talk about mount-session reuse instead
+  of `buildah` containers, while `backends/oci/conmon.rs` now threads that
+  same mount-session seam through the create/state/start/delete launch plan.
+  This is intentionally a behavior-preserving refactor: the build-backed lane
+  still shells through `BuildahCli` today, but the builder-specific shape is
+  now localized to the implementation boundary so the next slice can replace
+  the actual Dockerfile/build execution path without another cross-cutting
+  rename across manifest, krun, container, and conmon plumbing. Verification:
+  `cargo fmt --all`, `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox -p neovex-bin`,
+  `cargo test -p neovex-sandbox pull_mount_inspect_and_cleanup_execute_expected_commands -- --nocapture`,
+  `cargo test -p neovex-sandbox prepare_built_image_launch_uses_built_image_reference -- --nocapture`,
+  `cargo test -p neovex-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`,
+  and
+  `cargo test -p neovex-sandbox conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes -- --nocapture`.
+  The remaining work is the real Podman-aligned builder replacement itself:
+  `image-start` already uses the in-tree OCI materializer, but `build-start`
+  still needs a first-class Neovex build pipeline that turns a Dockerfile and
+  context into that same mounted-rootfs contract without requiring a standalone
+  guest `buildah` product dependency.
+- 2026-04-17: Closed that `service-sandboxes.build-start` dependency gap in
+  the shared sandbox/runtime seam. `crates/neovex-sandbox/src/backends/oci/`
+  now includes an internal Dockerfile builder that converges onto the same
+  `PreparedMaterializedImageLaunch` contract already used by `image-start`.
+  The current supported subset is intentionally narrow and operator-friendly:
+  single-stage Dockerfiles with `FROM scratch` or a registry base image plus
+  runtime metadata and local-context file operations (`COPY`/`ADD`, `CMD`,
+  `ENTRYPOINT`, `ENV`, `WORKDIR`, `USER`, `EXPOSE`, `LABEL`, `STOPSIGNAL`,
+  `HEALTHCHECK`, `VOLUME`). Unsupported instructions such as `RUN`,
+  multi-stage `FROM`, and flag-heavy `COPY --from=...` now fail explicitly
+  instead of silently depending on a missing guest toolchain. Both
+  `backends/container/runtime.rs` and `backends/krun/vm.rs` now route
+  `start_from_build()` through that materialized-rootfs path, so build-backed
+  launches no longer shell through guest `buildah` on the active macOS lane.
+  The guest machine-API capability contract in
+  `crates/neovex-bin/src/machine/api.rs` was tightened to match: `build-start`
+  now advertises the same runtime prerequisites as `image-start`
+  (`conmon`, `crun`, `netavark`, `aardvark-dns`) and no longer reports
+  `buildah` or `fuse-overlayfs` as blockers. Verification:
+  `cargo fmt --all --check`,
+  `cargo check -p neovex-sandbox -p neovex-bin`,
+  `cargo test -p neovex-sandbox builder_ -- --nocapture`,
+  `cargo test -p neovex-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`,
+  `cargo test -p neovex-bin capability_response_ -- --nocapture`,
+  and
+  `cargo test -p neovex-bin macos_service_commands_use_forwarded_machine_api_for_container_projects -- --nocapture`.
+  Remaining work now moves back up to the owning macOS functional proof path:
+  exercise a real build-backed service flow on macOS against the pinned Podman
+  image, then decide whether broader Dockerfile coverage (`RUN`,
+  multi-stage builds, or remote/flagged context handling) belongs in the
+  Neovex builder or should stay out of the v1 macOS contract.
+- 2026-04-17: Follow-on shared reliability proof on the isolated macOS root
+  `/tmp/neovex-mac-buildproof.nDZ0P4` closed the stale-state seams that were
+  still making the forwarded service proof flaky even after the Podman-aligned
+  guest contract and local guest-binary sync were in place. In
+  `crates/neovex-bin/src/machine/api.rs`, machine-API `list` and
+  `inspect-current` now refresh only sandboxes that may still be live
+  (`starting`, `ready`, `not_ready`, `stopping`) before reading persisted
+  state; that avoids re-inspecting historical stopped sandboxes that reuse the
+  same published host port and would otherwise let old cleanup paths withdraw
+  the active gvproxy forward. In
+  `crates/neovex-sandbox/src/backends/container/runtime.rs` and
+  `crates/neovex-sandbox/src/backends/krun/vm.rs`, stale pidfiles without a
+  live process now collapse to `failed` unless shutdown was explicitly
+  requested, which stops post-restart `service up` from reporting
+  `already_running` for dead sandboxes. The container cleanup path now also
+  treats gvproxy `unexpose` failures as best-effort teardown instead of a hard
+  stop failure, matching Podman's operator-facing behavior. Finally,
+  `scripts/collect-neovex-machine-service-proof.sh` now waits for
+  `service inspect` to reach `status: ready`, retries the localhost
+  published-port probe, and normalizes HTTP CRLF headers before matching
+  `200 OK`; `scripts/verify-neovex-machine-service-proof-helper.sh` was
+  updated to exercise those retry paths deterministically. Verification:
+  `bash scripts/verify-neovex-machine-service-proof-helper.sh`,
+  `cargo test -p neovex-bin machine_api_list_and_current_refresh_persisted_service_state_before_reply -- --nocapture`,
+  `cargo test -p neovex-sandbox detect_runtime_status_marks_stale_pidfiles_as_failed -- --nocapture`,
+  `cargo test -p neovex-sandbox release_execution_artifacts_ignores_machine_forwarder_unexpose_failures -- --nocapture`,
+  `cargo fmt --all --check`, and `cargo check -p neovex-bin`. Real host proof
+  then succeeded after rebuilding both binaries with
+  `cargo build -p neovex-bin` and
+  `bash scripts/build-neovex-machine-guest-binary.sh --cache-root /tmp/neovex-machine-guest-build-real`,
+  restarting the isolated machine with
+  `HOME=/tmp/neovex-mac-buildproof.nDZ0P4/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-buildproof.nDZ0P4/runtime NEOVEX_MACHINE_GUEST_BINARY=/Users/jack/src/github.com/agentstation/neovex/target/aarch64-unknown-linux-gnu/release/neovex NEOVEX_MACHINE_API_READY_TIMEOUT_SECS=180 /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine start`,
+  and capturing
+  `bash scripts/collect-neovex-machine-service-proof.sh --home /tmp/neovex-mac-buildproof.nDZ0P4/home --runtime-root /tmp/neovex-mac-buildproof.nDZ0P4/runtime --output-dir /tmp/neovex-mac-buildproof.nDZ0P4/service-proof-buildstart-pathfix-teardownfix-refreshfix-stalepidfix-crlffix --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex --compose-file /tmp/neovex-mac-buildproof.nDZ0P4/project/compose.yaml --service demo --published-url http://127.0.0.1:18080/healthz`.
+  That bundle recorded a clean run across `machine status`, machine-API
+  `/healthz` and `/capabilities`, `service up`, `service inspect`,
+  `service list`, `service ps`, `service logs`, localhost `HTTP/1.1 200 OK`
+  on `127.0.0.1:18080/healthz`, `service down`, and `service list` after
+  teardown, all without an extra bootstrap reboot. Shared `MLH1`-`MLH7`
+  remain complete; the next work returns to the owning macOS plan for the
+  remaining build-backed service-flow and packaging closeout.
+- 2026-04-17: Tightened that same macOS proof contract so the repo records the
+  correct build-backed reality instead of leaving it implicit. The isolated
+  project under `/tmp/neovex-mac-buildproof.nDZ0P4/project/compose.yaml` is
+  `build:`-backed, and the successful bundle already proved it: captured
+  `service-config.txt` shows `source.kind: build` with the resolved
+  Dockerfile/context paths, while `machine-api-capabilities.txt` shows
+  `service-sandboxes.build-start` available on the forwarded guest API. To keep
+  future regressions obvious, `scripts/verify-neovex-machine-service-proof-helper.sh`
+  now mirrors the live contract by rendering a build-backed compose service and
+  a `v1alpha2` capability payload with `build-start` available; the collector
+  usage text in `scripts/collect-neovex-machine-service-proof.sh` now also says
+  explicitly that the proof lane covers both image-backed and build-backed
+  projects. Verification: `bash scripts/verify-neovex-machine-service-proof-helper.sh`.
+  Durable conclusion: the build-backed macOS service flow is already covered by
+  the checked-in proof lane and the recorded real-host bundle. The remaining
+  follow-on work is no longer "prove build-start works on macOS"; it is the
+  packaging/distribution closeout and any future decision about expanding the
+  supported Dockerfile subset beyond the current v1 contract.
+- 2026-04-17: Reused the completed shared hardening seams in a new host
+  entrypoint instead of letting macOS `serve` invent its own side path.
+  `crates/neovex-bin/src/machine/mod.rs` now exports
+  `ensure_default_machine_api_client_started()`, which holds the existing
+  per-machine lock, loads the initialized default machine, and routes any
+  stopped-machine recovery back through the same `start_machine()` convergence
+  path before checking forwarded machine-API health. The macOS host-backed
+  `serve` loader in `crates/neovex-bin/src/service/mod.rs` now uses that
+  helper only for container-backed Compose projects, so the host-resident
+  server no longer fails with a manual "run `neovex machine start` first"
+  prerequisite. Focused verification:
+  `cargo fmt --all --check`,
+  `cargo test -p neovex-bin macos_host_loader_auto_starts_default_machine_only_for_container_projects -- --nocapture`,
+  `cargo test -p neovex-bin host_loader_accepts_default_projects_with_ready_forwarded_machine_api_on_macos -- --nocapture`,
+  `cargo test -p neovex-bin macos_service_commands_use_forwarded_machine_api_for_container_projects -- --nocapture`,
+  and `cargo check -p neovex-bin`. Real-host proof on the existing isolated
+  root `/tmp/neovex-mac-closeout.FNcv0I/serve-proof-d4c-autostart` then started
+  from `machine status = stopped`, launched `target/debug/neovex serve ...`
+  directly, and captured `/health = 200`, `machine_api.reachable = true`,
+  `services:activate = 18080`, localhost service `200 ok`, native `/ws`
+  initial plus pushed `subscription_result`, and tenant teardown withdrawing
+  the forwarded localhost service again. Durable conclusion: the shared MLH
+  lock/convergence contract now covers the host `serve` entrypoint too, and
+  follow-on work returns to packaging/distribution rather than more machine
+  lifecycle hardening.
