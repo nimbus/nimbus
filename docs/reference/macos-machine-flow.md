@@ -74,7 +74,7 @@ flowchart TD
     H --> I["build/publish machine-os raw guest artifact<br/>current checked-in repo flow"]
     I --> J["emit bootable raw-image metadata for the macOS release flow"]
     J --> K["prove parity against Podman machine image when needed"]
-    K --> L["wrap raw disk as OCI layout<br/>annotations include disktype=raw"]
+    K --> L["wrap raw disk as OCI layout<br/>annotations include disktype=applehv"]
     L --> M["publish to GHCR<br/>ghcr.io/agentstation/neovex-machine-os:vX.Y.Z"]
     M --> N["create neovex-machine-os GitHub Release"]
 ```
@@ -107,7 +107,7 @@ flowchart LR
     B --> C["package-oci.sh"]
     C --> D["OCI image layout"]
     D --> E["manifest annotations"]
-    E --> I["disktype=raw"]
+    E --> I["disktype=applehv"]
     E --> J["org.opencontainers.image.source"]
     E --> K["io.neovex.machine.attestation.repository"]
     E --> L["io.neovex.machine.neovex.version"]
@@ -143,12 +143,14 @@ disk. It looks for a specific artifact shape:
 
 - operating system: `linux`
 - architecture: current host-compatible machine arch
-- manifest annotation: `disktype=raw`
+- manifest annotation: `disktype=applehv` on the current macOS krunkit path
 - exactly one disk layer
 - disk layer title suffix such as `.raw`, `.raw.gz`, or `.raw.zst`
 
 That packaging contract is what lets the host treat GHCR as a versioned VM
-image registry instead of inventing a separate image service.
+image registry instead of inventing a separate image service. The provider
+capability contract owns that annotation value so the staged Windows path can
+select `wsl` without changing the current macOS rule.
 
 ## Flow 3: How `neovex` Pulls The VM Image On macOS
 
@@ -167,7 +169,7 @@ flowchart TD
     I -->|LocalDisk| L["use local disk directly"]
 
     J --> M["pull OCI manifest/index"]
-    M --> N["select linux current-arch manifest with disktype=raw"]
+    M --> N["select linux current-arch manifest with disktype=applehv"]
     N --> O["pull one disk layer blob into image cache"]
     O --> P["verify digest"]
     P --> Q["decompress cached blob if raw.gz or raw.zst"]
@@ -181,8 +183,9 @@ flowchart TD
     R --> V["boot or rebuild machine from desired image"]
     U --> V
     V --> W["sync guest /usr/local/bin/neovex by hash"]
-    W --> X["validate forwarded machine API readiness"]
-    X --> Y["krunkit-backed machine is ready"]
+    W --> X["repair neovex.socket activation state"]
+    X --> Y["validate forwarded machine API readiness"]
+    Y --> Z["krunkit-backed machine is ready"]
 ```
 
 ### Where The Image Comes From
@@ -334,7 +337,7 @@ Linux production:
 
 ## Proof Helpers
 
-The repo now owns two checked-in macOS proof collectors for this flow:
+The repo now owns three checked-in macOS proof collectors for this flow:
 
 - `make collect-neovex-machine-guest-proof`
   captures guest-image and guest machine-API proof through `neovex machine ssh`
@@ -342,6 +345,59 @@ The repo now owns two checked-in macOS proof collectors for this flow:
   captures host `<machine>-api.sock` health/capabilities, direct forwarded
   machine-API sandbox listing, host `neovex service up/list/inspect/ps/logs/down`,
   and an optional localhost published-port probe
+- `make collect-neovex-homebrew-cask-proof`
+  packages the local release binary plus bundled `libexec/gvproxy` into an
+  isolated proof cask, installs it under a temporary Homebrew tap/token, then
+  captures host `neovex --version`, packaged-helper discovery, `machine init`,
+  `machine start`, `machine status`, guest `neovex --version`, guest SSH, and
+  `machine stop` proof without touching the user's shipped `neovex` cask token
+  or default machine roots
+
+The current real-host cask-proof bundle at
+`/tmp/neovex-d4a-proof-checkedin` shows `neovex 0.1.10`,
+`runtime.helper_binaries.gvproxy:
+/opt/homebrew/Caskroom/neovex-dev/0.1.10/libexec/gvproxy`, guest
+`neovex 0.1.10`, and `/Users` virtiofs reachability, then cleans up the
+temporary `local/neovex-proof` tap and `neovex-dev` cask token afterward.
+The current no-ambient-`PATH` hardening rerun at
+`/tmp/neovex-d4a-proof-no-path` revalidated that same packaged/Homebrew
+contract after helper resolution stopped trusting shell `PATH`; the bundle
+again recorded packaged `gvproxy`, guest `neovex 0.1.10`, machine API
+readiness, and `/Users` virtiofs reachability before cleanup.
+The current Podman-default-directory rerun at
+`/tmp/neovex-d4a-proof-podman-dirs` then revalidated the same contract after
+the named fallback directories were aligned to Podman's darwin
+`helper_binaries_dir` defaults; the bundle again recorded packaged
+`gvproxy`, guest `neovex 0.1.10`, machine API readiness, and `/Users`
+virtiofs reachability before cleanup.
+
+The current checked-in isolated proof project for that collector is
+intentionally `build:`-backed, not `image:`-backed. The validated real-host
+bundle at
+`/tmp/neovex-mac-buildproof.nDZ0P4/service-proof-buildstart-pathfix-teardownfix-refreshfix-stalepidfix-crlffix`
+shows `service config` lowering with `source.kind: build`, a resolved
+`dockerfile_path`, guest machine-API `service-sandboxes.build-start:
+available=true`, successful `service up/list/inspect/ps/logs/down`, and
+localhost `HTTP/1.1 200 OK` on `http://127.0.0.1:18080/healthz`.
+
+The current real-host `serve` auto-start proof bundle at
+`/tmp/neovex-mac-closeout.FNcv0I/serve-proof-d4c-autostart` then closes the
+next host-resident DX seam on the same pinned Podman contract: the machine was
+stopped before startup, `neovex serve` on port `18084` brought it back to
+`running`, `/health` returned `200 {"ok":true}`, `services:activate` returned
+`18080`, localhost `http://127.0.0.1:18080/healthz` returned `200 ok`, native
+`/ws?tenant_id=demo-ws` captured an initial empty `subscription_result`
+followed by a pushed `subscription_result` after an HTTP document insert, and
+tenant deletion withdrew the published localhost service again.
+
+The repo also owns one checked-in local guest-binary build helper for the same
+contract:
+
+- `make build-neovex-machine-guest-binary`
+  builds the matching Linux guest `neovex` artifact into
+  `target/<triple>/release/neovex` on the current developer host; the checked-in
+  macOS machine manager automatically prefers that local artifact before
+  falling back to tagged release downloads
 
 The repo also owns two checked-in operator drill helpers for the same contract:
 
@@ -352,6 +408,54 @@ The repo also owns two checked-in operator drill helpers for the same contract:
   performs the supported stop/remove/init/start repair drill on isolated roots;
   by default it follows the current pinned machine-image contract, while
   `IMAGE=...` remains an explicit diagnostic override only
+
+## Current Reliability Notes
+
+- Host convergence stages the guest binary under
+  `/usr/local/bin/neovex`, backed by FCOS's writable `/var/usrlocal`, then
+  repairs `neovex.socket` activation before it trusts the forwarded machine
+  API. The active macOS contract does not rely on Ignition to fetch or version
+  that binary.
+- The supported Homebrew Apple Silicon packaging path keeps `krunkit` as an
+  explicit formula dependency and now prefers a bundled `libexec/gvproxy`
+  beside the packaged `neovex` binary, matching Podman's "bundle helper,
+  don't require Podman as a dependency manager" installer shape. Helper
+  resolution now follows the same general priority as Podman's darwin
+  `helper_binaries_dir` search: explicit binary override, optional
+  helper-directory override
+  (`NEOVEX_MACHINE_HELPER_BINARY_DIR`), packaged helper locations, known
+  Podman/Homebrew helper locations, without ambient `PATH` fallback for
+  machine helpers.
+- Manual macOS tarball installs need to preserve the same relative
+  `prefix/bin/neovex` plus `prefix/libexec/gvproxy` layout that the cask
+  provides, or set `NEOVEX_MACHINE_HELPER_BINARY_DIR` explicitly. Moving only
+  the `neovex` binary into `/usr/local/bin` is not a supported machine
+  install shape because it strands the bundled helper.
+- Machine-API `list` and `inspect-current` refresh only sandboxes that may
+  still be live (`starting`, `ready`, `not_ready`, `stopping`). Historical
+  stopped sandboxes are intentionally not re-inspected during these reads so a
+  reused host port does not let old cleanup paths withdraw the active gvproxy
+  forward.
+- Both the guest standard-container backend and the krun backend now treat a
+  surviving pidfile without a live process as stale state. If shutdown was not
+  requested, that state collapses to `failed` instead of lingering in
+  `starting`, which keeps post-restart `service up` from reporting
+  `already_running` for dead sandboxes.
+- The checked-in service-proof collector now waits for `service inspect` to
+  report `status: ready`, retries the localhost published-port probe, and
+  normalizes HTTP CRLF headers before matching the `200 OK` status line. That
+  keeps the macOS proof bundle deterministic against real host responses.
+- The deterministic proof helper for that collector now mirrors the live macOS
+  contract instead of the earlier simplified image-backed fixture: it renders a
+  `build:`-backed compose service and a `v1alpha2` guest capability payload
+  with `service-sandboxes.build-start` available, so regressions in the
+  build-backed lane are caught before the next real-host run.
+- When `neovex serve` loads a macOS container-backed Compose project without an
+  injected machine-API client, it now auto-starts the initialized default
+  machine under the existing machine lock before wiring the forwarded guest
+  sandbox backend. That keeps `serve` aligned with the documented "machine
+  start is the convergence path" contract instead of requiring a manual
+  pre-start step.
 
 ## Practical Summary
 
@@ -368,9 +472,16 @@ If you want the shortest accurate explanation:
    host reuses the machine; if it does not match, the host performs a
    controlled rebuild or recreate from the desired image.
 5. After boot, the host hash-checks and syncs
-   `/usr/local/bin/neovex` inside the guest. On FCOS that is the writable
-   `/var/usrlocal/bin/neovex` path with executable labeling, and then the host
-   validates the forwarded machine API.
-6. The host Neovex server talks to the guest machine API through a forwarded
+   `/usr/local/bin/neovex` inside the guest. On FCOS that is backed by the
+   writable `/var/usrlocal/bin/neovex` path with executable labeling.
+6. The same host convergence step then repairs guest socket activation
+   (`daemon-reload`, clears failed `neovex` units, removes any stale
+   `/run/neovex/neovex.sock`, and starts `neovex.socket`) before validating
+   the forwarded machine API, so a fresh Podman-image boot does not get stuck
+   on a pre-sync `start-limit-hit`.
+7. On macOS container-backed Compose projects, `neovex serve` now reuses that
+   same convergence path: if the initialized default machine is stopped, the
+   host starts it before it wires the forwarded guest backend.
+8. The host Neovex server talks to the guest machine API through a forwarded
    Unix socket, and the guest starts standard Linux containers for declared
    services.

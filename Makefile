@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof collect-neovex-machine-service-proof build-neovex-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-build-neovex-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof collect-neovex-machine-service-proof collect-neovex-homebrew-cask-proof build-neovex-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-build-neovex-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -72,6 +72,10 @@ verify-release-version-contract:
 	@test -n "$(VERSION)" || (echo "set VERSION=vX.Y.Z or VERSION=X.Y.Z" && exit 1)
 	bash scripts/verify-release-version-contract.sh "$(VERSION)"
 
+# Verify the published release archive layout contract, including the macOS helper bundle
+verify-release-archive-layout-helper:
+	bash scripts/verify-release-archive-layout-helper.sh
+
 # Focused verification harness slice
 verify-harness:
 	bash scripts/verification-harness.sh pr $(if $(SURFACE),$(SURFACE),all)
@@ -139,6 +143,10 @@ collect-neovex-machine-service-proof:
 	@test -n "$(COMPOSE_FILE)" || (echo "set COMPOSE_FILE=/absolute/path/to/compose.yaml" && exit 1)
 	@test -n "$(SERVICE)" || (echo "set SERVICE=<service-name>" && exit 1)
 	bash scripts/collect-neovex-machine-service-proof.sh --compose-file "$(COMPOSE_FILE)" --service "$(SERVICE)" $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(CURL),--curl "$(CURL)",) $(if $(PUBLISHED_URL),--published-url "$(PUBLISHED_URL)",)
+
+# Collect real-host proof for the supported macOS Homebrew/cask install surface on isolated roots
+collect-neovex-homebrew-cask-proof:
+	bash scripts/collect-neovex-homebrew-cask-proof.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(HOST_BINARY),--host-binary "$(HOST_BINARY)",) $(if $(GUEST_BINARY),--guest-binary "$(GUEST_BINARY)",) $(if $(GVPROXY),--gvproxy "$(GVPROXY)",) $(if $(BREW),--brew "$(BREW)",) $(if $(READLINK),--readlink "$(READLINK)",) $(if $(SSH_KEYGEN),--ssh-keygen "$(SSH_KEYGEN)",) $(if $(TAP),--tap "$(TAP)",) $(if $(CASK),--cask "$(CASK)",) $(if $(KEEP_INSTALLED),--keep-installed,)
 
 # Build the Linux guest neovex binary that macOS machine-start prefers before release downloads
 build-neovex-machine-guest-binary:

@@ -28,6 +28,9 @@ brew install agentstation/tap/neovex
 ```
 
 Homebrew automatically verifies the SHA256 checksum of the downloaded archive.
+On Apple Silicon macOS, the cask owns the machine helper contract:
+`slp/krunkit/krunkit` is the explicit VM dependency and `gvproxy` ships inside
+the Neovex archive under `libexec/gvproxy`.
 
 ### Download binary
 
@@ -40,12 +43,24 @@ Download the latest release for your platform from [GitHub Releases](https://git
 | macOS | Apple Silicon | `neovex_darwin_arm64.tar.gz` |
 | Windows | x86_64 | `neovex_windows_x86_64.zip` |
 
+On macOS, the darwin archive already contains the bundled `libexec/gvproxy`
+helper. There is no separate Neovex `gvproxy` download.
+
 ```bash
 # Example: download and install on macOS Apple Silicon
+# Homebrew is the recommended path. If you install from the tarball directly,
+# preserve the bundled libexec layout so machine helper discovery still works.
 curl -LO https://github.com/agentstation/neovex/releases/latest/download/neovex_darwin_arm64.tar.gz
 tar xzf neovex_darwin_arm64.tar.gz
-sudo mv neovex /usr/local/bin/
+sudo mkdir -p /opt/neovex/bin /opt/neovex/libexec
+sudo install -m 0755 neovex /opt/neovex/bin/neovex
+sudo install -m 0755 libexec/gvproxy /opt/neovex/libexec/gvproxy
+sudo ln -sf /opt/neovex/bin/neovex /usr/local/bin/neovex
 ```
+
+Do not move only the `neovex` binary on macOS. The supported machine contract
+expects the bundled helper layout to stay intact beside the installed binary,
+or to be provided explicitly through `NEOVEX_MACHINE_HELPER_BINARY_DIR`.
 
 ### Build from source
 

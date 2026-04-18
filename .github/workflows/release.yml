@@ -11,6 +11,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Mirror Podman's macOS packaging model: ship a pinned upstream gvproxy
+  # binary inside the darwin archive instead of publishing gvproxy as a
+  # separate Neovex release asset or depending on Podman at runtime.
+  GVPROXY_VERSION: v0.8.8
 
 permissions:
   contents: read
@@ -153,12 +157,28 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p neovex-bin
 
+      - name: Bundle macOS machine helper
+        if: matrix.os == 'darwin'
+        run: |
+          mkdir -p dist/libexec
+          curl --fail -sSL --retry 5 \
+            -o dist/libexec/gvproxy \
+            "https://github.com/containers/gvisor-tap-vsock/releases/download/${GVPROXY_VERSION}/gvproxy-darwin"
+          chmod 0755 dist/libexec/gvproxy
+
       - name: Package archive (unix)
         if: matrix.archive == 'tar.gz'
         run: |
+          mkdir -p dist
+          cp target/release/neovex dist/neovex
+          cp README.md LICENSE dist/
+          if [[ "${{ matrix.os }}" == "darwin" ]]; then
+            tar czf neovex_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
+              -C dist neovex libexec README.md LICENSE
+          else
           tar czf neovex_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
-            -C target/release neovex \
-            -C ${{ github.workspace }} README.md LICENSE
+              -C dist neovex README.md LICENSE
+          fi
 
       - name: Package archive (windows)
         if: matrix.archive == 'zip'
@@ -309,6 +329,9 @@ jobs:
           pattern: neovex_*
           merge-multiple: true
 
+      - name: Verify release archive layout
+        run: bash scripts/verify-release-archive-layout.sh --artifacts-dir artifacts
+
       - name: Generate checksums
         run: |
           cd artifacts
@@ -389,7 +412,6 @@ jobs:
           VERSION="${TAG#v}"
 
           SHA_DARWIN_ARM64=$(grep darwin_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
-          SHA_DARWIN_X86_64=$(grep darwin_x86_64 artifacts/checksums-sha256.txt | awk '{print $1}')
           SHA_LINUX_ARM64=$(grep linux_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
           SHA_LINUX_X86_64=$(grep linux_x86_64 artifacts/checksums-sha256.txt | awk '{print $1}')
 
@@ -407,10 +429,10 @@ jobs:
             binary "neovex"
 
             on_macos do
-              on_intel do
-                url "https://github.com/agentstation/neovex/releases/download/v#{version}/neovex_darwin_x86_64.tar.gz"
-                sha256 "${SHA_DARWIN_X86_64}"
-              end
+              depends_on arch: :arm64
+              depends_on macos: ">= :sonoma"
+              depends_on formula: "slp/krunkit/krunkit"
+
               on_arm do
                 url "https://github.com/agentstation/neovex/releases/download/v#{version}/neovex_darwin_arm64.tar.gz"
                 sha256 "${SHA_DARWIN_ARM64}"
@@ -430,7 +452,7 @@ jobs:
 
             postflight do
               if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-                system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/neovex"], sudo: false
+                system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s], sudo: false
               end
             end
 
@@ -439,7 +461,8 @@ jobs:
               ""
               "Quick start:"
               "  neovex --help              # Show all commands"
-              "  neovex --port 8080         # Start server on port 8080"
+              "  neovex machine init        # Record the default macOS machine contract"
+              "  neovex serve               # Auto-start the machine if needed"
               ""
               "Documentation: https://github.com/agentstation/neovex"
             end

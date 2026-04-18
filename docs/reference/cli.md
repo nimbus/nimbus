@@ -181,6 +181,10 @@ services on first use. The explicit `neovex service up/down/...` commands share
 that same Compose lowering, deterministic project identity, and project-scoped
 backend root instead of inventing a second lifecycle control plane.
 
+On macOS, if that Compose project resolves to the forwarded guest container
+backend and the default machine is initialized but stopped, `neovex serve`
+now starts the machine first and only then wires the forwarded guest manager.
+
 This is why `serve` and `service` are not the same concept:
 
 - server startup owns the Neovex API surface itself: HTTP, WebSocket,
@@ -245,8 +249,9 @@ Current scope:
 - mixed-backend project-wide Compose operations still reject because
   `neovex service ...` requires one backend family per project-wide command
 - the server startup path can now load container-backed Compose managers on
-  macOS through the forwarded guest machine API when the default machine API
-  is reachable and reports `service_execution_ready`
+  macOS through the forwarded guest machine API; if the default machine is
+  initialized but stopped, `neovex serve` now starts it first under the same
+  machine convergence contract, then requires `service_execution_ready`
 - derives a deterministic local project tenant id from the Compose project key,
   and uses that tenant by default for `service up` / `service down` /
   `service list` / `service inspect` / `service logs` / `service ps`
@@ -276,6 +281,16 @@ Current scope:
 - on macOS `krunkit`, defaults the guest image source to the pinned Podman
   machine-image digest owned by the host release
   (`docker://quay.io/podman/machine-os@sha256:...`) instead of a floating tag
+- for the supported Apple Silicon Homebrew install surface, expects `krunkit`
+  as the explicit formula dependency and prefers a bundled `libexec/gvproxy`
+  that ships beside the packaged `neovex` binary; helper lookup now mirrors
+  Podman's darwin `helper_binaries_dir` model by honoring
+  `NEOVEX_MACHINE_HELPER_BINARY_DIR`, then known packaged and Podman helper
+  locations, without relying on ambient `PATH` lookup for machine helpers
+- manual macOS tarball installs must preserve that same relative
+  `prefix/bin/neovex` plus `prefix/libexec/gvproxy` layout, or set
+  `NEOVEX_MACHINE_HELPER_BINARY_DIR` explicitly; moving only the `neovex`
+  binary is not a supported machine install shape
 - auto-generates a Neovex-owned Ignition file when no explicit
   `--ignition-file` override is configured, carrying the machine ready signal,
   guest `neovex.socket` plus `neovex.service`, and virtiofs mount-unit wiring

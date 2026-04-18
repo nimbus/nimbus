@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-04-18
+
+### Fixed
+
+- Bundle pinned upstream `gvproxy` inside the macOS darwin release archive and guard that archive layout in CI by @jackspirou
+- Harden macOS machine convergence so the host prefers a matching local Linux guest binary, repairs guest socket activation after sync, and keeps helper lookup aligned with Podman's explicit helper-directory model by @jackspirou
+- Tighten the guest machine API and service-control contract around operation-specific readiness, build-backed service flows, and host `serve` auto-start on macOS by @jackspirou
+- Replace the guest `buildah`-driven build lane with the in-tree Podman-aligned OCI Dockerfile builder and stale-state cleanup path by @jackspirou
+
+### Release
+
+- Prepare v0.1.11 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.10...v0.1.11
+
 ## [0.1.10] - 2026-04-17
 
 ### CI/CD
