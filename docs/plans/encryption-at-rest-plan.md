@@ -1,102 +1,131 @@
 # Encryption At Rest Plan
 
-This is the canonical execution plan for adding encryption at rest to Neovex
-tenant and control databases.
+This is the canonical execution plan for optional, enterprise-ready encryption
+at rest across Neovex-owned local persistence.
+
+Canonical architecture baseline:
+
+- [`docs/architecture/storage/encryption.md`](../architecture/storage/encryption.md)
+  owns the durable design, diagrams, provider boundaries, and algorithm
+  rationale
+- this plan owns rollout order, acceptance criteria, and verification
 
 Reviewed against:
 
 - `ARCHITECTURE.md`
-- `crates/neovex-storage/src/store.rs`
+- `crates/neovex-engine/src/persistence_config.rs`
+- `crates/neovex-storage/src/async_storage/engine.rs`
+- `crates/neovex-storage/src/async_storage/control.rs`
+- `crates/neovex-storage/src/store/write/store_entry.rs`
 - `crates/neovex-storage/src/usage_store.rs`
-- `crates/neovex-storage/src/async_storage.rs`
+- `crates/neovex-storage/src/sqlite.rs`
+- `crates/neovex-storage/src/libsql.rs`
 - `crates/neovex-bin/src/main.rs`
-- redb `StorageBackend` trait (redb 2.x)
 
 ---
 
 ## References
 
-### redb maintainer guidance
+### redb
 
-- [redb issue #759 — Encryption at rest](https://github.com/cberner/redb/issues/759):
-  cberner recommends encrypted filesystem or the `StorageBackend` trait.
-- [redb issue #1091 — Page level encryption?](https://github.com/cberner/redb/issues/1091):
-  cberner confirms `StorageBackend` enables block-level encryption "just as
-  efficient as if it was implemented in redb."
-- [redb `StorageBackend` trait docs](https://docs.rs/redb/2.6.3/redb/trait.StorageBackend.html):
-  five methods (`read`, `write`, `set_len`, `len`, `sync_data`), requires
-  `'static + Debug + Send + Sync`.
-- [redb design doc](https://github.com/cberner/redb/blob/master/docs/design.md):
-  copy-on-write B-trees, buddy allocator with page reuse, dual commit slots.
+- [redb `StorageBackend` trait](https://docs.rs/redb/2.6.3/redb/trait.StorageBackend.html)
+- [redb issue #759 - Encryption at rest](https://github.com/cberner/redb/issues/759)
+- [redb issue #1091 - Page level encryption?](https://github.com/cberner/redb/issues/1091)
+- [redb design doc](https://github.com/cberner/redb/blob/master/docs/design.md)
 
-### Existing implementations (prior art)
+### SQLite and libsql
 
-- [SQLCipher design](https://www.zetetic.net/sqlcipher/design/): AES-256-CBC
-  with random IV per page, regenerated on every write, stored in page.
-  HMAC-SHA512 per page for authentication.
-- [Turso/libSQL encryption](https://turso.tech/blog/introducing-fast-native-encryption-in-turso-database):
-  AEGIS-256 or AES-GCM per page, random nonce regenerated on every write,
-  nonce + auth tag stored in page reserved space. Measured ~6% read / ~14%
-  write overhead with AEGIS-256.
-  [Turso encryption docs](https://docs.turso.tech/tursodb/encryption).
-- [redb-turbo](https://github.com/russellromney/redb-turbo): community redb
-  fork with AES-256-GCM page-level encryption. 12-byte random nonce per
-  write, 28-byte overhead per page (nonce + auth tag). Validates that the
-  `StorageBackend` approach works end-to-end.
+- [SQLCipher design](https://www.zetetic.net/sqlcipher/design/)
+- [SQLCipher API](https://www.zetetic.net/sqlcipher/sqlcipher-api/)
+- [SQLite SEE overview](https://sqlite.org/com/see.html)
+- [SQLite SEE docs](https://www.sqlite.org/see/doc/trunk/www/readme.wiki)
+- [rusqlite feature flags](https://docs.rs/crate/rusqlite/latest/features)
+- [libsqlite3-sys feature flags](https://docs.rs/crate/libsqlite3-sys/latest/features)
+- [libsql Rust reference](https://docs.turso.tech/sdk/rust/reference)
+- [libsql `EncryptionConfig`](https://docs.rs/libsql/latest/libsql/struct.EncryptionConfig.html)
+- [libsql `Cipher`](https://docs.rs/libsql/latest/libsql/enum.Cipher.html)
+- [Turso embedded replicas encryption docs](https://docs.turso.tech/features/embedded-replicas/introduction)
+- [Turso native encryption docs](https://docs.turso.tech/tursodb/encryption)
 
-### Cipher references
+### KMS
 
-- [RFC 8452 — AES-GCM-SIV](https://www.rfc-editor.org/rfc/rfc8452.html):
-  nonce-misuse-resistant AEAD. Decryption speed matches AES-GCM; encryption
-  ~50% slower on long messages due to two-pass construction.
-- [AEGIS IETF draft](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/):
-  AEGIS-256 uses AES round function for speed, 256-bit nonce (no collision
-  concern), key-erasure-friendly. On IETF standardization track.
-- [`aegis` Rust crate](https://github.com/jedisct1/rust-aegis): maintained by
-  jedisct1 (libsodium author). Hardware-accelerated via AES-NI.
-- [`ring` crate](https://github.com/briansmith/ring): already a workspace
-  dependency. Provides AES-256-GCM with BoringSSL-derived assembly.
-- [RustCrypto AES-GCM-SIV](https://github.com/RustCrypto/AEADs/tree/master/aes-gcm-siv):
-  pure Rust with optional AES-NI. Partially audited by NCC Group.
-- [AES vs ChaCha20 benchmarks (2025)](https://ashvardanian.com/posts/chacha-vs-aes-2025/):
-  AES-GCM ~6.4 GB/s vs ChaCha20-Poly1305 ~4.2 GB/s on Apple M3 Pro. AES
-  wins by up to 3x on AWS instances with AES-NI.
+- [AWS KMS `GenerateDataKey`](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKey.html)
+- [AWS KMS `Decrypt`](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html)
+- [AWS KMS `ReEncrypt`](https://docs.aws.amazon.com/kms/latest/APIReference/API_ReEncrypt.html)
+- [AWS KMS encryption context](https://docs.aws.amazon.com/kms/latest/developerguide/encrypt_context.html)
 
-### Security references
+### Cryptographic standards and adjacent options
 
-- [AES-GCM nonce reuse attack](https://frereit.de/aes_gcm/): nonce reuse
-  under same key leaks XOR of plaintexts and recovers the authentication key.
-  Catastrophic, not degraded.
-- [GCM key recovery attacks (elttam)](https://www.elttam.com/blog/key-recovery-attacks-on-gcm/):
-  detailed write-up of nonce-reuse authentication key recovery.
+- [RFC 8452 - AES-GCM-SIV](https://www.rfc-editor.org/rfc/rfc8452.html)
+- [NIST SP 800-38D - GCM](https://csrc.nist.gov/pubs/sp/800/38/d/final)
+- [NIST SP 800-38F - AES Key Wrap](https://csrc.nist.gov/pubs/sp/800/38/f/final)
+- [RFC 5297 - AES-SIV](https://www.rfc-editor.org/rfc/rfc5297)
+- [Libsodium XChaCha20-Poly1305 guidance](https://libsodium.gitbook.io/doc/secret-key_cryptography/aead/chacha20-poly1305)
+- [CFRG AEGIS draft](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-aegis-aead-18)
+- [NIST SP 800-232 - Ascon lightweight crypto](https://csrc.nist.gov/pubs/sp/800/232/final)
 
 ---
 
 ## Purpose
 
-Enterprise multi-tenant deployments require encryption at rest. The current
-storage layer writes plaintext redb files to disk. redb's `StorageBackend`
-trait provides a clean seam for page-level encryption without forking or
-modifying redb itself.
+Enterprise deployments expect encryption at rest to be available, explicit,
+auditable, and aligned with real storage ownership boundaries. Neovex now has
+those boundaries:
 
-Neovex's database-per-tenant model makes per-tenant encryption keys
-architecturally natural: each `TenantStore` already opens an independent redb
-file, so each can use a different `StorageBackend` instance with a different
-key. This is a stronger isolation story than filesystem-level encryption
-(single key for all data).
+- tenant persistence is provider-shaped, not redb-only
+- embedded SQLite is the default embedded tenant provider
+- embedded redb remains a supported embedded tenant provider
+- the cross-tenant control plane is a separate retained redb store
+- libsql replica mode materializes local SQLite cache files that Neovex owns
+- Postgres and MySQL tenant data live in external databases that Neovex does
+  not own at the file level
+
+This plan replaces the old redb-only framing with an architecture-correct
+model:
+
+- encryption remains optional and opt-in
+- when enabled, Neovex encrypts the local files it owns
+- external providers remain responsible for their own at-rest encryption
+- one typed config and key-management model spans redb, embedded SQLite, and
+  local libsql replica cache files
+
+The goal is to ship something that can credibly support enterprise trust and
+compliance reviews without pretending that a single feature makes a whole
+deployment "compliant" on its own.
 
 ---
 
 ## Current Verified State
 
-- `TenantStore::open_with_simulation(path, ...)` uses `Database::create(path)`
-  which uses redb's default `FileBackend`
-- `TenantStore::create_in_memory_with_simulation(...)` already uses
-  `Database::builder().create_with_backend(InMemoryBackend::new())`
-- `UsageStore::open(path)` also uses `Database::create(path)`
-- the `StorageBackend` seam is already exercised — the in-memory test path
-  proves that `create_with_backend` works end-to-end
-- no encryption configuration exists in the CLI, server, or storage layer
+- `ServicePersistenceConfig` already splits `tenant_provider` from the
+  redb-backed control plane.
+- CLI startup defaults the tenant provider to embedded SQLite.
+- retained embedded redb remains selectable for tenant data.
+- `EmbeddedRedbControlPlaneProvider` still opens the cross-tenant
+  `neovex-control.db` usage store.
+- `LibsqlReplicaProvider` materializes local SQLite replica cache files under
+  `replica_cache_dir` and opens them through `SqliteTenantStore`.
+- Postgres and MySQL providers keep tenant data outside Neovex-owned local
+  files.
+- there is no typed encryption config in the CLI, server, or storage layer.
+- there is no migration, rotation, or diagnostics surface for encryption.
+
+---
+
+## Coverage Model
+
+| Persistence family | Local file ownership | v1 encryption posture |
+| --- | --- | --- |
+| Embedded SQLite tenant provider | Neovex-owned `.sqlite3` tenant files | Neovex encrypts |
+| Embedded redb tenant provider | Neovex-owned `.redb` tenant files | Neovex encrypts |
+| Control plane | Neovex-owned `neovex-control.db` redb file | Neovex encrypts |
+| libsql replica provider | Neovex-owned local replica cache files | Neovex encrypts local cache files; remote primary remains provider-managed |
+| Postgres provider | No Neovex-owned tenant data files | External provider responsibility |
+| MySQL provider | No Neovex-owned tenant data files | External provider responsibility |
+
+This table is the core design rule for the entire plan: Neovex encrypts the
+local files it owns and does not pretend to encrypt files or volumes owned by
+external database systems.
 
 ---
 
@@ -104,21 +133,33 @@ key. This is a stronger isolation story than filesystem-level encryption
 
 This plan covers:
 
-- an encrypted `StorageBackend` implementation for redb
-- per-tenant key provisioning and lifecycle with envelope encryption
-- control database (`neovex-control.db`) encryption
-- CLI and configuration surface for encryption
-- key rotation support (fast KEK rotation + full DEK rotation)
-- deterministic testing of the encrypted storage path
-- performance measurement and documentation
+- opt-in encryption at rest for embedded SQLite tenant databases
+- opt-in encryption at rest for retained embedded redb tenant databases
+- opt-in encryption at rest for the retained redb control-plane database
+- opt-in encryption at rest for local libsql replica cache files
+- encrypted-by-default Neovex-owned on-disk snapshot, bootstrap, rebuild, and
+  recovery artifacts produced from encryption-enabled local stores
+- one typed runtime config surface for local encryption
+- one cross-provider key-management model with wrapped per-subject keys
+- migration, recovery, and rotation flows tailored to each provider family
+- a sane local default key source plus at least one managed KMS provider in v1
+- diagnostics, documentation, and verification for enterprise review
 
 This plan does not cover:
 
-- wire-level encryption (TLS) — orthogonal transport concern
-- field-level encryption — different threat model
-- key management service (KMS) integration beyond a pluggable key-provider
-  trait — concrete provider implementations (AWS KMS, HashiCorp Vault, etc.)
-  are follow-on work after the core encryption layer lands
+- transport encryption or TLS
+- field-level or application-level selective encryption
+- Neovex-managed at-rest encryption of external Postgres or MySQL data files
+- encryption of remote libsql/Turso primary storage
+- blanket claims of HIPAA, SOC2, ISO, or FIPS compliance
+
+For external providers, Neovex must document operator responsibilities and
+report status clearly, but it should not build a fake second encryption layer
+inside remote schemas or databases that it does not physically own.
+
+Plaintext exports for recovery or interoperability are not a default feature of
+an encrypted deployment. If such flows are supported at all, they must require
+an explicit operator override and stay visible as plaintext exceptions.
 
 ---
 
@@ -126,21 +167,40 @@ This plan does not cover:
 
 This plan is successful only when all of the following are true:
 
-1. Tenant databases are encrypted at rest using authenticated encryption with
-   per-tenant data encryption keys.
-2. The control database is encrypted at rest.
-3. Existing unencrypted databases can be migrated to encrypted format.
-4. Key encryption key (KEK) rotation is supported without data rewrite.
-5. Data encryption key (DEK) rotation is supported via full database rewrite
-   for the rare case of DEK compromise.
-6. Encryption is opt-in and configurable through typed runtime config loaded
-   from idiomatic CLI/env/config inputs, with programmatic API support and no
-   reliance on ad hoc feature-specific env vars as the long-term contract.
-7. Performance overhead is measured and documented (target: <15% on write
-   path, <10% on read path).
-8. The encrypted path is covered by the existing test suite running through
-   the encrypted backend.
-9. An unencrypted deployment remains the zero-configuration default.
+1. Encryption remains disabled by default. No encryption config means the
+   current plaintext behavior remains unchanged.
+2. Embedded SQLite, embedded redb, and the retained redb control plane all
+   support encrypted-at-rest operation when enabled.
+3. Local libsql replica cache files support encrypted-at-rest operation when
+   encryption is enabled for that provider family.
+4. The default embedded tenant provider, SQLite, has a first-class encryption
+   story. Encryption is not gated on switching to retained redb.
+5. Postgres and MySQL are explicitly treated as external-provider-managed for
+   tenant data encryption, while Neovex still encrypts any local control-plane
+   files it owns.
+6. One typed config surface governs local encryption across CLI, env, config
+   file, and programmatic API use.
+7. Every local database and every persisted encrypted export artifact gets its
+   own random data-encryption key (DEK).
+8. DEKs are wrapped by a provider-managed wrapping mechanism so KEK rotation
+   does not require rewriting database pages.
+9. The default local enablement path is operationally simple and reasonable
+   for self-hosted users.
+10. A managed KMS provider is supported in v1 for enterprise deployments.
+11. Provider-specific migration and recovery paths exist:
+    plaintext to encrypted, encrypted to plaintext where meaningful, and
+    encrypted key rotation.
+12. Neovex-owned on-disk snapshot, bootstrap, rebuild, and recovery artifacts
+    emitted from encryption-enabled local stores are encrypted by default, or
+    explicitly surfaced as plaintext exceptions.
+13. Successful migration and rotation retire predecessor plaintext artifacts
+    from active Neovex-managed paths and surface `retirement_pending` until
+    residue is cleared.
+14. Status and diagnostics report what is encrypted, what is externally
+    provider-managed, which plaintext exceptions exist, and what remains to be
+    migrated or retired, without leaking key material.
+15. Performance and verification coverage exist for the encrypted paths that
+    Neovex owns.
 
 ---
 
@@ -148,36 +208,43 @@ This plan is successful only when all of the following are true:
 
 ### General rules
 
-- Follow the same execution discipline as the scalability plan: one item
-  in-progress at a time, deterministic tests before or alongside
-  implementation, update this plan's ledger and log in the same change set.
-- Prefer the `StorageBackend` trait approach over any redb fork or
-  modification.
-- Do not break the unencrypted path. Encryption is additive and opt-in.
-- Keep the crypto implementation as thin as possible. Use established crates
-  — do not implement cryptographic primitives.
-- Do not use deterministic or offset-derived nonces. Every page encryption
-  must use a fresh random nonce (see Design Decisions for rationale).
-- Runtime-facing encryption config should follow the same rule as broader
-  provider work: CLI flags, environment variables, and config files lower into
-  typed config, while any test-only or benchmark-only env vars remain harness
-  inputs rather than the product contract.
+- Keep the architecture aligned with
+  `docs/architecture/storage/encryption.md`; update both together when a
+  design decision changes.
+- Keep the architecture framing correct: storage is provider-shaped now.
+- Treat Neovex-owned on-disk snapshot, bootstrap, rebuild, and recovery
+  artifacts as in-scope persistence once local encryption is enabled.
+- Do not regress the unencrypted path.
+- Do not invent custom cryptographic primitives.
+- Keep key-management vocabulary provider-agnostic. Do not design everything
+  around "give me a raw KEK" if the provider is actually AWS KMS.
+- Prefer one cross-provider key model and provider-specific storage mechanics.
+- Do not silently leave predecessor plaintext artifacts in active Neovex-
+  managed paths after cutover.
+- Do not emit plaintext exports from an encryption-enabled local store unless
+  the operator has explicitly requested that exception.
+- Fail fast when encryption is requested for a provider path that is not fully
+  wired or not compiled in.
+- Update this plan's ledger and execution log in the same change set as
+  meaningful plan changes.
 
 ### Status model
 
 - `todo`: not started
 - `in_progress`: actively being implemented
-- `blocked`: cannot proceed until the recorded blocker is resolved
-- `done`: acceptance criteria are met and verification is recorded
+- `blocked`: waiting on a recorded blocker
+- `done`: acceptance criteria met and verification recorded
 - `deferred`: intentionally parked
 
 ### Minimum verification per item
 
-- targeted tests for the touched crate or subsystem
+- targeted tests for the touched subsystem
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test -p neovex-storage` for any storage-layer changes
-- `cargo test -p neovex-engine -p neovex-server` for integration changes
+- `cargo test -p neovex-storage`
+- `cargo test -p neovex-engine -p neovex-server`
+
+Add provider-specific or benchmark verification where the item requires it.
 
 ---
 
@@ -185,643 +252,844 @@ This plan is successful only when all of the following are true:
 
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
-| EAR1 | todo | Implement `EncryptedBackend` behind redb `StorageBackend` trait | none |
-| EAR2 | todo | Add key-provider trait with envelope encryption and file-based provider | none |
-| EAR3 | todo | Integrate encrypted backend into `TenantStore` and `UsageStore` | EAR1, EAR2 |
-| EAR4 | todo | Add typed runtime CLI/env/config surface for encryption and key-provider selection | EAR3 |
-| EAR5 | todo | Add migration path for unencrypted-to-encrypted databases | EAR3 |
-| EAR6 | todo | Add key rotation support (KEK rotation + DEK rotation) | EAR3 |
-| EAR7 | todo | Performance measurement and documentation | EAR3 |
-| EAR8 | deferred | Pluggable KMS provider implementations (AWS KMS, Vault, etc.) | EAR2, EAR4 |
+| EAR1 | todo | Add typed local-encryption config and provider-agnostic key-management interfaces | none |
+| EAR2 | todo | Add authenticated sidecar key manifests plus local `master-key-file` and `key-dir` providers | EAR1 |
+| EAR3 | todo | Implement retained redb encrypted backend and wire it into tenant/control redb stores | EAR1, EAR2 |
+| EAR4 | todo | Implement encrypted embedded SQLite via SQLCipher | EAR1, EAR2 |
+| EAR5 | todo | Encrypt local libsql replica cache files using libsql's encryption support | EAR1, EAR2 |
+| EAR6 | todo | Wire provider-aware coverage into service startup, status, and diagnostics | EAR3, EAR4, EAR5 |
+| EAR7 | todo | Add provider-specific migration, recovery, and rotation flows | EAR3, EAR4, EAR5 |
+| EAR8 | todo | Add AWS KMS provider for enterprise-managed keys | EAR1, EAR6 |
+| EAR9 | todo | Publish operator docs, performance data, and verification evidence | EAR6, EAR7, EAR8 |
 
 ---
 
 ## Dependency Graph
 
-- `EAR1` and `EAR2` are independent foundations that can proceed in parallel.
-- `EAR3` depends on both `EAR1` and `EAR2` — it wires the encrypted backend
-  into the storage layer using the key provider.
-- `EAR4`, `EAR5`, `EAR6`, and `EAR7` all depend on `EAR3`.
-- `EAR4`, `EAR5`, `EAR6`, and `EAR7` are independent of each other.
-- `EAR4` should define the operator-facing config contract first so later
-  migration, rotation, and performance work can reuse one consistent runtime
-  surface.
-- `EAR8` is deferred until the core encryption layer is stable and the
-  configuration surface from `EAR4` defines how providers are selected.
+- `EAR1` defines the typed config and key-management seam. Everything else
+  builds on it.
+- `EAR2` defines local manifest handling and the first local key sources.
+- `EAR3`, `EAR4`, and `EAR5` are parallel-safe provider implementations once
+  `EAR1` and `EAR2` exist.
+- `EAR6` depends on the provider implementations because it owns startup
+  wiring, coverage reporting, and safe failure behavior.
+- `EAR7` depends on each provider implementation because migration and
+  rotation are provider-specific.
+- `EAR8` depends on the config seam and diagnostics but can proceed in
+  parallel with later migration polish once the interface is stable.
+- `EAR9` closes the loop with docs, benchmarks, and verification evidence.
 
 ---
 
 ## Recommended Delivery Order
 
-1. `EAR1` and `EAR2` (parallel-safe)
-2. `EAR3`
-3. `EAR4`
-4. `EAR5`
-5. `EAR6`
-6. `EAR7`
-7. `EAR8`
+1. `EAR1`
+2. `EAR2`
+3. `EAR3`, `EAR4`, and `EAR5`
+4. `EAR6`
+5. `EAR7`
+6. `EAR8`
+7. `EAR9`
 
 ---
 
 ## Design Decisions
 
-### Why page-level encryption via `StorageBackend`
+### Architecture-first framing
 
-redb's maintainer explicitly endorsed this path (issue #1091) and declined to
-add encryption inside redb. The `StorageBackend` trait is a clean five-method
-interface that Neovex already exercises via `InMemoryBackend` in tests. The
-community fork redb-turbo validates that the approach works end-to-end.
+The old plan treated "encryption at rest" as a redb project. That is no longer
+correct for Neovex. The live architecture uses:
 
-Alternatives considered:
+- embedded SQLite as the default embedded tenant provider
+- retained embedded redb as another embedded tenant provider
+- a separate retained redb control-plane provider
+- libsql replica mode with local SQLite cache files
+- external Postgres and MySQL providers for tenant data
 
-| Approach | Rejected because |
-| --- | --- |
-| Encrypted filesystem (LUKS/dm-crypt) | Single key for all data. No per-tenant isolation. Requires OS-level configuration outside Neovex's control. |
-| Encrypt values before storage | Indexes cannot operate on encrypted values. Breaks query planning. Higher per-field overhead. |
-| Fork redb | Maintenance burden. Diverges from upstream. `StorageBackend` achieves the same result without forking. |
-| Field-level encryption | Different threat model (protects individual fields, not the database file). Does not address the enterprise requirement of full at-rest encryption. |
+The encryption plan must therefore answer four different questions:
 
-### Cipher evaluation
+- how Neovex encrypts retained redb files it owns
+- how Neovex encrypts embedded SQLite files it owns
+- how Neovex encrypts local libsql replica cache files it owns
+- how Neovex reports external-provider responsibility for tenant data it does
+  not own
 
-Four AEAD ciphers were evaluated for page-level database encryption:
+### Sane operator default
 
-| Cipher | Nonce | Tag | Per-page overhead | HW accel | Throughput (AES-NI) | Nonce safety | Status |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| AES-256-GCM | 12 B | 16 B | 28 B (~0.7% of 4 KB) | AES-NI, ARM CE | ~6.4 GB/s | Birthday bound at 2^32 per key. Catastrophic on reuse. | NIST standard |
-| AES-256-GCM-SIV | 12 B | 16 B | 28 B (~0.7% of 4 KB) | AES-NI | ~3-4 GB/s encrypt | Nonce-misuse resistant (leaks only plaintext equality). | RFC 8452 |
-| XChaCha20-Poly1305 | 24 B | 16 B | 40 B (~1.0% of 4 KB) | None (software only) | ~4.2 GB/s | 2^192 birthday bound. Random nonces effectively collision-free. | IETF RFC 8439 + extended nonce |
-| AEGIS-256 | 32 B | 16-32 B | 48-64 B (~1.2-1.6% of 4 KB) | AES-NI (uses AES round function) | >10 GB/s | 2^256 birthday bound. Random nonces collision-free. Key-erasure-friendly. | IETF draft, nearing RFC |
+Neovex needs two defaults, not one:
 
-**Decision: AES-256-GCM as initial default, with AEGIS-256 as a planned
-upgrade path.**
+- the zero-configuration default remains `disabled`
+- the default enablement path, once an operator opts in, is
+  `master-key-file`
+
+`master-key-file` is the sane self-hosted baseline because it:
+
+- requires one operator-managed 32-byte root key outside the data directory
+- avoids per-tenant key sprawl for small deployments
+- still derives or wraps per-subject keys so each protected local object has
+  an independent DEK
+- works for embedded SQLite, retained redb, the redb control plane, and local
+  libsql cache files
+
+`key-dir` remains a supported advanced mode for explicit per-subject or per-
+role key files. AWS KMS is required in v1 as the first enterprise-managed
+provider.
+
+### One key-management model across local providers
+
+The old plan centered everything on a `tenant_kek()` style interface. That is
+too low-level for managed KMS providers and too redb-specific.
+
+The durable abstraction should be provider-agnostic and operate on protected
+local subjects, not just databases:
+
+```rust
+pub enum LocalKeySubjectKind {
+    Database(LocalDatabaseRole),
+    Artifact(LocalArtifactRole),
+}
+
+pub struct LocalKeySubject {
+    pub provider_family: LocalPersistenceFamily,
+    pub kind: LocalKeySubjectKind,
+    pub tenant_id: Option<TenantId>,
+    pub logical_name: String,
+}
+
+pub trait LocalKeyProvider: Send + Sync + 'static {
+    fn generate_database_key(&self, subject: &LocalKeySubject) -> Result<GeneratedDatabaseKey>;
+    fn unwrap_database_key(
+        &self,
+        subject: &LocalKeySubject,
+        wrapped: &WrappedDatabaseKey,
+    ) -> Result<[u8; 32]>;
+    fn rewrap_database_key(
+        &self,
+        subject: &LocalKeySubject,
+        wrapped: &WrappedDatabaseKey,
+        next: &dyn LocalKeyProvider,
+    ) -> Result<WrappedDatabaseKey>;
+    fn descriptor(&self) -> KeyProviderDescriptor;
+}
+```
+
+Key rules:
+
+- every local database and every persisted encrypted artifact gets a random
+  256-bit DEK
+- the DEK is wrapped by the selected key provider
+- provider-specific storage engines receive only the plaintext DEK they need
+  at open time
+- a KEK rotation rewraps metadata only
+- a DEK rotation is provider-specific
+
+### Algorithm and standards matrix
+
+The plan needs to distinguish key-management configuration from data-page
+cipher choice. `master-key-file`, `key-dir`, and `aws-kms` decide how Neovex
+protects per-subject DEKs; each storage family still uses its own file-level
+encryption mechanism.
+
+| Concern | Applies to | v1 choice | Standard or implementation | Why |
+| --- | --- | --- | --- | --- |
+| Local DEK wrapping for `master-key-file` and `key-dir` | All Neovex-owned local databases and encrypted artifacts | **AES-256-GCM-SIV** for the wrapped-DEK envelope, with manifest metadata as AAD | [RFC 8452](https://www.rfc-editor.org/rfc/rfc8452.html) | One consistent local envelope format, misuse-resistant AEAD, and better failure characteristics than plain AES-GCM if nonce handling is ever imperfect |
+| Managed DEK wrapping for `aws-kms` | All Neovex-owned local databases and encrypted artifacts when AWS-managed keys are selected | **AWS KMS envelope encryption** using `GenerateDataKey`, `Decrypt`, and `ReEncrypt`, with stable subject metadata in `EncryptionContext` | [AWS KMS APIs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKey.html) and [encryption context](https://docs.aws.amazon.com/kms/latest/developerguide/encrypt_context.html) | Enterprise auditability, IAM/policy control, CloudTrail visibility, and no Neovex-managed KEK material on disk |
+| redb page encryption | Embedded redb tenant databases and the retained redb control plane | **AES-256-GCM-SIV** per page | [RFC 8452](https://www.rfc-editor.org/rfc/rfc8452.html) | redb requires a custom page layer, so nonce-misuse resilience is worth more than maximizing raw throughput |
+| Embedded SQLite page encryption | Default embedded SQLite tenant provider | **SQLCipher profile**: AES-256-CBC per page plus HMAC-SHA512 integrity, using raw 256-bit DEKs | [SQLCipher design](https://www.zetetic.net/sqlcipher/design/) | Mature SQLite-native encryption, WAL/journal coverage, supported rekey/export flows, and avoids inventing our own pager crypto |
+| libsql local cache encryption | Local libsql replica cache files only | **Provider-native libsql encryption**, currently `Cipher::Aes256Cbc` | [libsql `Cipher`](https://docs.rs/libsql/latest/libsql/enum.Cipher.html) | Use the provider-supported cache encryption mode instead of layering a second pager; accept that this family is constrained by the current libsql surface |
+| Snapshot and bootstrap artifact encryption | Neovex-owned on-disk exports, bootstraps, rebuilds, and recovery artifacts from encrypted local stores | **Encrypted by default** with per-artifact DEKs and the same envelope family | Prevents encrypted deployments from recreating plaintext secondary artifacts through backup and recovery flows |
+| External tenant stores | Postgres, MySQL, and remote libsql/Turso primary storage | **Provider-managed at-rest encryption** | Operator/provider responsibility | Neovex does not own those underlying data files, so a Neovex-side file cipher would be fake coverage |
+
+Important trust rule: the libsql local-cache profile is not as strong or as
+feature-complete as the redb or SQLCipher paths today. Product docs and
+diagnostics must report that honestly instead of implying a uniform crypto
+profile across all providers.
+
+### Why keep the DEK envelope consistent
+
+The wrapped-DEK envelope is not the place where Neovex should express
+provider-specific personality. It is the control-plane contract for:
+
+- key provenance
+- auditability
+- KEK rotation
+- database identity binding
+- status reporting
+- recovery tooling
+
+Those concerns are cross-provider concerns, so the design goal is one
+consistent envelope shape unless a provider gives Neovex a materially better
+reason to do otherwise.
+
+The architecture decision is therefore:
+
+- keep **page encryption provider-specific**
+- keep **DEK ownership and wrapping semantics uniform**
+
+That split gives Neovex a simpler and more trustworthy story:
+
+- redb can use a custom page AEAD tuned for redb
+- SQLite can use SQLCipher's mature pager encryption
+- libsql can use its provider-native cache encryption
+- operators and tooling still see one key-management model across all of them
+
+### Why the local envelope uses AES-256-GCM-SIV
+
+For the local `master-key-file` and `key-dir` providers, the choice is not
+"what is the strongest cipher in the abstract?" but "what is the safest and
+clearest envelope for a Neovex-owned design that binds key metadata and will
+be reused across multiple storage families?"
+
+AES-256-GCM-SIV was chosen because it balances the properties we care about:
+
+- misuse-resistant AEAD semantics are valuable in a Neovex-owned envelope
+  format
+- it supports associated data cleanly, which lets us bind manifest metadata
+- it keeps the envelope small and operationally simple
+- it stays in the AES family, which is easier to explain to enterprise buyers
+  than less familiar alternatives
+
+This is a design-safety choice, not a claim that AES-256-GCM-SIV is globally
+"stronger" than every other sound option. It is the best fit for the
+cross-provider local envelope role.
+
+### Stronger or more specialized envelope alternatives still worth considering
+
+There are credible alternatives. They were not rejected as "bad crypto"; they
+were rejected because they are worse fits for the v1 architecture goal.
+
+| Envelope option | Why it is attractive | Why it is not the v1 default |
+| --- | --- | --- |
+| **AWS KMS only** | Strongest governance and audit story for enterprises; no local KEK material on disk | Too opinionated as a universal default; worse self-hosted usability; does not help non-AWS deployments |
+| **AES-KW / AES-KWP** | NIST-approved key-wrapping modes explicitly designed for protecting keys | Great for pure key wrap, but not as natural when Neovex also wants authenticated metadata binding; would likely push us toward extra envelope machinery around AAD |
+| **AES-SIV** | Strong misuse-resistance story and natural AAD binding | Heavier and less implementation-friendly for this role than GCM-SIV; no compelling advantage here over RFC 8452 |
+| **XChaCha20-Poly1305** | Excellent random-nonce story and strong practical safety properties | Weaker enterprise standardization story than AES-family options; harder sell as the common envelope across all local providers |
+| **Provider-specific local wrap formats** | Could optimize each family independently | Fragments status, tooling, recovery, and rotation; higher audit and maintenance cost without a clear security win |
+
+If Neovex later needs a stricter enterprise profile, the most credible upgrade
+paths are:
+
+- `aws-kms` as the recommended enterprise key-provider baseline
+- an explicit NIST-leaning profile that swaps the local envelope to
+  **AES-KWP** or another reviewed key-wrap mode
+- a future hardened profile per provider where the operational value clearly
+  outweighs the extra complexity
+
+### Why we still allow provider-specific data encryption
+
+The storage-family ciphers are a different decision from the envelope because
+the threat model and integration seam differ by provider.
+
+- For **redb**, Neovex owns the page layer, so misuse resistance is worth
+  prioritizing.
+- For **SQLite**, correctness and maturity of the pager integration matter
+  more than chasing the newest primitive.
+- For **libsql**, Neovex should not fight the provider surface for a
+  derivative local cache file; the honest choice is to use the supported
+  provider mode and disclose its limitations.
+
+In other words, the architecture is intentionally mixed:
+
+- **uniform key-management semantics**
+- **provider-appropriate data encryption**
+
+That is the design we can explain clearly in an enterprise review without
+pretending every provider has the same crypto surface.
+
+### Authenticated sidecar key manifests
+
+The old header design created avoidable complexity and, in the redb case,
+incorrect offset math. Neovex should use one adjacent authenticated sidecar
+manifest per local database or persisted encrypted artifact instead:
+
+`<protected-path>.neovex-enc`
+
+Each manifest stores:
+
+- format version
+- storage family and subject role
+- cipher/profile identifier
+- wrapped DEK blob
+- key-provider descriptor and safe key identifier
+- provider-specific parameters needed to reopen the database
+- creation timestamp
+- last KEK rotation timestamp
+
+The manifest must be authenticated:
+
+- local providers bind manifest metadata as AEAD associated data when wrapping
+  the DEK
+- AWS KMS binds the same metadata through `EncryptionContext`
+
+This gives Neovex one consistent key-metadata story across redb, SQLCipher,
+and libsql replica cache files.
+
+### Why manifests instead of file headers
+
+Manifest sidecars are chosen because they are the least surprising cross-
+provider model:
+
+- SQLite and libsql already own their database file formats
+- redb does not need a custom cleartext header in front of its page store
+- one rotation and diagnostics flow can span all local provider families
+- provider-specific on-disk page mechanics stay local to each engine
+
+### Retained redb strategy
+
+retained redb remains the correct place for a custom encrypted page backend
+because upstream explicitly exposes `StorageBackend` for alternative storage
+implementations.
+
+For redb, Neovex will:
+
+- implement a new `EncryptedBackend` behind `StorageBackend`
+- keep key metadata in the sidecar manifest, not in the redb file
+- encrypt each logical redb page slot independently
+- authenticate page location as associated data
+
+Per-page layout:
+
+```text
+[ nonce ][ ciphertext ][ tag ]
+```
+
+Offset math must stay slot-based:
+
+```text
+physical_page_size = logical_page_size + nonce_size + tag_size
+page_index = logical_offset / logical_page_size
+page_slot_start = page_index * physical_page_size
+ciphertext_start = page_slot_start + nonce_size
+```
+
+Logical byte zero is never allowed to alias the stored nonce bytes. The
+implementation should operate on whole logical pages or whole logical
+multi-page spans and translate slot by slot.
+
+AAD for redb pages must include:
+
+- page index
+- logical page size
+- format version
+
+This prevents page-swap attacks across logical positions.
+
+### redb cipher choice
+
+For the custom redb backend, three practical choices were considered:
+
+| Cipher | Strengths | Weaknesses |
+| --- | --- | --- |
+| AES-256-GCM | Fast and familiar | Random-nonce misuse is catastrophic and forces a much tighter rekey budget for a custom page layer |
+| AES-256-GCM-SIV | Misuse resistant, same basic AES hardware story, same 28-byte overhead as GCM | Slower than plain GCM and not a FIPS claim |
+| XChaCha20-Poly1305 | Extremely large nonce space, simple random-nonce story | No AES hardware path and weaker enterprise standardization story |
+
+Decision for redb v1: **AES-256-GCM-SIV**.
 
 Rationale:
 
-- `ring` is already a workspace dependency and provides AES-256-GCM with
-  production-grade BoringSSL-derived assembly. No new dependency needed.
-- AES-256-GCM's 2^32 nonce birthday bound is safe for per-tenant keys: a
-  tenant would need >4 billion page writes under one key before collision risk
-  becomes non-negligible. Key rotation (EAR6) resets the counter.
-- AEGIS-256 is the better long-term choice (Turso chose it for exactly this
-  use case, faster than AES-GCM, larger nonce, key-erasure-friendly) but adds
-  a new dependency (`aegis` crate) and is not yet a finalized RFC.
-- The file header includes a cipher identifier byte so the upgrade from
-  AES-256-GCM to AEGIS-256 is a format-compatible change — existing databases
-  keep their cipher, new databases can use the new default.
-- AES-256-GCM-SIV was considered for nonce-misuse resistance but rejected
-  because the plan already mandates random nonces per write (eliminating the
-  misuse case) and GCM-SIV's ~50% encryption slowdown is unnecessary overhead.
-- XChaCha20-Poly1305 was considered for its large nonce space but rejected
-  because it lacks hardware acceleration and is ~40% slower than AES-GCM on
-  the x86/ARM64 targets Neovex is deployed on.
+- Neovex is writing a custom page-encryption layer here, so nonce-misuse
+  resilience is worth more than squeezing out the last few percent of
+  throughput.
+- It avoids the old plan's fragile "AES-GCM is fine forever with random
+  nonces" argument.
+- It preserves small page overhead and a simple per-page random-nonce design.
 
-### Nonce construction: random per write
+Neovex should not market this as a FIPS feature. If a future deployment needs
+a strict NIST-only or validated-crypto profile, that should land as an
+explicit profile with its own verification story rather than weakening the v1
+default.
 
-**Every page write gets a fresh cryptographically random nonce.** The nonce is
-stored alongside the ciphertext in the on-disk page.
+### Embedded SQLite strategy
 
-This is the same approach used by SQLCipher, Turso/libSQL, and redb-turbo. It
-is the only safe approach for redb because:
+Neovex should not build its own SQLite pager encryption. The correct v1 choice
+for embedded `rusqlite`-backed SQLite is **SQLCipher**.
 
-1. **redb reuses page offsets.** The copy-on-write B-tree frees pages into a
-   buddy allocator. Once all referencing read transactions complete, a freed
-   page offset is reallocated to a new transaction with different data. The
-   dual commit slots also rewrite fixed offsets on every transaction commit.
-   (Source: [redb design doc](https://github.com/cberner/redb/blob/master/docs/design.md))
+Reasons:
 
-2. **Deterministic nonces derived from offset would cause nonce reuse.**
-   If `nonce = f(offset, salt)` and the same offset receives different
-   plaintext across transactions (which redb's page reuse guarantees), then
-   AES-GCM is used with the same (key, nonce) pair on different plaintexts.
-   This is catastrophic: it leaks the XOR of plaintexts and allows full
-   recovery of the authentication key.
-   (Source: [AES-GCM nonce reuse](https://frereit.de/aes_gcm/),
-   [elttam GCM key recovery](https://www.elttam.com/blog/key-recovery-attacks-on-gcm/))
+- it is purpose-built to encrypt SQLite pages transparently
+- it supports raw key material, rekey, and export workflows
+- it encrypts the main database plus WAL and rollback journal pages
+- `rusqlite` and `libsqlite3-sys` already expose SQLCipher-capable build
+  features
 
-3. **Random nonces with AES-256-GCM are safe within the birthday bound.**
-   With 12-byte (96-bit) random nonces, the probability of a collision
-   reaches 2^-32 (one in ~4 billion) after 2^48 encryptions under the same
-   key. Per-tenant keys mean each tenant has an independent nonce space.
-   A tenant performing 1,000 writes/second would reach 2^32 writes (~4
-   billion) after ~136 years. Key rotation (EAR6) resets this counter.
+Rejected alternatives:
 
-### Per-page on-disk layout
+| Approach | Rejected because |
+| --- | --- |
+| SQLite SEE | proprietary license and distribution friction for public Neovex binaries |
+| Homegrown VFS/codec layer | high maintenance, fragile against SQLite internals, reinvents a specialized database encryption project |
+| Filesystem-only encryption | useful defense in depth, but not sufficient as Neovex's product-level enterprise story |
 
-Each page on disk is stored as:
+For embedded SQLite, Neovex will:
 
-```
-[ nonce (12 bytes) ][ ciphertext (N bytes) ][ auth tag (16 bytes) ]
-```
+- switch the bundled SQLite build to a SQLCipher-capable configuration once
+  verified
+- generate a random 32-byte DEK per database and pass raw key material to
+  SQLCipher
+- keep the wrapped DEK in the sidecar manifest
+- use SQLCipher's provider-owned migration and rekey flows instead of trying
+  to bolt page encryption on top
 
-Total overhead per page: **28 bytes** (AES-256-GCM). For redb's default page
-size (OS page size, typically 4096 bytes), this is ~0.7% space overhead.
+Important hardening rules:
 
-The `EncryptedBackend` translates between logical offsets (what redb sees) and
-physical offsets (what the file contains):
+- use raw DEKs, not passphrase-derived product contracts
+- set the key before the first database operation
+- harden temporary storage so encrypted SQLite does not spill plaintext temp
+  files to disk
+- verify WAL and journal behavior under the encrypted build
 
-```
-physical_page_size = logical_page_size + NONCE_SIZE + TAG_SIZE
-physical_offset = file_header_size + (logical_offset / logical_page_size) * physical_page_size + (logical_offset % logical_page_size)
-```
+Migration and rotation consequences:
 
-For sub-page writes (redb sometimes writes less than a full page), the
-backend must handle partial encryption. The simplest correct approach: always
-read-decrypt-modify-encrypt the full enclosing page. redb's `write()` calls
-are page-aligned in practice (the `StorageBackend` operates on pages), but
-the implementation must handle edge cases defensively.
+- plaintext SQLite to encrypted SQLite uses `sqlcipher_export()`
+- encrypted SQLite to plaintext recovery also uses `sqlcipher_export()`
+- encrypted SQLite DEK rotation uses `PRAGMA rekey` with a newly generated raw
+  key
 
-### Associated data (AAD) for page integrity
+### libsql replica local cache strategy
 
-The page's **logical offset** is passed as associated data (AAD) during both
-encryption and decryption. AAD is authenticated but not encrypted — it
-prevents an attacker from swapping two encrypted pages at different file
-offsets. Without AAD, an attacker who can modify the file could swap pages A
-and B; both would decrypt successfully but at the wrong logical position,
-silently corrupting the B-tree structure.
+libsql replica mode already has its own encryption support. Neovex should use
+that support for local cache files instead of layering SQLCipher on top.
 
-SQLCipher uses the page number as AAD for the same reason.
+For local libsql replica caches, Neovex will:
 
-### File header
+- enable the libsql crate's encryption feature
+- construct `EncryptionConfig` from the same per-database DEK model used
+  elsewhere
+- use the provider-supported cipher set for that family
+- keep the wrapped DEK in the same sidecar manifest format
 
-The encrypted database file starts with a small cleartext header:
+This is still in scope even though libsql is an external provider family,
+because the replica cache files are Neovex-owned local artifacts.
 
-```
-[ magic (8 bytes): "NVXCRYPT" ]
-[ format version (1 byte): 0x01 ]
-[ cipher identifier (1 byte): 0x01 = AES-256-GCM, 0x02 = AEGIS-256, ... ]
-[ logical page size (4 bytes): redb's page size, little-endian u32 ]
-[ encrypted DEK (48 bytes): DEK encrypted by KEK via AES-256-GCM ]
-[   - nonce (12 bytes) ]
-[   - ciphertext (20 bytes, padded to fixed size) ]
-[   - auth tag (16 bytes) ]
-[ header HMAC (32 bytes): HMAC-SHA256 of all preceding header bytes ]
-```
+The current libsql Rust docs expose `Cipher::Aes256Cbc`; Neovex should accept
+that provider limitation for this family rather than pretending every provider
+must use the same page cipher internally.
 
-Total header size: **94 bytes** (fixed, independent of page size).
+Because the cache is derivative, its lifecycle is easier than the embedded
+authoritative stores:
 
-The header is validated on open:
+- enabling encryption can rebuild the cache from the remote primary
+- DEK rotation can rebuild the cache under a new DEK
+- corruption recovery can discard and re-materialize the local cache
 
-- magic bytes must match
-- format version must be supported
-- cipher identifier must be recognized
-- HMAC must verify (detects header tampering)
-- encrypted DEK must decrypt successfully with the provided KEK
+### External Postgres and MySQL posture
 
-redb sees everything after the header as its normal storage space.
+Neovex does not own Postgres or MySQL data files. Therefore:
 
-### Envelope encryption (KEK/DEK model)
+- Neovex does not implement its own at-rest encryption layer for tenant data
+  inside those providers
+- operator and provider controls remain responsible for remote at-rest
+  encryption
+- local Neovex-owned control-plane files remain in scope
+- diagnostics must say `external-provider-managed` for tenant data encryption,
+  not `disabled`
 
-The plan uses **envelope encryption** rather than using the operator-provided
-key directly as the data encryption key. This is the standard model used by
-AWS KMS, GCP CMEK, Azure Key Vault, and HashiCorp Vault.
+The same rule applies to the remote primary in libsql/Turso. Neovex owns the
+local cache file, not the remote storage engine.
 
-**How it works:**
+### Diagnostics and trust posture
 
-1. The operator provides or provisions a **key encryption key (KEK)** — this
-   is what the `KeyProvider` trait returns.
-2. When a new encrypted database is created, a random 256-bit **data
-   encryption key (DEK)** is generated.
-3. The DEK is encrypted by the KEK and stored in the file header.
-4. On open, the KEK decrypts the DEK from the header. The DEK is used for
-   all page encryption/decryption. The KEK is not retained after
-   initialization.
-5. Page encryption uses the DEK, never the KEK.
+The feature should inspire trust by being explicit and honest:
 
-**Why envelope encryption:**
+- report exactly which local files are encrypted
+- report which tenant provider families are externally managed
+- report the configured key-provider family and safe key identifiers
+- report pending migrations or coverage gaps
+- never emit raw key material or wrapped-key blobs in status endpoints
 
-- **Fast KEK rotation:** rotating the KEK only requires re-encrypting the DEK
-  in the header (48 bytes). No data rewrite. This is the common operational
-  rotation and completes in microseconds.
-- **Rare DEK rotation:** if the DEK itself is compromised (rare — it only
-  exists in memory and in the encrypted header), a full database rewrite is
-  needed. This is the expensive path but should almost never be required.
-- **KMS compatibility:** enterprise KMS systems (AWS, GCP, Vault) are
-  designed around envelope encryption. The KEK maps directly to a KMS-managed
-  key. `GenerateDataKey` returns a plaintext DEK + an encrypted DEK blob.
-- **Key erasure:** the KEK can be erased from memory immediately after
-  decrypting the DEK on startup. Only the DEK needs to persist in memory
-  during operation.
+The docs and product copy must avoid claiming that this one feature makes an
+entire deployment compliant. The correct position is:
 
-### Key-per-tenant model
-
-Each `TenantStore` receives its own KEK via the `KeyProvider` trait. Each
-tenant's database has its own independent DEK stored in its file header. This
-gives per-tenant key isolation at both the KEK and DEK level.
-
-The control database (`neovex-control.db`) uses a separate system KEK
-(`KeyProvider::system_key()`) and its own DEK.
-
-### Expected performance overhead
-
-Based on prior art measurements and the design:
-
-| Operation | Expected overhead | Reasoning |
-| --- | --- | --- |
-| Page write | ~10-15% | Random nonce generation (~50ns) + AES-256-GCM encrypt (~0.15μs/KB with AES-NI for 4KB page) + write nonce+tag (28 extra bytes). Turso measured ~14% write overhead with AEGIS-256; AES-GCM is slightly slower. |
-| Page read | ~5-8% | AES-256-GCM decrypt (~0.15μs/KB with AES-NI) + read nonce+tag. Turso measured ~6% read overhead. Decryption is faster than encryption for GCM. |
-| fsync | ~0% | fsync latency is dominated by disk I/O, not crypto. The extra 28 bytes per page is negligible. |
-| Storage size | ~0.7% | 28 bytes overhead per 4096-byte page. Plus 94-byte file header (negligible). |
-| Memory | ~negligible | One DEK (32 bytes) per open tenant database. Nonces are generated per write, not stored in memory. |
-
-On modern hardware with AES-NI (which covers all x86_64 and ARM64 targets
-Neovex supports), AES-256-GCM processes ~6.4 GB/s. A 4KB page encrypts in
-~0.6μs. For comparison, an NVMe fsync takes ~10-20μs. The crypto overhead is
-dwarfed by the I/O overhead.
-
-**The write path is the more affected path** because:
-- encryption is slightly slower than decryption in GCM mode
-- random nonce generation adds ~50ns per page (negligible)
-- the read path benefits from OS page cache (many reads avoid disk entirely)
-
-**AEGIS-256 upgrade would reduce overhead further.** AEGIS-256 achieves >10
-GB/s with AES-NI (source: [jedisct1/rust-aegis benchmarks](https://github.com/jedisct1/rust-aegis)).
-A 4KB page would encrypt in ~0.4μs. This is why Turso chose it.
+- this is an enterprise-grade control
+- it materially improves local at-rest protection
+- operator environment, access controls, backups, KMS policy, audit logging,
+  and deployment choices still determine actual compliance outcomes
 
 ---
 
 ## Work Items
 
-### EAR1. Implement `EncryptedBackend` behind redb `StorageBackend` trait
+### EAR1. Add typed local-encryption config and provider-agnostic key interfaces
 
 **Priority:** highest
-**Expected impact:** provides the core encryption primitive that all other
-items build on.
+**Expected impact:** defines the durable product contract before provider
+implementations land.
 
 #### Implementation plan
 
-1. Create `crates/neovex-storage/src/encrypted_backend.rs`.
-2. Verify the exact `StorageBackend` trait signature in redb 2.6.3 (the
-   `read` method may take `&mut [u8]` output buffer rather than returning
-   `Vec<u8>` — this affects internal buffer management).
-3. Implement `StorageBackend` for `EncryptedBackend`:
-   - `new(path, dek: [u8; 32])` — wraps a `FileBackend` with encryption
-   - `write(offset, data)`:
-     1. generate 12-byte random nonce via `ring::rand::SystemRandom`
-     2. encrypt data with AES-256-GCM using DEK, with logical offset as AAD
-     3. write `[nonce][ciphertext][tag]` to inner backend at physical offset
-   - `read(offset, len)`:
-     1. read `[nonce][ciphertext][tag]` from inner backend at physical offset
-     2. decrypt with DEK, verify tag, passing logical offset as AAD
-     3. return plaintext into caller's buffer
-   - `set_len(len)` — translate logical length to physical length, delegate
-   - `sync_data(eventual)` — delegate to inner
-   - `len()` — translate physical length to logical length
-4. Implement offset translation between logical (redb-visible) and physical
-   (on-disk) address spaces, accounting for the file header and per-page
-   nonce/tag overhead.
-5. Write the cleartext file header on first create (see Design Decisions for
-   format).
-6. Validate the header on open (magic, version, cipher, HMAC).
-7. Use `ring::aead::AES_256_GCM` for page encryption and
-   `ring::aead::AES_256_GCM` for DEK encryption in the header.
+1. Add `LocalEncryptionConfig` to `ServicePersistenceConfig` instead of hiding
+   encryption knobs inside provider-specific path flags.
+2. Model `LocalEncryptionConfig` as `Disabled` by default plus an enabled
+   variant with a `LocalKeyProviderConfig`.
+3. Add typed CLI, env, and config-file inputs for:
+   - `master-key-file`
+   - `key-dir`
+   - `aws-kms`
+4. Make `master-key-file` the default enablement path in docs and examples,
+   while still requiring an explicit key source to turn encryption on.
+5. Add provider-aware validation:
+   - embedded SQLite, embedded redb, and libsql replica may enable local
+     tenant-file encryption
+   - Postgres and MySQL may enable local control-plane encryption only
+   - startup fails if encryption is requested for a path that is not supported
+     or not compiled in
+6. Add public-safe descriptors for diagnostics and programmatic API use.
 
 #### Files likely to change
 
-- `crates/neovex-storage/src/encrypted_backend.rs` (new)
-- `crates/neovex-storage/src/lib.rs`
-- `crates/neovex-storage/Cargo.toml` (if additional deps needed beyond `ring`)
-
-#### Acceptance criteria
-
-- `EncryptedBackend` passes redb's own read/write/sync contract
-- round-trip: write encrypted, read back, data matches
-- tampered ciphertext is detected and returns an error
-- tampered nonce is detected and returns an error
-- swapped pages (same ciphertext at different offset) are detected via AAD
-- wrong DEK returns an error on read
-- wrong KEK returns an error on header open
-- header validation rejects unknown versions or ciphers
-- nonces are random and non-deterministic (verified by checking that
-  encrypting the same plaintext twice at the same offset produces different
-  ciphertext)
-
----
-
-### EAR2. Add key-provider trait with envelope encryption and file-based provider
-
-**Priority:** highest
-**Expected impact:** defines how encryption keys are provisioned and
-retrieved without coupling to a specific key store.
-
-#### Implementation plan
-
-1. Define a `KeyProvider` trait:
-   ```rust
-   pub trait KeyProvider: Send + Sync + 'static {
-       /// Returns the key encryption key (KEK) for a tenant.
-       /// The KEK is used to encrypt/decrypt the per-database DEK
-       /// stored in the file header.
-       fn tenant_kek(&self, tenant_id: &TenantId) -> Result<[u8; 32]>;
-
-       /// Returns the system KEK for the control database.
-       fn system_kek(&self) -> Result<[u8; 32]>;
-   }
-   ```
-2. Implement `FileKeyProvider` that reads KEKs from a directory:
-   - `{key_dir}/{tenant_id}.kek` for tenant KEKs (32 bytes, hex-encoded)
-   - `{key_dir}/system.kek` for the system KEK
-   - keys are read once and cached in memory (KEKs are only needed on
-     database open, not per-operation)
-3. Implement `DerivedKeyProvider` that derives tenant KEKs from a master key
-   using HKDF:
-   - `tenant_kek = HKDF-Expand(master_key, "neovex-tenant-kek:" || tenant_id, 32)`
-   - simpler operational model (one master key), weaker isolation (master key
-     compromise exposes all tenant KEKs, though DEKs remain independently
-     random)
-4. Implement DEK lifecycle helpers:
-   - `generate_dek()` — generates a random 256-bit DEK
-   - `encrypt_dek(kek, dek)` — encrypts DEK with KEK for header storage
-   - `decrypt_dek(kek, encrypted_dek)` — decrypts DEK from header
-5. Add key generation CLI helper (`neovex keygen`) that writes a random key
-   file.
-
-#### Files likely to change
-
-- `crates/neovex-storage/src/key_provider.rs` (new)
-- `crates/neovex-storage/src/lib.rs`
+- `crates/neovex-engine/src/persistence_config.rs`
 - `crates/neovex-bin/src/main.rs`
-
-#### Acceptance criteria
-
-- `FileKeyProvider` reads KEKs from disk and returns them by tenant
-- `DerivedKeyProvider` produces deterministic KEKs from a master key
-- DEK encrypt/decrypt round-trips correctly
-- wrong KEK fails DEK decryption with a clear error
-- missing key files return a clear error
-- key generation produces cryptographically random 32-byte keys
-
----
-
-### EAR3. Integrate encrypted backend into `TenantStore` and `UsageStore`
-
-**Priority:** highest after EAR1 + EAR2
-**Expected impact:** the storage layer can open encrypted databases
-end-to-end.
-
-#### Implementation plan
-
-1. Add an `open_encrypted_with_simulation(path, kek, clock, fault_injector)`
-   constructor to `TenantStore` that:
-   - if the file does not exist: generates a new DEK, creates the encrypted
-     file header, and opens via
-     `Database::builder().create_with_backend(EncryptedBackend::new(...))`
-   - if the file exists: reads the header, decrypts the DEK with the KEK,
-     and opens with the DEK
-2. Add an `open_encrypted(path, kek)` constructor to `UsageStore`.
-3. Update `EmbeddedRedbProvider` to accept an optional `Arc<dyn KeyProvider>`
-   and use it when opening or creating tenant stores.
-4. Add a `create_in_memory_encrypted_with_simulation(...)` constructor for
-   tests that exercises the encryption path without disk I/O.
-5. Run the full existing test suite through both encrypted and unencrypted
-   backends to verify behavioral equivalence.
-
-#### Files likely to change
-
-- `crates/neovex-storage/src/store.rs`
-- `crates/neovex-storage/src/usage_store.rs`
-- `crates/neovex-storage/src/async_storage.rs`
-- `crates/neovex-storage/src/tests.rs`
-
-#### Acceptance criteria
-
-- all existing storage tests pass on both encrypted and unencrypted backends
-- `TenantStore` opened with encryption cannot be read with the wrong KEK
-- `TenantStore` opened without encryption remains unchanged
-- the encrypted file on disk is not readable as a valid redb database
-  without the correct key material
-- creating a new encrypted tenant generates a unique random DEK
-
----
-
-### EAR4. Add typed runtime CLI / env / config surface
-
-**Priority:** high
-**Expected impact:** operators can enable encryption through the existing
-CLI and configuration model.
-
-#### Implementation plan
-
-1. Define one typed runtime encryption config that can be populated from CLI
-   flags, environment variables, and config files.
-2. Add CLI flags and matching config-file/env inputs for the first provider
-   choices:
-   - `--encryption-key-dir <path>` / matching config key / matching env input
-     — enables file-based key provider
-   - `--encryption-master-key-file <path>` / matching config key / matching
-     env input — enables derived key provider
-   - the two are mutually exclusive at the typed-config validation layer
-3. Lower that typed runtime config into the concrete `KeyProvider` and pass it
-   to `EmbeddedRedbProvider`.
-4. Add `GET /debug/encryption/status` endpoint exposing:
-   - whether encryption is enabled
-   - which provider type is active
-   - cipher in use per tenant
-   - per-tenant encryption status (encrypted vs. plaintext)
-   - **do not expose key material in the status endpoint**
-5. Document the CLI/env/config contract in the CLI reference.
-
-#### Files likely to change
-
-- `crates/neovex-bin/src/main.rs`
-- `crates/neovex-server/src/lib.rs`
-- `crates/neovex-server/src/http/`
+- `crates/neovex/src/lib.rs`
 - `docs/reference/cli.md`
 
 #### Acceptance criteria
 
-- encryption is disabled by default (no config = plaintext)
-- providing a valid key dir or master key source through the typed
-  CLI/env/config surface enables encryption for new tenants
-- conflicting or incomplete runtime config fails validation before the service
-  starts
-- the debug endpoint reports accurate encryption status without leaking keys
-- invalid configuration (both flags, missing files) produces clear errors
+- one typed config surface exists for local encryption
+- zero config still means plaintext
+- enabling encryption without a valid key source fails before startup
+- provider coverage validation is explicit and correct
+- the config model works for embedded SQLite, retained redb, the redb control
+  plane, and libsql replica cache files
 
 ---
 
-### EAR5. Add migration path for unencrypted-to-encrypted databases
+### EAR2. Add authenticated sidecar manifests and local key providers
 
-**Priority:** high
-**Expected impact:** existing deployments can adopt encryption without
-data loss.
+**Priority:** highest
+**Expected impact:** gives every local database and persisted encrypted
+artifact its own wrapped DEK and rotation metadata without coupling to one
+storage engine.
 
 #### Implementation plan
 
-1. Add a `neovex migrate-encrypt` CLI command that:
-   - opens an existing unencrypted tenant database (read-only)
-   - creates a new encrypted database with a fresh DEK encrypted by the
-     tenant's KEK
-   - copies all data (using redb read transaction on source → write
-     transaction on destination, table by table)
-   - verifies the copy by comparing document counts, commit log heads, and
-     schema checksums
-   - atomically replaces the old file with the new one (`rename(2)` on the
-     same filesystem)
-2. Support `--all-tenants` for batch migration.
-3. Add a reverse `neovex migrate-decrypt` for operational recovery.
-4. Document expected migration time: sequential read + write of the entire
-   database. At ~1 GB/s effective throughput on NVMe, a 10 GB database
-   migrates in ~10-15 seconds. Disk-bound, not crypto-bound.
+1. Add an adjacent sidecar manifest format for all local encrypted databases
+   and persisted encrypted artifacts.
+2. Bind manifest metadata through authenticated wrapping:
+   - local providers use AEAD AAD
+   - AWS KMS uses `EncryptionContext`
+3. Implement `MasterKeyFileProvider`:
+   - root key read from one file outside the data directory
+   - derive per-subject wrapping keys with HKDF using provider family, subject
+     kind, and tenant id where applicable
+4. Implement `KeyDirectoryProvider`:
+   - per-subject or per-role key files for advanced deployments
+5. Add atomic sidecar writes and rewrap helpers.
+6. Add safe manifest inspection helpers for diagnostics.
+7. Extend the same envelope model to persisted snapshot/bootstrap/recovery
+   artifacts emitted by encryption-enabled local stores.
+
+#### Files likely to change
+
+- `crates/neovex-storage/src/` (new key-management module tree)
+- `crates/neovex-storage/src/lib.rs`
+- `crates/neovex-engine/src/persistence_config.rs`
+
+#### Acceptance criteria
+
+- every encrypted local database can be opened using a wrapped DEK from its
+  sidecar manifest
+- encrypted persisted snapshot/bootstrap/recovery artifacts use the same
+  wrapped-DEK model
+- manifest tampering is detected
+- `master-key-file` and `key-dir` both support create, open, and rewrap flows
+- sidecar writes are atomic and crash-safe
+
+---
+
+### EAR3. Implement retained redb encrypted backend
+
+**Priority:** highest after EAR1 and EAR2
+**Expected impact:** restores redb coverage for retained embedded tenant data
+and the retained control plane.
+
+#### Implementation plan
+
+1. Add `EncryptedBackend` for redb behind `StorageBackend`.
+2. Use per-page authenticated encryption with:
+   - AES-256-GCM-SIV
+   - fresh random nonce per page write
+   - AAD containing page index, logical page size, and format version
+3. Keep key metadata in the sidecar manifest; do not prepend a custom cleartext
+   header to the redb file.
+4. Correctly translate logical page slots to physical encrypted page slots.
+5. Wire encrypted open/create flows into:
+   - retained redb tenant stores
+   - `UsageStore` for the control plane
+6. Add in-memory and on-disk tests for tamper detection, wrong-key behavior,
+   page swap protection, and reopen behavior.
+
+#### Files likely to change
+
+- `crates/neovex-storage/src/encrypted_redb.rs` (new)
+- `crates/neovex-storage/src/store/`
+- `crates/neovex-storage/src/usage_store.rs`
+- `crates/neovex-storage/src/async_storage/engine.rs`
+- `crates/neovex-storage/src/async_storage/control.rs`
+
+#### Acceptance criteria
+
+- retained redb tenant databases can run encrypted
+- `neovex-control.db` can run encrypted
+- tampered pages fail authentication
+- wrong keys fail cleanly
+- the physical offset math is slot-correct and never aliases nonce bytes
+
+---
+
+### EAR4. Implement encrypted embedded SQLite via SQLCipher
+
+**Priority:** highest after EAR1 and EAR2
+**Expected impact:** gives the default embedded tenant provider a first-class
+encryption path.
+
+#### Implementation plan
+
+1. Switch the embedded SQLite build to a SQLCipher-capable configuration once
+   verified for Neovex's release targets.
+2. Add encrypted open/create helpers for `SqliteTenantStore`.
+3. Pass raw per-database DEKs to SQLCipher from the sidecar manifest flow.
+4. Harden temporary storage:
+   - build and runtime configuration must avoid plaintext temp-file spills
+   - verify WAL and rollback journal behavior under the encrypted build
+5. Add provider-owned migration helpers:
+   - plaintext to encrypted via `sqlcipher_export()`
+   - encrypted to plaintext recovery via `sqlcipher_export()`
+   - encrypted rekey via `PRAGMA rekey`
+6. Verify that the plaintext path still works when encryption is disabled.
+
+#### Files likely to change
+
+- `Cargo.toml`
+- `crates/neovex-storage/Cargo.toml`
+- `crates/neovex-storage/src/sqlite.rs`
+- `crates/neovex-storage/src/async_storage/sqlite.rs`
+- `crates/neovex-storage/src/tests.rs`
+
+#### Acceptance criteria
+
+- embedded SQLite tenants can be created and reopened encrypted
+- SQLCipher migration flows work for encrypt, decrypt, and rekey
+- WAL and rollback journal handling are verified under the encrypted build
+- temp-file hardening is enforced for encrypted SQLite mode
+- the unencrypted SQLite path remains supported when encryption is disabled
+
+---
+
+### EAR5. Encrypt local libsql replica cache files
+
+**Priority:** highest after EAR1 and EAR2
+**Expected impact:** closes the last Neovex-owned SQLite file gap for the
+libsql replica provider family.
+
+#### Implementation plan
+
+1. Enable libsql's encryption support in the workspace dependency.
+2. Add encrypted open/materialization flows for local replica cache files using
+   `EncryptionConfig`.
+3. Feed raw DEKs from the same sidecar manifest model used elsewhere.
+4. Keep the remote primary encryption story provider-managed and clearly
+   documented as such.
+5. Use cache rebuild flows for:
+   - first-time encryption enablement
+   - DEK rotation
+   - corruption recovery
+
+#### Files likely to change
+
+- `Cargo.toml`
+- `crates/neovex-storage/Cargo.toml`
+- `crates/neovex-storage/src/libsql.rs`
+- `crates/neovex-engine/src/service/mod.rs`
+
+#### Acceptance criteria
+
+- libsql local cache files can be materialized and reopened encrypted
+- local cache re-materialization works under encryption
+- diagnostics distinguish local cache encryption from remote primary
+  provider-managed encryption
+- cache rebuild flows remain correct after restart and refresh
+
+---
+
+### EAR6. Wire provider-aware coverage into startup and diagnostics
+
+**Priority:** high
+**Expected impact:** turns implementation slices into a coherent operator
+experience.
+
+#### Implementation plan
+
+1. Wire local encryption config through service startup for:
+   - embedded SQLite tenant provider
+   - retained redb tenant provider
+   - retained redb control plane
+   - libsql replica local cache path
+2. Add a status endpoint that reports:
+   - whether local encryption is enabled
+   - key-provider family and safe descriptor
+   - per-local-role coverage status
+   - plaintext exceptions and retirement-pending residue state
+   - provider-managed external coverage for Postgres, MySQL, and remote libsql
+   - pending migration state
+3. Add fail-fast startup checks for unsupported or partially wired paths.
+4. Expose programmatic diagnostics through the facade crate.
+
+#### Files likely to change
+
+- `crates/neovex-engine/src/service/mod.rs`
+- `crates/neovex-server/src/lib.rs`
+- `crates/neovex-server/src/http/`
+- `crates/neovex/src/lib.rs`
+
+#### Acceptance criteria
+
+- startup wiring matches the selected provider family
+- status output is accurate and does not leak secrets
+- plaintext exceptions and retirement-pending residue are visible in status
+- external-provider-managed paths are clearly labeled
+- unsupported coverage requests fail before serving traffic
+
+---
+
+### EAR7. Add provider-specific migration, recovery, and rotation flows
+
+**Priority:** high
+**Expected impact:** makes the feature operable rather than merely buildable.
+
+#### Implementation plan
+
+1. Add an explicit admin CLI namespace for encryption operations. The exact
+   command names should follow Neovex's CLI taxonomy, but the required
+   capabilities are:
+   - inspect coverage
+   - migrate plaintext to encrypted
+   - export encrypted to plaintext where meaningful
+   - rotate wrapping keys
+   - rotate database keys
+   - retire predecessor plaintext artifacts
+2. KEK rotation rules:
+   - rewrap sidecar manifest only
+   - no database page rewrite
+3. DEK rotation rules by provider:
+   - retained redb: copy and re-encrypt
+   - embedded SQLite: `PRAGMA rekey`
+   - libsql replica cache: discard and rebuild under a new DEK
+   - redb control plane: same as retained redb
+4. Migration rules by provider:
+   - retained redb: copy plaintext redb to encrypted redb and vice versa
+   - embedded SQLite: use `sqlcipher_export()`
+   - libsql replica cache: rebuild cache rather than export
+5. Artifact rules:
+   - persisted Neovex-owned snapshot/bootstrap/recovery artifacts produced from
+     encryption-enabled local stores are encrypted by default
+   - plaintext artifact output requires an explicit operator override and is
+     tracked as a plaintext exception
+6. Cutover and retirement rules:
+   - validation completes before the encrypted target becomes authoritative
+   - predecessor plaintext databases, WAL/SHM sidecars, rollback journals,
+     temp spill files, migration working copies, and retired replica caches are
+     removed from active Neovex-managed paths after cutover
+   - diagnostics report `retirement_pending` until predecessor plaintext
+     artifacts are cleared
+   - active-path conflicts fail closed
+7. Document live-tenant rules:
+   - KEK rotation may run online if reopen semantics are safe
+   - redb DEK rotation requires quiesce
+   - embedded SQLite rekey requires explicit operational guidance
+   - libsql cache rotation may rebuild from remote with documented refresh
+     behavior
 
 #### Files likely to change
 
 - `crates/neovex-bin/src/main.rs`
-- `crates/neovex-storage/src/` (migration helpers)
+- `crates/neovex-storage/src/`
+- `docs/reference/cli.md`
 
 #### Acceptance criteria
 
-- unencrypted database migrates to encrypted with identical logical content
-- migration is atomic (old file not removed until new file is verified)
-- reverse migration works for operational recovery
-- migration of a large database completes without excessive memory usage
-  (streaming, not bulk-load)
-- migration is idempotent (re-running on an already-encrypted database is a
-  no-op or clear error)
+- operators can migrate into encryption and back out for recovery where
+  applicable
+- KEK rotation never rewrites data pages
+- DEK rotation is correct for each provider family
+- predecessor plaintext artifacts are retired from active paths after cutover
+- plaintext exceptions and retirement-pending residue are surfaced clearly
+- live-operation requirements are documented and verified
 
 ---
 
-### EAR6. Add key rotation support (KEK rotation + DEK rotation)
+### EAR8. Add AWS KMS provider for enterprise-managed keys
 
 **Priority:** high
-**Expected impact:** operators can rotate encryption keys per enterprise
-compliance requirements.
-
-#### Two rotation modes
-
-**KEK rotation (fast, common):** re-encrypts the DEK in the file header with
-a new KEK. The data on disk is unchanged — only the 48-byte encrypted DEK
-blob in the header is rewritten. Completes in microseconds. This is the
-normal operational rotation for compliance (e.g., 90-day key rotation
-policies).
-
-**DEK rotation (slow, rare):** rewrites the entire database with a new DEK.
-Required only if the DEK itself is compromised (the DEK only exists in memory
-and in the KEK-encrypted header, so compromise is unlikely). Uses the same
-copy-and-replace mechanism as EAR5 migration.
+**Expected impact:** satisfies the v1 enterprise requirement for a managed KMS
+path instead of stopping at local files.
 
 #### Implementation plan
 
-1. Add `neovex rotate-kek --tenant <id>` CLI command:
-   - reads the current file header
-   - decrypts the DEK with the old KEK
-   - re-encrypts the DEK with the new KEK
-   - rewrites the header atomically (write to temp, fsync, rename)
-   - update the header HMAC
-2. Add `neovex rotate-dek --tenant <id>` CLI command:
-   - full database rewrite with a new random DEK (same as migration)
-   - the new DEK is encrypted with the current KEK
-3. Support `--all-tenants` for batch rotation.
-4. Document the difference between KEK and DEK rotation and when each is
-   appropriate.
-
-#### Expected rotation times
-
-| Mode | 1 GB database | 10 GB database | 100 GB database |
-| --- | --- | --- | --- |
-| KEK rotation | <1 ms | <1 ms | <1 ms |
-| DEK rotation | ~1-2 s | ~10-15 s | ~100-150 s |
-
-KEK rotation time is constant (header-only rewrite). DEK rotation time is
-proportional to database size at ~1 GB/s effective throughput on NVMe.
+1. Add `AwsKmsKeyProvider` as the first managed provider.
+2. Use:
+   - `GenerateDataKey` on create
+   - `Decrypt` on open
+   - `ReEncrypt` for wrapping-key rotation where applicable
+3. Bind `LocalKeySubject` metadata into AWS `EncryptionContext`.
+4. Support safe key descriptors and failure diagnostics without exposing
+   ciphertext blobs.
+5. Add test coverage against LocalStack or an equivalent AWS KMS test setup.
+6. Keep `master-key-file` as the default local path; AWS KMS is the required
+   enterprise-managed option, not the default for all deployments.
 
 #### Files likely to change
 
+- `crates/neovex-storage/src/` (new AWS KMS provider module)
+- `crates/neovex-engine/src/persistence_config.rs`
 - `crates/neovex-bin/src/main.rs`
-- `crates/neovex-storage/src/encrypted_backend.rs`
-- `crates/neovex-storage/src/` (rotation helpers)
+- `docs/reference/cli.md`
 
 #### Acceptance criteria
 
-- KEK rotation updates the header without touching data pages
-- DEK rotation produces a valid encrypted database with a new DEK
-- the old KEK (for KEK rotation) or old DEK (for DEK rotation) no longer
-  opens the rotated database
-- both rotation modes are atomic (no data loss on failure)
-- rotation of a live tenant is documented (KEK rotation needs no quiesce;
-  DEK rotation requires quiesce → rotate → resume)
+- AWS KMS create, open, and rewrap flows work
+- `EncryptionContext` is stable and validated
+- failures distinguish auth, missing key, policy, and network errors
+- managed-key diagnostics are safe and useful
 
 ---
 
-### EAR7. Performance measurement and documentation
+### EAR9. Publish docs, performance data, and verification evidence
 
 **Priority:** high
-**Expected impact:** operators have concrete numbers to evaluate the
-encryption overhead against the estimates in this plan.
+**Expected impact:** turns the feature into something an enterprise reviewer
+can actually evaluate.
 
 #### Implementation plan
 
-1. Add a benchmark suite (`cargo bench`) that measures:
-   - single-document insert (encrypted vs. unencrypted)
-   - batch insert (32 documents via journal)
-   - point read by ID (cold cache + warm cache)
-   - table scan (100, 1k, 10k documents)
-   - index scan (single-field equality)
-   - mixed read/write workload (75% read / 25% write)
-2. Run on representative hardware:
-   - NVMe SSD (target deployment)
-   - standard SATA SSD (lower bound)
-3. Compare measured overhead against the estimates in this plan's Design
-   Decisions section.
-4. Document results in `docs/reference/encryption.md` with:
-   - absolute throughput numbers
-   - relative overhead percentages
-   - hardware specifications used
-   - guidance on when encryption overhead is and is not a concern
-5. If measured overhead exceeds targets (>15% write, >10% read), investigate
-   and optimize before shipping. Likely optimization paths:
-   - switch to AEGIS-256 (faster cipher)
-   - buffer pool for avoiding redundant page re-encryption
-   - batch nonce generation
+1. Add `docs/reference/encryption.md` covering:
+   - provider coverage matrix
+   - key-provider options
+   - migration and rotation rules
+   - snapshot/bootstrap/export artifact rules
+   - plaintext exception and retirement-pending semantics
+   - external-provider responsibilities
+   - operational caveats and recovery flows
+2. Add benchmark coverage for:
+   - retained redb plaintext vs encrypted
+   - embedded SQLite plaintext vs encrypted
+   - libsql replica encrypted local-cache reopen and refresh drills
+3. Record representative performance numbers with hardware context.
+4. Update the CLI reference with the final operator surface.
+5. Document release-build implications for SQLCipher and libsql encryption.
 
 #### Files likely to change
 
-- `crates/neovex-storage/benches/` (new)
 - `docs/reference/encryption.md` (new)
+- `docs/reference/cli.md`
+- `crates/neovex-storage/benches/`
 
 #### Acceptance criteria
 
-- benchmark suite exists and is reproducible via `cargo bench`
-- overhead is measured and documented with hardware context
-- results are compared against this plan's estimates
-- if targets are exceeded, optimization is attempted or targets are revised
-  with documented justification
-
----
-
-### EAR8. Pluggable KMS provider implementations
-
-**Priority:** deferred
-**Expected impact:** enterprise deployments can use managed key services
-instead of file-based keys.
-
-#### Gate
-
-Do not start this item until `EAR4` is done and the configuration surface
-defines how providers are selected. Concrete provider scope should be driven
-by actual deployment requirements rather than speculative coverage.
-
-#### Implementation plan
-
-1. Add `AwsKmsKeyProvider` using the AWS SDK for envelope encryption:
-   - operator configures a KMS key ARN per tenant (or a single ARN with
-     per-tenant encryption context)
-   - `tenant_kek()` calls `Decrypt` with the stored encrypted KEK blob
-   - on first tenant creation, calls `GenerateDataKey` to produce a new KEK
-   - the encrypted KEK blob is stored alongside the tenant database
-     (e.g., `{tenant_id}.kek.enc`)
-2. Add `VaultKeyProvider` for HashiCorp Vault Transit secrets engine:
-   - operator configures a Vault transit key name
-   - `tenant_kek()` calls the `decrypt` endpoint with the stored wrapped KEK
-   - on first creation, calls `datakey/plaintext` to generate a new KEK
-3. Each provider implements the same `KeyProvider` trait from `EAR2`.
-
-#### Acceptance criteria
-
-- at least one KMS provider is implemented and tested against a real or
-  emulated service (LocalStack for AWS, Vault dev mode)
-- the provider selection is driven by CLI configuration from `EAR4`
-- KMS provider failures produce clear errors that distinguish auth failures,
-  key-not-found, and network errors
+- docs accurately describe coverage and limits
+- benchmarks exist and are reproducible
+- encrypted and plaintext performance comparisons are published
+- operator guidance is sufficient for security and compliance review
 
 ---
 
@@ -829,5 +1097,7 @@ by actual deployment requirements rather than speculative coverage.
 
 | Date | Item | Outcome | Notes |
 | --- | --- | --- | --- |
-| 2026-04-02 | baseline | created | Created this plan based on architecture review findings and redb maintainer guidance on the `StorageBackend` encryption path. |
-| 2026-04-02 | plan | revised | Incorporated review feedback: fixed critical nonce construction flaw (deterministic offset-derived nonces → random per-write nonces), added envelope encryption (KEK/DEK) model, added AAD for page-swap protection, added cipher evaluation table with sources, added per-page on-disk layout specification, added expected performance overhead estimates with reasoning, added redb-turbo and Turso/libSQL as prior art references, split key rotation into fast KEK rotation and slow DEK rotation, added security and cipher reference links throughout. |
+| 2026-04-02 | baseline | created | Created the original redb-first plan. |
+| 2026-04-16 | plan | rewritten | Reframed the plan around the live provider architecture: embedded SQLite default, retained redb, separate redb control plane, and libsql local cache coverage. Removed the invalid redb header design, replaced it with authenticated sidecar key manifests, moved embedded SQLite to a SQLCipher-based strategy, added explicit external-provider responsibility rules for Postgres/MySQL, and made AWS KMS a required v1 enterprise-managed key provider. |
+| 2026-04-16 | docs | architecture added | Added `docs/architecture/storage/encryption.md` as the stable architecture baseline, including provider-boundary diagrams, key-management rationale, and lifecycle flows; retargeted the plan to it and updated the docs index. |
+| 2026-04-16 | review | findings resolved | Expanded scope to cover persisted snapshot/bootstrap/recovery artifacts, broadened the key-subject model beyond databases, and added explicit cutover plus retirement semantics so predecessor plaintext artifacts cannot silently linger after migration or rotation. |
