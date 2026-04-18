@@ -14,6 +14,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use axum::Router;
+use axum::extract::State as AxumState;
+use axum::routing::get;
 use flate2::read::GzDecoder;
 use fs2::FileExt;
 use libc::{SIGKILL, SIGTERM, kill};
@@ -25,7 +28,7 @@ use oci_client::manifest::{
     OCI_IMAGE_MEDIA_TYPE, OciDescriptor,
 };
 use oci_client::secrets::RegistryAuth;
-use reqwest::blocking::Client;
+use reqwest::blocking::Client as BlockingClient;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use signal_hook_registry::{SigId, register as register_signal, unregister as unregister_signal};
@@ -42,10 +45,7 @@ use super::{
 };
 
 const DEFAULT_KRUNKIT_BINARY: &str = "krunkit";
-const DEFAULT_KRUNKIT_HOMEBREW_PATH: &str = "/opt/homebrew/bin/krunkit";
 const DEFAULT_GVPROXY_BINARY: &str = "gvproxy";
-const DEFAULT_GVPROXY_HOMEBREW_PATH: &str = "/opt/homebrew/opt/podman/libexec/podman/gvproxy";
-const DEFAULT_GVPROXY_INTEL_HOMEBREW_PATH: &str = "/usr/local/opt/podman/libexec/podman/gvproxy";
 const DEFAULT_MACHINE_MAC_ADDRESS: &str = "5a:94:ef:e4:0c:ee";
 const READY_VSOCK_PORT: u32 = 1025;
 const READY_WAIT_TIMEOUT_ENV: &str = "NEOVEX_MACHINE_READY_TIMEOUT_SECS";
@@ -63,6 +63,7 @@ const MACHINE_PORT_MIN: u16 = 10000;
 const MACHINE_PORT_MAX: u16 = 65535;
 const KRUNKIT_ENV: &str = "NEOVEX_MACHINE_KRUNKIT";
 const GVPROXY_ENV: &str = "NEOVEX_MACHINE_GVPROXY";
+const HELPER_BINARY_DIR_ENV: &str = "NEOVEX_MACHINE_HELPER_BINARY_DIR";
 const HTTP_IMAGE_TIMEOUT: Duration = Duration::from_secs(300);
 const GUEST_NEOVEX_BINARY_OVERRIDE_ENV: &str = "NEOVEX_MACHINE_GUEST_BINARY";
 const GUEST_NEOVEX_RELEASE_BASE_URL_ENV: &str = "NEOVEX_MACHINE_GUEST_RELEASE_BASE_URL";
@@ -70,6 +71,10 @@ const DEFAULT_GUEST_NEOVEX_RELEASE_BASE_URL: &str =
     "https://github.com/agentstation/neovex/releases/download";
 const DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_ARM64: &str = "neovex_linux_arm64.tar.gz";
 const DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_X86_64: &str = "neovex_linux_x86_64.tar.gz";
+const DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64: &str = "aarch64-unknown-linux-gnu";
+const DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_X86_64: &str = "x86_64-unknown-linux-gnu";
+const LOCAL_GUEST_BINARY_HELP_TEXT: &str =
+    "run `make build-neovex-machine-guest-binary` or set `NEOVEX_MACHINE_GUEST_BINARY`";
 const OCI_MACHINE_OS: &str = "linux";
 const OCI_ANNOTATION_TITLE: &str = "org.opencontainers.image.title";
 const OCI_ANNOTATION_SOURCE: &str = "org.opencontainers.image.source";
@@ -78,6 +83,17 @@ const OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY: &str =
 const OCI_ANNOTATION_MACHINE_NEOVEX_VERSION: &str = "io.neovex.machine.neovex.version";
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
+const PODMAN_DARWIN_HELPER_DIRECTORIES: &[&str] = &[
+    "/usr/local/opt/podman/libexec/podman",
+    "/opt/homebrew/opt/podman/libexec/podman",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/homebrew/libexec/podman",
+    "/usr/local/libexec/podman",
+    "/usr/local/lib/podman",
+    "/usr/libexec/podman",
+    "/usr/lib/podman",
+];
 
 #[derive(Debug, Deserialize)]
 struct RegistryImageIndex {
@@ -267,19 +283,21 @@ impl MachineCommandLine {
 
 impl MachineHelperBinaryPaths {
     pub(super) fn resolve() -> Result<Self, Error> {
+        let bundled_gvproxy = bundled_helper_candidates(DEFAULT_GVPROXY_BINARY);
+        let known_krunkit = known_helper_candidates(DEFAULT_KRUNKIT_BINARY);
+        let known_gvproxy = known_helper_candidates(DEFAULT_GVPROXY_BINARY);
         Ok(Self {
             krunkit: resolve_helper_binary(
                 KRUNKIT_ENV,
                 DEFAULT_KRUNKIT_BINARY,
-                &[PathBuf::from(DEFAULT_KRUNKIT_HOMEBREW_PATH)],
+                &[],
+                &known_krunkit,
             )?,
             gvproxy: resolve_helper_binary(
                 GVPROXY_ENV,
                 DEFAULT_GVPROXY_BINARY,
-                &[
-                    PathBuf::from(DEFAULT_GVPROXY_HOMEBREW_PATH),
-                    PathBuf::from(DEFAULT_GVPROXY_INTEL_HOMEBREW_PATH),
-                ],
+                &bundled_gvproxy,
+                &known_gvproxy,
             )?,
         })
     }
@@ -684,25 +702,32 @@ fn sync_guest_neovex_binary(
     let guest_binary = resolve_guest_neovex_binary(paths)?;
     let desired_hash = compute_sha256(&guest_binary)?;
     let current_hash = read_guest_neovex_hash(config, ssh_port)?;
-    if current_hash.as_deref() == Some(desired_hash.as_str()) {
-        return Ok(());
+    if current_hash.as_deref() != Some(desired_hash.as_str()) {
+        stream_guest_file_over_ssh(
+            config,
+            ssh_port,
+            &guest_binary,
+            &format!(
+                "set -eu; install_dir=\"{}\"; tmp_name=\".neovex.$$.tmp\"; sudo mkdir -p \"$install_dir\"; tmp_path=\"$install_dir/$tmp_name\"; cat | sudo tee \"$tmp_path\" >/dev/null; sudo chmod 0755 \"$tmp_path\"; if command -v restorecon >/dev/null 2>&1; then sudo restorecon \"$tmp_path\"; fi; sudo mv \"$tmp_path\" \"{}\"; if command -v restorecon >/dev/null 2>&1; then sudo restorecon \"{}\"; fi",
+                Path::new(GUEST_NEOVEX_BIN)
+                    .parent()
+                    .expect("guest neovex binary path should have a parent")
+                    .display(),
+                GUEST_NEOVEX_BIN,
+                GUEST_NEOVEX_BIN
+            ),
+        )?;
     }
 
-    stream_guest_file_over_ssh(
-        config,
-        ssh_port,
-        &guest_binary,
-        &format!(
-            "set -eu; install_dir=\"{}\"; tmp_name=\".neovex.$$.tmp\"; sudo mkdir -p \"$install_dir\"; tmp_path=\"$install_dir/$tmp_name\"; cat | sudo tee \"$tmp_path\" >/dev/null; sudo chmod 0755 \"$tmp_path\"; if command -v restorecon >/dev/null 2>&1; then sudo restorecon \"$tmp_path\"; fi; sudo mv \"$tmp_path\" \"{}\"; if command -v restorecon >/dev/null 2>&1; then sudo restorecon \"{}\"; fi",
-            Path::new(GUEST_NEOVEX_BIN)
-                .parent()
-                .expect("guest neovex binary path should have a parent")
-                .display(),
-            GUEST_NEOVEX_BIN,
-            GUEST_NEOVEX_BIN
-        ),
-    )?;
+    run_guest_ssh_shell_capture(config, ssh_port, &ensure_guest_neovex_socket_shell_script())?;
     Ok(())
+}
+
+fn ensure_guest_neovex_socket_shell_script() -> String {
+    format!(
+        "set -eu; sudo systemctl daemon-reload; sudo systemctl stop neovex.service neovex.socket >/dev/null 2>&1 || true; sudo systemctl reset-failed neovex.service neovex.socket >/dev/null 2>&1 || true; sudo rm -f \"{socket}\"; sudo systemctl enable neovex.socket >/dev/null 2>&1 || true; sudo systemctl start neovex.socket; sudo systemctl is-active neovex.socket >/dev/null; printf '%s' ok",
+        socket = GUEST_NEOVEX_SOCKET
+    )
 }
 
 fn read_guest_neovex_hash(
@@ -733,6 +758,9 @@ fn resolve_guest_neovex_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
                 path.display()
             )));
         }
+        return Ok(path);
+    }
+    if let Some(path) = resolve_local_guest_neovex_binary()? {
         return Ok(path);
     }
 
@@ -774,6 +802,51 @@ fn guest_neovex_archive_name() -> Result<&'static str, Error> {
     }
 }
 
+fn resolve_local_guest_neovex_binary() -> Result<Option<PathBuf>, Error> {
+    let Some(workspace_root) = compiled_workspace_root() else {
+        return Ok(None);
+    };
+    let target_triple = guest_neovex_target_triple()?;
+    Ok(find_local_guest_neovex_binary_under(
+        workspace_root,
+        target_triple,
+    ))
+}
+
+fn compiled_workspace_root() -> Option<&'static Path> {
+    workspace_root_from_manifest_dir(Path::new(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn workspace_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
+    manifest_dir.parent()?.parent()
+}
+
+fn guest_neovex_target_triple() -> Result<&'static str, Error> {
+    match env::consts::ARCH {
+        "aarch64" | "arm64" => Ok(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64),
+        "x86_64" => Ok(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_X86_64),
+        arch => Err(Error::InvalidInput(format!(
+            "unsupported macOS machine host architecture '{arch}' for guest neovex binary sync"
+        ))),
+    }
+}
+
+fn find_local_guest_neovex_binary_under(
+    workspace_root: &Path,
+    target_triple: &str,
+) -> Option<PathBuf> {
+    ["release", "debug"]
+        .into_iter()
+        .map(|profile| {
+            workspace_root
+                .join("target")
+                .join(target_triple)
+                .join(profile)
+                .join("neovex")
+        })
+        .find(|candidate| candidate.is_file())
+}
+
 fn guest_neovex_release_url(release_tag: &str, archive_name: &str) -> String {
     let base = env::var(GUEST_NEOVEX_RELEASE_BASE_URL_ENV)
         .unwrap_or_else(|_| DEFAULT_GUEST_NEOVEX_RELEASE_BASE_URL.to_owned());
@@ -781,50 +854,54 @@ fn guest_neovex_release_url(release_tag: &str, archive_name: &str) -> String {
 }
 
 fn download_guest_neovex_archive(destination: &Path, url: &str) -> Result<(), Error> {
-    let parent = destination.parent().ok_or_else(|| {
-        Error::Internal(format!(
-            "failed to resolve parent directory for guest neovex archive {}",
-            destination.display()
-        ))
-    })?;
-    let mut temp = NamedTempFile::new_in(parent).map_err(|error| {
-        Error::Internal(format!(
-            "failed to create temporary guest neovex archive under {}: {error}",
-            parent.display()
-        ))
-    })?;
-    let client = Client::builder()
-        .timeout(HTTP_IMAGE_TIMEOUT)
-        .build()
-        .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
-    let mut response = client
-        .get(url)
-        .send()
-        .and_then(|response| response.error_for_status())
-        .map_err(|error| {
-            Error::InvalidInput(format!(
-                "failed to download guest neovex archive from {url}: {error}. Set ${GUEST_NEOVEX_BINARY_OVERRIDE_ENV} to a local Linux guest binary to continue without the release asset."
+    let destination = destination.to_path_buf();
+    let url = url.to_owned();
+    run_blocking_in_thread("guest neovex archive download", move || {
+        let parent = destination.parent().ok_or_else(|| {
+            Error::Internal(format!(
+                "failed to resolve parent directory for guest neovex archive {}",
+                destination.display()
             ))
         })?;
-    io::copy(&mut response, &mut temp).map_err(|error| {
-        Error::Internal(format!(
-            "failed to write guest neovex archive from {url} into {}: {error}",
-            destination.display()
-        ))
-    })?;
-    temp.flush().map_err(|error| {
-        Error::Internal(format!(
-            "failed to flush guest neovex archive from {url}: {error}"
-        ))
-    })?;
-    temp.persist(destination).map_err(|error| {
-        Error::Internal(format!(
-            "failed to persist guest neovex archive {}: {}",
-            destination.display(),
-            error.error
-        ))
-    })?;
-    Ok(())
+        let mut temp = NamedTempFile::new_in(parent).map_err(|error| {
+            Error::Internal(format!(
+                "failed to create temporary guest neovex archive under {}: {error}",
+                parent.display()
+            ))
+        })?;
+        let client = BlockingClient::builder()
+            .timeout(HTTP_IMAGE_TIMEOUT)
+            .build()
+            .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
+        let mut response = client
+            .get(&url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|error| {
+                Error::InvalidInput(format!(
+                    "failed to download guest neovex archive from {url}: {error}. To continue without the release asset, {LOCAL_GUEST_BINARY_HELP_TEXT} to a local Linux guest binary."
+                ))
+            })?;
+        io::copy(&mut response, &mut temp).map_err(|error| {
+            Error::Internal(format!(
+                "failed to write guest neovex archive from {url} into {}: {error}",
+                destination.display()
+            ))
+        })?;
+        temp.flush().map_err(|error| {
+            Error::Internal(format!(
+                "failed to flush guest neovex archive from {url}: {error}"
+            ))
+        })?;
+        temp.persist(&destination).map_err(|error| {
+            Error::Internal(format!(
+                "failed to persist guest neovex archive {}: {}",
+                destination.display(),
+                error.error
+            ))
+        })?;
+        Ok(())
+    })
 }
 
 fn extract_guest_neovex_archive(archive_path: &Path, output_path: &Path) -> Result<(), Error> {
@@ -1493,32 +1570,47 @@ fn serve_ignition_file(
     ignition_path: &Path,
 ) -> Result<thread::JoinHandle<()>, Error> {
     remove_file_if_exists(socket_path)?;
-    let bytes = fs::read(ignition_path).map_err(|error| {
+    let bytes = Arc::new(fs::read(ignition_path).map_err(|error| {
         Error::InvalidInput(format!(
             "failed to read ignition file {}: {error}",
             ignition_path.display()
         ))
-    })?;
+    })?);
     let listener = UnixListener::bind(socket_path).map_err(|error| {
         Error::Internal(format!(
             "failed to bind ignition socket {}: {error}",
             socket_path.display()
         ))
     })?;
-    let response_prefix = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        bytes.len()
-    )
-    .into_bytes();
+    listener.set_nonblocking(true).map_err(|error| {
+        Error::Internal(format!(
+            "failed to configure ignition socket {} as non-blocking: {error}",
+            socket_path.display()
+        ))
+    })?;
+    let router = Router::new()
+        .route("/", get(machine_ignition_payload))
+        .with_state(bytes);
     Ok(thread::spawn(move || {
-        while let Ok((mut stream, _)) = listener.accept() {
-            let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request);
-            let _ = stream.write_all(&response_prefix);
-            let _ = stream.write_all(&bytes);
-            let _ = stream.flush();
-        }
+        // The machine start path is synchronous, so the ignition helper needs
+        // its own Tokio runtime to serve Podman-style HTTP over the Unix socket.
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let _ = runtime.block_on(async move {
+            let Ok(listener) = tokio::net::UnixListener::from_std(listener) else {
+                return;
+            };
+            let _ = axum::serve(listener, router).await;
+        });
     }))
+}
+
+async fn machine_ignition_payload(AxumState(bytes): AxumState<Arc<Vec<u8>>>) -> Vec<u8> {
+    bytes.as_ref().clone()
 }
 
 fn wait_for_ready(
@@ -1917,13 +2009,19 @@ fn pid_is_alive(pid: i32) -> bool {
 fn resolve_helper_binary(
     env_name: &str,
     command_name: &str,
+    preferred_candidates: &[PathBuf],
     fallbacks: &[PathBuf],
 ) -> Result<PathBuf, Error> {
     if let Some(path) = std::env::var_os(env_name) {
         return resolve_existing_file(PathBuf::from(path), env_name);
     }
-    if let Some(path) = find_in_path(command_name) {
+    if let Some(path) = helper_binary_dir_candidate(command_name) {
         return Ok(path);
+    }
+    for candidate in preferred_candidates {
+        if candidate.is_file() {
+            return Ok(candidate.clone());
+        }
     }
     for fallback in fallbacks {
         if fallback.is_file() {
@@ -1931,8 +2029,65 @@ fn resolve_helper_binary(
         }
     }
     Err(Error::InvalidInput(format!(
-        "required helper '{command_name}' was not found; set {env_name} or install it on PATH"
+        "required helper '{command_name}' was not found; set {env_name}, set {HELPER_BINARY_DIR_ENV}, or install it in a supported packaged or Homebrew helper directory"
     )))
+}
+
+fn helper_binary_dir_candidate(command_name: &str) -> Option<PathBuf> {
+    let helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV)?;
+    let candidate = PathBuf::from(helper_dir).join(command_name);
+    candidate.is_file().then_some(candidate)
+}
+
+fn known_helper_candidates(helper_name: &str) -> Vec<PathBuf> {
+    PODMAN_DARWIN_HELPER_DIRECTORIES
+        .iter()
+        .map(|directory| PathBuf::from(directory).join(helper_name))
+        .collect()
+}
+
+fn bundled_helper_candidates(helper_name: &str) -> Vec<PathBuf> {
+    let Ok(current_exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+
+    let mut candidates = bundled_helper_candidates_for_executable(&current_exe, helper_name);
+    if let Ok(canonical_exe) = current_exe.canonicalize() {
+        for candidate in bundled_helper_candidates_for_executable(&canonical_exe, helper_name) {
+            push_unique_path(&mut candidates, candidate);
+        }
+    }
+    candidates
+}
+
+fn bundled_helper_candidates_for_executable(
+    executable_path: &Path,
+    helper_name: &str,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let Some(executable_dir) = executable_path.parent() else {
+        return candidates;
+    };
+
+    push_unique_path(
+        &mut candidates,
+        executable_dir.join("libexec").join(helper_name),
+    );
+    if executable_dir.file_name().and_then(|value| value.to_str()) == Some("bin")
+        && let Some(prefix_dir) = executable_dir.parent()
+    {
+        push_unique_path(
+            &mut candidates,
+            prefix_dir.join("libexec").join(helper_name),
+        );
+    }
+    candidates
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.contains(&candidate) {
+        paths.push(candidate);
+    }
 }
 
 fn resolve_existing_file(path: PathBuf, env_name: &str) -> Result<PathBuf, Error> {
@@ -1943,13 +2098,6 @@ fn resolve_existing_file(path: PathBuf, env_name: &str) -> Result<PathBuf, Error
         "{env_name} points to {}, but that file does not exist",
         path.display()
     )))
-}
-
-fn find_in_path(binary: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|entry| entry.join(binary))
-        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]
@@ -1963,6 +2111,8 @@ pub(crate) struct MachineHelperEnvGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
     previous_krunkit: Option<std::ffi::OsString>,
     previous_gvproxy: Option<std::ffi::OsString>,
+    previous_helper_dir: Option<std::ffi::OsString>,
+    previous_path: Option<std::ffi::OsString>,
 }
 
 #[cfg(test)]
@@ -1981,6 +2131,8 @@ impl MachineHelperEnvGuard {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
         let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
+        let previous_helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV);
+        let previous_path = std::env::var_os("PATH");
         unsafe {
             std::env::set_var(KRUNKIT_ENV, krunkit_path);
             std::env::set_var(GVPROXY_ENV, gvproxy_path);
@@ -1989,6 +2141,53 @@ impl MachineHelperEnvGuard {
             _lock: lock,
             previous_krunkit,
             previous_gvproxy,
+            previous_helper_dir,
+            previous_path,
+        }
+    }
+
+    pub(crate) fn with_helper_binary_dir(dir: &Path) -> Self {
+        let lock = helper_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
+        let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
+        let previous_helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV);
+        let previous_path = std::env::var_os("PATH");
+        unsafe {
+            std::env::remove_var(KRUNKIT_ENV);
+            std::env::remove_var(GVPROXY_ENV);
+            std::env::set_var(HELPER_BINARY_DIR_ENV, dir);
+        }
+        Self {
+            _lock: lock,
+            previous_krunkit,
+            previous_gvproxy,
+            previous_helper_dir,
+            previous_path,
+        }
+    }
+
+    pub(crate) fn with_path_only(dir: &Path) -> Self {
+        let lock = helper_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_krunkit = std::env::var_os(KRUNKIT_ENV);
+        let previous_gvproxy = std::env::var_os(GVPROXY_ENV);
+        let previous_helper_dir = std::env::var_os(HELPER_BINARY_DIR_ENV);
+        let previous_path = std::env::var_os("PATH");
+        unsafe {
+            std::env::remove_var(KRUNKIT_ENV);
+            std::env::remove_var(GVPROXY_ENV);
+            std::env::remove_var(HELPER_BINARY_DIR_ENV);
+            std::env::set_var("PATH", dir);
+        }
+        Self {
+            _lock: lock,
+            previous_krunkit,
+            previous_gvproxy,
+            previous_helper_dir,
+            previous_path,
         }
     }
 }
@@ -2003,6 +2202,14 @@ impl Drop for MachineHelperEnvGuard {
         match &self.previous_gvproxy {
             Some(path) => unsafe { std::env::set_var(GVPROXY_ENV, path) },
             None => unsafe { std::env::remove_var(GVPROXY_ENV) },
+        }
+        match &self.previous_helper_dir {
+            Some(path) => unsafe { std::env::set_var(HELPER_BINARY_DIR_ENV, path) },
+            None => unsafe { std::env::remove_var(HELPER_BINARY_DIR_ENV) },
+        }
+        match &self.previous_path {
+            Some(path) => unsafe { std::env::set_var("PATH", path) },
+            None => unsafe { std::env::remove_var("PATH") },
         }
     }
 }
@@ -2061,44 +2268,50 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
         ))
     })?;
 
-    let download = NamedTempFile::new_in(&paths.image_cache_dir).map_err(|error| {
-        Error::Internal(format!(
-            "failed to allocate temporary download file under {}: {error}",
-            paths.image_cache_dir.display()
-        ))
-    })?;
-    let client = Client::builder()
-        .timeout(HTTP_IMAGE_TIMEOUT)
-        .build()
-        .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
-    let mut response = client
-        .get(url)
-        .send()
-        .and_then(|response| response.error_for_status())
-        .map_err(|error| {
-            Error::InvalidInput(format!(
-                "failed to download machine guest image from {url}: {error}"
+    let image_cache_dir = paths.image_cache_dir.clone();
+    let url = url.to_owned();
+    let download_url = url.clone();
+    let download = run_blocking_in_thread("machine HTTP image download", move || {
+        let download = NamedTempFile::new_in(&image_cache_dir).map_err(|error| {
+            Error::Internal(format!(
+                "failed to allocate temporary download file under {}: {error}",
+                image_cache_dir.display()
             ))
         })?;
+        let client = BlockingClient::builder()
+            .timeout(HTTP_IMAGE_TIMEOUT)
+            .build()
+            .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
+        let mut response = client
+            .get(&download_url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|error| {
+                Error::InvalidInput(format!(
+                    "failed to download machine guest image from {download_url}: {error}"
+                ))
+            })?;
 
-    let mut writer = download.reopen().map_err(|error| {
-        Error::Internal(format!(
-            "failed to reopen temporary download file under {}: {error}",
-            paths.image_cache_dir.display()
-        ))
+        let mut writer = download.reopen().map_err(|error| {
+            Error::Internal(format!(
+                "failed to reopen temporary download file under {}: {error}",
+                image_cache_dir.display()
+            ))
+        })?;
+        io::copy(&mut response, &mut writer).map_err(|error| {
+            Error::Internal(format!(
+                "failed to write downloaded machine image from {download_url} into {}: {error}",
+                image_cache_dir.display()
+            ))
+        })?;
+        writer.flush().map_err(|error| {
+            Error::Internal(format!(
+                "failed to flush downloaded machine image for {download_url}: {error}"
+            ))
+        })?;
+        drop(writer);
+        Ok(download)
     })?;
-    io::copy(&mut response, &mut writer).map_err(|error| {
-        Error::Internal(format!(
-            "failed to write downloaded machine image from {url} into {}: {error}",
-            paths.image_cache_dir.display()
-        ))
-    })?;
-    writer.flush().map_err(|error| {
-        Error::Internal(format!(
-            "failed to flush downloaded machine image for {url}: {error}"
-        ))
-    })?;
-    drop(writer);
 
     let temp_output = NamedTempFile::new_in(&paths.image_cache_dir).map_err(|error| {
         Error::Internal(format!(
@@ -2556,40 +2769,64 @@ fn check_build_attestation(
         return;
     };
 
-    let repos_to_check = attestation_repositories_for_reference(
-        &image_repo,
-        explicit_repository.filter(|repo| !repo.is_empty()),
-    );
+    let subject_digest = subject_digest.to_owned();
+    let explicit_repository = explicit_repository.map(ToOwned::to_owned);
+    let _ = run_blocking_in_thread("machine build attestation lookup", move || {
+        let repos_to_check = attestation_repositories_for_reference(
+            &image_repo,
+            explicit_repository
+                .as_deref()
+                .filter(|repo| !repo.is_empty()),
+        );
 
-    let client = match Client::builder().timeout(Duration::from_secs(10)).build() {
-        Ok(client) => client,
-        Err(error) => {
-            eprintln!("warning: attestation lookup failed: {error}");
-            return;
-        }
-    };
-
-    for repo in &repos_to_check {
-        match query_attestations(&client, repo, subject_digest) {
-            Ok(count) if count > 0 => {
-                eprintln!(
-                    "verified: {count} build attestation(s) found for {subject_digest} in {repo}"
-                );
-                return;
+        let client = match BlockingClient::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("warning: attestation lookup failed: {error}");
+                return Ok(());
             }
-            Ok(_) => {}
-            Err(msg) => {
-                eprintln!("warning: attestation lookup for {repo}: {msg}");
+        };
+
+        for repo in &repos_to_check {
+            match query_attestations(&client, repo, &subject_digest) {
+                Ok(count) if count > 0 => {
+                    eprintln!(
+                        "verified: {count} build attestation(s) found for {subject_digest} in {repo}"
+                    );
+                    return Ok(());
+                }
+                Ok(_) => {}
+                Err(msg) => {
+                    eprintln!("warning: attestation lookup for {repo}: {msg}");
+                }
             }
         }
-    }
 
-    eprintln!("warning: no build attestations found for {subject_digest}");
+        eprintln!("warning: no build attestations found for {subject_digest}");
+        Ok(())
+    });
+}
+
+fn run_blocking_in_thread<F, T>(label: &'static str, work: F) -> Result<T, Error>
+where
+    F: FnOnce() -> Result<T, Error> + Send + 'static,
+    T: Send + 'static,
+{
+    thread::spawn(work)
+        .join()
+        .map_err(|_| Error::Internal(format!("{label} worker panicked")))?
 }
 
 /// Query the GitHub Attestations API for a specific repo and digest.
 /// Returns the number of attestations found, or an error message.
-fn query_attestations(client: &Client, repo: &str, subject_digest: &str) -> Result<usize, String> {
+fn query_attestations(
+    client: &BlockingClient,
+    repo: &str,
+    subject_digest: &str,
+) -> Result<usize, String> {
     let url = format!("https://api.github.com/repos/{repo}/attestations/{subject_digest}");
 
     let response = client
@@ -2607,8 +2844,8 @@ fn query_attestations(client: &Client, repo: &str, subject_digest: &str) -> Resu
 
     Ok(body
         .get("attestations")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
         .unwrap_or(0))
 }
 
@@ -3162,6 +3399,63 @@ mod tests {
     }
 
     #[test]
+    fn local_guest_binary_lookup_prefers_release_over_debug() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let target_dir = temp_dir
+            .path()
+            .join("target")
+            .join(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64);
+        let release_binary = target_dir.join("release").join("neovex");
+        let debug_binary = target_dir.join("debug").join("neovex");
+        fs::create_dir_all(release_binary.parent().expect("release dir should exist"))
+            .expect("release dir should create");
+        fs::create_dir_all(debug_binary.parent().expect("debug dir should exist"))
+            .expect("debug dir should create");
+        fs::write(&release_binary, b"release").expect("release binary should write");
+        fs::write(&debug_binary, b"debug").expect("debug binary should write");
+
+        assert_eq!(
+            find_local_guest_neovex_binary_under(
+                temp_dir.path(),
+                DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64,
+            ),
+            Some(release_binary)
+        );
+    }
+
+    #[test]
+    fn local_guest_binary_lookup_falls_back_to_debug() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let debug_binary = temp_dir
+            .path()
+            .join("target")
+            .join(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64)
+            .join("debug")
+            .join("neovex");
+        fs::create_dir_all(debug_binary.parent().expect("debug dir should exist"))
+            .expect("debug dir should create");
+        fs::write(&debug_binary, b"debug").expect("debug binary should write");
+
+        assert_eq!(
+            find_local_guest_neovex_binary_under(
+                temp_dir.path(),
+                DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64,
+            ),
+            Some(debug_binary)
+        );
+    }
+
+    #[test]
+    fn workspace_root_from_manifest_dir_climbs_out_of_crate_dir() {
+        let manifest_dir = Path::new("/tmp/neovex/crates/neovex-bin");
+
+        assert_eq!(
+            workspace_root_from_manifest_dir(manifest_dir),
+            Some(Path::new("/tmp/neovex"))
+        );
+    }
+
+    #[test]
     fn converge_machine_image_contract_updates_legacy_stream_and_rebuilds_boot_artifacts() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let image_path = temp_dir.path().join("disk.raw");
@@ -3348,6 +3642,23 @@ mod tests {
             remote_shell_command(script),
             "sh -lc 'if [ -x '\"'\"'/usr/local/bin/neovex'\"'\"' ]; then printf '\"'\"'%s'\"'\"' ok; fi'"
         );
+    }
+
+    #[test]
+    fn ensure_guest_neovex_socket_shell_repairs_first_boot_failures() {
+        let script = ensure_guest_neovex_socket_shell_script();
+
+        assert!(script.contains("systemctl daemon-reload"), "{script}");
+        assert!(
+            script.contains("systemctl stop neovex.service neovex.socket"),
+            "{script}"
+        );
+        assert!(
+            script.contains("systemctl reset-failed neovex.service neovex.socket"),
+            "{script}"
+        );
+        assert!(script.contains("systemctl start neovex.socket"), "{script}");
+        assert!(script.contains(GUEST_NEOVEX_SOCKET), "{script}");
     }
 
     #[test]
@@ -3573,6 +3884,108 @@ mod tests {
 
         assert_eq!(resolved.krunkit, krunkit_path);
         assert_eq!(resolved.gvproxy, gvproxy_path);
+    }
+
+    #[test]
+    fn bundled_helper_candidates_cover_root_and_bin_layouts() {
+        let root_layout = bundled_helper_candidates_for_executable(
+            Path::new("/opt/homebrew/Caskroom/neovex/0.1.10/neovex"),
+            "gvproxy",
+        );
+        assert_eq!(
+            root_layout,
+            vec![PathBuf::from(
+                "/opt/homebrew/Caskroom/neovex/0.1.10/libexec/gvproxy"
+            )]
+        );
+
+        let bin_layout = bundled_helper_candidates_for_executable(
+            Path::new("/opt/homebrew/bin/neovex"),
+            "gvproxy",
+        );
+        assert_eq!(
+            bin_layout,
+            vec![
+                PathBuf::from("/opt/homebrew/bin/libexec/gvproxy"),
+                PathBuf::from("/opt/homebrew/libexec/gvproxy"),
+            ]
+        );
+    }
+
+    #[test]
+    fn helper_resolution_prefers_packaged_candidates_before_fallbacks() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let packaged_dir = temp_dir.path().join("libexec");
+        let fallback_dir = temp_dir.path().join("fallback");
+        fs::create_dir_all(&packaged_dir).expect("packaged helper dir should exist");
+        fs::create_dir_all(&fallback_dir).expect("fallback helper dir should exist");
+        let packaged_gvproxy = packaged_dir.join("gvproxy");
+        let fallback_gvproxy = fallback_dir.join("gvproxy");
+        write_helper_stub(&packaged_gvproxy, "gvproxy");
+        write_helper_stub(&fallback_gvproxy, "gvproxy");
+
+        let resolved = resolve_helper_binary(
+            "NEOVEX_TEST_GVPROXY",
+            "gvproxy-does-not-exist",
+            &[packaged_gvproxy.clone()],
+            &[fallback_gvproxy],
+        )
+        .expect("packaged helper should resolve");
+
+        assert_eq!(resolved, packaged_gvproxy);
+    }
+
+    #[test]
+    fn helper_resolution_honors_helper_binary_directory_override() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let helper_dir = temp_dir.path().join("helpers");
+        fs::create_dir_all(&helper_dir).expect("helper dir should exist");
+        let helper_gvproxy = helper_dir.join("gvproxy");
+        write_helper_stub(&helper_gvproxy, "gvproxy");
+        let _guard = MachineHelperEnvGuard::with_helper_binary_dir(&helper_dir);
+
+        let resolved = resolve_helper_binary("NEOVEX_TEST_GVPROXY", "gvproxy", &[], &[])
+            .expect("helper dir override should resolve");
+
+        assert_eq!(resolved, helper_gvproxy);
+    }
+
+    #[test]
+    fn known_helper_candidates_mirror_podman_darwin_defaults() {
+        assert_eq!(
+            known_helper_candidates("gvproxy"),
+            vec![
+                PathBuf::from("/usr/local/opt/podman/libexec/podman/gvproxy"),
+                PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"),
+                PathBuf::from("/opt/homebrew/bin/gvproxy"),
+                PathBuf::from("/usr/local/bin/gvproxy"),
+                PathBuf::from("/opt/homebrew/libexec/podman/gvproxy"),
+                PathBuf::from("/usr/local/libexec/podman/gvproxy"),
+                PathBuf::from("/usr/local/lib/podman/gvproxy"),
+                PathBuf::from("/usr/libexec/podman/gvproxy"),
+                PathBuf::from("/usr/lib/podman/gvproxy"),
+            ]
+        );
+    }
+
+    #[test]
+    fn helper_resolution_does_not_fall_back_to_path() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let helper_dir = temp_dir.path().join("path-only");
+        fs::create_dir_all(&helper_dir).expect("path-only helper dir should exist");
+        let helper_gvproxy = helper_dir.join("gvproxy");
+        write_helper_stub(&helper_gvproxy, "gvproxy");
+        let _guard = MachineHelperEnvGuard::with_path_only(&helper_dir);
+
+        let error = resolve_helper_binary("NEOVEX_TEST_GVPROXY", "gvproxy", &[], &[])
+            .expect_err("PATH-only helpers should be ignored");
+
+        assert!(
+            error
+                .to_string()
+                .contains("supported packaged or Homebrew helper directory"),
+            "{error}"
+        );
     }
 
     #[cfg(unix)]
