@@ -2661,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "neovex"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "neovex-core",
  "neovex-engine",
@@ -2673,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-bin"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "axum",
  "clap",
@@ -2701,7 +2701,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "rmp-serde",
  "serde",
@@ -2713,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-engine"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-runtime"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "criterion",
  "deno_core",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-sandbox"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "flate2",
  "fs2",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-server"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2808,7 +2808,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-storage"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "deadpool-postgres",
  "hyper 0.14.32",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-testing"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "axum",
  "futures",
