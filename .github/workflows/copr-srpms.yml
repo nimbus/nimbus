@@ -1,0 +1,166 @@
+name: copr-srpms
+
+on:
+  workflow_call:
+    inputs:
+      neovex_version:
+        description: Release version or tag from agentstation/neovex
+        required: true
+        type: string
+      neovex_crun_version:
+        description: Release version or tag from agentstation/neovex-crun
+        required: false
+        default: ""
+        type: string
+      copr_project:
+        description: COPR project name (owner/project)
+        required: false
+        default: ""
+        type: string
+      submit_to_copr:
+        description: Submit the generated SRPMs to COPR
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      neovex_version:
+        description: Release version or tag from agentstation/neovex
+        required: true
+      neovex_crun_version:
+        description: Release version or tag from agentstation/neovex-crun (defaults to packaging/linux-distribution-contract.env)
+        required: false
+        default: ""
+      copr_project:
+        description: COPR project name (owner/project, defaults to packaging/linux-distribution-contract.env)
+        default: ""
+        required: false
+      submit_to_copr:
+        description: Submit the generated SRPMs to COPR
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Fedora/COPR SRPMs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve Linux distribution contract
+        id: contract
+        shell: bash
+        env:
+          INPUT_NEOVEX_VERSION: ${{ inputs.neovex_version }}
+          INPUT_NEOVEX_CRUN_VERSION: ${{ inputs.neovex_crun_version }}
+          INPUT_COPR_PROJECT: ${{ inputs.copr_project }}
+        run: |
+          set -euo pipefail
+          source packaging/linux-distribution-contract.env
+
+          neovex_version="${INPUT_NEOVEX_VERSION#v}"
+          neovex_crun_version="${INPUT_NEOVEX_CRUN_VERSION:-}"
+          copr_project="${INPUT_COPR_PROJECT:-}"
+          if [[ -z "${neovex_crun_version}" ]]; then
+            neovex_crun_version="${NEOVEX_CRUN_VERSION}"
+          fi
+          if [[ -z "${copr_project}" ]]; then
+            copr_project="${COPR_PROJECT}"
+          fi
+          neovex_crun_version="${neovex_crun_version#v}"
+
+          {
+            echo "neovex_version=${neovex_version}"
+            echo "neovex_release_tag=v${neovex_version}"
+            echo "neovex_crun_version=${neovex_crun_version}"
+            echo "neovex_crun_release_tag=v${neovex_crun_version}"
+            echo "copr_project=${copr_project}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/copr/assets
+          gh release download "${{ steps.contract.outputs.neovex_release_tag }}" \
+            --repo agentstation/neovex \
+            --pattern 'neovex_linux_x86_64.tar.gz' \
+            --pattern 'neovex_linux_arm64.tar.gz' \
+            --dir dist/copr/assets
+          gh release download "${{ steps.contract.outputs.neovex_crun_release_tag }}" \
+            --repo agentstation/neovex-crun \
+            --pattern 'neovex-crun-linux-amd64' \
+            --pattern 'neovex-crun-linux-arm64' \
+            --dir dist/copr/assets
+
+      - name: Build SRPMs inside Fedora userspace
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$PWD:/work" \
+            -w /work \
+            fedora:42 \
+            bash -lc '
+              set -euo pipefail
+              dnf install -y rpm-build tar gzip findutils
+
+              bash scripts/build-fedora-release-srpms.sh \
+                --output-dir /work/dist/copr/output \
+                --neovex-version "${{ steps.contract.outputs.neovex_version }}" \
+                --neovex-linux-amd64-tarball /work/dist/copr/assets/neovex_linux_x86_64.tar.gz \
+                --neovex-linux-arm64-tarball /work/dist/copr/assets/neovex_linux_arm64.tar.gz \
+                --neovex-crun-version "${{ steps.contract.outputs.neovex_crun_version }}" \
+                --neovex-crun-linux-amd64 /work/dist/copr/assets/neovex-crun-linux-amd64 \
+                --neovex-crun-linux-arm64 /work/dist/copr/assets/neovex-crun-linux-arm64
+
+              chown -R "${HOST_UID}:${HOST_GID}" /work/dist/copr
+            '
+
+      - name: Upload SRPM artifact bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: copr-srpms-${{ steps.contract.outputs.neovex_version }}
+          path: dist/copr/output
+          compression-level: 0
+
+      - name: Install copr-cli
+        if: inputs.submit_to_copr
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user copr-cli
+
+      - name: Configure copr-cli
+        if: inputs.submit_to_copr
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${COPR_CONFIG}" ]]; then
+            echo "COPR_CONFIG secret must be configured when submit_to_copr=true" >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.config
+          printf '%s\n' "${COPR_CONFIG}" > ~/.config/copr
+          chmod 0600 ~/.config/copr
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Submit SRPMs to COPR
+        if: inputs.submit_to_copr
+        run: |
+          set -euo pipefail
+
+          copr-cli build "${{ steps.contract.outputs.copr_project }}" dist/copr/output/srpms/neovex-*.src.rpm
+          copr-cli build "${{ steps.contract.outputs.copr_project }}" dist/copr/output/srpms/neovex-crun-*.src.rpm

@@ -1,0 +1,223 @@
+name: apt-repo
+
+on:
+  workflow_call:
+    inputs:
+      neovex_version:
+        description: "Neovex release version or tag"
+        required: true
+        type: string
+      neovex_crun_version:
+        description: "neovex-crun release version or tag"
+        required: false
+        default: ""
+        type: string
+      distribution:
+        description: "Apt distribution/codename"
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: "Deploy the built apt repository bundle to GitHub Pages"
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      neovex_version:
+        description: "Neovex release version or tag (for example 0.1.10 or v0.1.10)"
+        required: true
+      neovex_crun_version:
+        description: "neovex-crun release version or tag (defaults to packaging/linux-distribution-contract.env)"
+        required: false
+        default: ""
+      distribution:
+        description: "Apt distribution/codename (defaults to packaging/linux-distribution-contract.env)"
+        required: false
+        default: ""
+      publish:
+        description: "Deploy the built apt repository bundle to GitHub Pages"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Resolve Linux distribution contract
+        id: contract
+        shell: bash
+        env:
+          INPUT_NEOVEX_VERSION: ${{ inputs.neovex_version }}
+          INPUT_NEOVEX_CRUN_VERSION: ${{ inputs.neovex_crun_version }}
+          INPUT_DISTRIBUTION: ${{ inputs.distribution }}
+        run: |
+          set -euo pipefail
+          source packaging/linux-distribution-contract.env
+
+          neovex_version="${INPUT_NEOVEX_VERSION#v}"
+          neovex_crun_version="${INPUT_NEOVEX_CRUN_VERSION:-}"
+          distribution="${INPUT_DISTRIBUTION:-}"
+          if [[ -z "${neovex_crun_version}" ]]; then
+            neovex_crun_version="${NEOVEX_CRUN_VERSION}"
+          fi
+          if [[ -z "${distribution}" ]]; then
+            distribution="${APT_REPOSITORY_DISTRIBUTION}"
+          fi
+          neovex_crun_version="${neovex_crun_version#v}"
+
+          {
+            echo "neovex_version=${neovex_version}"
+            echo "neovex_release_tag=v${neovex_version}"
+            echo "neovex_crun_version=${neovex_crun_version}"
+            echo "neovex_crun_release_tag=v${neovex_crun_version}"
+            echo "distribution=${distribution}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.2"
+
+      - name: Install packaging tools
+        run: |
+          GOBIN="${RUNNER_TEMP}/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y apt-utils gnupg
+
+      - name: Download release binaries
+        env:
+          NEOVEX_RELEASE_TAG: ${{ steps.contract.outputs.neovex_release_tag }}
+          CRUN_RELEASE_TAG: ${{ steps.contract.outputs.neovex_crun_release_tag }}
+        run: |
+          mkdir -p dist/input/neovex/amd64 dist/input/neovex/arm64 dist/input/crun
+
+          curl --fail -sSL --retry 5 \
+            -o dist/input/neovex_linux_x86_64.tar.gz \
+            "https://github.com/agentstation/neovex/releases/download/${NEOVEX_RELEASE_TAG}/neovex_linux_x86_64.tar.gz"
+          tar -xzf dist/input/neovex_linux_x86_64.tar.gz -C dist/input/neovex/amd64
+
+          curl --fail -sSL --retry 5 \
+            -o dist/input/neovex_linux_arm64.tar.gz \
+            "https://github.com/agentstation/neovex/releases/download/${NEOVEX_RELEASE_TAG}/neovex_linux_arm64.tar.gz"
+          tar -xzf dist/input/neovex_linux_arm64.tar.gz -C dist/input/neovex/arm64
+
+          curl --fail -sSL --retry 5 \
+            -o dist/input/crun/neovex-crun-amd64 \
+            "https://github.com/agentstation/neovex-crun/releases/download/${CRUN_RELEASE_TAG}/neovex-crun-linux-amd64"
+          curl --fail -sSL --retry 5 \
+            -o dist/input/crun/neovex-crun-arm64 \
+            "https://github.com/agentstation/neovex-crun/releases/download/${CRUN_RELEASE_TAG}/neovex-crun-linux-arm64"
+          chmod 0755 dist/input/crun/neovex-crun-amd64 dist/input/crun/neovex-crun-arm64
+
+      - name: Build amd64 deb packages
+        env:
+          NEOVEX_VERSION: ${{ steps.contract.outputs.neovex_version }}
+          CRUN_VERSION: ${{ steps.contract.outputs.neovex_crun_version }}
+        run: |
+          bash scripts/build-linux-release-packages.sh \
+            --output-dir dist/linux-packages/amd64 \
+            --neovex-binary dist/input/neovex/amd64/neovex \
+            --neovex-crun-binary dist/input/crun/neovex-crun-amd64 \
+            --version "${NEOVEX_VERSION}" \
+            --crun-version "${CRUN_VERSION}" \
+            --arch amd64 \
+            --format deb
+
+      - name: Build arm64 deb packages
+        env:
+          NEOVEX_VERSION: ${{ steps.contract.outputs.neovex_version }}
+          CRUN_VERSION: ${{ steps.contract.outputs.neovex_crun_version }}
+        run: |
+          bash scripts/build-linux-release-packages.sh \
+            --output-dir dist/linux-packages/arm64 \
+            --neovex-binary dist/input/neovex/arm64/neovex \
+            --neovex-crun-binary dist/input/crun/neovex-crun-arm64 \
+            --version "${NEOVEX_VERSION}" \
+            --crun-version "${CRUN_VERSION}" \
+            --arch arm64 \
+            --format deb
+
+      - name: Assemble apt repo input
+        run: |
+          mkdir -p dist/apt-input/packages
+          cp dist/linux-packages/amd64/packages/*.deb dist/apt-input/packages/
+          cp dist/linux-packages/arm64/packages/*.deb dist/apt-input/packages/
+
+      - name: Materialize optional signing key
+        env:
+          APT_REPOSITORY_SIGNING_KEY: ${{ secrets.APT_REPOSITORY_SIGNING_KEY }}
+          APT_REPOSITORY_SIGNING_PASSPHRASE: ${{ secrets.APT_REPOSITORY_SIGNING_PASSPHRASE }}
+        run: |
+          mkdir -p dist/apt-signing
+          if [[ -n "${APT_REPOSITORY_SIGNING_KEY}" ]]; then
+            printf '%s\n' "${APT_REPOSITORY_SIGNING_KEY}" > dist/apt-signing/private.asc
+          fi
+          if [[ -n "${APT_REPOSITORY_SIGNING_PASSPHRASE}" ]]; then
+            printf '%s\n' "${APT_REPOSITORY_SIGNING_PASSPHRASE}" > dist/apt-signing/passphrase.txt
+          fi
+
+      - name: Build apt repository bundle
+        env:
+          DISTRIBUTION: ${{ steps.contract.outputs.distribution }}
+          APT_REPOSITORY_CNAME: ${{ vars.APT_REPOSITORY_CNAME }}
+        run: |
+          signing_args=()
+          if [[ -f dist/apt-signing/private.asc ]]; then
+            signing_args+=(--gpg-private-key dist/apt-signing/private.asc)
+          fi
+          if [[ -f dist/apt-signing/passphrase.txt ]]; then
+            signing_args+=(--gpg-passphrase-file dist/apt-signing/passphrase.txt)
+          fi
+
+          bash scripts/build-apt-repository.sh \
+            --output-dir dist/apt-repo \
+            --packages-dir dist/apt-input/packages \
+            --distribution "${DISTRIBUTION}" \
+            --component main \
+            --origin AgentStation \
+            --label neovex \
+            --description "Neovex apt repository" \
+            "${signing_args[@]}"
+
+          if [[ -n "${APT_REPOSITORY_CNAME}" ]]; then
+            printf '%s\n' "${APT_REPOSITORY_CNAME}" > dist/apt-repo/CNAME
+          fi
+
+      - name: Upload apt repository artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo-${{ steps.contract.outputs.distribution }}
+          path: |
+            dist/apt-repo/**
+
+      - name: Upload Pages artifact
+        if: ${{ inputs.publish }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/apt-repo
+
+  deploy:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
