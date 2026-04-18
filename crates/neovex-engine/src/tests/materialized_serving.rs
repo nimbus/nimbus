@@ -835,12 +835,24 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
     sorted.sort_unstable();
     assert_eq!(bodies, sorted);
     assert_eq!(bodies.len(), 33);
+    let journal_stats = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
 
     let stats = service
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
-    assert_eq!(stats.table_load_count, 1);
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(stats.in_flight_load_count, 0);
+    assert!(
+        (1..=2).contains(&stats.table_load_count),
+        "concurrent writes may force one catch-up warm load beyond the initial publication"
+    );
     assert!(stats.evaluation_count >= 66);
+    assert_eq!(
+        stats.latest_covered_sequence,
+        Some(journal_stats.applied_head)
+    );
 }
 
 #[test]
