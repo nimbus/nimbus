@@ -6,10 +6,11 @@ use neovex::{
 #[cfg(unix)]
 use neovex::{SandboxBuildLaunchSpec, SandboxHandle, SandboxImageLaunchSpec};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 #[cfg(unix)]
-pub(crate) const PROTOCOL_VERSION: &str = "v1alpha1";
+pub(crate) const PROTOCOL_VERSION: &str = "v1alpha2";
 #[cfg(unix)]
 pub(crate) const MACHINE_API_ROLE: &str = "guest-machine-api";
 
@@ -29,7 +30,8 @@ pub(crate) struct MachineApiCapabilityResponse {
     pub(crate) service_execution_mode: MachineApiServiceExecutionMode,
     pub(crate) supported_service_backends: Vec<SandboxBackendKind>,
     pub(crate) supported_operations: Vec<String>,
-    pub(crate) required_binaries: Vec<MachineApiRequiredBinaryStatus>,
+    pub(crate) binary_statuses: Vec<MachineApiBinaryStatus>,
+    pub(crate) operation_statuses: Vec<MachineApiOperationStatus>,
     pub(crate) service_execution_blockers: Vec<String>,
 }
 
@@ -40,10 +42,39 @@ pub(crate) enum MachineApiServiceExecutionMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MachineApiRequiredBinaryStatus {
+pub(crate) struct MachineApiBinaryStatus {
     pub(crate) name: String,
     pub(crate) present: bool,
     pub(crate) resolved_path: Option<String>,
+    pub(crate) required_for_operations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiOperationStatus {
+    pub(crate) name: String,
+    pub(crate) available: bool,
+    pub(crate) blockers: Vec<String>,
+}
+
+impl MachineApiCapabilityResponse {
+    pub(crate) fn blockers_for_operations<'a>(
+        &self,
+        required_operations: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        let mut blockers = BTreeSet::new();
+        for required_operation in required_operations {
+            if let Some(status) = self
+                .operation_statuses
+                .iter()
+                .find(|status| status.name == required_operation)
+            {
+                for blocker in &status.blockers {
+                    blockers.insert(blocker.clone());
+                }
+            }
+        }
+        blockers.into_iter().collect()
+    }
 }
 
 #[cfg(unix)]

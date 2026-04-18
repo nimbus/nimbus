@@ -16,7 +16,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use neovex::{Error, SandboxBackend, SandboxBackendKind, SandboxError, TenantId};
+use neovex::{Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxStatus, TenantId};
 use neovex_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerSandboxStateView,
     OciMachinePortForwarderConfig,
@@ -24,9 +24,9 @@ use neovex_sandbox::backends::container::{
 use serde::Deserialize;
 
 use super::protocol::{
-    MACHINE_API_ROLE, MachineApiCapabilityResponse, MachineApiErrorResponse,
-    MachineApiHealthResponse, MachineApiRequiredBinaryStatus, MachineApiServiceExecutionMode,
-    MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
+    MACHINE_API_ROLE, MachineApiBinaryStatus, MachineApiCapabilityResponse,
+    MachineApiErrorResponse, MachineApiHealthResponse, MachineApiOperationStatus,
+    MachineApiServiceExecutionMode, MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
     MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxBuildStartRequest,
     MachineApiServiceSandboxDetails, MachineApiServiceSandboxImageStartRequest,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
@@ -37,17 +37,6 @@ use super::protocol::{
 use super::{MachineApiCommand, MachineRootLayout};
 
 const DEFAULT_SYSTEMD_SOCKET_FD: i32 = 3;
-const STANDARD_CONTAINER_RUNTIME_BINARIES: &[&str] = &[
-    "buildah",
-    "conmon",
-    "crun",
-    "netavark",
-    "aardvark-dns",
-    "fuse-overlayfs",
-];
-const STANDARD_CONTAINER_IMAGE_START_BINARIES: &[&str] =
-    &["conmon", "crun", "netavark", "aardvark-dns"];
-const STANDARD_CONTAINER_BUILD_START_BINARIES: &[&str] = &["buildah", "fuse-overlayfs"];
 const DEFAULT_GUEST_HELPER_BINARY_DIRS: &[&str] = &[
     "/usr/local/libexec/podman",
     "/usr/local/lib/podman",
@@ -65,6 +54,43 @@ const MACHINE_API_LOGS_OPERATION: &str = "service-sandboxes.logs";
 const MACHINE_API_PS_OPERATION: &str = "service-sandboxes.ps";
 const MACHINE_API_STOP_OPERATION: &str = "service-sandboxes.stop";
 const MACHINE_PORT_FORWARDER_TIMEOUT: Duration = Duration::from_millis(200);
+
+#[derive(Clone, Copy)]
+struct MachineApiBinaryRequirement {
+    name: &'static str,
+    required_for_operations: &'static [&'static str],
+}
+
+const STANDARD_CONTAINER_BINARY_REQUIREMENTS: &[MachineApiBinaryRequirement] = &[
+    MachineApiBinaryRequirement {
+        name: "conmon",
+        required_for_operations: &[
+            MACHINE_API_IMAGE_START_OPERATION,
+            MACHINE_API_BUILD_START_OPERATION,
+        ],
+    },
+    MachineApiBinaryRequirement {
+        name: "crun",
+        required_for_operations: &[
+            MACHINE_API_IMAGE_START_OPERATION,
+            MACHINE_API_BUILD_START_OPERATION,
+        ],
+    },
+    MachineApiBinaryRequirement {
+        name: "netavark",
+        required_for_operations: &[
+            MACHINE_API_IMAGE_START_OPERATION,
+            MACHINE_API_BUILD_START_OPERATION,
+        ],
+    },
+    MachineApiBinaryRequirement {
+        name: "aardvark-dns",
+        required_for_operations: &[
+            MACHINE_API_IMAGE_START_OPERATION,
+            MACHINE_API_BUILD_START_OPERATION,
+        ],
+    },
+];
 
 #[derive(Clone)]
 pub(crate) struct MachineApiState {
@@ -262,6 +288,19 @@ async fn machine_api_list_service_sandboxes(
 ) -> Result<Json<MachineApiServiceSandboxListResponse>, MachineApiHttpError> {
     require_service_backend(&state)?;
     let view = container_state_view(&state);
+    let summaries = match query.tenant_id.as_ref() {
+        Some(tenant_id) => view
+            .list_for_tenant(tenant_id)
+            .map_err(container_state_error_to_http_error)?,
+        None => view.list().map_err(container_state_error_to_http_error)?,
+    };
+    let sandbox_ids = summaries
+        .iter()
+        .filter(|summary| service_sandbox_status_needs_refresh(summary.status))
+        .map(|summary| summary.sandbox_id.clone())
+        .collect::<Vec<_>>();
+    refresh_persisted_service_sandbox_state(&state, sandbox_ids).await?;
+
     let sandboxes = match query.tenant_id.as_ref() {
         Some(tenant_id) => view
             .list_for_tenant(tenant_id)
@@ -287,6 +326,17 @@ async fn machine_api_lookup_current_service_sandbox(
 ) -> Result<Json<MachineApiServiceSandboxLookupResponse>, MachineApiHttpError> {
     require_service_backend(&state)?;
     let view = container_state_view(&state);
+    let sandbox_ids = view
+        .list_for_tenant(&query.tenant_id)
+        .map_err(container_state_error_to_http_error)?
+        .into_iter()
+        .filter(|summary| {
+            summary.service_name == query.service_name
+                && service_sandbox_status_needs_refresh(summary.status)
+        })
+        .map(|summary| summary.sandbox_id)
+        .collect::<Vec<_>>();
+    refresh_persisted_service_sandbox_state(&state, sandbox_ids).await?;
     let details = view
         .inspect_service(&query.tenant_id, &query.service_name)
         .map_err(container_state_error_to_http_error)?
@@ -393,56 +443,71 @@ async fn machine_api_stop_service_sandbox(
 }
 
 fn machine_api_capability_response(state: &MachineApiState) -> MachineApiCapabilityResponse {
-    let required_binaries = resolve_required_binaries(
+    let binary_statuses = resolve_binary_statuses(
         state.binary_lookup_path.as_deref(),
         &state.helper_binary_dirs,
     );
-    let image_start_binaries_ready =
-        required_binaries_ready(&required_binaries, STANDARD_CONTAINER_IMAGE_START_BINARIES);
-    let build_start_binaries_ready =
-        required_binaries_ready(&required_binaries, STANDARD_CONTAINER_BUILD_START_BINARIES);
-    let mut service_execution_blockers = Vec::new();
     let state_operations_available = state.service_backend.is_some();
-    if state.service_backend.is_none() {
-        service_execution_blockers.push(MACHINE_API_OPERATION_BLOCKER.to_owned());
+    let mut shared_blockers = Vec::new();
+    if !state_operations_available {
+        shared_blockers.push(MACHINE_API_OPERATION_BLOCKER.to_owned());
     }
-    if state.service_backend.is_some()
+    if state_operations_available
         && let Some(forwarder) = state.machine_port_forwarder.as_ref()
         && let Err(error) = probe_machine_port_forwarder(forwarder)
     {
-        service_execution_blockers.push(error);
+        shared_blockers.push(error);
     }
-    service_execution_blockers.extend(
-        required_binaries
-            .iter()
-            .filter(|binary| {
-                STANDARD_CONTAINER_IMAGE_START_BINARIES
-                    .iter()
-                    .any(|name| *name == binary.name)
-            })
-            .filter(|binary| !binary.present)
-            .map(|binary| format!("missing required guest runtime binary: {}", binary.name)),
+
+    let image_start_blockers = merge_operation_blockers(
+        &shared_blockers,
+        missing_binary_blockers(&binary_statuses, MACHINE_API_IMAGE_START_OPERATION),
     );
+    let build_start_blockers = merge_operation_blockers(
+        &image_start_blockers,
+        missing_binary_blockers(&binary_statuses, MACHINE_API_BUILD_START_OPERATION),
+    );
+    let operation_statuses = vec![
+        machine_api_operation_status(
+            MACHINE_API_LIST_OPERATION,
+            shared_operation_blockers(state_operations_available, &shared_blockers),
+        ),
+        machine_api_operation_status(
+            MACHINE_API_INSPECT_OPERATION,
+            shared_operation_blockers(state_operations_available, &shared_blockers),
+        ),
+        machine_api_operation_status(
+            MACHINE_API_INSPECT_CURRENT_OPERATION,
+            shared_operation_blockers(state_operations_available, &shared_blockers),
+        ),
+        machine_api_operation_status(
+            MACHINE_API_LOGS_OPERATION,
+            shared_operation_blockers(state_operations_available, &shared_blockers),
+        ),
+        machine_api_operation_status(
+            MACHINE_API_PS_OPERATION,
+            shared_operation_blockers(state_operations_available, &shared_blockers),
+        ),
+        machine_api_operation_status(
+            MACHINE_API_IMAGE_START_OPERATION,
+            image_start_blockers.clone(),
+        ),
+        machine_api_operation_status(MACHINE_API_STOP_OPERATION, image_start_blockers.clone()),
+        machine_api_operation_status(MACHINE_API_BUILD_START_OPERATION, build_start_blockers),
+    ];
+    let service_execution_blockers = operation_statuses
+        .iter()
+        .find(|status| status.name == MACHINE_API_IMAGE_START_OPERATION)
+        .map(|status| status.blockers.clone())
+        .unwrap_or_default();
     let service_execution_ready = service_execution_blockers.is_empty();
     let mut supported_operations = vec!["healthz".to_owned(), "capabilities".to_owned()];
-    if state_operations_available {
-        supported_operations.extend([
-            MACHINE_API_LIST_OPERATION.to_owned(),
-            MACHINE_API_INSPECT_OPERATION.to_owned(),
-            MACHINE_API_INSPECT_CURRENT_OPERATION.to_owned(),
-            MACHINE_API_LOGS_OPERATION.to_owned(),
-            MACHINE_API_PS_OPERATION.to_owned(),
-        ]);
-    }
-    if state.service_backend.is_some() && image_start_binaries_ready && service_execution_ready {
-        supported_operations.extend([
-            MACHINE_API_IMAGE_START_OPERATION.to_owned(),
-            MACHINE_API_STOP_OPERATION.to_owned(),
-        ]);
-        if build_start_binaries_ready {
-            supported_operations.push(MACHINE_API_BUILD_START_OPERATION.to_owned());
-        }
-    }
+    supported_operations.extend(
+        operation_statuses
+            .iter()
+            .filter(|status| status.available)
+            .map(|status| status.name.clone()),
+    );
     let supported_service_backends = state
         .service_backend
         .as_ref()
@@ -455,22 +520,57 @@ fn machine_api_capability_response(state: &MachineApiState) -> MachineApiCapabil
         service_execution_mode: MachineApiServiceExecutionMode::StandardContainers,
         supported_service_backends,
         supported_operations,
-        required_binaries,
+        binary_statuses,
+        operation_statuses,
         service_execution_blockers,
     }
 }
 
-fn required_binaries_ready(
-    required_binaries: &[MachineApiRequiredBinaryStatus],
-    required_names: &[&str],
-) -> bool {
-    required_names.iter().all(|required_name| {
-        required_binaries
-            .iter()
-            .find(|binary| binary.name == *required_name)
-            .map(|binary| binary.present)
-            .unwrap_or(false)
-    })
+fn machine_api_operation_status(name: &str, blockers: Vec<String>) -> MachineApiOperationStatus {
+    MachineApiOperationStatus {
+        name: name.to_owned(),
+        available: blockers.is_empty(),
+        blockers,
+    }
+}
+
+fn shared_operation_blockers(
+    state_operations_available: bool,
+    shared_blockers: &[String],
+) -> Vec<String> {
+    if state_operations_available {
+        Vec::new()
+    } else {
+        shared_blockers.to_vec()
+    }
+}
+
+fn merge_operation_blockers(shared: &[String], mut specific: Vec<String>) -> Vec<String> {
+    let mut blockers = shared.to_vec();
+    blockers.append(&mut specific);
+    blockers
+}
+
+fn missing_binary_blockers(
+    binary_statuses: &[MachineApiBinaryStatus],
+    operation_name: &str,
+) -> Vec<String> {
+    binary_statuses
+        .iter()
+        .filter(|binary| {
+            !binary.present
+                && binary
+                    .required_for_operations
+                    .iter()
+                    .any(|required| required == operation_name)
+        })
+        .map(|binary| {
+            format!(
+                "missing guest binary required for {}: {}",
+                operation_name, binary.name
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn default_guest_helper_binary_dirs() -> Vec<PathBuf> {
@@ -504,6 +604,30 @@ fn apply_resolved_runtime_paths(
 
 fn container_state_view(state: &MachineApiState) -> ContainerSandboxStateView {
     ContainerSandboxStateView::new(machine_container_state_root(&state.control_data_dir))
+}
+
+fn service_sandbox_status_needs_refresh(status: SandboxStatus) -> bool {
+    matches!(
+        status,
+        SandboxStatus::Starting
+            | SandboxStatus::Ready
+            | SandboxStatus::NotReady
+            | SandboxStatus::Stopping
+    )
+}
+
+async fn refresh_persisted_service_sandbox_state(
+    state: &MachineApiState,
+    sandbox_ids: Vec<neovex::SandboxId>,
+) -> Result<(), MachineApiHttpError> {
+    let backend = require_service_backend(state)?;
+    for sandbox_id in sandbox_ids {
+        let _ = backend
+            .inspect(&sandbox_id)
+            .await
+            .map_err(sandbox_error_to_http_error)?;
+    }
+    Ok(())
 }
 
 fn machine_container_state_root(control_data_dir: &Path) -> PathBuf {
@@ -743,18 +867,23 @@ impl IntoResponse for MachineApiHttpError {
     }
 }
 
-fn resolve_required_binaries(
+fn resolve_binary_statuses(
     path_env: Option<&OsStr>,
     helper_binary_dirs: &[PathBuf],
-) -> Vec<MachineApiRequiredBinaryStatus> {
-    STANDARD_CONTAINER_RUNTIME_BINARIES
+) -> Vec<MachineApiBinaryStatus> {
+    STANDARD_CONTAINER_BINARY_REQUIREMENTS
         .iter()
-        .map(|name| {
-            let resolved_path = resolve_binary(name, path_env, helper_binary_dirs);
-            MachineApiRequiredBinaryStatus {
-                name: (*name).to_owned(),
+        .map(|requirement| {
+            let resolved_path = resolve_binary(requirement.name, path_env, helper_binary_dirs);
+            MachineApiBinaryStatus {
+                name: requirement.name.to_owned(),
                 present: resolved_path.is_some(),
                 resolved_path: resolved_path.map(|path| path.display().to_string()),
+                required_for_operations: requirement
+                    .required_for_operations
+                    .iter()
+                    .map(|operation| (*operation).to_owned())
+                    .collect(),
             }
         })
         .collect()
@@ -931,12 +1060,22 @@ fn remove_env_var(key: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io::{Read, Write};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
-    use std::sync::Arc;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use neovex::{
+        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+        SandboxBuildLaunchSpec, SandboxError, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
+        SandboxPortBinding, SandboxSpec, SandboxStatus, TenantId,
+    };
+    use neovex_sandbox::SandboxFuture;
+    use serde_json::json;
     use tempfile::{Builder, TempDir};
 
     use super::*;
@@ -954,8 +1093,8 @@ mod tests {
             service_backend: None,
             machine_port_forwarder: None,
         };
-        for binary in STANDARD_CONTAINER_RUNTIME_BINARIES {
-            write_fake_binary(&temp_dir, binary);
+        for requirement in STANDARD_CONTAINER_BINARY_REQUIREMENTS {
+            write_fake_binary(&temp_dir, requirement.name);
         }
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -1004,9 +1143,8 @@ mod tests {
     }
 
     #[test]
-    fn capability_response_reports_required_binaries_and_explicit_blockers() {
+    fn capability_response_reports_binary_statuses_and_explicit_blockers() {
         let temp_dir = short_socket_tempdir();
-        write_fake_binary(&temp_dir, "buildah");
         write_fake_binary(&temp_dir, "conmon");
         write_fake_binary(&temp_dir, "crun");
 
@@ -1039,31 +1177,37 @@ mod tests {
                 .iter()
                 .any(|blocker| blocker == MACHINE_API_OPERATION_BLOCKER)
         );
-        assert!(
-            capabilities
-                .required_binaries
-                .iter()
-                .any(|binary| binary.name == "buildah" && binary.present)
-        );
-        assert!(
-            capabilities
-                .required_binaries
-                .iter()
-                .any(|binary| binary.name == "netavark" && !binary.present)
-        );
+        assert!(capabilities.binary_statuses.iter().any(|binary| {
+            binary.name == "netavark"
+                && !binary.present
+                && binary.required_for_operations
+                    == vec![
+                        MACHINE_API_IMAGE_START_OPERATION.to_owned(),
+                        MACHINE_API_BUILD_START_OPERATION.to_owned(),
+                    ]
+        }));
         assert!(
             capabilities
                 .service_execution_blockers
                 .iter()
-                .any(|blocker| blocker == "missing required guest runtime binary: netavark")
+                .any(|blocker| blocker
+                    == "missing guest binary required for service-sandboxes.image-start: netavark")
         );
+        assert!(capabilities.operation_statuses.iter().any(|status| {
+            status.name == MACHINE_API_BUILD_START_OPERATION
+                && !status.available
+                && status
+                    .blockers
+                    .iter()
+                    .any(|blocker| blocker == MACHINE_API_OPERATION_BLOCKER)
+        }));
     }
 
     #[test]
     fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable() {
         let temp_dir = short_socket_tempdir();
-        for binary in STANDARD_CONTAINER_RUNTIME_BINARIES {
-            write_fake_binary(&temp_dir, binary);
+        for requirement in STANDARD_CONTAINER_BINARY_REQUIREMENTS {
+            write_fake_binary(&temp_dir, requirement.name);
         }
 
         let state = MachineApiState {
@@ -1114,12 +1258,10 @@ mod tests {
         let temp_dir = short_socket_tempdir();
         let helper_dir = temp_dir.path().join("podman-helpers");
         fs::create_dir_all(&helper_dir).expect("helper dir should create");
-        write_fake_binary(&temp_dir, "buildah");
         write_fake_binary(&temp_dir, "conmon");
         write_fake_binary(&temp_dir, "crun");
         write_fake_binary_at(&helper_dir, "netavark");
         write_fake_binary_at(&helper_dir, "aardvark-dns");
-        write_fake_binary_at(&helper_dir, "fuse-overlayfs");
 
         let state = MachineApiState {
             control_data_dir: temp_dir.path().join("control"),
@@ -1133,12 +1275,12 @@ mod tests {
         let capabilities = machine_api_capability_response(&state);
         let netavark_path = helper_dir.join("netavark").display().to_string();
         let aardvark_path = helper_dir.join("aardvark-dns").display().to_string();
-        assert!(capabilities.required_binaries.iter().any(|binary| {
+        assert!(capabilities.binary_statuses.iter().any(|binary| {
             binary.name == "netavark"
                 && binary.present
                 && binary.resolved_path.as_deref() == Some(netavark_path.as_str())
         }));
-        assert!(capabilities.required_binaries.iter().any(|binary| {
+        assert!(capabilities.binary_statuses.iter().any(|binary| {
             binary.name == "aardvark-dns"
                 && binary.present
                 && binary.resolved_path.as_deref() == Some(aardvark_path.as_str())
@@ -1152,7 +1294,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_response_keeps_image_start_available_without_buildah() {
+    fn capability_response_keeps_build_start_available_without_buildah_or_fuse_overlayfs() {
         let temp_dir = short_socket_tempdir();
         let helper_dir = temp_dir.path().join("podman-helpers");
         fs::create_dir_all(&helper_dir).expect("helper dir should create");
@@ -1160,7 +1302,6 @@ mod tests {
         write_fake_binary(&temp_dir, "crun");
         write_fake_binary_at(&helper_dir, "netavark");
         write_fake_binary_at(&helper_dir, "aardvark-dns");
-        write_fake_binary_at(&helper_dir, "fuse-overlayfs");
 
         let state = MachineApiState {
             control_data_dir: temp_dir.path().join("control"),
@@ -1189,20 +1330,19 @@ mod tests {
             capabilities
                 .supported_operations
                 .iter()
-                .all(|operation| operation != MACHINE_API_BUILD_START_OPERATION)
+                .any(|operation| operation == MACHINE_API_BUILD_START_OPERATION)
         );
         assert!(
             capabilities
-                .required_binaries
+                .binary_statuses
                 .iter()
-                .any(|binary| binary.name == "buildah" && !binary.present)
+                .all(|binary| binary.name != "buildah" && binary.name != "fuse-overlayfs")
         );
-        assert!(
-            capabilities
-                .service_execution_blockers
-                .iter()
-                .all(|blocker| !blocker.contains("buildah"))
-        );
+        assert!(capabilities.operation_statuses.iter().any(|status| {
+            status.name == MACHINE_API_BUILD_START_OPERATION
+                && status.available
+                && status.blockers.is_empty()
+        }));
     }
 
     #[test]
@@ -1256,6 +1396,93 @@ mod tests {
         let tokio_listener =
             tokio_listener_from_inherited_fd(duplicated_fd).expect("fd should convert");
         drop(tokio_listener);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn machine_api_list_and_current_refresh_persisted_service_state_before_reply() {
+        let temp_dir = short_socket_tempdir();
+        let control_data_dir = temp_dir.path().join("control");
+        let state_root = machine_container_state_root(&control_data_dir);
+        let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+        let sandbox_id = SandboxId::new("demo-01aaa");
+        let stopped_sandbox_id = SandboxId::new("demo-01old");
+        write_container_manifest(
+            &state_root,
+            sandbox_id.as_str(),
+            tenant_id.as_str(),
+            "demo",
+            SandboxStatus::Starting,
+            Vec::new(),
+        );
+        write_container_manifest(
+            &state_root,
+            stopped_sandbox_id.as_str(),
+            tenant_id.as_str(),
+            "demo",
+            SandboxStatus::Stopped,
+            Vec::new(),
+        );
+
+        let backend = RefreshingInspectBackend::new(state_root.clone());
+        let inspected_ids = backend.inspected_ids();
+
+        let socket_path = temp_dir.path().join("neovex.sock");
+        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+        let state = MachineApiState {
+            control_data_dir,
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
+            helper_binary_dirs: Vec::new(),
+            service_backend: Some(Arc::new(backend)),
+            machine_port_forwarder: None,
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve_machine_api(listener, state, async move {
+            let _ = shutdown_rx.await;
+        }));
+        wait_for_socket_path(&socket_path);
+
+        let list_response = wait_for_http_response_contains(
+            &socket_path,
+            &format!("/v1/machine-api/service-sandboxes?tenant_id={tenant_id}"),
+            "\"status\":\"ready\"",
+        );
+        assert!(
+            list_response.contains("\"published_endpoints\":[{\"name\":\"default\""),
+            "{list_response}"
+        );
+
+        let current_response = wait_for_http_response_contains(
+            &socket_path,
+            &format!(
+                "/v1/machine-api/service-sandboxes/current?tenant_id={tenant_id}&service_name=demo"
+            ),
+            "\"status\":\"ready\"",
+        );
+        assert!(
+            current_response.contains("\"published_endpoints\":[{\"name\":\"default\""),
+            "{current_response}"
+        );
+        let inspected_ids = inspected_ids.lock().expect("lock should acquire").clone();
+        assert_eq!(
+            inspected_ids,
+            vec![
+                sandbox_id.as_str().to_owned(),
+                sandbox_id.as_str().to_owned()
+            ]
+        );
+        assert!(
+            !inspected_ids
+                .iter()
+                .any(|id| id == stopped_sandbox_id.as_str()),
+            "{inspected_ids:?}"
+        );
+
+        let _ = shutdown_tx.send(());
+        server
+            .await
+            .expect("machine API server task should join")
+            .expect("machine API server should shut down cleanly");
     }
 
     fn unix_http_get(socket_path: &Path, path: &str) -> String {
@@ -1385,5 +1612,147 @@ mod tests {
     fn write_fake_binary_at(root: &Path, name: &str) {
         let path = root.join(name);
         crate::test_support::write_executable_stub(&path, "#!/bin/sh\nexit 0\n");
+    }
+
+    fn write_container_manifest(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        service_name: &str,
+        status: SandboxStatus,
+        published_endpoints: Vec<PublishedEndpoint>,
+    ) {
+        let container_dir = state_root.join("containers").join(sandbox_id);
+        fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
+
+        let handle = SandboxHandle::new(
+            SandboxId::new(sandbox_id),
+            service_name,
+            SandboxBackendKind::Container,
+            status,
+            published_endpoints,
+        );
+        let manifest = json!({
+            "handle": handle,
+            "spec": {
+                "tenant_id": tenant_id,
+                "name": service_name,
+                "backend": "container",
+                "filesystem": {
+                    "rootfs": "/tmp/rootfs",
+                    "readonly": true
+                },
+                "process": {
+                    "args": ["/bin/server"],
+                    "env": ["PATH=/usr/bin"],
+                    "cwd": "/",
+                    "terminal": false
+                },
+                "resources": neovex::SandboxResourceLimits::default(),
+                "lifecycle": {
+                    "restart_policy": "never"
+                },
+                "port_bindings": [SandboxPortBinding::tcp("default", 18080, 8080)]
+            },
+            "conmon_layout": {
+                "container_state_dir": container_dir,
+                "ctr_log": container_dir.join("ctr.log"),
+                "oci_log": container_dir.join("oci.log")
+            },
+            "last_exit_code": null,
+            "shutdown_requested": false,
+            "status": status
+        });
+
+        fs::write(
+            container_dir.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+    }
+
+    #[derive(Debug, Clone)]
+    struct RefreshingInspectBackend {
+        state_root: PathBuf,
+        inspected_ids: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RefreshingInspectBackend {
+        fn new(state_root: PathBuf) -> Self {
+            Self {
+                state_root,
+                inspected_ids: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn inspected_ids(&self) -> Arc<Mutex<Vec<String>>> {
+            Arc::clone(&self.inspected_ids)
+        }
+    }
+
+    impl SandboxBackend for RefreshingInspectBackend {
+        fn kind(&self) -> SandboxBackendKind {
+            SandboxBackendKind::Container
+        }
+
+        fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+            let message = format!(
+                "test refresh backend expects inspect only, not bare spec {}",
+                spec.name
+            );
+            Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
+        }
+
+        fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
+            let message = format!(
+                "test refresh backend expects inspect only, not image launch {}",
+                launch.spec.name
+            );
+            Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
+        }
+
+        fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
+            let message = format!(
+                "test refresh backend expects inspect only, not build launch {}",
+                launch.spec.name
+            );
+            Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
+        }
+
+        fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+            let state_root = self.state_root.clone();
+            let sandbox_id = id.clone();
+            let inspected_ids = Arc::clone(&self.inspected_ids);
+            Box::pin(async move {
+                inspected_ids
+                    .lock()
+                    .expect("lock should acquire")
+                    .push(sandbox_id.as_str().to_owned());
+                let endpoints = vec![PublishedEndpoint::new(
+                    "default",
+                    PublishedEndpointProtocol::Tcp,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+                )];
+                write_container_manifest(
+                    &state_root,
+                    sandbox_id.as_str(),
+                    "svc-demo",
+                    "demo",
+                    SandboxStatus::Ready,
+                    endpoints.clone(),
+                );
+                Ok(Some(SandboxHandle::new(
+                    sandbox_id,
+                    "demo",
+                    SandboxBackendKind::Container,
+                    SandboxStatus::Ready,
+                    endpoints,
+                )))
+            })
+        }
+
+        fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
+            Box::pin(async move { Ok(()) })
+        }
     }
 }
