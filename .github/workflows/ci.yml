@@ -205,6 +205,34 @@ jobs:
       - name: Test
         run: npm run test --workspaces --if-present
 
+  proof-helpers:
+    name: Proof Helper Verifiers
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Check helper script syntax
+        run: |
+          bash -n scripts/collect-neovex-machine-guest-proof.sh
+          bash -n scripts/collect-neovex-machine-service-proof.sh
+          bash -n scripts/collect-neovex-homebrew-cask-proof.sh
+          bash -n scripts/verify-neovex-machine-guest-proof-helper.sh
+          bash -n scripts/verify-neovex-machine-service-proof-helper.sh
+          bash -n scripts/verify-neovex-homebrew-cask-proof-helper.sh
+
+      - name: Verify guest proof helper
+        run: bash scripts/verify-neovex-machine-guest-proof-helper.sh
+
+      - name: Verify service proof helper
+        run: bash scripts/verify-neovex-machine-service-proof-helper.sh
+
+      - name: Verify Homebrew cask proof helper
+        run: bash scripts/verify-neovex-homebrew-cask-proof-helper.sh
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

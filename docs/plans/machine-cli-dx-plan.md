@@ -691,3 +691,16 @@ are low-priority polish.
   `cargo run -p neovex-bin -- --version` smoke check. This closes the CLI DX
   task, while live macOS guest proof still depends on a Linux guest asset built
   from this updated source rather than the already-published `v0.1.8` asset.
+- 2026-04-18: Closed that lingering live-proof note for `DX1` on the actual
+  macOS machine contract. Using the isolated proof root
+  `/tmp/neovex-release-proof.aYbYTo` with no
+  `NEOVEX_MACHINE_GUEST_BINARY` override, the current
+  `target/debug/neovex` host binary initialized and started a clean machine on
+  the pinned Podman digest, pulled the matching `v0.1.11` Linux guest release
+  asset into Neovex's cache, and then returned `neovex 0.1.11` from guest SSH
+  at `/usr/local/bin/neovex --version`. The checked-in proof bundle at
+  `/tmp/neovex-release-proof.aYbYTo/guest-proof-release-path` also recorded
+  guest machine-API `/healthz` and `/capabilities` success on the booted VM.
+  Durable conclusion: the user-facing `neovex --version` DX task is fully
+  validated on macOS through the shipped release-asset path, not through a
+  locally built Linux guest binary workaround.

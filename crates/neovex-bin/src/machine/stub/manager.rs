@@ -26,6 +26,34 @@ pub(super) struct MachineRuntimeState {
     pub(super) ready_vsock_port: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum GuestNeovexBinarySourceKind {
+    ReleaseAsset,
+    ExplicitOverride,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct DesiredGuestNeovexBinaryStatus {
+    pub(super) install_path: PathBuf,
+    pub(super) source: GuestNeovexBinarySourceKind,
+    pub(super) source_detail: String,
+    pub(super) desired_path: PathBuf,
+    pub(super) desired_exists: bool,
+    pub(super) desired_version: Option<String>,
+    pub(super) desired_hash: Option<String>,
+    pub(super) release_archive_path: Option<PathBuf>,
+    pub(super) release_archive_exists: Option<bool>,
+    pub(super) release_url: Option<String>,
+    pub(super) error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct ObservedGuestNeovexBinaryStatus {
+    pub(super) version: Option<String>,
+    pub(super) hash: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct MachineHelperBinaryPaths {
     pub(super) krunkit: PathBuf,
@@ -94,6 +122,32 @@ pub(super) fn release_machine_ssh_port(
     _machine_name: &str,
 ) -> Result<(), Error> {
     Ok(())
+}
+
+pub(super) fn inspect_desired_guest_neovex_binary(
+    paths: &MachinePaths,
+) -> DesiredGuestNeovexBinaryStatus {
+    DesiredGuestNeovexBinaryStatus {
+        install_path: PathBuf::from("/usr/local/bin/neovex"),
+        source: GuestNeovexBinarySourceKind::ReleaseAsset,
+        source_detail: "GitHub release asset lookup is unavailable on non-unix host stubs"
+            .to_owned(),
+        desired_path: paths.guest_binary_cache_dir.join("unsupported-host-neovex"),
+        desired_exists: false,
+        desired_version: None,
+        desired_hash: None,
+        release_archive_path: None,
+        release_archive_exists: None,
+        release_url: None,
+        error: Some(unsupported_machine_host_error().to_string()),
+    }
+}
+
+pub(super) fn inspect_observed_guest_neovex_binary(
+    _config: &MachineConfigRecord,
+    _state: &MachineStateRecord,
+) -> Result<ObservedGuestNeovexBinaryStatus, Error> {
+    Err(unsupported_machine_host_error())
 }
 
 #[cfg(test)]

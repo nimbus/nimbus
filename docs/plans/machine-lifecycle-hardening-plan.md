@@ -76,6 +76,11 @@ Reviewed against:
   machine layering."
 - Stale state detection works: `refresh_machine_state()` checks PID liveness
   and transitions dead machines to `Failed`/`Stale`.
+- Host storage roots now follow a Neovex-owned XDG split: config under
+  `XDG_CONFIG_HOME`, lifecycle state and locks under `XDG_STATE_HOME`,
+  durable per-machine VM artifacts under `XDG_DATA_HOME`, and shared
+  redownloadable machine-image / guest-binary artifacts under
+  `XDG_CACHE_HOME`.
 - However, several Podman robustness patterns are missing. Each was identified
   by reading Podman source and comparing against the neovex implementation.
 
@@ -374,6 +379,7 @@ This plan covers:
 - machine record versioning and state rebuild policy
 - provider capability flags on `MachineProvider`
 - explicit pre/post-start networking phases
+- the shared host-storage contract for machine config, state, data, and caches
 
 This plan does not cover:
 
@@ -381,6 +387,69 @@ This plan does not cover:
 - Windows machine architecture (owned by Windows plan)
 - new providers or backends
 - machine image artifacts or guest bootstrap content
+
+## Shared Host Storage Contract
+
+This control decision exists to keep Neovex Podman-aligned at the published
+artifact and runtime-seam layer without coupling Neovex to Podman's or
+Docker's mutable host state.
+
+### Build Now
+
+- Keep machine control roots Neovex-owned and separate from
+  `~/.config/containers`, `~/.local/share/containers`, Docker Desktop state,
+  or any other tool-owned runtime directories.
+- Share redownloadable artifacts across **Neovex machines** where it reduces
+  user overhead, but keep that sharing inside Neovex-owned cache roots instead
+  of reusing Podman or Docker stores.
+- Reuse standards-boundary inputs where they are intentionally stable and
+  user-beneficial, such as published OCI references/digests, system CA trust,
+  and explicitly chosen SSH keys.
+
+### Do Not Build
+
+- Do not share machine definitions, machine status, default-machine pointers,
+  forwarded sockets, PID files, or lock files with Podman or Docker.
+- Do not share VM disks, EFI variable stores, or any other mutable guest
+  machine data across tools.
+- Do not point Neovex at Podman's local image store, Docker's image store,
+  libpod metadata, containerd metadata, or any other mutable runtime store as a
+  shortcut.
+- Do not make Podman or Docker host state part of Neovex's correctness
+  contract for machine start, stop, rebuild, or recovery.
+
+### What Is Reasonable To Share
+
+- **Within Neovex:** machine image blob caches, downloaded guest Linux
+  `neovex` assets, and similar redownloadable artifacts should be shared across
+  Neovex machines so users do not pay repeated download/decompression costs.
+- **Across tools by stable convention:** system CA trust, registry credentials
+  or credential-helper conventions if Neovex explicitly adopts them, and
+  user-selected SSH identities.
+- **At the logical contract layer only:** immutable OCI references/digests and
+  other published artifact identifiers. The identifier may be shared across
+  tools; the local cache/store implementation should remain Neovex-owned.
+
+### Target XDG Split
+
+- config: `${XDG_CONFIG_HOME:-~/.config}/neovex/machine`
+- state: `${XDG_STATE_HOME:-~/.local/state}/neovex/machine`
+- data: `${XDG_DATA_HOME:-~/.local/share}/neovex/machine`
+- cache: `${XDG_CACHE_HOME:-~/.cache}/neovex/machine`
+
+### Planned Follow-On Refactor
+
+- Keep `config.json`, generated ignition, machine records, port-allocation
+  state, and machine lock files in the config/state roots where they already
+  fit the control-plane contract.
+- Move durable per-machine VM artifacts such as the materialized raw disk and
+  EFI variable store from the state root into the data root.
+- Move redownloadable machine image layers, decompression staging, and the
+  guest Linux `neovex` asset cache out of the per-machine state tree and into
+  a Neovex-owned shared cache root.
+- If future sharing is needed to reduce user overhead further, prefer adding a
+  standalone Neovex-owned content-addressed cache contract rather than
+  coupling Neovex directly to Podman's or Docker's internal stores.
 
 ## Verification Contract
 
@@ -431,7 +500,7 @@ This plan does not cover:
 | MLH2 | done | Startup now installs scoped SIGINT/SIGTERM monitoring; interrupted startup kills spawned children, clears runtime artifacts, persists `Stopped`, and avoids leaving machine state stuck in `Starting` | none |
 | MLH3 | done | SSH ports now allocate from a shared file-locked pool under the machine state root, reuse the recorded machine port when it is still valid, reassign on startup when the old port is busy or outside the managed range, and release by machine name on removal | none |
 | MLH4 | done | Machine config/state writes now use atomic temp-file replacement, and machine command entrypoints plus default machine-API client loading hold a per-machine lock under the shared state root so config/status reads and writes stay coherent | none |
-| MLH5 | done | Machine config/state records now carry explicit schema versions; legacy versionless records upgrade on load, newer config versions fail clearly, and unreadable or incompatible state rebuilds with an explicit stale error instead of a raw parse failure | none |
+| MLH5 | done | Machine config/state records now carry explicit schema versions; unsupported config versions now fail clearly with recreate guidance, and unreadable or incompatible state rebuilds with an explicit stale error instead of a raw parse failure | none |
 | MLH6 | done | `MachineProvider` now carries explicit capability values for networking ownership, exclusivity, image format, and bootstrap mode, with Podman-aligned `Krunkit` values plus a staged `Wsl2` capability contract for future Windows work | none |
 | MLH7 | done | `start_machine()` now runs through explicit bootstrap, pre-start networking, VM start, machine-ready, post-start networking, and readiness-check phases dispatched from provider capabilities while preserving the current macOS flow | MLH6 |
 
@@ -524,16 +593,14 @@ Repo outputs:
 - `CURRENT_MACHINE_STATE_VERSION: u32 = 1`
 - load policy:
   - current version: proceed normally
-  - older version: migrate (or clear error with upgrade instructions)
-  - newer version: clear error ("created with newer neovex version")
+- older version: clear recreate guidance instead of silent migration
+- newer version: clear error ("created with newer neovex version")
 - unsupported or unreadable state: reset/rebuild state explicitly instead of
   surfacing a raw parse failure
-- migration function placeholder for future version bumps
 
 Acceptance criteria:
 
-- existing (versionless) configs are treated as version 0 and either
-  auto-migrated or rejected with a clear message
+- unsupported config versions are rejected with a clear recreate message
 - version mismatch produces a helpful compatibility error, not a serde parse
   failure
 - corrupt or incompatible state does not brick ordinary machine commands
@@ -633,12 +700,12 @@ prep for Windows but also clean up the macOS code.
   plans remain the architecture owners for their respective platform flows.
 - 2026-04-16: Completed `MLH5` in `crates/neovex-bin/src/machine/`. Added
   `CURRENT_MACHINE_CONFIG_VERSION` / `CURRENT_MACHINE_STATE_VERSION` plus
-  explicit `version` fields on machine config/state records; versionless
-  current-shape records now upgrade in place on load; newer config versions now
-  fail with an operator-friendly compatibility error; and unreadable or
+  explicit `version` fields on machine config/state records; unsupported or
+  newer config versions now fail with an operator-friendly compatibility error;
+  and unreadable or
   unsupported state now rebuilds into a `Stopped` + `Stale` record with the
   rebuild reason persisted in `last_error`. Focused regression coverage now
-  exercises versionless upgrade, newer-version rejection, and corrupt-state
+  exercises older-version rejection, newer-version rejection, and corrupt-state
   rebuild behavior. Verification: `cargo fmt --all --check`,
   `cargo check -p neovex-bin`, `cargo test -p neovex-bin machine::`. Recommended
   next item: `MLH4` so the new record contract lands on top of atomic,
@@ -717,8 +784,9 @@ prep for Windows but also clean up the macOS code.
   Replaced that payload with explicit `binary_statuses` plus
   `operation_statuses`, bumped the guest machine-API protocol to `v1alpha2`,
   and taught the host client to fail version skew with an operator-friendly
-  "host expects X / guest reported Y" error that points local developers at
-  `NEOVEX_MACHINE_GUEST_BINARY`. Verification:
+  "host expects X / guest reported Y" error that points operators at an
+  explicit `NEOVEX_MACHINE_GUEST_BINARY` override when they intentionally need
+  to stage a non-release guest binary. Verification:
   `cargo fmt --all --check`, `cargo check -p neovex-bin`,
   `cargo test -p neovex-bin machine::api:: -- --nocapture`,
   `cargo test -p neovex-bin machine::client:: -- --nocapture`,
@@ -726,13 +794,9 @@ prep for Windows but also clean up the macOS code.
   isolated temp root `/tmp/neovex-bootstrap-smoke.s7lYjJ` confirmed the new
   mismatch error during `target/debug/neovex machine start`:
   `guest machine API protocol mismatch ... host expects v1alpha2, guest reported v1alpha1`.
-  The same change set also taught macOS guest-binary sync to prefer a locally
-  built workspace Linux guest binary under `target/<triple>/{release,debug}/neovex`
-  before falling back to the tagged release asset, so source-built hosts stop
-  silently pulling stale guest binaries when local guest artifacts exist.
-  Focused regression coverage now exercises local release-vs-debug preference
-  and workspace-root discovery in `machine::manager::tests`. Full live proof of
-  the new `v1alpha2` capability payload remains blocked on
+  The intended shipping contract remains release-asset first rather than
+  implicit workspace-binary discovery. Full live proof of the new `v1alpha2`
+  capability payload remained blocked at that point on
   rebuilding the aarch64 Linux guest binary locally; this host currently lacks
   `aarch64-linux-gnu-gcc`, so `cargo build --release --target aarch64-unknown-linux-gnu -p neovex-bin`
   fails before producing a matching guest override binary.
@@ -759,6 +823,60 @@ prep for Windows but also clean up the macOS code.
   `neovex 0.1.10` and current boot ID
   `f46c2819-bb64-49fa-aa4e-d506f4f96590`; no extra bootstrap reboot was needed
   for the successful convergence run.
+- 2026-04-18: Added an explicit shared host-storage contract to this plan so
+  future machine-lifecycle work does not accidentally couple Neovex to Podman
+  or Docker host state. Locked the contract to Neovex-owned XDG roots:
+  config under `XDG_CONFIG_HOME`, lifecycle state under `XDG_STATE_HOME`,
+  durable VM artifacts under `XDG_DATA_HOME`, and redownloadable machine-image
+  / guest-binary artifacts under `XDG_CACHE_HOME`. Explicitly recorded that
+  sharing should happen inside Neovex-owned caches across Neovex machines, not
+  by reusing Podman or Docker machine metadata, VM disks, or local image
+  stores.
+- 2026-04-18: Implemented that storage split in
+  `crates/neovex-bin/src/machine/`. Added `resolve_data_root()` and
+  `resolve_cache_root()`, expanded `MachineRootLayout` to persist those roots,
+  and bumped machine config schema to v2 so the new split is an explicit
+  contract rather than a silent migration path. Durable per-machine boot artifacts now live under
+  `data/<machine>/...`, while machine-image blobs and guest Linux `neovex`
+  assets now share a Neovex-owned cache root across machines. `machine rm`
+  now removes the machine data tree without purging shared caches, status
+  output surfaces the new roots, and machine commands now expect the new
+  config/data/cache layout directly instead of carrying state-root or
+  versionless-config compatibility shims. Verification:
+  `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine:: -- --nocapture`. Recommended next item:
+  none in this control plan; the split is landed, so follow-on work should use
+  these roots instead of reintroducing machine artifacts under `state`.
+- 2026-04-18: Revalidated the landed storage split on a real macOS host using
+  isolated roots under `/tmp/neovex-mac-validation.KRe8ea`. Proof commands
+  used the current worktree's `target/debug/neovex` with
+  `XDG_CONFIG_HOME=/tmp/neovex-mac-validation.KRe8ea/xdg-config`,
+  `XDG_STATE_HOME=/tmp/neovex-mac-validation.KRe8ea/xdg-state`,
+  `XDG_DATA_HOME=/tmp/neovex-mac-validation.KRe8ea/xdg-data`,
+  `XDG_CACHE_HOME=/tmp/neovex-mac-validation.KRe8ea/xdg-cache`, and
+  `NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-mac-validation.KRe8ea/runtime`.
+  `machine init` recorded the pinned Podman digest and the split roots;
+  `machine start` pulled the compressed Podman image into
+  `xdg-cache/neovex/machine/images/1ca36ee640f03bf7ca59d45cadfdfa2dd2497b79e5c2030871d5798f336b96b4.raw.zst`,
+  materialized the boot disk at
+  `xdg-data/neovex/machine/default/images/default.raw`, and reached
+  `machine_api.reachable: true` with recorded helper paths
+  `/opt/homebrew/bin/krunkit` and
+  `/opt/homebrew/opt/podman/libexec/podman/gvproxy`. Guest SSH proof first
+  exposed a stale local Linux artifact (`/usr/local/bin/neovex --version`
+  returned `0.1.10` when forced to use the previously built local override),
+  so the validation switched to the released `v0.1.11`
+  `neovex_linux_arm64.tar.gz` asset under the same isolated root, restarted
+  the machine without re-pulling the Podman image, and then confirmed
+  `/usr/local/bin/neovex --version` returned `neovex 0.1.11`. The only host
+  blocker encountered was local guest cross-build: `cargo build --release
+  --target aarch64-unknown-linux-gnu -p neovex-bin` failed because
+  `aarch64-linux-gnu-gcc` is not installed on this macOS host. A follow-up
+  validation pass also caught a stop-path residue bug for
+  `default-gvproxy.sock-krun.sock`; after wiring that derived path into the
+  active runtime cleanup helper, a freshly rebuilt `target/debug/neovex`
+  plus one more cached start/stop cycle left
+  `/tmp/neovex-mac-validation.KRe8ea/runtime` with only truncated log files.
 - 2026-04-17: Follow-on hardening in the same shared machine seam closed two
   fresh-root macOS reliability gaps. First, the new
   `scripts/verify-build-neovex-machine-guest-binary-helper.sh` test harness
@@ -941,3 +1059,58 @@ prep for Windows but also clean up the macOS code.
   lock/convergence contract now covers the host `serve` entrypoint too, and
   follow-on work returns to packaging/distribution rather than more machine
   lifecycle hardening.
+- 2026-04-18: Tightened the checked-in macOS guest-binary convergence
+  contract so the default path never depends on a locally built Linux guest
+  artifact. `resolve_guest_neovex_binary()` in
+  `crates/neovex-bin/src/machine/manager.rs` now has only two inputs:
+  `NEOVEX_MACHINE_GUEST_BINARY` for an intentional local override, or the
+  matching tagged GitHub release asset cached under Neovex's machine cache.
+  Deleted the old workspace `target/<triple>/{release,debug}/neovex`
+  auto-discovery path, updated the machine client/operator wording, and
+  updated `docs/reference/macos-machine-flow.md` to describe the same
+  release-asset-first contract. Added focused regression coverage proving the
+  resolver reuses the cached release binary directly. Verification:
+  `cargo fmt --all --check`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine:: -- --nocapture`.
+- 2026-04-18: Captured a fresh real-host macOS proof of that release-asset
+  contract on isolated roots under `/tmp/neovex-release-proof.aYbYTo` with no
+  `NEOVEX_MACHINE_GUEST_BINARY` override and no preexisting Neovex cache. The
+  exact host flow was: `machine init --ssh-identity /tmp/neovex-release-proof.keytest`,
+  `machine start`, `machine status`, `machine ssh -- /usr/local/bin/neovex --version`,
+  and `scripts/collect-neovex-machine-guest-proof.sh`, all using
+  `HOME=/tmp/neovex-release-proof.aYbYTo/home`,
+  `NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-release-proof.aYbYTo/runtime`, and
+  `/Users/jack/src/github.com/agentstation/neovex/target/debug/neovex`.
+  First boot pulled the pinned Podman image into
+  `home/.cache/neovex/machine/images/1ca36ee640f03bf7ca59d45cadfdfa2dd2497b79e5c2030871d5798f336b96b4.raw.zst`,
+  cached the matching guest asset at
+  `home/.cache/neovex/machine/guest-neovex/v0.1.11-neovex_linux_arm64-neovex`,
+  materialized the raw disk at
+  `home/.local/share/neovex/machine/default/images/default.raw`, and recorded
+  the desired/recorded Podman digest match in `machine status`. Elevated host
+  status then confirmed `machine_api.reachable: true`,
+  `protocol_version: v1alpha2`, and the expected stock guest runtime binaries
+  (`conmon`, `crun`, `netavark`, `aardvark-dns`). Guest SSH returned
+  `neovex 0.1.11` from `/usr/local/bin/neovex`, and the proof bundle at
+  `/tmp/neovex-release-proof.aYbYTo/guest-proof-release-path` captured guest
+  version, SHA-256, socket/service state, virtiofs `/Users`, and guest
+  machine-API `/healthz` plus `/v1/machine-api/capabilities` over the booted
+  VM's own `/run/neovex/neovex.sock`. A warm stop/start on the same isolated
+  root then returned to `running`/`ready` on the same cached Podman digest and
+  guest asset without any override, and the stop-path runtime cleanup
+  converged back to log files only after a brief teardown settle, with no
+  surviving `krunkit` or `gvproxy` processes. Durable conclusion: the
+  enterprise macOS happy path is now proved against the real release-asset
+  contract instead of a locally built guest binary.
+- 2026-04-18: Closed the remaining operator-visibility gap on that contract by
+  adding a `guest_binary_contract` section to `neovex machine status` for the
+  host-managed macOS path. Status now reports whether the desired guest binary
+  comes from the tagged GitHub release asset or an explicit
+  `NEOVEX_MACHINE_GUEST_BINARY` override, the desired cache/install paths, the
+  desired version/hash when available locally, and the observed guest
+  `/usr/local/bin/neovex` version/hash when the machine is running. This keeps
+  the convergence contract inspectable without reintroducing local-worktree
+  fallback or hidden operator state. Focused regression coverage now exercises
+  both release-asset and explicit-override status rendering. Verification:
+  `cargo fmt --all`, `cargo check -p neovex-bin`,
+  `cargo test -p neovex-bin machine_status_ -- --nocapture`.

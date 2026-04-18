@@ -296,7 +296,7 @@ capture_command \
 
 health_cmd=(
   "${ssh_base[@]}"
-  "/bin/sh -lc 'printf \"GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" | sudo socat - UNIX-CONNECT:${guest_socket_path}'"
+  "/bin/sh -lc 'sudo curl --silent --show-error --include --unix-socket ${guest_socket_path} http://localhost/healthz'"
 )
 capture_command \
   "capture.guest_machine_api_health" \
@@ -306,7 +306,7 @@ capture_command \
 
 capabilities_cmd=(
   "${ssh_base[@]}"
-  "/bin/sh -lc 'printf \"GET /v1/machine-api/capabilities HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" | sudo socat - UNIX-CONNECT:${guest_socket_path}'"
+  "/bin/sh -lc 'sudo curl --silent --show-error --include --unix-socket ${guest_socket_path} http://localhost/v1/machine-api/capabilities'"
 )
 capture_command \
   "capture.guest_machine_api_capabilities" \

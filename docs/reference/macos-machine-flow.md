@@ -57,6 +57,12 @@ Current contract note:
 - `neovex machine start` is the primary convergence path: cache missing
   artifacts, boot or rebuild from the desired image, sync the guest binary by
   hash, and validate the forwarded machine API before reporting success
+- the default guest-binary path is the matching GitHub release asset cached
+  under Neovex's machine cache; `NEOVEX_MACHINE_GUEST_BINARY` is an explicit
+  developer/operator override only
+- this Podman alignment is at the published-image and provider-behavior layer,
+  not at the host-state layer; Neovex does not reuse Podman's machine records,
+  VM disks, sockets, or local image store
 - Neovex-owned image publishing remains later follow-on work instead of the
   current shipped macOS contract
 
@@ -212,11 +218,25 @@ floating tag.
 For a machine named `default`, Neovex reserves:
 
 - cache directory:
-  `state/default/images/`
+  `cache/images/`
+- guest Linux `neovex` asset cache:
+  `cache/guest-neovex/`
 - materialized bootable raw disk:
-  `state/default/images/default.raw`
+  `data/default/images/default.raw`
 
 The manager reuses `default.raw` if it already exists.
+
+Current implementation note:
+
+- the checked-in machine manager now uses that split directly:
+  - config under `XDG_CONFIG_HOME`
+  - lifecycle state and locks under `XDG_STATE_HOME`
+  - durable VM data under `XDG_DATA_HOME`
+  - redownloadable machine-image and guest-binary artifacts under
+    `XDG_CACHE_HOME`
+- the cache-sharing target is **across Neovex machines only**; Neovex should
+  not couple itself to Podman's or Docker's mutable local stores just because
+  the current macOS bring-up image comes from Podman's published image stream
 
 ## Flow 4: macOS Machine Launch Plumbing
 
@@ -349,16 +369,33 @@ The repo now owns three checked-in macOS proof collectors for this flow:
   packages the local release binary plus bundled `libexec/gvproxy` into an
   isolated proof cask, installs it under a temporary Homebrew tap/token, then
   captures host `neovex --version`, packaged-helper discovery, `machine init`,
-  `machine start`, `machine status`, guest `neovex --version`, guest SSH, and
-  `machine stop` proof without touching the user's shipped `neovex` cask token
-  or default machine roots
+  `machine start`, `machine status`, guest `neovex --version`, nested guest
+  machine-API proof, guest SSH, and `machine stop` proof without touching the
+  user's shipped `neovex` cask token or default machine roots. The default
+  collector path uses the tagged guest release asset; `--guest-binary` is only
+  an explicit override for local guest-build debugging
+
+The repo also now owns deterministic verifiers for the guest, service, and
+Homebrew/cask proof harnesses, including
+`make verify-neovex-homebrew-cask-proof-helper` for the packaged macOS path.
+Those helper verifiers are the CI-safe automation lane for the harness logic
+itself; the full `krunkit` guest boot remains a checked-in local proof lane
+rather than a GitHub-hosted runner contract.
 
 The current real-host cask-proof bundle at
-`/tmp/neovex-d4a-proof-checkedin` shows `neovex 0.1.10`,
+`/tmp/neovex-d4a-proof-release-asset` shows `guest.binary.override <none>`,
+host `neovex 0.1.11`, guest `neovex 0.1.11`,
 `runtime.helper_binaries.gvproxy:
-/opt/homebrew/Caskroom/neovex-dev/0.1.10/libexec/gvproxy`, guest
-`neovex 0.1.10`, and `/Users` virtiofs reachability, then cleans up the
-temporary `local/neovex-proof` tap and `neovex-dev` cask token afterward.
+/opt/homebrew/Caskroom/neovex-dev/0.1.11/libexec/gvproxy`, forwarded
+`machine_api.reachable: true`, nested guest machine-API `HTTP/1.1 200 OK`
+proof plus `protocol_version: v1alpha2`, and `/Users` virtiofs reachability,
+then cleans up the temporary `local/neovex-proof` tap and `neovex-dev` cask
+token afterward.
+Current status-output note: `neovex machine status` now includes a
+`guest_binary_contract` block for the macOS host-managed path so operators can
+see the desired guest-binary provenance (`release-asset` vs
+`explicit-override`), desired version/hash/cache path, and, when the machine is
+running, the observed guest `/usr/local/bin/neovex` version/hash too.
 The current no-ambient-`PATH` hardening rerun at
 `/tmp/neovex-d4a-proof-no-path` revalidated that same packaged/Homebrew
 contract after helper resolution stopped trusting shell `PATH`; the bundle
@@ -395,9 +432,9 @@ contract:
 
 - `make build-neovex-machine-guest-binary`
   builds the matching Linux guest `neovex` artifact into
-  `target/<triple>/release/neovex` on the current developer host; the checked-in
-  macOS machine manager automatically prefers that local artifact before
-  falling back to tagged release downloads
+  `target/<triple>/release/neovex` on the current developer host; use it only
+  with an explicit `NEOVEX_MACHINE_GUEST_BINARY=...` override when intentionally
+  testing a local guest build instead of the tagged release asset cache
 
 The repo also owns two checked-in operator drill helpers for the same contract:
 
@@ -415,7 +452,8 @@ The repo also owns two checked-in operator drill helpers for the same contract:
   `/usr/local/bin/neovex`, backed by FCOS's writable `/var/usrlocal`, then
   repairs `neovex.socket` activation before it trusts the forwarded machine
   API. The active macOS contract does not rely on Ignition to fetch or version
-  that binary.
+  that binary, and it does not expect macOS users to build a Linux guest
+  binary locally; the normal path is the matching cached release asset.
 - The supported Homebrew Apple Silicon packaging path keeps `krunkit` as an
   explicit formula dependency and now prefers a bundled `libexec/gvproxy`
   beside the packaged `neovex` binary, matching Podman's "bundle helper,
