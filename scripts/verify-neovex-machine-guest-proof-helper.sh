@@ -9,12 +9,12 @@ tmp_dir="$(cd "${tmp_dir}" && pwd)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 expected_neovex_version="$(
   sed -n 's/^version = "\(.*\)"$/\1/p' \
-    "${repo_root}/crates/neovex-bin/Cargo.toml" \
+    "${repo_root}/Cargo.toml" \
     | head -n1
 )"
 
 if [[ -z "${expected_neovex_version}" ]]; then
-  echo "failed to resolve expected neovex version from crates/neovex-bin/Cargo.toml" >&2
+  echo "failed to resolve expected neovex version from workspace Cargo.toml" >&2
   exit 70
 fi
 export EXPECTED_NEOVEX_VERSION="${expected_neovex_version}"
@@ -92,17 +92,17 @@ OUT
       *"findmnt --noheadings --output TARGET,SOURCE,FSTYPE,OPTIONS -T \"/Users\" || stat \"/Users\""*)
         echo "/Users neovex-users virtiofs rw,nosuid,nodev"
         ;;
-      *"GET /healthz HTTP/1.0"*)
+      *"curl --silent --show-error --include --unix-socket /run/neovex/neovex.sock http://localhost/healthz"*)
         cat <<'OUT'
-HTTP/1.0 200 OK
+HTTP/1.1 200 OK
 content-type: application/json
 
 {"status":"ok","role":"guest-machine-api","protocol_version":"v1alpha1"}
 OUT
         ;;
-      *"GET /v1/machine-api/capabilities HTTP/1.0"*)
+      *"curl --silent --show-error --include --unix-socket /run/neovex/neovex.sock http://localhost/v1/machine-api/capabilities"*)
         cat <<'OUT'
-HTTP/1.0 200 OK
+HTTP/1.1 200 OK
 content-type: application/json
 
 {"protocol_version":"v1alpha1","service_execution_ready":false,"service_execution_mode":"standard_containers","supported_service_backends":["container"],"supported_operations":["healthz","capabilities"],"required_binaries":[{"name":"buildah","present":true,"resolved_path":"/usr/bin/buildah"}],"service_execution_blockers":["guest machine API does not yet expose service lifecycle operations"]}

@@ -71,10 +71,8 @@ const DEFAULT_GUEST_NEOVEX_RELEASE_BASE_URL: &str =
     "https://github.com/agentstation/neovex/releases/download";
 const DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_ARM64: &str = "neovex_linux_arm64.tar.gz";
 const DEFAULT_GUEST_NEOVEX_BINARY_ARCHIVE_NAME_X86_64: &str = "neovex_linux_x86_64.tar.gz";
-const DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64: &str = "aarch64-unknown-linux-gnu";
-const DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_X86_64: &str = "x86_64-unknown-linux-gnu";
 const LOCAL_GUEST_BINARY_HELP_TEXT: &str =
-    "run `make build-neovex-machine-guest-binary` or set `NEOVEX_MACHINE_GUEST_BINARY`";
+    "set `NEOVEX_MACHINE_GUEST_BINARY` to an explicit local Linux guest binary override";
 const OCI_MACHINE_OS: &str = "linux";
 const OCI_ANNOTATION_TITLE: &str = "org.opencontainers.image.title";
 const OCI_ANNOTATION_SOURCE: &str = "org.opencontainers.image.source";
@@ -155,6 +153,34 @@ pub(super) struct MachineRuntimeState {
     pub(super) ssh_port: u16,
     pub(super) rest_uri: String,
     pub(super) ready_vsock_port: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum GuestNeovexBinarySourceKind {
+    ReleaseAsset,
+    ExplicitOverride,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct DesiredGuestNeovexBinaryStatus {
+    pub(super) install_path: PathBuf,
+    pub(super) source: GuestNeovexBinarySourceKind,
+    pub(super) source_detail: String,
+    pub(super) desired_path: PathBuf,
+    pub(super) desired_exists: bool,
+    pub(super) desired_version: Option<String>,
+    pub(super) desired_hash: Option<String>,
+    pub(super) release_archive_path: Option<PathBuf>,
+    pub(super) release_archive_exists: Option<bool>,
+    pub(super) release_url: Option<String>,
+    pub(super) error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct ObservedGuestNeovexBinaryStatus {
+    pub(super) version: Option<String>,
+    pub(super) hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -593,6 +619,8 @@ fn machine_image_rebuild_reason(
     state: &MachineStateRecord,
     desired_image: &str,
 ) -> Option<String> {
+    let current_boot_artifacts_exist =
+        paths.materialized_image_path.is_file() || paths.efi_variable_store_path.exists();
     match state
         .runtime
         .as_ref()
@@ -604,14 +632,10 @@ fn machine_image_rebuild_reason(
             recorded, desired_image
         )),
         Some(_) => None,
-        None if paths.materialized_image_path.is_file()
-            || paths.efi_variable_store_path.exists() =>
-        {
-            Some(format!(
-                "machine boot artifacts existed without a recorded base-image identity for '{}'; boot artifacts were reset and will be recreated on the next start",
-                desired_image
-            ))
-        }
+        None if current_boot_artifacts_exist => Some(format!(
+            "machine boot artifacts existed without a recorded base-image identity for '{}'; boot artifacts were reset and will be recreated on the next start",
+            desired_image
+        )),
         None => None,
     }
 }
@@ -750,6 +774,122 @@ fn read_guest_neovex_hash(
     }
 }
 
+fn read_guest_neovex_version(
+    config: &MachineConfigRecord,
+    ssh_port: u16,
+) -> Result<Option<String>, Error> {
+    let output = run_guest_ssh_shell_capture(
+        config,
+        ssh_port,
+        &format!(
+            "if [ -x \"{path}\" ]; then \"{path}\" --version | head -n1; fi",
+            path = GUEST_NEOVEX_BIN
+        ),
+    )?;
+    let version = output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned);
+    Ok(version)
+}
+
+pub(super) fn inspect_desired_guest_neovex_binary(
+    paths: &MachinePaths,
+) -> DesiredGuestNeovexBinaryStatus {
+    if let Some(path) = env::var_os(GUEST_NEOVEX_BINARY_OVERRIDE_ENV).map(PathBuf::from) {
+        let desired_exists = path.is_file();
+        let desired_hash = desired_exists
+            .then(|| compute_sha256(&path))
+            .transpose()
+            .ok()
+            .flatten();
+        let error = (!desired_exists).then(|| {
+            format!(
+                "guest neovex binary override {} from ${GUEST_NEOVEX_BINARY_OVERRIDE_ENV} does not exist",
+                path.display()
+            )
+        });
+        return DesiredGuestNeovexBinaryStatus {
+            install_path: PathBuf::from(GUEST_NEOVEX_BIN),
+            source: GuestNeovexBinarySourceKind::ExplicitOverride,
+            source_detail: format!("${GUEST_NEOVEX_BINARY_OVERRIDE_ENV}={}", path.display()),
+            desired_path: path,
+            desired_exists,
+            desired_version: None,
+            desired_hash,
+            release_archive_path: None,
+            release_archive_exists: None,
+            release_url: None,
+            error,
+        };
+    }
+
+    let release_tag = super::current_machine_release_tag();
+    match guest_neovex_archive_name() {
+        Ok(archive_name) => {
+            let desired_path = paths.guest_binary_cache_dir.join(format!(
+                "{}-{}-neovex",
+                release_tag,
+                archive_name.trim_end_matches(".tar.gz")
+            ));
+            let desired_exists = desired_path.is_file();
+            let desired_hash = desired_exists
+                .then(|| compute_sha256(&desired_path))
+                .transpose()
+                .ok()
+                .flatten();
+            let release_archive_path = paths
+                .guest_binary_cache_dir
+                .join(format!("{release_tag}-{archive_name}"));
+            DesiredGuestNeovexBinaryStatus {
+                install_path: PathBuf::from(GUEST_NEOVEX_BIN),
+                source: GuestNeovexBinarySourceKind::ReleaseAsset,
+                source_detail: format!("GitHub release asset {}", release_tag),
+                desired_path,
+                desired_exists,
+                desired_version: Some(release_tag.clone()),
+                desired_hash,
+                release_archive_exists: Some(release_archive_path.is_file()),
+                release_url: Some(guest_neovex_release_url(&release_tag, archive_name)),
+                release_archive_path: Some(release_archive_path),
+                error: None,
+            }
+        }
+        Err(error) => DesiredGuestNeovexBinaryStatus {
+            install_path: PathBuf::from(GUEST_NEOVEX_BIN),
+            source: GuestNeovexBinarySourceKind::ReleaseAsset,
+            source_detail: format!("GitHub release asset {}", release_tag),
+            desired_path: paths
+                .guest_binary_cache_dir
+                .join("unsupported-host-arch-neovex"),
+            desired_exists: false,
+            desired_version: Some(release_tag),
+            desired_hash: None,
+            release_archive_path: None,
+            release_archive_exists: None,
+            release_url: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+pub(super) fn inspect_observed_guest_neovex_binary(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> Result<ObservedGuestNeovexBinaryStatus, Error> {
+    let runtime = state.runtime.as_ref().ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{}' has no recorded runtime; start it first",
+            config.name
+        ))
+    })?;
+    Ok(ObservedGuestNeovexBinaryStatus {
+        version: read_guest_neovex_version(config, runtime.ssh_port)?,
+        hash: read_guest_neovex_hash(config, runtime.ssh_port)?,
+    })
+}
+
 fn resolve_guest_neovex_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
     if let Some(path) = env::var_os(GUEST_NEOVEX_BINARY_OVERRIDE_ENV).map(PathBuf::from) {
         if !path.is_file() {
@@ -760,11 +900,8 @@ fn resolve_guest_neovex_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
         }
         return Ok(path);
     }
-    if let Some(path) = resolve_local_guest_neovex_binary()? {
-        return Ok(path);
-    }
 
-    let cache_dir = paths.state_dir.join("guest-neovex");
+    let cache_dir = paths.guest_binary_cache_dir.clone();
     fs::create_dir_all(&cache_dir).map_err(|error| {
         Error::Internal(format!(
             "failed to create guest neovex cache directory {}: {error}",
@@ -800,51 +937,6 @@ fn guest_neovex_archive_name() -> Result<&'static str, Error> {
             "unsupported macOS machine host architecture '{arch}' for guest neovex binary sync"
         ))),
     }
-}
-
-fn resolve_local_guest_neovex_binary() -> Result<Option<PathBuf>, Error> {
-    let Some(workspace_root) = compiled_workspace_root() else {
-        return Ok(None);
-    };
-    let target_triple = guest_neovex_target_triple()?;
-    Ok(find_local_guest_neovex_binary_under(
-        workspace_root,
-        target_triple,
-    ))
-}
-
-fn compiled_workspace_root() -> Option<&'static Path> {
-    workspace_root_from_manifest_dir(Path::new(env!("CARGO_MANIFEST_DIR")))
-}
-
-fn workspace_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
-    manifest_dir.parent()?.parent()
-}
-
-fn guest_neovex_target_triple() -> Result<&'static str, Error> {
-    match env::consts::ARCH {
-        "aarch64" | "arm64" => Ok(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64),
-        "x86_64" => Ok(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_X86_64),
-        arch => Err(Error::InvalidInput(format!(
-            "unsupported macOS machine host architecture '{arch}' for guest neovex binary sync"
-        ))),
-    }
-}
-
-fn find_local_guest_neovex_binary_under(
-    workspace_root: &Path,
-    target_triple: &str,
-) -> Option<PathBuf> {
-    ["release", "debug"]
-        .into_iter()
-        .map(|profile| {
-            workspace_root
-                .join("target")
-                .join(target_triple)
-                .join(profile)
-                .join("neovex")
-        })
-        .find(|candidate| candidate.is_file())
 }
 
 fn guest_neovex_release_url(release_tag: &str, archive_name: &str) -> String {
@@ -1934,6 +2026,7 @@ fn cleanup_runtime_artifacts(paths: &MachinePaths) -> Result<(), Error> {
         &paths.ignition_socket_path,
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
+        &paths.krunkit_gvproxy_socket_path(),
         &paths.krunkit_endpoint_path,
         &paths.gvproxy_pid_path,
         &paths.krunkit_pid_path,
@@ -2267,6 +2360,7 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
             paths.image_cache_dir.display()
         ))
     })?;
+    ensure_materialized_image_parent(&paths.materialized_image_path)?;
 
     let image_cache_dir = paths.image_cache_dir.clone();
     let url = url.to_owned();
@@ -2374,6 +2468,7 @@ fn materialize_oci_image(
             paths.image_cache_dir.display()
         ))
     })?;
+    ensure_materialized_image_parent(&paths.materialized_image_path)?;
 
     let cache_dir = paths.image_cache_dir.clone();
     let reference = reference.to_owned();
@@ -2750,15 +2845,15 @@ fn log_machine_artifact_metadata(reference: &str, metadata: &MachineArtifactMeta
     }
 }
 
-/// The neovex source repo, used as a fallback for legacy machine images that
-/// were published before OCI metadata recorded the attestation repository.
+/// The neovex source repo, used when a GHCR machine image did not publish an
+/// explicit OCI attestation repository annotation.
 const NEOVEX_SOURCE_REPO: &str = "agentstation/neovex";
 
 /// Query the GitHub Attestations API for a signed build provenance attestation
 /// matching the downloaded artifact digest. Prefer the explicit attestation
-/// repository published in the OCI metadata; fall back to the historical
-/// dual-repo lookup only for older machine images. Advisory only — logs the
-/// result but does not block the download.
+/// repository published in the OCI metadata; otherwise fall back to the
+/// historical dual-repo lookup for GHCR-hosted Neovex machine images.
+/// Advisory only — logs the result but does not block the download.
 fn check_build_attestation(
     reference: &str,
     subject_digest: &str,
@@ -2929,6 +3024,7 @@ fn materialize_cached_disk(
     output_path: &Path,
     source_label: &str,
 ) -> Result<(), Error> {
+    ensure_materialized_image_parent(output_path)?;
     let temp_output = NamedTempFile::new_in(output_path.parent().ok_or_else(|| {
         Error::Internal(format!("{} has no parent directory", output_path.display()))
     })?)
@@ -3013,6 +3109,18 @@ fn materialize_cached_disk(
         ))
     })?;
     Ok(())
+}
+
+fn ensure_materialized_image_parent(output_path: &Path) -> Result<(), Error> {
+    let parent = output_path.parent().ok_or_else(|| {
+        Error::Internal(format!("{} has no parent directory", output_path.display()))
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create machine image data directory {}: {error}",
+            parent.display()
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3399,70 +3507,38 @@ mod tests {
     }
 
     #[test]
-    fn local_guest_binary_lookup_prefers_release_over_debug() {
+    fn resolve_guest_neovex_binary_reuses_cached_release_asset() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let target_dir = temp_dir
-            .path()
-            .join("target")
-            .join(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64);
-        let release_binary = target_dir.join("release").join("neovex");
-        let debug_binary = target_dir.join("debug").join("neovex");
-        fs::create_dir_all(release_binary.parent().expect("release dir should exist"))
-            .expect("release dir should create");
-        fs::create_dir_all(debug_binary.parent().expect("debug dir should exist"))
-            .expect("debug dir should create");
-        fs::write(&release_binary, b"release").expect("release binary should write");
-        fs::write(&debug_binary, b"debug").expect("debug binary should write");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let config = sample_config(&image_path);
+        let paths = config.roots.paths("default");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+
+        let archive_name = guest_neovex_archive_name().expect("archive name should resolve");
+        let cached_binary = paths.guest_binary_cache_dir.join(format!(
+            "{}-{}-neovex",
+            super::super::current_machine_release_tag(),
+            archive_name.trim_end_matches(".tar.gz")
+        ));
+        fs::write(&cached_binary, b"cached guest binary").expect("cached binary should write");
 
         assert_eq!(
-            find_local_guest_neovex_binary_under(
-                temp_dir.path(),
-                DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64,
-            ),
-            Some(release_binary)
+            resolve_guest_neovex_binary(&paths).expect("cached guest binary should resolve"),
+            cached_binary
         );
     }
 
     #[test]
-    fn local_guest_binary_lookup_falls_back_to_debug() {
-        let temp_dir = TempDir::new().expect("temp dir should exist");
-        let debug_binary = temp_dir
-            .path()
-            .join("target")
-            .join(DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64)
-            .join("debug")
-            .join("neovex");
-        fs::create_dir_all(debug_binary.parent().expect("debug dir should exist"))
-            .expect("debug dir should create");
-        fs::write(&debug_binary, b"debug").expect("debug binary should write");
-
-        assert_eq!(
-            find_local_guest_neovex_binary_under(
-                temp_dir.path(),
-                DEFAULT_GUEST_NEOVEX_TARGET_TRIPLE_ARM64,
-            ),
-            Some(debug_binary)
-        );
-    }
-
-    #[test]
-    fn workspace_root_from_manifest_dir_climbs_out_of_crate_dir() {
-        let manifest_dir = Path::new("/tmp/neovex/crates/neovex-bin");
-
-        assert_eq!(
-            workspace_root_from_manifest_dir(manifest_dir),
-            Some(Path::new("/tmp/neovex"))
-        );
-    }
-
-    #[test]
-    fn converge_machine_image_contract_updates_legacy_stream_and_rebuilds_boot_artifacts() {
+    fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_drifted() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let image_path = temp_dir.path().join("disk.raw");
         fs::write(&image_path, []).expect("image should write");
         let mut config = sample_config(&image_path);
         config.guest.image_source = MachineImageSource::OciReference {
-            reference: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0".to_owned(),
+            reference: super::super::default_machine_image_for_provider(MachineProvider::Krunkit),
         };
         let paths = config.roots.paths("default");
         paths
@@ -3479,8 +3555,7 @@ mod tests {
             },
             image_path: paths.materialized_image_path.clone(),
             efi_variable_store_path: paths.efi_variable_store_path.clone(),
-            machine_image_source: "docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0"
-                .to_owned(),
+            machine_image_source: "docker://quay.io/podman/machine-os@sha256:old-digest".to_owned(),
             ssh_port: 20022,
             rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
             ready_vsock_port: READY_VSOCK_PORT,
@@ -3755,6 +3830,13 @@ mod tests {
         );
         let paths = layout.paths("default");
         fs::create_dir_all(&paths.image_cache_dir).expect("image cache dir should exist");
+        fs::create_dir_all(
+            paths
+                .materialized_image_path
+                .parent()
+                .expect("materialized image parent should exist"),
+        )
+        .expect("materialized image parent should exist");
         fs::write(&paths.materialized_image_path, []).expect("materialized image should write");
 
         let config = MachineConfigRecord {

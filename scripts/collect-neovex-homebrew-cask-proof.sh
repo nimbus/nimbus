@@ -23,11 +23,13 @@ options:
   --output-dir <path>            Output directory for captured artifacts
   --host-binary <path>           Host macOS neovex binary to package
                                  (default: <repo>/target/release/neovex)
-  --guest-binary <path>          Linux guest neovex binary to sync into the VM
-                                 (default: <repo>/target/aarch64-unknown-linux-gnu/release/neovex)
+  --guest-binary <path>          Optional Linux guest neovex override to sync
+                                 into the VM instead of the tagged release asset
   --gvproxy <path>               gvproxy binary to bundle
-                                 (default: /opt/homebrew/opt/podman/libexec/podman/gvproxy)
+                                 (default: <brew-prefix>/opt/podman/libexec/podman/gvproxy)
   --brew <path>                  Brew binary path (default: brew)
+  --brew-prefix <path>           Homebrew prefix to target
+                                 (default: /opt/homebrew)
   --readlink <path>              readlink binary path (default: readlink)
   --ssh-keygen <path>            ssh-keygen binary path (default: ssh-keygen)
   --tap <name>                   Local tap to create (default: local/neovex-proof)
@@ -141,9 +143,10 @@ output_dir=""
 home_dir=""
 runtime_root=""
 host_binary="${repo_root}/target/release/neovex"
-guest_binary="${repo_root}/target/aarch64-unknown-linux-gnu/release/neovex"
-gvproxy_binary="/opt/homebrew/opt/podman/libexec/podman/gvproxy"
+guest_binary=""
+gvproxy_binary=""
 brew_bin="brew"
+brew_prefix="/opt/homebrew"
 readlink_bin="readlink"
 ssh_keygen_bin="ssh-keygen"
 tap_name="local/neovex-proof"
@@ -182,6 +185,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --brew)
       brew_bin="${2:?missing brew path}"
+      shift 2
+      ;;
+    --brew-prefix)
+      brew_prefix="${2:?missing brew prefix}"
       shift 2
       ;;
     --readlink)
@@ -225,6 +232,7 @@ fi
 output_dir="$(cd "${output_dir}" && pwd)"
 summary_file="${output_dir}/summary.txt"
 : > "${summary_file}"
+brew_prefix="${brew_prefix%/}"
 
 if [[ -z "${home_dir}" ]]; then
   home_dir="${output_dir}/home"
@@ -235,6 +243,10 @@ fi
 
 mkdir -p "${home_dir}" "${runtime_root}"
 
+if [[ -z "${gvproxy_binary}" ]]; then
+  gvproxy_binary="${brew_prefix}/opt/podman/libexec/podman/gvproxy"
+fi
+
 machine_stopped=0
 
 cleanup() {
@@ -242,20 +254,36 @@ cleanup() {
   trap - EXIT
 
   if [[ "${machine_stopped}" -eq 0 && -x "${installed_binary:-}" ]]; then
+    local -a cleanup_cmd=(
+      env
+      -u NEOVEX_MACHINE_GVPROXY
+      -u NEOVEX_MACHINE_HELPER_BINARY_DIR
+      "HOME=${home_dir}"
+      "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
+      "PATH=${stripped_path:-${brew_prefix}/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+      "${installed_binary}"
+      machine
+      stop
+    )
+    if [[ -n "${guest_binary}" ]]; then
+      cleanup_cmd=(
+        env
+        -u NEOVEX_MACHINE_GVPROXY
+        -u NEOVEX_MACHINE_HELPER_BINARY_DIR
+        "HOME=${home_dir}"
+        "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
+        "NEOVEX_MACHINE_GUEST_BINARY=${guest_binary}"
+        "PATH=${stripped_path:-${brew_prefix}/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+        "${installed_binary}"
+        machine
+        stop
+      )
+    fi
     capture_command_allow_failure \
       "cleanup.machine_stop" \
       "${output_dir}/cleanup-machine-stop-command.txt" \
       "${output_dir}/cleanup-machine-stop.txt" \
-      env \
-      -u NEOVEX_MACHINE_GVPROXY \
-      -u NEOVEX_MACHINE_HELPER_BINARY_DIR \
-      "HOME=${home_dir}" \
-      "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}" \
-      "NEOVEX_MACHINE_GUEST_BINARY=${guest_binary}" \
-      "PATH=${stripped_path:-/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin}" \
-      "${installed_binary}" \
-      machine \
-      stop
+      "${cleanup_cmd[@]}"
   fi
 
   if [[ "${keep_installed}" -eq 0 ]]; then
@@ -286,8 +314,8 @@ if [[ ! -x "${host_binary}" ]]; then
   exit 64
 fi
 
-if [[ ! -x "${guest_binary}" ]]; then
-  echo "guest Linux neovex binary is not executable at ${guest_binary}; build it first or pass --guest-binary" >&2
+if [[ -n "${guest_binary}" && ! -x "${guest_binary}" ]]; then
+  echo "guest Linux neovex binary override is not executable at ${guest_binary}; build it first or pass a valid --guest-binary" >&2
   exit 64
 fi
 
@@ -325,19 +353,20 @@ archive_sha_file="${output_dir}/archive-sha256.txt"
 tap_info_file="${output_dir}/tap-info.txt"
 cask_rendered="${output_dir}/${cask_token}.rb"
 ssh_identity="${output_dir}/machine-key"
-stripped_path="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-installed_binary="/opt/homebrew/bin/${cask_token}"
-expected_gvproxy="/opt/homebrew/Caskroom/${cask_token}/${host_version}/libexec/gvproxy"
-expected_symlink="/opt/homebrew/Caskroom/${cask_token}/${host_version}/neovex"
+stripped_path="${brew_prefix}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+installed_binary="${brew_prefix}/bin/${cask_token}"
+expected_gvproxy="${brew_prefix}/Caskroom/${cask_token}/${host_version}/libexec/gvproxy"
+expected_symlink="${brew_prefix}/Caskroom/${cask_token}/${host_version}/neovex"
 
 print_line "output.dir" "${output_dir}"
 print_line "machine.name" "${machine_name}"
 print_line "home.dir" "${home_dir}"
 print_line "runtime.root" "${runtime_root}"
 print_line "host.binary" "${host_binary}"
-print_line "guest.binary" "${guest_binary}"
+print_line "guest.binary.override" "${guest_binary:-<none>}"
 print_line "gvproxy.binary" "${gvproxy_binary}"
 print_line "brew.bin" "${brew_bin}"
+print_line "brew.prefix" "${brew_prefix}"
 print_line "tap.name" "${tap_name}"
 print_line "cask.token" "${cask_token}"
 print_line "host.version" "${host_version}"
@@ -474,10 +503,22 @@ base_cmd=(
   -u NEOVEX_MACHINE_HELPER_BINARY_DIR
   "HOME=${home_dir}"
   "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
-  "NEOVEX_MACHINE_GUEST_BINARY=${guest_binary}"
   "PATH=${stripped_path}"
   "${installed_binary}"
 )
+
+if [[ -n "${guest_binary}" ]]; then
+  base_cmd=(
+    env
+    -u NEOVEX_MACHINE_GVPROXY
+    -u NEOVEX_MACHINE_HELPER_BINARY_DIR
+    "HOME=${home_dir}"
+    "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
+    "NEOVEX_MACHINE_GUEST_BINARY=${guest_binary}"
+    "PATH=${stripped_path}"
+    "${installed_binary}"
+  )
+fi
 
 capture_command \
   "capture.host_neovex_version" \
@@ -527,6 +568,47 @@ capture_command \
   "${output_dir}/guest-neovex-version.txt" \
   "${base_cmd[@]}" machine ssh -- /usr/local/bin/neovex --version
 
+guest_proof_dir="${output_dir}/guest-proof"
+guest_proof_cmd=(
+  env
+  "HOME=${home_dir}"
+  "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
+  bash
+  "${repo_root}/scripts/collect-neovex-machine-guest-proof.sh"
+  --home
+  "${home_dir}"
+  --runtime-root
+  "${runtime_root}"
+  --output-dir
+  "${guest_proof_dir}"
+  --neovex
+  "${installed_binary}"
+)
+if [[ -n "${guest_binary}" ]]; then
+  guest_proof_cmd=(
+    env
+    "HOME=${home_dir}"
+    "NEOVEX_MACHINE_RUNTIME_ROOT=${runtime_root}"
+    "NEOVEX_MACHINE_GUEST_BINARY=${guest_binary}"
+    bash
+    "${repo_root}/scripts/collect-neovex-machine-guest-proof.sh"
+    --home
+    "${home_dir}"
+    --runtime-root
+    "${runtime_root}"
+    --output-dir
+    "${guest_proof_dir}"
+    --neovex
+    "${installed_binary}"
+  )
+fi
+
+capture_command \
+  "capture.guest_contract_proof" \
+  "${output_dir}/guest-proof-command.txt" \
+  "${output_dir}/guest-proof.txt" \
+  "${guest_proof_cmd[@]}"
+
 capture_command \
   "capture.machine_stop" \
   "${output_dir}/machine-stop-command.txt" \
@@ -562,6 +644,16 @@ assert_file_contains \
   "assert.guest_version" \
   "${output_dir}/guest-neovex-version.txt" \
   "^neovex ${host_version}"
+
+assert_file_contains \
+  "assert.guest_proof_health" \
+  "${guest_proof_dir}/guest-machine-api-health.txt" \
+  'HTTP/1.1 200 OK'
+
+assert_file_contains \
+  "assert.guest_proof_capabilities" \
+  "${guest_proof_dir}/guest-machine-api-capabilities.txt" \
+  '"protocol_version":"v1alpha2"'
 
 assert_file_contains \
   "assert.machine_running" \

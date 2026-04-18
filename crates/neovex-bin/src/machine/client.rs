@@ -31,7 +31,7 @@ const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
 const BUILD_START_PATH: &str = "/v1/machine-api/service-sandboxes/build-start";
 const LIST_PATH: &str = "/v1/machine-api/service-sandboxes";
 const CURRENT_PATH: &str = "/v1/machine-api/service-sandboxes/current";
-const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "run `make build-neovex-machine-guest-binary` or set `NEOVEX_MACHINE_GUEST_BINARY` for local builds";
+const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "set `NEOVEX_MACHINE_GUEST_BINARY` only when you intentionally need a local Linux guest binary override";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -563,11 +563,11 @@ mod tests {
         );
         assert!(message.contains(PROTOCOL_VERSION), "{message}");
         assert!(message.contains("v1alpha1"), "{message}");
+        assert!(message.contains("NEOVEX_MACHINE_GUEST_BINARY"), "{message}");
         assert!(
-            message.contains("build-neovex-machine-guest-binary"),
+            message.contains("local Linux guest binary override"),
             "{message}"
         );
-        assert!(message.contains("NEOVEX_MACHINE_GUEST_BINARY"), "{message}");
 
         server.join().expect("server should join");
     }
