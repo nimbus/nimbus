@@ -7,13 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.14] - 2026-04-18
 
-### Fixed
+### Machine
 
-- Reflect the guest-binary explicit-override contract in the non-Unix machine stub so Windows release builds stay aligned with the shipped macOS guest-binary behavior by @jackspirou
-
-### Release
-
-- Prepare v0.1.14 by @jackspirou
+- Reflect guest override in non-unix stub by @jackspirou
 
 
 
@@ -21,15 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.13] - 2026-04-18
 
-### Fixed
+### Documentation
 
-- Repair macOS machine contract CI assertions off macOS without changing the shipped machine behavior by @jackspirou
-- Restore the Postgres repeated-direct-CRUD engine stress test to its full 128-round load while keeping it explicitly bounded in CI by @jackspirou
-- Harden V8-sensitive runtime isolation under coverage by making test locks poison-tolerant and relaxing the cooperative subprocess timeout for slower coverage builds by @jackspirou
+- Add storage and rename planning research by @jackspirou
 
-### Release
+### Testing
 
-- Prepare v0.1.13 by @jackspirou
+- Harden runtime isolation under coverage by @jackspirou
+- Bound postgres repeated crud lane by @jackspirou
+- Fix machine contract assertions off macOS by @jackspirou
 
 
 
@@ -37,16 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.12] - 2026-04-18
 
-### Fixed
+### Documentation
 
-- Converge the macOS machine contract on a pinned Podman image digest, explicit rebuild-on-image-drift behavior, and operator-visible guest-binary status by @jackspirou
-- Keep the macOS guest path release-asset-first, remove implicit local Linux guest binary fallback, and prove the shipped guest `neovex --version` path on a real host by @jackspirou
-- Split machine config, state, data, and cache roots across Neovex-owned XDG directories so shared artifacts stay reusable without coupling Neovex to Podman or Docker host state by @jackspirou
-- Add a CI-safe Homebrew/cask proof-helper verifier so the packaged macOS harness stays regression-tested between real Apple Silicon proof runs by @jackspirou
-
-### Release
-
-- Prepare v0.1.12 by @jackspirou
+- Update CHANGELOG.md for v0.1.11 by @github-actions[bot]
 
 
 
