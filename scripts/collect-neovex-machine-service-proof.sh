@@ -15,7 +15,7 @@ lane for:
 - host `<machine>-api.sock` health and capabilities
 - direct host-side machine-API sandbox listing through the forwarded socket
 - `neovex service up/list/inspect/ps/logs/down` against a container-backed
-  Compose project
+  image-backed or build-backed Compose project
 - optional localhost connectivity proof for one published guest service
 
 options:
@@ -82,6 +82,47 @@ capture_command() {
   fi
 
   return "${status}"
+}
+
+capture_command_with_retries() {
+  local label="$1"
+  local command_path="$2"
+  local output_path="$3"
+  local success_pattern="$4"
+  local terminal_pattern="${5:-}"
+  local timeout_secs="$6"
+  shift 6
+
+  write_command_file "${command_path}" "$@"
+
+  local deadline=$((SECONDS + timeout_secs))
+  local attempt=0
+  local status=1
+
+  while :; do
+    attempt=$((attempt + 1))
+    set +e
+    "$@" >"${output_path}" 2>&1
+    status=$?
+    set -e
+
+    if [[ "${status}" -eq 0 ]] && tr -d '\r' <"${output_path}" | grep -Eq "${success_pattern}"; then
+      print_line "${label}" "ok attempts=${attempt} path=${output_path} cmd=${command_path}"
+      return 0
+    fi
+
+    if [[ -n "${terminal_pattern}" ]] && tr -d '\r' <"${output_path}" | grep -Eq "${terminal_pattern}"; then
+      print_line "${label}" "failed attempts=${attempt} terminal_state path=${output_path} cmd=${command_path}"
+      return 1
+    fi
+
+    if (( SECONDS >= deadline )); then
+      print_line "${label}" "failed status=${status} attempts=${attempt} timeout=${timeout_secs}s path=${output_path} cmd=${command_path}"
+      return 1
+    fi
+
+    sleep 1
+  done
 }
 
 machine_name="default"
@@ -238,6 +279,15 @@ capture_command \
   "${output_dir}/service-up.txt" \
   "${base_cmd[@]}" service up --file "${compose_file}" || true
 
+capture_command_with_retries \
+  "capture.service_ready" \
+  "${output_dir}/service-inspect-command.txt" \
+  "${output_dir}/service-inspect.txt" \
+  '^[[:space:]]*status: ready$' \
+  '^[[:space:]]*status: (failed|stopped)$' \
+  30 \
+  "${base_cmd[@]}" service inspect "${service_name}" --file "${compose_file}" || true
+
 capture_command \
   "capture.machine_api_service_sandboxes" \
   "${output_dir}/machine-api-service-sandboxes-command.txt" \
@@ -249,12 +299,6 @@ capture_command \
   "${output_dir}/service-list-command.txt" \
   "${output_dir}/service-list.txt" \
   "${base_cmd[@]}" service list --file "${compose_file}" || true
-
-capture_command \
-  "capture.service_inspect" \
-  "${output_dir}/service-inspect-command.txt" \
-  "${output_dir}/service-inspect.txt" \
-  "${base_cmd[@]}" service inspect "${service_name}" --file "${compose_file}" || true
 
 capture_command \
   "capture.service_ps" \
@@ -269,10 +313,13 @@ capture_command \
   "${base_cmd[@]}" service logs "${service_name}" --file "${compose_file}" || true
 
 if [[ -n "${published_url}" ]]; then
-  capture_command \
+  capture_command_with_retries \
     "capture.localhost_probe" \
     "${output_dir}/localhost-probe-command.txt" \
     "${output_dir}/localhost-probe.txt" \
+    '^HTTP/[0-9.]+ 200 OK$' \
+    '' \
+    15 \
     "${curl_bin}" --silent --show-error --include "${published_url}" || true
 else
   print_line "capture.localhost_probe" "skipped reason=no-published-url"

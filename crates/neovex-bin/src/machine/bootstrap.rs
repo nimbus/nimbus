@@ -264,10 +264,20 @@ mod tests {
                 memory_mib: 2048,
                 disk_gib: 20,
             },
-            volumes: vec![MachineVolume {
-                source: PathBuf::from("/Users"),
-                target: PathBuf::from("/Users"),
-            }],
+            volumes: vec![
+                MachineVolume {
+                    source: PathBuf::from("/Users"),
+                    target: PathBuf::from("/Users"),
+                },
+                MachineVolume {
+                    source: PathBuf::from("/private"),
+                    target: PathBuf::from("/private"),
+                },
+                MachineVolume {
+                    source: PathBuf::from("/var/folders"),
+                    target: PathBuf::from("/var/folders"),
+                },
+            ],
             roots: MachineRootLayout::new(
                 temp_dir.path().join("config"),
                 temp_dir.path().join("state"),
@@ -296,6 +306,8 @@ mod tests {
         assert!(names.contains(&"immutable-root-off.service"));
         assert!(names.contains(&"immutable-root-on.service"));
         assert!(names.contains(&"Users.mount"));
+        assert!(names.contains(&"private.mount"));
+        assert!(names.contains(&"var-folders.mount"));
         assert!(units.iter().any(|unit| {
             unit["contents"]
                 .as_str()

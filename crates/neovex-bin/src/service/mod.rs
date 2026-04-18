@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use crate::machine::{
     ForwardedMachineApiSandboxBackend, MachineApiClient, MachineApiServiceSandboxDetails,
-    require_default_machine_api_client,
+    ensure_default_machine_api_client_started, require_default_machine_api_client,
 };
 
 mod compose;
@@ -209,10 +209,36 @@ fn load_host_backed_sandbox_service_manager_for_platform(
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<SandboxServiceManager, Error> {
     let context = load_compose_project_context(file, control_data_dir)?;
+    let machine_api_client = match machine_api_client {
+        Some(client) => Some(client),
+        None if should_auto_start_default_machine_for_host_loader(&context, host_platform)? => {
+            Some(ensure_default_machine_api_client_started()?)
+        }
+        None => None,
+    };
     let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
     Ok(SandboxServiceManager::new(
         load_sandbox_service_catalog_for_execution_platform(file, host_platform)?,
         backend,
+    ))
+}
+
+fn should_auto_start_default_machine_for_host_loader(
+    context: &ComposeProjectContext,
+    host_platform: ServiceHostPlatform,
+) -> Result<bool, Error> {
+    if host_platform != ServiceHostPlatform::Macos {
+        return Ok(false);
+    }
+
+    Ok(matches!(
+        required_effective_project_backend(
+            context,
+            None,
+            "load a compose-backed sandbox manager",
+            host_platform,
+        )?,
+        SandboxBackendKind::Container
     ))
 }
 
@@ -1311,7 +1337,10 @@ fn validate_forwarded_machine_api_operations(
         return Ok(());
     }
 
-    let blockers = if capabilities.service_execution_blockers.is_empty() {
+    let operation_blockers = capabilities.blockers_for_operations(missing.iter().copied());
+    let blockers = if !operation_blockers.is_empty() {
+        operation_blockers.join("; ")
+    } else if capabilities.service_execution_blockers.is_empty() {
         "guest machine API did not report readiness blockers".to_owned()
     } else {
         capabilities.service_execution_blockers.join("; ")
@@ -2718,6 +2747,66 @@ services:
         );
     }
 
+    #[test]
+    fn macos_host_loader_auto_starts_default_machine_only_for_container_projects() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let container_compose_path = write_compose_fixture_with_body(
+            temp_dir.path(),
+            r#"
+name: Demo App
+services:
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: container
+"#,
+        );
+        let krun_compose_path = temp_dir.path().join("compose-krun.yaml");
+        fs::write(
+            &krun_compose_path,
+            r#"
+name: Demo App
+services:
+  db:
+    image: busybox:latest
+    x_neovex:
+      backend: krun
+"#,
+        )
+        .expect("krun compose fixture should write");
+        let control_data_dir = temp_dir.path().join("control");
+        let container_context =
+            load_compose_project_context(&container_compose_path, &control_data_dir)
+                .expect("container compose project context should load");
+        let krun_context = load_compose_project_context(&krun_compose_path, &control_data_dir)
+            .expect("krun compose project context should load");
+
+        assert!(
+            should_auto_start_default_machine_for_host_loader(
+                &container_context,
+                ServiceHostPlatform::Macos,
+            )
+            .expect("container compose project should evaluate"),
+            "container-backed macOS serve should auto-start the default machine"
+        );
+        assert!(
+            !should_auto_start_default_machine_for_host_loader(
+                &krun_context,
+                ServiceHostPlatform::Macos,
+            )
+            .expect("krun compose project should evaluate"),
+            "krun-backed macOS serve should stay on the local backend"
+        );
+        assert!(
+            !should_auto_start_default_machine_for_host_loader(
+                &container_context,
+                ServiceHostPlatform::Linux,
+            )
+            .expect("linux compose project should evaluate"),
+            "non-macOS serve should not auto-start the default machine"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn macos_service_commands_use_forwarded_machine_api_for_container_projects() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
@@ -3021,7 +3110,7 @@ services:
                 "port_bindings": [neovex::SandboxPortBinding::tcp("http", 18080, 8080)]
             },
             "image_metadata": {},
-            "buildah_container": null,
+            "launch_artifact": null,
             "bundle_layout": {
                 "bundle_dir": bundle_dir,
                 "config_path": bundle_dir.join("config.json")

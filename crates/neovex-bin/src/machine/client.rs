@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -16,7 +17,7 @@ use super::protocol::{
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
     MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
-    MachineApiServiceSandboxSummary,
+    MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
 };
 
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -30,6 +31,7 @@ const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
 const BUILD_START_PATH: &str = "/v1/machine-api/service-sandboxes/build-start";
 const LIST_PATH: &str = "/v1/machine-api/service-sandboxes";
 const CURRENT_PATH: &str = "/v1/machine-api/service-sandboxes/current";
+const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "run `make build-neovex-machine-guest-binary` or set `NEOVEX_MACHINE_GUEST_BINARY` for local builds";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -64,7 +66,16 @@ impl MachineApiClient {
     }
 
     pub(crate) fn capabilities(&self) -> Result<MachineApiCapabilityResponse, Error> {
-        self.get_json(CAPABILITIES_PATH)
+        let response = read_unix_http_request(
+            &self.socket_path,
+            "GET",
+            CAPABILITIES_PATH,
+            None,
+            self.io_timeout,
+        )?;
+        let body = parse_http_json_body(&response, &self.socket_path, CAPABILITIES_PATH)?;
+        serde_json::from_slice(body)
+            .map_err(|error| describe_capability_decode_error(&self.socket_path, body, error))
     }
 
     pub(crate) fn start_service_sandbox_from_image(
@@ -82,6 +93,7 @@ impl MachineApiClient {
         &self,
         launch: SandboxBuildLaunchSpec,
     ) -> Result<SandboxHandle, Error> {
+        let launch = normalize_guest_visible_build_launch(launch);
         self.post_json(
             BUILD_START_PATH,
             &MachineApiServiceSandboxBuildStartRequest { launch },
@@ -225,6 +237,63 @@ impl MachineApiClient {
     }
 }
 
+fn normalize_guest_visible_build_launch(
+    mut launch: SandboxBuildLaunchSpec,
+) -> SandboxBuildLaunchSpec {
+    launch.dockerfile_path = normalize_guest_visible_host_path(&launch.dockerfile_path);
+    launch.context_path = normalize_guest_visible_host_path(&launch.context_path);
+    launch
+}
+
+fn normalize_guest_visible_host_path(path: &Path) -> PathBuf {
+    if !cfg!(target_os = "macos") || !path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    if let Ok(canonical) = fs::canonicalize(path) {
+        return canonical;
+    }
+
+    if path == Path::new("/tmp") {
+        return PathBuf::from("/private/tmp");
+    }
+
+    if let Ok(relative) = path.strip_prefix("/tmp/") {
+        return PathBuf::from("/private/tmp").join(relative);
+    }
+
+    path.to_path_buf()
+}
+
+fn describe_capability_decode_error(
+    socket_path: &Path,
+    body: &[u8],
+    error: serde_json::Error,
+) -> Error {
+    let reported_protocol = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("protocol_version")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+    match reported_protocol {
+        Some(protocol_version) if protocol_version != PROTOCOL_VERSION => Error::Internal(format!(
+            "guest machine API protocol mismatch at {}{}: host expects {}, guest reported {}. Re-sync a matching guest neovex binary and retry ({LOCAL_GUEST_BINARY_HELP_TEXT})",
+            socket_path.display(),
+            CAPABILITIES_PATH,
+            PROTOCOL_VERSION,
+            protocol_version
+        )),
+        _ => Error::Internal(format!(
+            "failed to decode machine API response from {}{}: {error}",
+            socket_path.display(),
+            CAPABILITIES_PATH
+        )),
+    }
+}
+
 fn read_unix_http_request(
     socket_path: &Path,
     method: &str,
@@ -349,7 +418,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::os::unix::net::UnixListener as StdUnixListener;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -366,12 +435,16 @@ mod tests {
     };
     use tempfile::{Builder, TempDir};
 
-    use super::MachineApiClient;
+    use super::{
+        MachineApiClient, normalize_guest_visible_build_launch, normalize_guest_visible_host_path,
+    };
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
         default_guest_helper_binary_dirs, serve_machine_api,
     };
-    use crate::machine::protocol::{MachineApiHealthResponse, MachineApiServiceExecutionMode};
+    use crate::machine::protocol::{
+        MachineApiHealthResponse, MachineApiServiceExecutionMode, PROTOCOL_VERSION,
+    };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn client_reads_health_and_capabilities_from_machine_api_socket() {
@@ -397,14 +470,14 @@ mod tests {
         let health = wait_for_health(&client);
         assert_eq!(health.status, "ok");
         assert_eq!(health.role, "guest-machine-api");
-        assert_eq!(health.protocol_version, "v1alpha1");
+        assert_eq!(health.protocol_version, PROTOCOL_VERSION);
         assert_eq!(health.listen_mode, "direct-socket");
         assert!(health.control_data_dir.ends_with("/control"));
 
         let capabilities = client
             .capabilities()
             .expect("capabilities should decode cleanly");
-        assert_eq!(capabilities.protocol_version, "v1alpha1");
+        assert_eq!(capabilities.protocol_version, PROTOCOL_VERSION);
         assert!(!capabilities.service_execution_ready);
         assert_eq!(
             capabilities.service_execution_mode,
@@ -418,10 +491,16 @@ mod tests {
             capabilities.supported_operations,
             vec!["healthz".to_owned(), "capabilities".to_owned()]
         );
-        assert_eq!(capabilities.required_binaries.len(), 6);
+        assert_eq!(capabilities.binary_statuses.len(), 6);
         assert_eq!(
             capabilities.service_execution_blockers,
             vec!["guest machine API does not yet expose service lifecycle operations".to_owned()]
+        );
+        assert!(
+            capabilities
+                .operation_statuses
+                .iter()
+                .any(|status| status.name == "service-sandboxes.build-start" && !status.available)
         );
 
         let _ = shutdown_tx.send(());
@@ -429,6 +508,55 @@ mod tests {
             .await
             .expect("machine API server task should join")
             .expect("machine API server should shut down cleanly");
+    }
+
+    #[test]
+    fn client_reports_guest_protocol_mismatch_cleanly() {
+        let temp_dir = short_socket_tempdir();
+        let socket_path = temp_dir.path().join("neovex.sock");
+        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server should accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = serde_json::json!({
+                "protocol_version": "v1alpha1",
+                "service_execution_ready": true,
+                "service_execution_mode": "standard_containers",
+                "supported_service_backends": ["container"],
+                "supported_operations": ["healthz", "capabilities"],
+                "service_execution_blockers": [],
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("server should write capabilities response");
+        });
+        let client = MachineApiClient::new_for_test(socket_path);
+
+        let error = client
+            .capabilities()
+            .expect_err("older guest protocol should fail clearly");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("guest machine API protocol mismatch"),
+            "{message}"
+        );
+        assert!(message.contains(PROTOCOL_VERSION), "{message}");
+        assert!(message.contains("v1alpha1"), "{message}");
+        assert!(
+            message.contains("build-neovex-machine-guest-binary"),
+            "{message}"
+        );
+        assert!(message.contains("NEOVEX_MACHINE_GUEST_BINARY"), "{message}");
+
+        server.join().expect("server should join");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -467,6 +595,12 @@ mod tests {
                 .contains(&"service-sandboxes.image-start".to_owned())
         );
         assert!(capabilities.service_execution_blockers.is_empty());
+        assert!(
+            capabilities
+                .operation_statuses
+                .iter()
+                .any(|status| status.name == "service-sandboxes.build-start" && status.available)
+        );
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let image_launch =
@@ -605,6 +739,57 @@ mod tests {
                 .contains("failed to connect to machine API socket"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn guest_visible_path_normalization_preserves_non_absolute_paths() {
+        assert_eq!(
+            normalize_guest_visible_host_path(Path::new("Dockerfile")),
+            PathBuf::from("Dockerfile")
+        );
+    }
+
+    #[test]
+    fn guest_visible_path_normalization_rewrites_tmp_prefix_when_needed() {
+        let path = Path::new("/tmp/neovex-build-context/Dockerfile");
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                normalize_guest_visible_host_path(path),
+                PathBuf::from("/private/tmp/neovex-build-context/Dockerfile")
+            );
+        } else {
+            assert_eq!(normalize_guest_visible_host_path(path), path);
+        }
+    }
+
+    #[test]
+    fn guest_visible_build_launch_normalization_updates_both_paths() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let launch = normalize_guest_visible_build_launch(SandboxBuildLaunchSpec::new(
+            sample_spec(&tenant_id, "api"),
+            "api-image",
+            "/tmp/neovex-build-context/Dockerfile",
+            "/tmp/neovex-build-context",
+        ));
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                launch.dockerfile_path,
+                PathBuf::from("/private/tmp/neovex-build-context/Dockerfile")
+            );
+            assert_eq!(
+                launch.context_path,
+                PathBuf::from("/private/tmp/neovex-build-context")
+            );
+        } else {
+            assert_eq!(
+                launch.dockerfile_path,
+                PathBuf::from("/tmp/neovex-build-context/Dockerfile")
+            );
+            assert_eq!(
+                launch.context_path,
+                PathBuf::from("/tmp/neovex-build-context")
+            );
+        }
     }
 
     #[test]
@@ -779,7 +964,7 @@ mod tests {
                 "port_bindings": [SandboxPortBinding::tcp("http", 18080, 8080)]
             },
             "image_metadata": {},
-            "buildah_container": null,
+            "launch_artifact": null,
             "bundle_layout": {
                 "bundle_dir": bundle_dir,
                 "config_path": bundle_dir.join("config.json")

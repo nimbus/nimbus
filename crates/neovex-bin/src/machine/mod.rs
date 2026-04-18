@@ -339,6 +339,36 @@ pub(crate) fn require_default_machine_api_client() -> Result<MachineApiClient, E
     Ok(client)
 }
 
+pub(crate) fn ensure_default_machine_api_client_started() -> Result<MachineApiClient, Error> {
+    let roots = MachineRootLayout::resolve()?;
+    let paths = with_default_machine_lock(&roots, || {
+        let (paths, mut config, mut state) = load_initialized_machine(&roots)?;
+        if !matches!(state.lifecycle, MachineLifecycle::Running) {
+            paths.ensure_runtime_directories()?;
+            start_machine(&paths, &mut config, &mut state)?;
+        }
+        Ok(paths)
+    })?;
+
+    if !paths.api_socket_path.exists() {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' started but guest machine API socket {} is missing; run `neovex machine status` or restart the machine",
+            DEFAULT_MACHINE_NAME,
+            paths.api_socket_path.display()
+        )));
+    }
+
+    let client = MachineApiClient::new(paths.api_socket_path.clone());
+    client.health().map_err(|error| {
+        Error::InvalidInput(format!(
+            "machine '{}' guest machine API is not reachable at {} after startup: {error}",
+            DEFAULT_MACHINE_NAME,
+            paths.api_socket_path.display()
+        ))
+    })?;
+    Ok(client)
+}
+
 async fn run_machine_command_with_layout(
     command: MachineCommand,
     roots: &MachineRootLayout,
@@ -1084,10 +1114,20 @@ fn roots_view(paths: &MachinePaths) -> MachineRootsView {
 
 fn default_machine_volumes() -> Vec<MachineVolume> {
     if cfg!(target_os = "macos") {
-        vec![MachineVolume {
-            source: PathBuf::from("/Users"),
-            target: PathBuf::from("/Users"),
-        }]
+        vec![
+            MachineVolume {
+                source: PathBuf::from("/Users"),
+                target: PathBuf::from("/Users"),
+            },
+            MachineVolume {
+                source: PathBuf::from("/private"),
+                target: PathBuf::from("/private"),
+            },
+            MachineVolume {
+                source: PathBuf::from("/var/folders"),
+                target: PathBuf::from("/var/folders"),
+            },
+        ]
     } else {
         Vec::new()
     }
@@ -1992,6 +2032,26 @@ mod tests {
         match machine.command {
             MachineSubcommand::Init(init) => {
                 assert_eq!(init.image, expected_default_machine_image());
+                if cfg!(target_os = "macos") {
+                    assert!(init.volumes.is_empty());
+                    assert_eq!(
+                        default_machine_volumes(),
+                        vec![
+                            MachineVolume {
+                                source: PathBuf::from("/Users"),
+                                target: PathBuf::from("/Users"),
+                            },
+                            MachineVolume {
+                                source: PathBuf::from("/private"),
+                                target: PathBuf::from("/private"),
+                            },
+                            MachineVolume {
+                                source: PathBuf::from("/var/folders"),
+                                target: PathBuf::from("/var/folders"),
+                            },
+                        ]
+                    );
+                }
             }
             _ => panic!("expected init subcommand"),
         }
@@ -2817,7 +2877,7 @@ mod tests {
             let body = serde_json::json!({
                 "status": "ok",
                 "role": "guest-machine-api",
-                "protocol_version": "v1alpha1",
+                "protocol_version": "v1alpha2",
                 "listen_mode": "direct-socket",
                 "control_data_dir": temp_dir.path().join("control").display().to_string(),
             })
@@ -2837,16 +2897,24 @@ mod tests {
             let mut request = [0_u8; 1024];
             let _ = stream.read(&mut request);
             let body = serde_json::json!({
-                "protocol_version": "v1alpha1",
+                "protocol_version": "v1alpha2",
                 "service_execution_ready": false,
                 "service_execution_mode": "standard_containers",
                 "supported_service_backends": ["container"],
                 "supported_operations": ["healthz", "capabilities"],
-                "required_binaries": [
+                "binary_statuses": [
                     {
                         "name": "buildah",
                         "present": true,
-                        "resolved_path": "/usr/bin/buildah"
+                        "resolved_path": "/usr/bin/buildah",
+                        "required_for_operations": ["service-sandboxes.build-start"]
+                    }
+                ],
+                "operation_statuses": [
+                    {
+                        "name": "service-sandboxes.build-start",
+                        "available": false,
+                        "blockers": ["guest machine API does not yet expose service lifecycle operations"]
                     }
                 ],
                 "service_execution_blockers": [
@@ -2878,7 +2946,7 @@ mod tests {
         assert!(api.exists);
         assert!(api.reachable);
         assert_eq!(api.role.as_deref(), Some("guest-machine-api"));
-        assert_eq!(api.protocol_version.as_deref(), Some("v1alpha1"));
+        assert_eq!(api.protocol_version.as_deref(), Some("v1alpha2"));
         assert_eq!(api.listen_mode.as_deref(), Some("direct-socket"));
         assert_eq!(
             api.capabilities
