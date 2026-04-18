@@ -1,6 +1,6 @@
 {
   "name": "convex",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -19,9 +19,9 @@
     "./values": "./src/values.ts"
   },
   "dependencies": {
-    "@neovex/codegen": "0.1.13",
+    "@neovex/codegen": "0.1.14",
     "esbuild": "0.28.0",
-    "neovex": "0.1.13"
+    "neovex": "0.1.14"
   },
   "devDependencies": {
     "typescript": "6.0.2"
