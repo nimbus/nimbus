@@ -1600,7 +1600,7 @@ fn serve_ignition_file(
         else {
             return;
         };
-        let _ = runtime.block_on(async move {
+        runtime.block_on(async move {
             let Ok(listener) = tokio::net::UnixListener::from_std(listener) else {
                 return;
             };
@@ -3927,7 +3927,7 @@ mod tests {
         let resolved = resolve_helper_binary(
             "NEOVEX_TEST_GVPROXY",
             "gvproxy-does-not-exist",
-            &[packaged_gvproxy.clone()],
+            std::slice::from_ref(&packaged_gvproxy),
             &[fallback_gvproxy],
         )
         .expect("packaged helper should resolve");
