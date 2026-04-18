@@ -792,13 +792,13 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
     );
 
     let buildah = env::var("NEOVEX_KRUN_SMOKE_BUILDAH").unwrap_or("buildah".into());
-    let container_name = read_manifest_buildah_container_name(&state_root, &handle.id);
-    let vm_config_text = read_buildah_rootfs_file(&buildah, &container_name, ".krun_vm.json");
+    let session_name = read_manifest_mount_session_name(&state_root, &handle.id);
+    let vm_config_text = read_buildah_rootfs_file(&buildah, &session_name, ".krun_vm.json");
     let vm_config: serde_json::Value =
         serde_json::from_str(&vm_config_text).expect("vm config should be valid JSON");
     assert_eq!(vm_config["cpus"].as_u64(), Some(2));
     assert_eq!(vm_config["ram_mib"].as_u64(), Some(256));
-    eprintln!("image-backed .krun_vm.json ({container_name}): {vm_config_text}");
+    eprintln!("image-backed .krun_vm.json ({session_name}): {vm_config_text}");
 
     let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
     assert!(
@@ -1396,7 +1396,7 @@ fn run_host_command_capture_stdout(program: &str, args: &[&str]) -> String {
         .unwrap_or_else(|e| panic!("stdout from {program} was not utf-8: {e}"))
 }
 
-fn read_manifest_buildah_container_name(
+fn read_manifest_mount_session_name(
     state_root: &std::path::Path,
     sandbox_id: &neovex_sandbox::SandboxId,
 ) -> String {
@@ -1409,11 +1409,11 @@ fn read_manifest_buildah_container_name(
             panic!("manifest should be readable at {}", manifest_path.display())
         }))
         .expect("manifest should be valid JSON");
-    manifest["buildah_container"]["container_name"]
+    manifest["launch_artifact"]["MountedRootfs"]["session_name"]
         .as_str()
         .unwrap_or_else(|| {
             panic!(
-                "manifest {} should record a buildah container name",
+                "manifest {} should record a mounted rootfs session name",
                 manifest_path.display()
             )
         })

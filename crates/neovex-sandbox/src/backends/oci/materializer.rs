@@ -17,7 +17,7 @@ use tokio::io::AsyncWriteExt;
 use ulid::Ulid;
 
 use super::buildah::{
-    OciImageLaunchDefaults, parse_image_config_blob, resolve_image_user_from_rootfs,
+    OciImageConfig, OciImageLaunchDefaults, parse_image_config_blob, resolve_image_user_from_rootfs,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -35,6 +35,12 @@ pub struct MaterializedImageRootfs {
 pub struct PreparedMaterializedImageLaunch {
     pub artifact: MaterializedImageRootfs,
     pub launch_defaults: OciImageLaunchDefaults,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreparedMaterializedImageRootfs {
+    pub artifact: MaterializedImageRootfs,
+    pub image_config: OciImageConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +64,97 @@ impl OciImageMaterializer {
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
+        let prepared_rootfs = self.prepare_image_rootfs_with_config(sandbox_id, image_reference)?;
+        let resolved_user = resolve_image_user_from_rootfs(
+            &prepared_rootfs.artifact.rootfs_path,
+            overrides
+                .user
+                .as_deref()
+                .or(prepared_rootfs.image_config.user.as_deref()),
+        )?;
+        let mut config_with_resolved_user = prepared_rootfs.image_config;
+        config_with_resolved_user.user = resolved_user;
+        let mut process_overrides = overrides.clone();
+        process_overrides.user = None;
+
+        Ok(PreparedMaterializedImageLaunch {
+            launch_defaults: config_with_resolved_user.resolve_launch_defaults(
+                &prepared_rootfs.artifact.rootfs_path,
+                &process_overrides,
+            )?,
+            artifact: prepared_rootfs.artifact,
+        })
+    }
+
+    pub(crate) fn prepare_image_rootfs_with_config(
+        &self,
+        sandbox_id: &SandboxId,
+        image_reference: &str,
+    ) -> Result<PreparedMaterializedImageRootfs> {
+        self.ensure_storage_roots()?;
+        let cached_image =
+            pull_image_artifacts_to_cache(self.blob_cache_dir.clone(), image_reference.to_owned())?;
+        let artifact =
+            self.materialize_rootfs(sandbox_id, image_reference, &cached_image.layers)?;
+
+        let config_bytes =
+            fs::read(&cached_image.config_path).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read cached OCI image config {}: {error}",
+                    cached_image.config_path.display()
+                ),
+            })?;
+        let image_config = parse_image_config_blob(&config_bytes)?;
+
+        Ok(PreparedMaterializedImageRootfs {
+            artifact,
+            image_config,
+        })
+    }
+
+    pub(crate) fn prepare_scratch_rootfs(
+        &self,
+        sandbox_id: &SandboxId,
+        image_reference: &str,
+    ) -> Result<MaterializedImageRootfs> {
+        self.ensure_storage_roots()?;
+        let final_rootfs = self.final_rootfs_path(sandbox_id);
+        let temp_rootfs = self.temp_rootfs_path(sandbox_id);
+        if temp_rootfs.exists() {
+            fs::remove_dir_all(&temp_rootfs).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to remove stale temporary rootfs {}: {error}",
+                    temp_rootfs.display()
+                ),
+            })?;
+        }
+        if final_rootfs.exists() {
+            fs::remove_dir_all(&final_rootfs).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to replace stale materialized rootfs {}: {error}",
+                    final_rootfs.display()
+                ),
+            })?;
+        }
+        fs::create_dir_all(&temp_rootfs).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to create temporary rootfs {}: {error}",
+                temp_rootfs.display()
+            ),
+        })?;
+        fs::rename(&temp_rootfs, &final_rootfs).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to persist materialized rootfs {}: {error}",
+                final_rootfs.display()
+            ),
+        })?;
+        Ok(MaterializedImageRootfs {
+            image_reference: image_reference.to_owned(),
+            rootfs_path: final_rootfs,
+        })
+    }
+
+    fn ensure_storage_roots(&self) -> Result<()> {
         fs::create_dir_all(&self.blob_cache_dir).map_err(|error| {
             SandboxError::OperationFailed {
                 message: format!(
@@ -74,34 +171,19 @@ impl OciImageMaterializer {
                 ),
             }
         })?;
+        Ok(())
+    }
 
-        let cached_image =
-            pull_image_artifacts_to_cache(self.blob_cache_dir.clone(), image_reference.to_owned())?;
-        let artifact =
-            self.materialize_rootfs(sandbox_id, image_reference, &cached_image.layers)?;
+    fn final_rootfs_path(&self, sandbox_id: &SandboxId) -> PathBuf {
+        self.rootfs_root_dir.join(sandbox_id.as_str())
+    }
 
-        let config_bytes =
-            fs::read(&cached_image.config_path).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to read cached OCI image config {}: {error}",
-                    cached_image.config_path.display()
-                ),
-            })?;
-        let image_config = parse_image_config_blob(&config_bytes)?;
-        let resolved_user = resolve_image_user_from_rootfs(
-            &artifact.rootfs_path,
-            overrides.user.as_deref().or(image_config.user.as_deref()),
-        )?;
-        let mut config_with_resolved_user = image_config;
-        config_with_resolved_user.user = resolved_user;
-        let mut process_overrides = overrides.clone();
-        process_overrides.user = None;
-
-        Ok(PreparedMaterializedImageLaunch {
-            launch_defaults: config_with_resolved_user
-                .resolve_launch_defaults(&artifact.rootfs_path, &process_overrides)?,
-            artifact,
-        })
+    fn temp_rootfs_path(&self, sandbox_id: &SandboxId) -> PathBuf {
+        self.rootfs_root_dir.join(format!(
+            "{}.extracting-{}",
+            sandbox_id.as_str(),
+            Ulid::new()
+        ))
     }
 
     fn materialize_rootfs(
@@ -110,12 +192,8 @@ impl OciImageMaterializer {
         image_reference: &str,
         layers: &[PathBuf],
     ) -> Result<MaterializedImageRootfs> {
-        let final_rootfs = self.rootfs_root_dir.join(sandbox_id.as_str());
-        let temp_rootfs = self.rootfs_root_dir.join(format!(
-            "{}.extracting-{}",
-            sandbox_id.as_str(),
-            Ulid::new()
-        ));
+        let final_rootfs = self.final_rootfs_path(sandbox_id);
+        let temp_rootfs = self.temp_rootfs_path(sandbox_id);
         if temp_rootfs.exists() {
             fs::remove_dir_all(&temp_rootfs).map_err(|error| SandboxError::OperationFailed {
                 message: format!(

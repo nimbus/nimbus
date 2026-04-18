@@ -13,9 +13,9 @@ use ulid::Ulid;
 use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::backends::oci::buildah::{
-    BuildahCli, BuildahContainer, ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
-    PreparedImageLaunch,
+    BuildahCli, ImageHealthcheck, MountedRootfsSession, OciExposedPort, OciImageLaunchDefaults,
 };
+use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
@@ -247,7 +247,7 @@ impl KrunSandboxBackend {
             context_path,
             overrides,
         )?;
-        self.plan_start_with_prepared_launch(spec, &sandbox_id, prepared_launch)
+        self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
     }
 
     pub fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
@@ -270,15 +270,6 @@ impl KrunSandboxBackend {
         self.plan_start_with_id(spec, &sandbox_id, launch_defaults, None)
     }
 
-    fn plan_start_with_prepared_launch(
-        &self,
-        spec: &SandboxSpec,
-        sandbox_id: &SandboxId,
-        prepared_launch: PreparedImageLaunch,
-    ) -> Result<KrunLaunchPlan> {
-        self.plan_start_with_buildah_launch(spec, sandbox_id, prepared_launch)
-    }
-
     fn plan_start_with_materialized_launch(
         &self,
         spec: &SandboxSpec,
@@ -290,20 +281,6 @@ impl KrunSandboxBackend {
             sandbox_id,
             Some(&prepared_launch.launch_defaults),
             Some(KrunLaunchArtifact::Rootfs(prepared_launch.artifact)),
-        )
-    }
-
-    fn plan_start_with_buildah_launch(
-        &self,
-        spec: &SandboxSpec,
-        sandbox_id: &SandboxId,
-        prepared_launch: PreparedImageLaunch,
-    ) -> Result<KrunLaunchPlan> {
-        self.plan_start_with_id(
-            spec,
-            sandbox_id,
-            Some(&prepared_launch.launch_defaults),
-            Some(KrunLaunchArtifact::Buildah(prepared_launch.container)),
         )
     }
 
@@ -356,7 +333,7 @@ impl KrunSandboxBackend {
                 buildah_path: self.config.buildah_path.clone(),
                 use_buildah_unshare: launch_artifact
                     .as_ref()
-                    .is_some_and(KrunLaunchArtifact::uses_buildah_unshare)
+                    .is_some_and(KrunLaunchArtifact::uses_mount_session_unshare)
                     && self.config.use_buildah_unshare,
                 log_level: self.config.log_level.clone(),
             },
@@ -366,12 +343,12 @@ impl KrunSandboxBackend {
             &bundle_layout.bundle_dir,
             launch_artifact
                 .as_ref()
-                .and_then(KrunLaunchArtifact::buildah_container_name),
+                .and_then(KrunLaunchArtifact::mount_session_name),
             &krun_vm_config_prelude(
                 &resolved_launch.spec,
                 launch_artifact
                     .as_ref()
-                    .is_some_and(KrunLaunchArtifact::uses_buildah_unshare)
+                    .is_some_and(KrunLaunchArtifact::uses_mount_session_unshare)
                     && self.config.use_buildah_unshare,
             )?,
         );
@@ -426,10 +403,10 @@ impl KrunSandboxBackend {
         dockerfile_path: &Path,
         context_path: &Path,
         overrides: &SandboxImageProcessOverrides,
-    ) -> Result<PreparedImageLaunch> {
-        self.buildah_cli().prepare_built_image_launch(
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        OciDockerfileBuilder::under_state_root(&self.config.state_root).prepare_built_image_launch(
+            sandbox_id,
             image_name,
-            &buildah_container_name(sandbox_id),
             dockerfile_path,
             context_path,
             overrides,
@@ -448,9 +425,9 @@ impl KrunSandboxBackend {
             return Ok(());
         };
         match artifact {
-            KrunLaunchArtifact::Buildah(container) => {
+            KrunLaunchArtifact::MountedRootfs(session) => {
                 self.buildah_cli()
-                    .cleanup_container(&container.container_name)?;
+                    .cleanup_rootfs_session(&session.session_name)?;
             }
             KrunLaunchArtifact::Rootfs(rootfs) => {
                 if !rootfs.rootfs_path.exists() {
@@ -495,7 +472,7 @@ impl KrunSandboxBackend {
         if manifest
             .launch_artifact
             .as_ref()
-            .is_some_and(KrunLaunchArtifact::uses_buildah_unshare)
+            .is_some_and(KrunLaunchArtifact::uses_mount_session_unshare)
             && self.config.use_buildah_unshare
         {
             return Ok(());
@@ -599,7 +576,15 @@ impl KrunSandboxBackend {
             Some("stopped") => Ok(SandboxStatus::Stopped),
             Some("paused") => Ok(SandboxStatus::Stopping),
             Some(_) => Ok(SandboxStatus::Failed),
-            None if manifest.conmon_layout.pidfile.exists() => Ok(SandboxStatus::Starting),
+            None if manifest.conmon_layout.pidfile.exists() => {
+                if pid_is_alive(read_pid(&manifest.conmon_layout.pidfile)?) {
+                    Ok(SandboxStatus::Starting)
+                } else if manifest.shutdown_requested {
+                    Ok(SandboxStatus::Stopped)
+                } else {
+                    Ok(SandboxStatus::Failed)
+                }
+            }
             None => Ok(manifest.status),
         }
     }
@@ -812,20 +797,20 @@ struct GuestUserIds {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum KrunLaunchArtifact {
-    Buildah(BuildahContainer),
+    MountedRootfs(MountedRootfsSession),
     Rootfs(MaterializedImageRootfs),
 }
 
 impl KrunLaunchArtifact {
-    fn buildah_container_name(&self) -> Option<&str> {
+    fn mount_session_name(&self) -> Option<&str> {
         match self {
-            Self::Buildah(container) => Some(container.container_name.as_str()),
+            Self::MountedRootfs(session) => Some(session.session_name.as_str()),
             Self::Rootfs(_) => None,
         }
     }
 
-    fn uses_buildah_unshare(&self) -> bool {
-        matches!(self, Self::Buildah(_))
+    fn uses_mount_session_unshare(&self) -> bool {
+        matches!(self, Self::MountedRootfs(_))
     }
 }
 
@@ -874,10 +859,6 @@ fn slugify(name: &str) -> String {
         }
     }
     slug.trim_matches('-').to_owned()
-}
-
-fn buildah_container_name(sandbox_id: &SandboxId) -> String {
-    format!("{}-image", sandbox_id.as_str())
 }
 
 fn configured_stop_signal(image_metadata: &KrunImageMetadata) -> String {
@@ -1437,6 +1418,15 @@ fn wait_for_path(path: &Path, timeout: Duration) -> bool {
     path.exists()
 }
 
+fn pid_is_alive(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    result == 0
+        || matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        )
+}
+
 fn read_exit_code(path: &Path) -> Result<i32> {
     let exit_status =
         std::fs::read_to_string(path).map_err(|error| SandboxError::OperationFailed {
@@ -1483,7 +1473,7 @@ mod tests {
     use serde_json::json;
     use sha2::{Digest, Sha256};
     use tar::Builder;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::TempDir;
 
     use neovex_core::TenantId;
 
@@ -1500,7 +1490,7 @@ mod tests {
         ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
     };
     use crate::endpoint::PublishedEndpointProtocol;
-    use crate::instance::SandboxStatus;
+    use crate::instance::{SandboxId, SandboxStatus};
     use crate::spec::{
         SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
         SandboxImageProcessOverrides, SandboxPortBinding, SandboxProcessSpec,
@@ -1564,17 +1554,16 @@ mod tests {
     #[test]
     fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let (buildah_path, log_path) = write_fake_buildah_script(&temp_dir);
         let workspace = temp_dir.path().join("workspace");
         fs::create_dir_all(&workspace).expect("workspace directory should exist");
         let dockerfile_path = workspace.join("Dockerfile");
-        fs::write(&dockerfile_path, "FROM busybox\n").expect("dockerfile should be written");
+        fs::write(&dockerfile_path, "FROM scratch\nCMD [\"/bin/true\"]\n")
+            .expect("dockerfile should be written");
 
         let mut config = KrunSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
             temp_dir.path().join("state"),
         );
-        configure_fake_buildah(&mut config, buildah_path);
         config.use_buildah_unshare = false;
         let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
@@ -1593,24 +1582,20 @@ mod tests {
             .expect("inspect should succeed")
             .expect("plan-only build-backed sandbox should persist a manifest");
         assert_eq!(inspected.id, handle.id);
-
-        let log = fs::read_to_string(log_path).expect("fake buildah log should be readable");
-        let lines: Vec<_> = log.lines().collect();
-        assert_eq!(
-            lines,
-            vec![
-                format!(
-                    "bud -t neovex-api -f {} {}",
-                    dockerfile_path.display(),
-                    workspace.display()
-                ),
-                format!(
-                    "from --name {}-image localhost/neovex-api",
-                    handle.id.as_str()
-                ),
-                format!("mount {}-image", handle.id.as_str()),
-                format!("inspect --type container {}-image", handle.id.as_str()),
-            ]
+        let manifest_path = temp_dir
+            .path()
+            .join("state")
+            .join("containers")
+            .join(handle.id.as_str())
+            .join("manifest.json");
+        let manifest = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+        assert!(
+            manifest.contains("\"Rootfs\""),
+            "build-backed plan should persist a materialized rootfs launch artifact: {manifest}"
+        );
+        assert!(
+            !manifest.contains("\"MountedRootfs\""),
+            "build-backed plan should no longer depend on mounted buildah rootfs sessions: {manifest}"
         );
     }
 
@@ -2232,6 +2217,36 @@ mod tests {
     }
 
     #[test]
+    fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        ));
+        let mut manifest = backend
+            .plan_start_with_id(&sample_spec(), &SandboxId::new("db-01"), None, None)
+            .expect("plan should lower")
+            .manifest;
+        let state_stub = temp_dir.path().join("krun-state");
+        fs::write(&state_stub, "#!/bin/sh\nexit 1\n").expect("state stub should write");
+        let mut permissions = fs::metadata(&state_stub)
+            .expect("state stub metadata should resolve")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&state_stub, permissions)
+            .expect("state stub permissions should update");
+        manifest.conmon_launch.state_command.program = state_stub;
+        fs::write(&manifest.conmon_layout.pidfile, "999999\n").expect("pidfile should write");
+
+        assert_eq!(
+            backend
+                .detect_runtime_status(&manifest)
+                .expect("status should resolve"),
+            SandboxStatus::Failed
+        );
+    }
+
+    #[test]
     fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
         let spec = sample_spec();
 
@@ -2619,11 +2634,6 @@ mod tests {
         format!("docker://localhost:{}/library/demo:latest", address.port())
     }
 
-    fn configure_fake_buildah(config: &mut KrunSandboxBackendConfig, script_path: PathBuf) {
-        config.buildah_path = PathBuf::from("/bin/sh");
-        config.buildah_launcher_args = vec![script_path.to_string_lossy().into_owned()];
-    }
-
     #[test]
     fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
         let error = desired_krun_vm_config(
@@ -2637,138 +2647,6 @@ mod tests {
                 .contains("cpu_count requires memory_limit_bytes"),
             "expected actionable validation error, got: {error}"
         );
-    }
-
-    fn write_fake_buildah_script(temp_dir: &TempDir) -> (PathBuf, PathBuf) {
-        let script_path = temp_dir.path().join("fake-buildah");
-        let log_path = temp_dir.path().join("buildah.log");
-        let script = format!(
-            r#"#!/bin/sh
-set -eu
-printf '%s\n' "$*" >> "{log_path}"
-cmd="${{1:-}}"
-if [ -z "$cmd" ]; then
-  echo "missing buildah subcommand" >&2
-  exit 1
-fi
-shift
-
-if [ "$cmd" = "unshare" ]; then
-  if [ "${{1:-}}" != "--" ]; then
-    echo "expected -- after buildah unshare" >&2
-    exit 1
-  fi
-  shift
-  wrapped_program="${{1:-}}"
-  if [ -z "$wrapped_program" ]; then
-    echo "missing wrapped program for buildah unshare" >&2
-    exit 1
-  fi
-  shift
-  if [ "${{1:-}}" = "$0" ]; then
-    shift
-  fi
-  cmd="${{1:-}}"
-  if [ -z "$cmd" ]; then
-    printf 'missing subcommand for wrapped program %s\n' "$wrapped_program" >&2
-    exit 1
-  fi
-  shift
-fi
-
-case "$cmd" in
-  from|bud|umount|rm)
-    exit 0
-    ;;
-  mount)
-    printf '%s\n' "/tmp/fake-rootfs"
-    exit 0
-    ;;
-  inspect)
-    cat <<'JSON'
-{inspect_json}
-JSON
-    exit 0
-    ;;
-  *)
-    printf 'unexpected command: %s\n' "$cmd" >&2
-    exit 1
-    ;;
-esac
-"#,
-            log_path = log_path.display(),
-            inspect_json = sample_inspect_json()
-        );
-
-        let mut temp_script = NamedTempFile::new_in(temp_dir.path())
-            .expect("temporary fake buildah file should exist");
-        temp_script
-            .write_all(script.as_bytes())
-            .expect("fake buildah script should be written");
-        temp_script
-            .flush()
-            .expect("fake buildah script should flush cleanly");
-        let mut permissions = temp_script
-            .as_file()
-            .metadata()
-            .expect("fake buildah temp script metadata should exist")
-            .permissions();
-        permissions.set_mode(0o755);
-        temp_script
-            .as_file()
-            .set_permissions(permissions)
-            .expect("fake buildah temp script should be executable");
-        temp_script
-            .as_file()
-            .sync_all()
-            .expect("fake buildah script should sync cleanly");
-        temp_script
-            .into_temp_path()
-            .persist(&script_path)
-            .expect("fake buildah script should persist cleanly");
-
-        (script_path, log_path)
-    }
-
-    fn sample_inspect_json() -> String {
-        json!([
-            {
-                "OCIv1": {
-                    "Config": {
-                        "Entrypoint": ["/usr/local/bin/docker-entrypoint.sh"],
-                        "Cmd": ["postgres"],
-                        "Env": [
-                            "PATH=/usr/local/bin:/usr/bin",
-                            "POSTGRES_DB=postgres"
-                        ],
-                        "WorkingDir": "/var/lib/postgresql",
-                        "User": "999:999",
-                        "ExposedPorts": {
-                            "5432/tcp": {}
-                        },
-                        "Volumes": {
-                            "/var/lib/postgresql/data": {}
-                        },
-                        "StopSignal": "SIGINT",
-                        "Labels": {
-                            "com.example.role": "primary"
-                        }
-                    }
-                },
-                "Docker": {
-                    "Config": {
-                        "Healthcheck": {
-                            "Test": ["CMD-SHELL", "pg_isready -U postgres"],
-                            "Interval": 10000000000_u64,
-                            "Timeout": 5000000000_u64,
-                            "StartPeriod": 30000000000_u64,
-                            "Retries": 3
-                        }
-                    }
-                }
-            }
-        ])
-        .to_string()
     }
 
     trait ImageMetadataTestExt {

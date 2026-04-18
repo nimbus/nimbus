@@ -72,7 +72,7 @@ pub(crate) fn build_launch_plan(
     sandbox_id: &SandboxId,
     sandbox_name: &str,
     bundle_dir: &Path,
-    buildah_container_name: Option<&str>,
+    mount_session_name: Option<&str>,
     create_prelude: &[String],
 ) -> OciConmonLaunchPlan {
     let create_command = CommandSpec::new(config.conmon_path.clone()).args([
@@ -124,9 +124,9 @@ pub(crate) fn build_launch_plan(
     let buildah =
         BuildahCli::new(config.buildah_path.clone()).with_unshare(config.use_buildah_unshare);
 
-    // For image-backed sandboxes, the conmon create command must run inside the
-    // same buildah unshare session that mounts the rootfs overlay, because crun
-    // needs the rootfs accessible during the create phase.
+    // For build-backed sandboxes, the conmon create command must run inside the
+    // same buildah unshare session that mounts the working rootfs overlay,
+    // because crun needs the rootfs accessible during the create phase.
     //
     // The state and start commands must NOT run inside buildah unshare because
     // the crun state directory was created by the conmon create session's user
@@ -137,20 +137,20 @@ pub(crate) fn build_launch_plan(
     OciConmonLaunchPlan {
         create_command: buildah.maybe_wrap_with_mount_prelude(
             create_command,
-            buildah_container_name,
+            mount_session_name,
             create_prelude,
         ),
-        state_command: if buildah_container_name.is_some() {
+        state_command: if mount_session_name.is_some() {
             state_command
         } else {
             buildah.maybe_wrap(state_command)
         },
-        start_command: if buildah_container_name.is_some() {
+        start_command: if mount_session_name.is_some() {
             start_command
         } else {
             buildah.maybe_wrap(start_command)
         },
-        delete_command: if buildah_container_name.is_some() {
+        delete_command: if mount_session_name.is_some() {
             delete_command
         } else {
             buildah.maybe_wrap(delete_command)
