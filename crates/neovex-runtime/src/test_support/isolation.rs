@@ -10,7 +10,7 @@ pub(crate) fn acquire_runtime_suite_lock() -> MutexGuard<'static, ()> {
     IN_PROCESS_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("runtime test lock should not be poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeTestCase) {
@@ -42,7 +42,7 @@ pub(crate) fn acquire_snapshot_reset_test_lock() -> SnapshotResetTestLockGuard {
     let in_process_guard = IN_PROCESS_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("snapshot reset test lock should not be poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     #[cfg(unix)]
     {
