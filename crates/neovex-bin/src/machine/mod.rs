@@ -2119,6 +2119,12 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    fn lock_machine_guest_binary_override_env() -> std::sync::MutexGuard<'static, ()> {
+        machine_guest_binary_override_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     struct GuestBinaryOverrideEnvGuard {
         previous: Option<std::ffi::OsString>,
     }
@@ -2713,7 +2719,10 @@ mod tests {
         let desired = desired_machine_image_source(&config);
 
         assert_eq!(desired, config.guest.image_source);
-        assert!(uses_host_managed_machine_image_contract(&config));
+        assert_eq!(
+            uses_host_managed_machine_image_contract(&config),
+            cfg!(target_os = "macos")
+        );
     }
 
     #[test]
@@ -3025,9 +3034,7 @@ mod tests {
 
     #[test]
     fn machine_status_renders_release_asset_guest_binary_contract() {
-        let _env_lock = machine_guest_binary_override_env_lock()
-            .lock()
-            .expect("guest override env lock should acquire");
+        let _env_lock = lock_machine_guest_binary_override_env();
         let _env_guard = GuestBinaryOverrideEnvGuard::clear();
 
         let temp_dir = TempDir::new().expect("temp dir should exist");
@@ -3073,6 +3080,11 @@ mod tests {
         .expect("machine view should render");
         let desired = inspect_desired_guest_neovex_binary(&paths);
 
+        if !cfg!(target_os = "macos") {
+            assert!(rendered.contains("guest_binary_contract: null"));
+            return;
+        }
+
         assert!(rendered.contains("guest_binary_contract:"));
         assert!(rendered.contains("source: release-asset"));
         assert!(rendered.contains(&format!(
@@ -3096,9 +3108,7 @@ mod tests {
 
     #[test]
     fn machine_status_renders_explicit_override_guest_binary_contract() {
-        let _env_lock = machine_guest_binary_override_env_lock()
-            .lock()
-            .expect("guest override env lock should acquire");
+        let _env_lock = lock_machine_guest_binary_override_env();
 
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let layout = MachineRootLayout::new(
@@ -3144,6 +3154,11 @@ mod tests {
         )
         .expect("machine view should render");
         let desired = inspect_desired_guest_neovex_binary(&paths);
+
+        if !cfg!(target_os = "macos") {
+            assert!(rendered.contains("guest_binary_contract: null"));
+            return;
+        }
 
         assert!(rendered.contains("guest_binary_contract:"));
         assert!(rendered.contains("source: explicit-override"));
