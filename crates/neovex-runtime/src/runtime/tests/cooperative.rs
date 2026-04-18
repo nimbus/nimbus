@@ -36,6 +36,8 @@ pub(super) const CONCURRENT_DISPATCH_CASE: IsolatedRuntimeTestCase = IsolatedRun
     "runtime::tests::cooperative::cooperative_concurrent_dispatch_does_not_deadlock_subprocess",
 );
 
+const CONCURRENT_DISPATCH_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[test]
 fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion() {
     run_v8_sensitive_runtime_test_in_subprocess(PARK_AND_RESUME_CASE);
@@ -537,13 +539,16 @@ export {};
 
         for (i, handle) in handles.into_iter().enumerate() {
             // Wrap the join in a timeout: if the fix didn't work this would
-            // hang forever. We want to fail the test rather than hang CI.
+            // hang forever. Keep the timeout bounded but high enough for
+            // coverage-instrumented CI builds, where cooperative locker and
+            // startup-snapshot paths can run materially slower than a normal
+            // local test build.
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let _ = tx.send(handle.join());
             });
             let join_result = rx
-                .recv_timeout(std::time::Duration::from_secs(10))
+                .recv_timeout(CONCURRENT_DISPATCH_JOIN_TIMEOUT)
                 .unwrap_or_else(|_| {
                     panic!(
                         "{} for {pool_kind:?} thread {i}",
