@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof collect-neovex-machine-service-proof check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-guest-proof collect-neovex-machine-service-proof build-neovex-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-build-neovex-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -140,6 +140,35 @@ collect-neovex-machine-service-proof:
 	@test -n "$(SERVICE)" || (echo "set SERVICE=<service-name>" && exit 1)
 	bash scripts/collect-neovex-machine-service-proof.sh --compose-file "$(COMPOSE_FILE)" --service "$(SERVICE)" $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(CURL),--curl "$(CURL)",) $(if $(PUBLISHED_URL),--published-url "$(PUBLISHED_URL)",)
 
+# Build the Linux guest neovex binary that macOS machine-start prefers before release downloads
+build-neovex-machine-guest-binary:
+	bash scripts/build-neovex-machine-guest-binary.sh $(if $(TARGET),--target "$(TARGET)",) $(if $(PROFILE),--profile "$(PROFILE)",) $(if $(COPY_TO),--copy-to "$(COPY_TO)",) $(if $(CACHE_ROOT),--cache-root "$(CACHE_ROOT)",) $(if $(CARGO_BIN),--cargo "$(CARGO_BIN)",) $(if $(RUSTUP_BIN),--rustup "$(RUSTUP_BIN)",) $(if $(ZIG_BIN),--zig "$(ZIG_BIN)",)
+
+# Stage Linux package payloads, render nFPM manifests, and optionally build deb/rpm artifacts
+build-linux-release-packages:
+	@test -n "$(OUTPUT_DIR)" || (echo "set OUTPUT_DIR=/absolute/path/to/output-dir" && exit 1)
+	@test -n "$(NEOVEX_BINARY)" || (echo "set NEOVEX_BINARY=/absolute/path/to/neovex" && exit 1)
+	@test -n "$(NEOVEX_CRUN_BINARY)" || (echo "set NEOVEX_CRUN_BINARY=/absolute/path/to/neovex-crun" && exit 1)
+	@test -n "$(VERSION)" || (echo "set VERSION=X.Y.Z or VERSION=vX.Y.Z" && exit 1)
+	bash scripts/build-linux-release-packages.sh --output-dir "$(OUTPUT_DIR)" --neovex-binary "$(NEOVEX_BINARY)" --neovex-crun-binary "$(NEOVEX_CRUN_BINARY)" --version "$(VERSION)" $(if $(CRUN_VERSION),--crun-version "$(CRUN_VERSION)",) $(if $(ARCH),--arch "$(ARCH)",) $(foreach format,$(FORMAT),--format "$(format)") $(if $(NFPM),--nfpm "$(NFPM)",) $(if $(RENDER_ONLY),--render-only,)
+
+# Build a static Debian/Ubuntu apt repository tree from prebuilt .deb packages
+build-apt-repository:
+	@test -n "$(OUTPUT_DIR)" || (echo "set OUTPUT_DIR=/absolute/path/to/output-dir" && exit 1)
+	@test -n "$(PACKAGES_DIR)" || (echo "set PACKAGES_DIR=/absolute/path/to/packages-dir" && exit 1)
+	bash scripts/build-apt-repository.sh --output-dir "$(OUTPUT_DIR)" --packages-dir "$(PACKAGES_DIR)" $(if $(DISTRIBUTION),--distribution "$(DISTRIBUTION)",) $(if $(SUITE),--suite "$(SUITE)",) $(if $(COMPONENT),--component "$(COMPONENT)",) $(if $(ORIGIN),--origin "$(ORIGIN)",) $(if $(LABEL),--label "$(LABEL)",) $(if $(DESCRIPTION),--description "$(DESCRIPTION)",) $(foreach arch,$(ARCH),--arch "$(arch)") $(if $(APT_FTPARCHIVE),--apt-ftparchive "$(APT_FTPARCHIVE)",) $(if $(GPG_BIN),--gpg "$(GPG_BIN)",) $(if $(GPG_PRIVATE_KEY),--gpg-private-key "$(GPG_PRIVATE_KEY)",) $(if $(GPG_KEY_ID),--gpg-key-id "$(GPG_KEY_ID)",) $(if $(GPG_PASSPHRASE_FILE),--gpg-passphrase-file "$(GPG_PASSPHRASE_FILE)",) $(if $(KEYRING_NAME),--keyring-name "$(KEYRING_NAME)",)
+
+# Build Fedora/COPR SRPMs from published Neovex release artifacts
+build-fedora-release-srpms:
+	@test -n "$(OUTPUT_DIR)" || (echo "set OUTPUT_DIR=/absolute/path/to/output-dir" && exit 1)
+	@test -n "$(NEOVEX_VERSION)" || (echo "set NEOVEX_VERSION=X.Y.Z or NEOVEX_VERSION=vX.Y.Z" && exit 1)
+	@test -n "$(NEOVEX_LINUX_AMD64_TARBALL)" || (echo "set NEOVEX_LINUX_AMD64_TARBALL=/absolute/path/to/neovex_linux_x86_64.tar.gz" && exit 1)
+	@test -n "$(NEOVEX_LINUX_ARM64_TARBALL)" || (echo "set NEOVEX_LINUX_ARM64_TARBALL=/absolute/path/to/neovex_linux_arm64.tar.gz" && exit 1)
+	@test -n "$(NEOVEX_CRUN_VERSION)" || (echo "set NEOVEX_CRUN_VERSION=X.Y.Z or NEOVEX_CRUN_VERSION=vX.Y.Z" && exit 1)
+	@test -n "$(NEOVEX_CRUN_LINUX_AMD64)" || (echo "set NEOVEX_CRUN_LINUX_AMD64=/absolute/path/to/neovex-crun-linux-amd64" && exit 1)
+	@test -n "$(NEOVEX_CRUN_LINUX_ARM64)" || (echo "set NEOVEX_CRUN_LINUX_ARM64=/absolute/path/to/neovex-crun-linux-arm64" && exit 1)
+	bash scripts/build-fedora-release-srpms.sh --output-dir "$(OUTPUT_DIR)" --neovex-version "$(NEOVEX_VERSION)" --neovex-linux-amd64-tarball "$(NEOVEX_LINUX_AMD64_TARBALL)" --neovex-linux-arm64-tarball "$(NEOVEX_LINUX_ARM64_TARBALL)" --neovex-crun-version "$(NEOVEX_CRUN_VERSION)" --neovex-crun-linux-amd64 "$(NEOVEX_CRUN_LINUX_AMD64)" --neovex-crun-linux-arm64 "$(NEOVEX_CRUN_LINUX_ARM64)" $(if $(RELEASE),--release "$(RELEASE)",) $(if $(RPMBUILD),--rpmbuild "$(RPMBUILD)",) $(if $(RENDER_ONLY),--render-only,)
+
 # Check whether a Podman/libkrun machine tmp root will overflow Darwin's unix-socket path budget
 check-podman-machine-socket-paths:
 	@test -n "$(MACHINE)" || (echo "set MACHINE=<podman-machine-name>" && exit 1)
@@ -220,6 +249,22 @@ verify-neovex-machine-recreate-helper:
 # Verify the Neovex machine guest-proof helper against deterministic fake guest artifacts
 verify-neovex-machine-guest-proof-helper:
 	bash scripts/verify-neovex-machine-guest-proof-helper.sh
+
+# Verify the machine guest-binary build helper against deterministic fake cargo/rustup/zig shims
+verify-build-neovex-machine-guest-binary-helper:
+	bash scripts/verify-build-neovex-machine-guest-binary-helper.sh
+
+# Verify the Linux package builder helper against deterministic staged binaries and manifests
+verify-build-linux-release-packages-helper:
+	bash scripts/verify-build-linux-release-packages-helper.sh
+
+# Verify the apt repository builder helper against deterministic stub packages and signed metadata
+verify-build-apt-repository-helper:
+	bash scripts/verify-build-apt-repository-helper.sh
+
+# Verify the Fedora/COPR SRPM builder against deterministic release-asset stubs and Fedora userspace
+verify-build-fedora-release-srpms-helper:
+	bash scripts/verify-build-fedora-release-srpms-helper.sh
 
 # Verify the Neovex machine service-proof helper against deterministic fake host artifacts
 verify-neovex-machine-service-proof-helper:

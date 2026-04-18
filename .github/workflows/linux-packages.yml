@@ -1,0 +1,121 @@
+name: linux-packages
+
+on:
+  workflow_call:
+    inputs:
+      neovex_version:
+        description: "Neovex release version or tag"
+        required: true
+        type: string
+      neovex_crun_version:
+        description: "neovex-crun release version or tag"
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      neovex_version:
+        description: "Neovex release version or tag (for example 0.1.10 or v0.1.10)"
+        required: true
+      neovex_crun_version:
+        description: "neovex-crun release version or tag (defaults to packaging/linux-distribution-contract.env)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Resolve Linux distribution contract
+        id: contract
+        shell: bash
+        env:
+          INPUT_NEOVEX_VERSION: ${{ inputs.neovex_version }}
+          INPUT_NEOVEX_CRUN_VERSION: ${{ inputs.neovex_crun_version }}
+        run: |
+          set -euo pipefail
+          source packaging/linux-distribution-contract.env
+
+          neovex_version="${INPUT_NEOVEX_VERSION#v}"
+          neovex_crun_version="${INPUT_NEOVEX_CRUN_VERSION:-}"
+          if [[ -z "${neovex_crun_version}" ]]; then
+            neovex_crun_version="${NEOVEX_CRUN_VERSION}"
+          fi
+          neovex_crun_version="${neovex_crun_version#v}"
+
+          {
+            echo "neovex_version=${neovex_version}"
+            echo "neovex_release_tag=v${neovex_version}"
+            echo "neovex_crun_version=${neovex_crun_version}"
+            echo "neovex_crun_release_tag=v${neovex_crun_version}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.2"
+
+      - name: Install nFPM
+        run: |
+          GOBIN="${RUNNER_TEMP}/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Download Neovex release binary
+        env:
+          RELEASE_TAG: ${{ steps.contract.outputs.neovex_release_tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist/input/neovex
+          case "${ARCH}" in
+            amd64) archive="neovex_linux_x86_64.tar.gz" ;;
+            arm64) archive="neovex_linux_arm64.tar.gz" ;;
+            *) echo "unsupported architecture: ${ARCH}" >&2; exit 64 ;;
+          esac
+          curl --fail -sSL --retry 5 \
+            -o "dist/input/${archive}" \
+            "https://github.com/agentstation/neovex/releases/download/${RELEASE_TAG}/${archive}"
+          tar -xzf "dist/input/${archive}" -C dist/input/neovex
+
+      - name: Download neovex-crun release binary
+        env:
+          RELEASE_TAG: ${{ steps.contract.outputs.neovex_crun_release_tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist/input
+          curl --fail -sSL --retry 5 \
+            -o "dist/input/neovex-crun" \
+            "https://github.com/agentstation/neovex-crun/releases/download/${RELEASE_TAG}/neovex-crun-linux-${ARCH}"
+          chmod 0755 dist/input/neovex-crun
+
+      - name: Build Linux package artifacts
+        env:
+          VERSION: ${{ steps.contract.outputs.neovex_version }}
+          CRUN_VERSION: ${{ steps.contract.outputs.neovex_crun_version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          bash scripts/build-linux-release-packages.sh \
+            --output-dir "dist/linux-packages/${ARCH}" \
+            --neovex-binary "dist/input/neovex/neovex" \
+            --neovex-crun-binary "dist/input/neovex-crun" \
+            --version "${VERSION}" \
+            --crun-version "${CRUN_VERSION}" \
+            --arch "${ARCH}"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.arch }}
+          path: |
+            dist/linux-packages/${{ matrix.arch }}/packages/*
+            dist/linux-packages/${{ matrix.arch }}/manifests/*

@@ -1,0 +1,132 @@
+name: linux-distribution-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Neovex GitHub release tag to mirror (for example v0.1.10)"
+        required: true
+      publish_apt_repo:
+        description: "Publish the built apt repository bundle to GitHub Pages"
+        type: boolean
+        required: true
+        default: false
+      submit_to_copr:
+        description: "Submit the generated SRPMs to COPR"
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-contract:
+    name: Resolve Linux distribution contract
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.contract.outputs.release_tag }}
+      neovex_version: ${{ steps.contract.outputs.neovex_version }}
+      neovex_crun_version: ${{ steps.contract.outputs.neovex_crun_version }}
+      apt_distribution: ${{ steps.contract.outputs.apt_distribution }}
+      copr_project: ${{ steps.contract.outputs.copr_project }}
+      publish_apt_repo: ${{ steps.contract.outputs.publish_apt_repo }}
+      submit_to_copr: ${{ steps.contract.outputs.submit_to_copr }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+
+      - name: Resolve checked-in defaults
+        id: contract
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_PUBLISH_APT_REPO: ${{ inputs.publish_apt_repo }}
+          INPUT_SUBMIT_TO_COPR: ${{ inputs.submit_to_copr }}
+          DEFAULT_PUBLISH_APT_REPO: ${{ vars.APT_REPOSITORY_PUBLISH }}
+          DEFAULT_SUBMIT_TO_COPR: ${{ vars.COPR_SUBMIT_RELEASES }}
+        run: |
+          set -euo pipefail
+          source packaging/linux-distribution-contract.env
+
+          release_tag="${EVENT_RELEASE_TAG:-${INPUT_RELEASE_TAG:-}}"
+          if [[ -z "${release_tag}" ]]; then
+            echo "release tag is required" >&2
+            exit 1
+          fi
+
+          neovex_version="${release_tag#v}"
+          neovex_crun_version="${NEOVEX_CRUN_VERSION#v}"
+          apt_distribution="${APT_REPOSITORY_DISTRIBUTION}"
+          copr_project="${COPR_PROJECT}"
+
+          publish_apt_repo="false"
+          submit_to_copr="false"
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            if [[ "${DEFAULT_PUBLISH_APT_REPO:-}" == "true" ]]; then
+              publish_apt_repo="true"
+            fi
+            if [[ "${DEFAULT_SUBMIT_TO_COPR:-}" == "true" ]]; then
+              submit_to_copr="true"
+            fi
+          else
+            publish_apt_repo="${INPUT_PUBLISH_APT_REPO}"
+            submit_to_copr="${INPUT_SUBMIT_TO_COPR}"
+          fi
+
+          {
+            echo "release_tag=v${neovex_version}"
+            echo "neovex_version=${neovex_version}"
+            echo "neovex_crun_version=${neovex_crun_version}"
+            echo "apt_distribution=${apt_distribution}"
+            echo "copr_project=${copr_project}"
+            echo "publish_apt_repo=${publish_apt_repo}"
+            echo "submit_to_copr=${submit_to_copr}"
+          } >> "${GITHUB_OUTPUT}"
+
+  linux-packages:
+    name: Mirror Linux package artifacts
+    needs: resolve-contract
+    uses: ./.github/workflows/linux-packages.yml
+    permissions:
+      contents: read
+    with:
+      neovex_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      neovex_crun_version: ${{ needs.resolve-contract.outputs.neovex_crun_version }}
+
+  apt-repo:
+    name: Mirror apt repository bundle
+    needs: resolve-contract
+    uses: ./.github/workflows/apt-repo.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    secrets: inherit
+    with:
+      neovex_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      neovex_crun_version: ${{ needs.resolve-contract.outputs.neovex_crun_version }}
+      distribution: ${{ needs.resolve-contract.outputs.apt_distribution }}
+      publish: ${{ needs.resolve-contract.outputs.publish_apt_repo == 'true' }}
+
+  copr-srpms:
+    name: Mirror Fedora/COPR SRPMs
+    needs: resolve-contract
+    uses: ./.github/workflows/copr-srpms.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      neovex_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      neovex_crun_version: ${{ needs.resolve-contract.outputs.neovex_crun_version }}
+      copr_project: ${{ needs.resolve-contract.outputs.copr_project }}
+      submit_to_copr: ${{ needs.resolve-contract.outputs.submit_to_copr == 'true' }}
