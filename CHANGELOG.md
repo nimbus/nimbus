@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-04-18
+
+### Fixed
+
+- Repair macOS machine contract CI assertions off macOS without changing the shipped machine behavior by @jackspirou
+- Restore the Postgres repeated-direct-CRUD engine stress test to its full 128-round load while keeping it explicitly bounded in CI by @jackspirou
+- Harden V8-sensitive runtime isolation under coverage by making test locks poison-tolerant and relaxing the cooperative subprocess timeout for slower coverage builds by @jackspirou
+
+### Release
+
+- Prepare v0.1.13 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.12...v0.1.13
+
 ## [0.1.12] - 2026-04-18
 
 ### Fixed

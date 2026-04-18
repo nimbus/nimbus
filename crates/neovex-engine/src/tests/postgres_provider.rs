@@ -237,7 +237,7 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                 .await
                 .expect("tenant should create");
 
-            const CRUD_ROUNDS: usize = 64;
+            const CRUD_ROUNDS: usize = 128;
             for round in 0..CRUD_ROUNDS {
                 let document_id = service
                     .insert_document_async(
