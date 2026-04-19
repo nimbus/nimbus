@@ -349,10 +349,10 @@ impl ByteProgress {
 #[cfg(any(unix, test))]
 impl Drop for ByteProgress {
     fn drop(&mut self) {
-        if !self.finished {
-            if let Some(bar) = &self.bar {
-                bar.abandon();
-            }
+        if !self.finished
+            && let Some(bar) = &self.bar
+        {
+            bar.abandon();
         }
     }
 }
@@ -376,10 +376,10 @@ pub(crate) struct ProgressRead<R> {
 impl<R: Read> Read for ProgressRead<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let read = self.inner.read(buf)?;
-        if read > 0 {
-            if let Some(bar) = &self.bar {
-                bar.inc(read as u64);
-            }
+        if read > 0
+            && let Some(bar) = &self.bar
+        {
+            bar.inc(read as u64);
         }
         Ok(read)
     }
@@ -400,10 +400,10 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressAsyncWrite<W> {
     ) -> Poll<io::Result<usize>> {
         match Pin::new(&mut self.inner).poll_write(cx, buf) {
             Poll::Ready(Ok(written)) => {
-                if written > 0 {
-                    if let Some(bar) = &self.bar {
-                        bar.inc(written as u64);
-                    }
+                if written > 0
+                    && let Some(bar) = &self.bar
+                {
+                    bar.inc(written as u64);
                 }
                 Poll::Ready(Ok(written))
             }
