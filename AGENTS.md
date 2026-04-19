@@ -34,10 +34,11 @@ Use the repo docs for architecture and behavior details:
 - `docs/README.md`
 - For generic maintainability, refactor, modularity, canonical naming, or
   god-file cleanup work, open
-  `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` after
-  the three docs above only when a task needs the historical execution detail
-  or checkpoint chain from the completed maintainability wave. Promote a new
-  active plan before landing another repo-wide cleanup pass.
+  `docs/plans/codebase-modularity-and-maintainability-follow-on-plan.md`
+  after the three docs above. Open
+  `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
+  when a task needs the historical execution detail or predecessor checkpoint
+  chain from the completed maintainability wave.
 - For the landed krun-backed microVM and service-control architecture, go
   directly to `docs/reference/microvm-service-baseline.md` after the three
   docs above. Open the archived plans only when a task needs historical
@@ -80,10 +81,11 @@ Use the repo docs for architecture and behavior details:
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For generic maintainability, refactor, modularity, canonical naming, or
   readability cleanup work, open
-  `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
-  immediately after those three docs only when you need the historical
-  execution record or predecessor checkpoints from the completed wave.
-  Promote a new active plan before starting another broad cleanup pass.
+  `docs/plans/codebase-modularity-and-maintainability-follow-on-plan.md`
+  immediately after those three docs. Open
+  `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
+  when you need the historical execution record or predecessor checkpoints
+  from the completed wave.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
   docs. Only load the archived plans if the task genuinely needs historical

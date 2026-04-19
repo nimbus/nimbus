@@ -4,6 +4,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/codebase-modularity-and-maintainability-follow-on-plan.md`
+  - canonical follow-on execution plan for the next broad maintainability,
+    modularity, canonical-naming, and god-file cleanup wave: thin-root test
+    extraction, remaining concept-mixed production files, oversized regression
+    suites, and provider benchmark harness modularization after the completed
+    archived maintainability wave
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
@@ -30,6 +36,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
     dark mode, a11y, optional Electron shell (Phase 2); depends on the three
     prerequisite plans above
+
 ## Stable implementation baselines
 
 - `docs/reference/microvm-service-baseline.md`
@@ -241,11 +248,15 @@ completed plans unless explicitly asked to review historical work.
   understand the landed `neovex-runtime` versus `neovex-sandbox` split, then
   promote or author a new active plan before doing further cleanup work in
   that area.
+- For broad maintainability, modularity, canonical naming, or god-file
+  cleanup work, start with
+  `codebase-modularity-and-maintainability-follow-on-plan.md`.
 - The repo-wide maintainability cleanup plan is complete and archived at
   `archive/codebase-modularity-and-maintainability-plan.md`. Use it only for
   historical context on the landed CLI, provider, and sandbox ownership map,
-  then promote or author a new active plan before starting another broad
-  maintainability, refactor, modularity, or canonical-naming wave.
+  then use `codebase-modularity-and-maintainability-follow-on-plan.md` as the
+  active owner for the next broad maintainability, refactor, modularity, or
+  canonical-naming wave.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.
