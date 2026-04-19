@@ -77,15 +77,15 @@ case "${2:-}" in
           image="${2:?missing image path}"
           shift 2
           ;;
-        --ssh-identity)
+        --identity)
           ssh_identity="${2:?missing ssh identity path}"
           shift 2
           ;;
-        --ignition-file)
+        --ignition-path)
           ignition_file="${2:?missing ignition file path}"
           shift 2
           ;;
-        --efi-store)
+        --firmware)
           efi_store="${2:?missing efi store path}"
           shift 2
           ;;
@@ -157,9 +157,9 @@ HOME="${home_dir}" bash "${repo_root}/scripts/recreate-neovex-machine.sh" \
   --output-dir "${output_dir}" \
   --neovex "${bin_dir}/neovex" \
   --image "${image_path}" \
-  --ssh-identity "${tmp_dir}/machine-key" \
-  --ignition-file "${tmp_dir}/machine.ign" \
-  --efi-store "${tmp_dir}/efi-store" \
+  --identity "${tmp_dir}/machine-key" \
+  --ignition-path "${tmp_dir}/machine.ign" \
+  --firmware "${tmp_dir}/efi-store" \
   --volume /Users:/Users \
   > "${output_dir}/stdout.txt"
 

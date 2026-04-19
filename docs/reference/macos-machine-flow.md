@@ -42,8 +42,9 @@ The current macOS architecture is a hybrid control plane:
 - the host `neovex` release owns the desired Podman image reference/digest and
   the matching Linux guest `neovex` asset for the local host architecture
 
-The checked-in macOS default image reference recorded by `neovex machine init`
-is currently:
+The checked-in macOS default image reference recorded when Neovex creates a
+machine (`neovex machine init` or `neovex machine start` on a clean host) is
+currently:
 
 ```text
 docker://quay.io/podman/machine-os@sha256:02ce56eb3a353f3d909eeb6742db7052e13fcad01937ef9536d41178c4865000
@@ -162,7 +163,7 @@ select `wsl` without changing the current macOS rule.
 
 ```mermaid
 flowchart TD
-    A["neovex machine init"] --> B["config.json records image source"]
+    A["neovex machine start<br/>or neovex machine init"] --> B["config.json records image source"]
     B --> C["docker://quay.io/podman/machine-os:<pinned-ref-or-digest>"]
     C --> D["neovex machine start"]
     D --> E["converge desired artifacts"]
@@ -503,7 +504,10 @@ If you want the shortest accurate explanation:
    machine-image reference or digest and a matching Linux guest `neovex`
    binary asset for the local host architecture.
 2. `neovex machine init` records the machine contract; the checked-in default
-   currently uses Podman's machine image stream on Quay.
+   currently uses Podman's machine image stream on Quay. `neovex machine
+   start` now also performs that same initialization step automatically when
+   no machine exists yet, and `neovex machine init --now` remains the explicit
+   Podman-style combined shortcut.
 3. `neovex machine start` checks the local caches, pulls any missing image or
    guest-binary artifact, and materializes the bootable raw disk.
 4. If the machine's recorded base image already matches the desired digest, the
@@ -512,14 +516,19 @@ If you want the shortest accurate explanation:
 5. After boot, the host hash-checks and syncs
    `/usr/local/bin/neovex` inside the guest. On FCOS that is backed by the
    writable `/var/usrlocal/bin/neovex` path with executable labeling.
-6. The same host convergence step then repairs guest socket activation
+6. If the host-managed macOS contract does not already have an explicit SSH
+   identity recorded, `neovex machine start` auto-generates a machine-owned
+   keypair under the Neovex machine data root before it boots the guest, so
+   first-run SSH and guest-binary sync do not require a separate manual key
+   provisioning step.
+7. The same host convergence step then repairs guest socket activation
    (`daemon-reload`, clears failed `neovex` units, removes any stale
    `/run/neovex/neovex.sock`, and starts `neovex.socket`) before validating
    the forwarded machine API, so a fresh Podman-image boot does not get stuck
    on a pre-sync `start-limit-hit`.
-7. On macOS container-backed Compose projects, `neovex serve` now reuses that
+8. On macOS container-backed Compose projects, `neovex serve` now reuses that
    same convergence path: if the initialized default machine is stopped, the
    host starts it before it wires the forwarded guest backend.
-8. The host Neovex server talks to the guest machine API through a forwarded
+9. The host Neovex server talks to the guest machine API through a forwarded
    Unix socket, and the guest starts standard Linux containers for declared
    services.
