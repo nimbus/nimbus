@@ -40,15 +40,18 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/macos-machine-flow.md` after the microVM baseline.
   Open `docs/plans/archive/macos-machine-support-plan.md` only when a task
   needs the historical MAC1-MAC7 execution record or exact proof-bundle paths.
-- For historical machine/service CLI UX alignment, help/output/progress
+- For historical machine/service CLI UX work, help/output/progress
   consistency, or Podman/Docker-style command-surface work, open
-  `docs/plans/archive/machine-cli-alignment-plan.md` after the microVM
-  baseline. That archived plan records the completed `CLIA1`-`CLIA10`
-  rollout, real macOS proof bundles, and the settled CLI style-system
-  contract. Use `docs/plans/archive/machine-cli-dx-plan.md` only for the
-  earlier first-wave `DX1`-`DX11` rollout, older proof bundle paths, and the
-  pre-alignment comparative audit context. Promote a new active plan before
-  landing another CLI-wide change wave.
+  `docs/plans/archive/machine-cli-follow-on-plan.md` after the microVM
+  baseline only when a task needs the completed `CLIF1`-`CLIF5` execution
+  record, exact macOS proof-bundle paths, or the settled follow-on contract.
+  Use `docs/plans/archive/machine-cli-alignment-plan.md` only for the older
+  completed `CLIA1`-`CLIA10` rollout, earlier macOS proof bundles, and the
+  baseline contract the follow-on wave built on. Use
+  `docs/plans/archive/machine-cli-dx-plan.md` only for the first-wave
+  `DX1`-`DX11` rollout, older proof bundle paths, and the pre-alignment
+  comparative audit context. Promote a new active plan before landing new
+  machine/service CLI work.
 - For shared machine-lifecycle hardening, enterprise machine-management
   reliability, or Windows-provider groundwork that reuses the existing machine
   manager seams, open
@@ -79,13 +82,16 @@ Use the repo docs for architecture and behavior details:
   the historical MAC1-MAC7 execution record, exact real-host proof paths, or
   phase-by-phase closeout context.
 - For historical machine/service CLI alignment work, open
-  `docs/plans/archive/machine-cli-alignment-plan.md` after the microVM
-  baseline. Use it for the completed `CLIA1`-`CLIA10` rollout, proof-bundle
-  paths, and the settled output/help/progress/table contract, then promote a
-  new active plan before resuming another CLI-wide alignment wave.
+  `docs/plans/archive/machine-cli-follow-on-plan.md` after the microVM
+  baseline only when you need the completed `CLIF1`-`CLIF5` rollout, exact
+  macOS proof-bundle paths, or the settled follow-on command-surface
+  contract. Use `docs/plans/archive/machine-cli-alignment-plan.md` only for
+  the older completed `CLIA1`-`CLIA10` rollout, proof-bundle paths, and the
+  baseline output/help/progress/table contract the follow-on wave refined.
   Open `docs/plans/archive/machine-cli-dx-plan.md` only when you need the
   completed first-wave comparative audit, closeout order, or older archived
-  proof bundles.
+  proof bundles. Promote a new active plan before starting another CLI UX
+  wave.
 - For shared machine-lifecycle hardening work, open
   `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the microVM
   baseline and reread its `Current Assessed State`, `Current Review Findings`,
@@ -93,12 +99,14 @@ Use the repo docs for architecture and behavior details:
   `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log`
   when the task needs the landed shared reliability baseline or exact closeout
   evidence.
-- If work spans a platform/reference doc and the archived machine CLI
-  alignment plan, treat the platform/reference doc as the active architecture
-  owner and `docs/plans/archive/machine-cli-alignment-plan.md` as historical
-  command-surface context. Promote a new active plan before landing another
-  CLI-wide alignment wave. Use the archived machine CLI DX plan only as older
-  historical context.
+- If work spans a platform/reference doc and historical machine CLI follow-on
+  context, treat the platform/reference doc as the active owner and
+  `docs/plans/archive/machine-cli-follow-on-plan.md` as historical
+  user-surface context only. Use
+  `docs/plans/archive/machine-cli-alignment-plan.md` only as older
+  command-surface context, and the archived machine CLI DX plan only as even
+  earlier historical context. Promote a new active plan before landing new
+  CLI UX scope.
 - If work spans a platform plan and the archived lifecycle hardening plan,
   treat the platform plan as the active owner and the archived lifecycle plan
   as historical reliability context; promote a new active plan before landing

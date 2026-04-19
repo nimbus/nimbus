@@ -48,7 +48,7 @@ Examples:
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:
   neovex machine init --now
-  neovex machine status --format json
+  neovex machine status -f json
   neovex machine ssh";
 
 pub(crate) const MACHINE_OS_HELP_EXAMPLES: &str = "\
@@ -75,19 +75,27 @@ Examples:
 pub(crate) const MACHINE_STATUS_HELP_EXAMPLES: &str = "\
 Examples:
   neovex machine status
-  neovex machine status --format json
+  neovex machine status -f json
+  neovex machine status --noheading
   neovex machine status --quiet";
 
 pub(crate) const MACHINE_LIST_HELP_EXAMPLES: &str = "\
 Examples:
   neovex machine list
+  neovex machine list --noheading
   neovex machine ls --quiet
-  neovex machine list --format json";
+  neovex machine list -f json";
+
+pub(crate) const MACHINE_INFO_HELP_EXAMPLES: &str = "\
+Examples:
+  neovex machine info
+  neovex machine info -f json
+  neovex machine info -f yaml";
 
 pub(crate) const MACHINE_INSPECT_HELP_EXAMPLES: &str = "\
 Examples:
   neovex machine inspect
-  neovex machine inspect --format yaml team-a";
+  neovex machine inspect -f yaml team-a";
 
 pub(crate) const MACHINE_SET_HELP_EXAMPLES: &str = "\
 Examples:
@@ -147,13 +155,14 @@ pub(crate) const SERVICE_LIST_HELP_EXAMPLES: &str = "\
 Examples:
   neovex service list
   neovex service list --all-tenants
-  neovex service list --format json";
+  neovex service list --noheading
+  neovex service list -f json";
 
 pub(crate) const SERVICE_INSPECT_HELP_EXAMPLES: &str = "\
 Examples:
   neovex service inspect api
   neovex service inspect api --tenant demo
-  neovex service inspect api --format yaml";
+  neovex service inspect api -f yaml";
 
 pub(crate) const SERVICE_LOGS_HELP_EXAMPLES: &str = "\
 Examples:
@@ -163,8 +172,9 @@ Examples:
 pub(crate) const SERVICE_PS_HELP_EXAMPLES: &str = "\
 Examples:
   neovex service ps api
+  neovex service ps api --noheading
   neovex service ps api --tenant demo
-  neovex service ps api --format json";
+  neovex service ps api -f json";
 
 const SUPPRESS_PHASE_OUTPUT: usize = 1 << 0;
 const SUPPRESS_INFO_OUTPUT: usize = 1 << 1;
@@ -441,8 +451,20 @@ impl<'a> TableColumn<'a> {
     }
 }
 
-pub(crate) fn render_table(columns: &[TableColumn<'_>], rows: &[Vec<String>]) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct TableRenderOptions {
+    pub(crate) omit_header: bool,
+}
+
+pub(crate) fn render_table_with_options(
+    columns: &[TableColumn<'_>],
+    rows: &[Vec<String>],
+    options: TableRenderOptions,
+) -> String {
     if columns.is_empty() {
+        return String::new();
+    }
+    if options.omit_header && rows.is_empty() {
         return String::new();
     }
 
@@ -451,12 +473,16 @@ pub(crate) fn render_table(columns: &[TableColumn<'_>], rows: &[Vec<String>]) ->
         .load_preset(NOTHING)
         .set_content_arrangement(ContentArrangement::Disabled)
         .force_no_tty();
-    table.set_header(
-        columns
-            .iter()
-            .map(|column| Cell::new(column.header).set_alignment(cell_alignment(column.alignment)))
-            .collect::<Vec<_>>(),
-    );
+    if !options.omit_header {
+        table.set_header(
+            columns
+                .iter()
+                .map(|column| {
+                    Cell::new(column.header).set_alignment(cell_alignment(column.alignment))
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
     for row in rows {
         debug_assert_eq!(
             row.len(),
@@ -524,9 +550,9 @@ mod tests {
     use tokio::io::{AsyncWriteExt, sink};
 
     use super::{
-        ByteProgress, OutputMode, TableColumn, format_action_block, format_action_summary,
-        format_hint, info_output_enabled, phase_output_enabled, progress_output_enabled,
-        push_output_mode, render_table,
+        ByteProgress, OutputMode, TableColumn, TableRenderOptions, format_action_block,
+        format_action_summary, format_hint, info_output_enabled, phase_output_enabled,
+        progress_output_enabled, push_output_mode, render_table_with_options,
     };
 
     #[test]
@@ -583,7 +609,7 @@ Hint: run `neovex machine start` to boot the updated image\n"
             vec!["team-a".to_owned(), "16".to_owned()],
         ];
 
-        let rendered = render_table(&columns, &rows);
+        let rendered = render_table_with_options(&columns, &rows, TableRenderOptions::default());
         let mut lines = rendered.lines();
 
         assert_eq!(lines.next(), Some("NAME    CPUS"));
@@ -595,11 +621,49 @@ Hint: run `neovex machine start` to boot the updated image\n"
     #[test]
     fn render_table_preserves_header_for_empty_rows() {
         let columns = [TableColumn::left("NAME", 8), TableColumn::right("CPUS", 4)];
-        let rendered = render_table(&columns, &[]);
+        let rendered = render_table_with_options(&columns, &[], TableRenderOptions::default());
         let mut lines = rendered.lines();
 
         assert_eq!(lines.next(), Some("NAME    CPUS"));
         assert_eq!(lines.next(), None);
+    }
+
+    #[test]
+    fn render_table_can_omit_header() {
+        let columns = [TableColumn::left("NAME", 8), TableColumn::right("CPUS", 4)];
+        let rows = vec![
+            vec!["default".to_owned(), "2".to_owned()],
+            vec!["team-a".to_owned(), "16".to_owned()],
+        ];
+
+        let rendered =
+            render_table_with_options(&columns, &rows, TableRenderOptions { omit_header: true });
+        let mut lines = rendered.lines();
+
+        assert_eq!(
+            lines
+                .next()
+                .map(str::split_whitespace)
+                .map(Iterator::collect::<Vec<_>>),
+            Some(vec!["default", "2"])
+        );
+        assert_eq!(
+            lines
+                .next()
+                .map(str::split_whitespace)
+                .map(Iterator::collect::<Vec<_>>),
+            Some(vec!["team-a", "16"])
+        );
+        assert_eq!(lines.next(), None);
+    }
+
+    #[test]
+    fn render_table_omitting_header_with_no_rows_returns_empty_output() {
+        let columns = [TableColumn::left("NAME", 8), TableColumn::right("CPUS", 4)];
+        let rendered =
+            render_table_with_options(&columns, &[], TableRenderOptions { omit_header: true });
+
+        assert!(rendered.is_empty());
     }
 
     #[test]

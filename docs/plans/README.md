@@ -184,6 +184,11 @@ completed plans unless explicitly asked to review historical work.
     `CLIA1`-`CLIA10` rollout for shared help/output/progress/table contracts,
     deterministic proof helpers, and the final local-binary plus
     packaged/Homebrew macOS proof bundles
+- `docs/plans/archive/machine-cli-follow-on-plan.md`
+  - completed machine/service CLI follow-on wave; records the `CLIF1`-`CLIF5`
+    rollout for Podman-aligned `machine info`, output-shaping parity, stronger
+    `machine list` ergonomics, help/reference cleanup, and the final real
+    macOS host proof bundle
 
 ## How To Use This Folder
 
@@ -194,11 +199,17 @@ completed plans unless explicitly asked to review historical work.
 - For current macOS developer-machine behavior, start with
   `docs/reference/microvm-service-baseline.md` and
   `docs/reference/macos-machine-flow.md`.
-- For historical machine/service CLI alignment work, start with
-  `docs/plans/archive/machine-cli-alignment-plan.md`, then promote a new
-  active plan before starting another CLI-wide change wave.
+- For historical machine/service CLI follow-on work, start with
+  `docs/plans/archive/machine-cli-follow-on-plan.md` only when you need the
+  completed `CLIF1`-`CLIF5` rollout, exact proof-bundle paths, or the settled
+  follow-on command-surface contract.
+- Use `docs/plans/archive/machine-cli-alignment-plan.md` only for the
+  completed `CLIA1`-`CLIA10` rollout, older historical proof-bundle paths, and
+  the baseline contract the follow-on wave refined.
 - Use `docs/plans/archive/machine-cli-dx-plan.md` only for the completed first
   DX wave, older comparative audit context, or archived proof bundles.
+- Promote a new active plan before landing another machine/service CLI UX
+  wave.
 - Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
   the historical MAC1-MAC7 execution record or exact proof-bundle paths.
 - For historical shared machine-lifecycle hardening context or Windows
