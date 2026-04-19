@@ -1,13 +1,21 @@
-use std::io::{self, IsTerminal, Read, Write};
+#[cfg(any(unix, test))]
+use std::io::IsTerminal;
+#[cfg(any(unix, test))]
+use std::io::Read;
+use std::io::{self, Write};
+#[cfg(any(unix, test))]
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+#[cfg(any(unix, test))]
 use std::task::{Context, Poll};
 
 use comfy_table::{
     Cell, CellAlignment, ColumnConstraint, ContentArrangement, Table, Width, presets::NOTHING,
 };
+#[cfg(any(unix, test))]
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+#[cfg(any(unix, test))]
 use tokio::io::AsyncWrite;
 
 pub(crate) const ROOT_HELP_TEMPLATE: &str = "\
@@ -209,10 +217,12 @@ pub(crate) fn push_output_mode(mode: OutputMode) -> OutputModeGuard {
     }
 }
 
+#[cfg(any(unix, test))]
 pub(crate) fn stderr_is_tty() -> bool {
     io::stderr().is_terminal()
 }
 
+#[cfg(any(unix, test))]
 pub(crate) fn info_output_enabled() -> bool {
     output_mode_flags() & SUPPRESS_INFO_OUTPUT == 0
 }
@@ -238,6 +248,7 @@ pub(crate) fn write_stderr_prefixed_line(prefix: &str, message: &str) -> io::Res
     write_stderr_line(&format!("{prefix} {message}"))
 }
 
+#[cfg(any(unix, test))]
 pub(crate) fn emit_phase(message: &str) -> io::Result<()> {
     if stderr_is_tty() && phase_output_enabled() {
         write_stderr_prefixed_line("==>", message)
@@ -263,12 +274,14 @@ pub(crate) fn format_hint(message: &str) -> String {
     format!("Hint: {message}")
 }
 
+#[cfg(any(unix, test))]
 pub(crate) struct ByteProgress {
     message: String,
     bar: Option<ProgressBar>,
     finished: bool,
 }
 
+#[cfg(any(unix, test))]
 impl ByteProgress {
     pub(crate) fn new(message: impl Into<String>, total_bytes: Option<u64>) -> io::Result<Self> {
         let message = message.into();
@@ -323,6 +336,7 @@ impl ByteProgress {
     }
 }
 
+#[cfg(any(unix, test))]
 impl Drop for ByteProgress {
     fn drop(&mut self) {
         if !self.finished {
@@ -333,6 +347,7 @@ impl Drop for ByteProgress {
     }
 }
 
+#[cfg(any(unix, test))]
 fn progress_bar_style() -> ProgressStyle {
     ProgressStyle::with_template(
         "{msg:30} [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} {bytes_per_sec} eta {eta}",
@@ -341,11 +356,13 @@ fn progress_bar_style() -> ProgressStyle {
     .progress_chars("=> ")
 }
 
+#[cfg(any(unix, test))]
 pub(crate) struct ProgressRead<R> {
     inner: R,
     bar: Option<ProgressBar>,
 }
 
+#[cfg(any(unix, test))]
 impl<R: Read> Read for ProgressRead<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let read = self.inner.read(buf)?;
@@ -358,11 +375,13 @@ impl<R: Read> Read for ProgressRead<R> {
     }
 }
 
+#[cfg(any(unix, test))]
 pub(crate) struct ProgressAsyncWrite<W> {
     inner: W,
     bar: Option<ProgressBar>,
 }
 
+#[cfg(any(unix, test))]
 impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressAsyncWrite<W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -483,14 +502,17 @@ fn output_mode_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[cfg(any(unix, test))]
 fn output_mode_flags() -> usize {
     OUTPUT_MODE_FLAGS.load(Ordering::SeqCst)
 }
 
+#[cfg(any(unix, test))]
 fn phase_output_enabled() -> bool {
     output_mode_flags() & SUPPRESS_PHASE_OUTPUT == 0
 }
 
+#[cfg(any(unix, test))]
 fn progress_output_enabled() -> bool {
     output_mode_flags() & SUPPRESS_PROGRESS_OUTPUT == 0
 }
