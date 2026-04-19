@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.18] - 2026-04-19
 
+### Documentation
+
+- Update CHANGELOG.md for v0.1.17 by @github-actions[bot]
+
 ### Testing
 
-- Widen the Postgres repeated direct CRUD CI timeout so the workspace test lane stays green under full-runner contention while preserving the repeated CRUD correctness coverage by @jackspirou
-
-### Release
-
-- Prepare v0.1.18 by @jackspirou
+- Widen postgres repeated CRUD timeout by @jackspirou
 
 
 
