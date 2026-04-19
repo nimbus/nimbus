@@ -2,8 +2,9 @@
 
 Archived on 2026-04-08 after `TD1` through `TD5` completed. This file is
 preserved as a historical execution record and should not be resumed as a live
-control plane. For current generic maintainability work, start at
-`docs/plans/codebase-modularity-and-maintainability-plan.md`.
+control plane. For historical generic maintainability context, see
+`docs/plans/archive/codebase-modularity-and-maintainability-plan.md`, then
+promote a new active plan before starting another broad cleanup wave.
 
 This is the canonical execution control plane for the next focused cleanup pass
 after the archived queue-and-test-surface workstream.

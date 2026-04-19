@@ -30,11 +30,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
     dark mode, a11y, optional Electron shell (Phase 2); depends on the three
     prerequisite plans above
-- `docs/plans/codebase-modularity-and-maintainability-plan.md`
-  - canonical execution plan for repo-wide maintainability, refactor,
-    canonical naming, and idiomatic-Rust cleanup across the CLI, provider,
-    and sandbox ownership seams; use it before starting broad cleanup work
-    that is not owned by another active plan
 ## Stable implementation baselines
 
 - `docs/reference/microvm-service-baseline.md`
@@ -140,7 +135,11 @@ completed plans unless explicitly asked to review historical work.
 - `docs/plans/archive/targeted-domain-modularity-cleanup-plan.md`
   - completed targeted-domain cleanup pass; records the final runtime test
     extraction, tenant facade split, auth module split, browser client split,
-    and the maintainability baseline this active cleanup plan now builds on
+    and the maintainability baseline the later repo-wide cleanup wave built on
+- `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
+  - completed repo-wide maintainability cleanup plan; records the CLI,
+    provider, and krun ownership splits, the final verification bundle, and
+    the archive-state control-plane handoff for future broad cleanup waves
 - `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
   - completed storage follow-up plan; records the `LibsqlReplica` naming
     cleanup, replica freshness observability surface, Postgres/MySQL schema
@@ -242,14 +241,17 @@ completed plans unless explicitly asked to review historical work.
   understand the landed `neovex-runtime` versus `neovex-sandbox` split, then
   promote or author a new active plan before doing further cleanup work in
   that area.
-- For generic maintainability, refactor, modularity, or canonical-naming work,
-  start with `codebase-modularity-and-maintainability-plan.md`.
+- The repo-wide maintainability cleanup plan is complete and archived at
+  `archive/codebase-modularity-and-maintainability-plan.md`. Use it only for
+  historical context on the landed CLI, provider, and sandbox ownership map,
+  then promote or author a new active plan before starting another broad
+  maintainability, refactor, modularity, or canonical-naming wave.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.
-- If a future cleanup or verification-hardening task intentionally falls
-  outside `codebase-modularity-and-maintainability-plan.md`, author or promote
-  a new active plan instead of reviving an archived one.
+- For future cleanup or verification-hardening work that is not already owned
+  by another active plan, author or promote a new active plan instead of
+  reviving an archived one.
 - For the deferred raw-V8 backend fallback (only if the fork approach is
   blocked), see `raw-v8-warm-backend-plan.md`.
 - For future wasmtime WASM backend work, start with

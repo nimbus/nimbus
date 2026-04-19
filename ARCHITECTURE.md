@@ -207,6 +207,41 @@ metering.
   provider, and `helpers.rs` owns shared blocking-task error mapping. The
   boundary still preserves the same cancellable pre-commit versus
   committed-write semantics.
+- `sqlite.rs` — SQLite provider composition root. The root now only holds the
+  shared store and transaction types plus module wiring while `sqlite/config.rs`
+  owns connection opening and pooling, `read.rs` owns snapshot-backed document
+  reads and the public read facade, `write.rs` owns transaction-backed document
+  writes and execution-unit batch application, `scheduler.rs` owns scheduled
+  job and cron store surfaces, `journal.rs` owns durable-journal and
+  materialized-snapshot flows, `schema.rs` owns schema-cache and SQLite index
+  helpers, and `backend.rs` owns low-level SQLite row or codec utilities.
+- `postgres.rs` — Postgres provider composition root. The CM7 split has
+  moved provider config, identifier or naming helpers, bootstrap SQL, and pool
+  construction into `postgres/config.rs`, LISTEN or NOTIFY payload or listener
+  coordination into `postgres/notifications.rs`, provider connect or
+  tenant-open flows into `postgres/provider.rs`, the async storage bridge plus
+  blocking-write executor into `postgres/storage.rs`, the public read facade
+  plus snapshot ownership into `postgres/read.rs`, and the public write facade
+  plus transaction ownership into `postgres/write.rs`. The root now only keeps
+  the shared store types, runtime bridge helper, and backend utility wiring.
+- `mysql.rs` — MySQL provider composition root. The CM7 split has moved
+  provider connect or tenant-open flows into `mysql/provider.rs`, the async
+  storage bridge plus blocking-write executor into `mysql/storage.rs`, the
+  public read facade plus snapshot ownership into `mysql/read.rs`, and the
+  public write facade plus transaction ownership into `mysql/write.rs`. The
+  root now keeps the provider config, shared store types, runtime bridge
+  helper, and backend SQL or codec utilities that the concept-owned modules
+  share.
+- `libsql.rs` — libsql replica-provider composition root. The completed CM7
+  split moved provider connect/open, namespace lifecycle, tenant snapshot
+  materialization, metadata-namespace ownership, and opened-tenant accessors
+  into `libsql/provider.rs`; the async storage bridge plus blocking-write
+  executor into `libsql/storage.rs`; the public read facade into
+  `libsql/read.rs`; the public write facade plus transaction ownership into
+  `libsql/write.rs`; the remote namespace, snapshot, and admin helpers into
+  `libsql/remote.rs`; and the custom transport connector into
+  `libsql/transport.rs`. The root now keeps the replica-cache freshness state
+  machine, shared store types, and low-level libsql codec/error helpers.
 - `store.rs` — `TenantStore` wrapping a redb `Database`: the storage
   composition root. It now keeps the shared table definitions and public store
   types while routing the remaining storage concerns through the
@@ -259,6 +294,14 @@ metering.
   storage handle, simulation seams, scheduler wakeups, and a process-wide
   background Tokio runtime handle used for long-lived engine workers.
   Lazy-loads tenants from disk on first access.
+- `persistence.rs` — Provider-facade composition root. `provider.rs` owns the
+  tenant-provider registry plus opened-tenant mapping, `control.rs` owns the
+  redb-backed control-plane usage facade, `tenant.rs` owns the tenant-store
+  facade plus direct durable read/write helpers, `executor.rs` owns async
+  read/write execution, `snapshot.rs` owns the snapshot read facade,
+  `query.rs` owns `QueryReadStore` delegation for stores and snapshots, and
+  `write_ops.rs` owns the write-transaction capability trait shared by the
+  scheduler and async journal paths.
 - `service/mutations.rs` — Composition root for the write path. Public
   `apply_mutation` behavior still flows through the same single durable contract
   while the implementation is split across
@@ -499,8 +542,12 @@ proof on Linux.
   bundle config with the krun handler and TSI port-map annotation,
   `buildah.rs` owns buildah command assembly, `conmon.rs` builds the
   `conmon -> /usr/libexec/neovex/crun` launch plan, `command.rs` holds the
-  reusable backend-local command spec, and `vm.rs` owns manifest-backed
-  `start`/`inspect`/`stop` lowering plus the current plan-only mode used for
+  reusable backend-local command spec, and `vm.rs` is now the backend
+  composition root over `vm/launch.rs` (launch planning, image/build
+  materialization, guest-user switching, and krun VM-config helpers),
+  `vm/lifecycle.rs` (manifest-backed inspect/start/stop/restart/cleanup
+  behavior), and `vm/readiness.rs` (published-endpoint visibility and
+  readiness probing) while preserving the current plan-only mode used for
   cross-platform verification.
 
 ### Async Ownership Boundaries
@@ -626,15 +673,37 @@ worker-local beneath that seam.
 
 **`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-sandbox`, `neovex-server`, and `neovex-storage` so downstream consumers depend on a single crate.
 
-**`neovex-bin`** — CLI entry point. Lowers runtime CLI, env, and JSON config
-into typed `ServicePersistenceConfig`, then parses `--port`,
-local data-directory and control-plane overrides, provider-specific settings
-such as `--postgres-url`, `--convex-app-dir`, `--license-file`, and runtime
-limit flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
+**`neovex-bin`** — CLI entry point. `main.rs` is the thin command root, while
+`serve/` owns the serve-command composition seam: JSON config and env loading,
+provider selection, precedence merging into typed
+`ServicePersistenceConfig`, runtime-limit defaults, and the server boot path
+that loads tenants with scheduled work, spawns the scheduler, optionally loads
+the Convex registry and sandbox-backed services, starts the server, and handles
+graceful shutdown. `machine/` now follows the same pattern: `mod.rs` is the
+machine CLI composition root, `command.rs` owns clap models, `record.rs` owns
+machine roots and persisted record types, `files.rs` owns JSON and lock helper
+semantics, `render.rs` owns status/list/info/inspect output shaping, and
+`handlers.rs` owns subcommand orchestration while `manager.rs` stays the
+machine lifecycle composition surface. The lifecycle ownership now lives under
+`machine/manager/`: `launch.rs` owns launch planning and helper command lines,
+`image.rs` owns OCI or HTTP image materialization and attestation metadata,
+`helpers.rs` owns helper discovery, `ports.rs` owns managed SSH-port leasing,
+`ssh.rs` owns localhost SSH and SCP helpers, `readiness.rs` owns bootstrap and
+readiness waits, `guest.rs` owns guest bootstrap and binary-sync behavior, and
+`stop.rs` owns stop, cleanup, and stale-state recovery. `service/` now follows
+the same ownership model: `mod.rs` stays the service CLI composition root,
+`execution.rs` owns host-platform backend defaults, execution-surface
+resolution, and forwarded machine API validation, `lifecycle.rs` owns service
+up or down flows plus launch and stop helpers, `render.rs` owns lifecycle,
+list, inspect, and process-snapshot output shaping, `logs.rs` owns persisted
+and forwarded log reads, and `process.rs` owns PID-file plus process-table
+inspection helpers. The CLI surface still
+parses `--port`, local data-directory and control-plane overrides,
+provider-specific settings such as
+`--postgres-url`, `--convex-app-dir`, `--license-file`, and runtime limit
+flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
 `--runtime-timeout-secs`, `--runtime-max-instances`,
-`--runtime-worker-threads`, `--runtime-max-nested-calls`). Loads tenants with
-scheduled work, spawns the scheduler, optionally loads the Convex registry and
-license state, starts the server, and handles graceful shutdown.
+`--runtime-worker-threads`, `--runtime-max-nested-calls`).
 
 **`packages/codegen`** — Node.js code generation tool. Reads Convex source files (`convex/*.ts`) and a `convex/schema.ts`, emits `.neovex/convex/functions.json` (named-function manifest), `.neovex/convex/bundle.mjs` (runtime ESM entrypoint), `.neovex/convex/bundle.sha256` (integrity hash), and generated `convex/_generated/` TypeScript (api, server, dataModel, scheduled_functions).
 
