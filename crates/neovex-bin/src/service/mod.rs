@@ -1,31 +1,42 @@
-use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
 use neovex::{
-    Error, PublishedEndpoint, SandboxBackend, SandboxBackendKind, SandboxHandle,
-    SandboxServiceCatalog, SandboxServiceLaunch, SandboxServiceManager, SandboxStatus,
-    ServicePersistenceConfig, TenantId,
+    Error, PublishedEndpoint, SandboxBackend, SandboxHandle, SandboxServiceCatalog,
+    SandboxServiceManager, SandboxStatus, ServicePersistenceConfig, TenantId,
 };
-use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
+use neovex_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
 use crate::cli_ux;
-use crate::machine::{
-    ForwardedMachineApiSandboxBackend, MachineApiClient, MachineApiServiceSandboxDetails,
-    ensure_default_machine_api_client_started, require_default_machine_api_client,
-};
+use crate::machine::MachineApiClient;
 
 mod compose;
+mod execution;
+mod lifecycle;
+mod logs;
+mod process;
 mod project;
+mod render;
 
+use self::execution::{
+    load_host_backed_sandbox_service_manager_for_platform,
+    load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
+    machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
+    requested_service_names, require_krun_backend_for_service_operation,
+    resolve_remote_service_down_targets, resolve_service_down_targets,
+    resolve_service_execution_surface, validate_forwarded_machine_api_backend,
+    validate_forwarded_machine_api_operations,
+};
+use self::lifecycle::{service_down_outcomes_for_platform, service_up_outcomes_for_platform};
+use self::logs::run_service_logs_for_platform;
+use self::process::resolve_service_process_snapshot_for_platform;
+use self::render::{
+    render_service_inspect_view, render_service_lifecycle_action_summary, render_service_list_view,
+    render_service_process_snapshot_view,
+};
 pub(crate) use project::ComposeProjectContext;
 
 #[derive(Debug, Args)]
@@ -280,46 +291,6 @@ pub(crate) fn load_host_backed_sandbox_service_manager(
     )
 }
 
-fn load_host_backed_sandbox_service_manager_for_platform(
-    file: &std::path::Path,
-    control_data_dir: &std::path::Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<SandboxServiceManager, Error> {
-    let context = load_compose_project_context(file, control_data_dir)?;
-    let machine_api_client = match machine_api_client {
-        Some(client) => Some(client),
-        None if should_auto_start_default_machine_for_host_loader(&context, host_platform)? => {
-            Some(ensure_default_machine_api_client_started()?)
-        }
-        None => None,
-    };
-    let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
-    Ok(SandboxServiceManager::new(
-        load_sandbox_service_catalog_for_execution_platform(file, host_platform)?,
-        backend,
-    ))
-}
-
-fn should_auto_start_default_machine_for_host_loader(
-    context: &ComposeProjectContext,
-    host_platform: ServiceHostPlatform,
-) -> Result<bool, Error> {
-    if host_platform != ServiceHostPlatform::Macos {
-        return Ok(false);
-    }
-
-    Ok(matches!(
-        required_effective_project_backend(
-            context,
-            None,
-            "load a compose-backed sandbox manager",
-            host_platform,
-        )?,
-        SandboxBackendKind::Container
-    ))
-}
-
 fn run_service_config(command: ServiceConfigCommand) -> Result<(), Error> {
     let rendered = compose::render_compose_project(&command.file, command.services)?;
 
@@ -438,10 +409,6 @@ async fn render_service_down(
         None,
     )
     .await
-}
-
-fn render_state_lookup_error(operation: &str, error: neovex::SandboxError) -> Error {
-    Error::Internal(format!("failed to {operation}: {error}"))
 }
 
 fn render_service_list_for_platform(
@@ -623,79 +590,6 @@ fn render_service_inspect_for_platform(
     }
 }
 
-fn run_service_logs_for_platform(
-    command: &ServiceLogsCommand,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<(), Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    match resolve_service_execution_surface(
-        &context,
-        Some(&command.service),
-        "service logs",
-        host_platform,
-        machine_api_client,
-    )? {
-        ServiceExecutionSurface::Krun { .. } => {
-            let log_path = resolve_service_ctr_log_path(command, control_data_dir)?;
-            let mut offset = 0;
-            loop {
-                let (chunk, next_offset) = read_log_chunk(&log_path, offset)?;
-                flush_service_log_chunk(&command.service, &chunk)?;
-                offset = next_offset;
-                if !command.follow {
-                    return Ok(());
-                }
-                thread::sleep(Duration::from_millis(250));
-            }
-        }
-        ServiceExecutionSurface::ForwardedContainer { client, .. } => {
-            validate_forwarded_machine_api_operations(
-                &context,
-                &client,
-                "service logs",
-                &[
-                    "service-sandboxes.inspect-current",
-                    "service-sandboxes.logs",
-                ],
-            )?;
-            let details = lookup_current_remote_service_details(
-                &context,
-                &client,
-                &tenant,
-                &command.service,
-                "resolve persisted service logs",
-            )?
-            .ok_or_else(|| {
-                missing_persisted_service_error(
-                    &context.control_plane.project_name,
-                    &tenant,
-                    &command.service,
-                )
-            })?;
-            let mut offset = 0;
-            loop {
-                let response = client
-                    .read_service_sandbox_log_chunk(&details.summary.sandbox_id, offset)
-                    .map_err(|error| {
-                        machine_api_operation_error("read persisted service logs", &client, error)
-                    })?;
-                flush_service_log_chunk(&command.service, &response.chunk)?;
-                offset = response.next_offset;
-                if !command.follow {
-                    return Ok(());
-                }
-                thread::sleep(Duration::from_millis(250));
-            }
-        }
-    }
-}
-
 fn render_service_ps_for_platform(
     command: &ServicePsCommand,
     control_data_dir: &Path,
@@ -709,291 +603,6 @@ fn render_service_ps_for_platform(
         machine_api_client,
     )?;
     render_service_process_snapshot_view(&snapshot, command.format, command.no_heading)
-}
-
-async fn service_up_outcomes_for_platform(
-    command: &ServiceUpCommand,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    let service_names = requested_service_names(&context, command.service.as_deref())?;
-    let service_catalog =
-        load_sandbox_service_catalog_for_execution_platform(&command.file, host_platform)?;
-
-    match resolve_service_execution_surface(
-        &context,
-        command.service.as_deref(),
-        "service up",
-        host_platform,
-        machine_api_client,
-    )? {
-        ServiceExecutionSurface::Krun {
-            state_view,
-            backend,
-        } => {
-            let mut outcomes = Vec::new();
-            for service_name in service_names {
-                if let Some(handle) = resolve_live_service_handle(
-                    &state_view,
-                    backend.as_ref(),
-                    &tenant,
-                    &service_name,
-                )
-                .await?
-                {
-                    outcomes.push(ServiceLifecycleOutcome::from_handle(
-                        ServiceLifecycleAction::AlreadyRunning,
-                        &tenant,
-                        &service_name,
-                        handle,
-                    ));
-                    continue;
-                }
-
-                let launch = service_catalog
-                    .sandbox_service_for_tenant(&tenant, &service_name)
-                    .ok_or_else(|| {
-                        Error::InvalidInput(format!(
-                            "service {} is not declared in compose project {}",
-                            service_name, context.control_plane.project_name
-                        ))
-                    })?;
-                let handle =
-                    start_service_launch(backend.as_ref(), &tenant, &service_name, launch).await?;
-                outcomes.push(ServiceLifecycleOutcome::from_handle(
-                    ServiceLifecycleAction::Started,
-                    &tenant,
-                    &service_name,
-                    handle,
-                ));
-            }
-            Ok(outcomes)
-        }
-        ServiceExecutionSurface::ForwardedContainer { client, backend } => {
-            validate_forwarded_machine_api_backend(&context, &client)?;
-            let mut outcomes = Vec::new();
-            for service_name in service_names {
-                if let Some(details) = lookup_current_remote_service_details(
-                    &context,
-                    &client,
-                    &tenant,
-                    &service_name,
-                    "resolve persisted sandbox state",
-                )? && is_active_status(details.summary.status)
-                {
-                    outcomes.push(ServiceLifecycleOutcome {
-                        action: ServiceLifecycleAction::AlreadyRunning,
-                        tenant_id: details.summary.tenant_id,
-                        service_name: details.summary.service_name,
-                        sandbox_id: details.summary.sandbox_id,
-                        status: details.summary.status,
-                    });
-                    continue;
-                }
-
-                let launch = service_catalog
-                    .sandbox_service_for_tenant(&tenant, &service_name)
-                    .ok_or_else(|| {
-                        Error::InvalidInput(format!(
-                            "service {} is not declared in compose project {}",
-                            service_name, context.control_plane.project_name
-                        ))
-                    })?;
-                let handle =
-                    start_service_launch(backend.as_ref(), &tenant, &service_name, launch).await?;
-                outcomes.push(ServiceLifecycleOutcome::from_handle(
-                    ServiceLifecycleAction::Started,
-                    &tenant,
-                    &service_name,
-                    handle,
-                ));
-            }
-            Ok(outcomes)
-        }
-    }
-}
-
-async fn service_down_outcomes_for_platform(
-    command: &ServiceDownCommand,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-
-    match resolve_service_execution_surface(
-        &context,
-        command.service.as_deref(),
-        "service down",
-        host_platform,
-        machine_api_client,
-    )? {
-        ServiceExecutionSurface::Krun {
-            state_view,
-            backend,
-        } => {
-            let targets = resolve_service_down_targets(
-                &state_view,
-                &tenant,
-                command.service.as_deref(),
-                &context.control_plane.project_name,
-            )?;
-            let mut outcomes = Vec::new();
-            for target in targets {
-                outcomes.push(stop_service_target(backend.as_ref(), &tenant, target).await?);
-            }
-            Ok(outcomes)
-        }
-        ServiceExecutionSurface::ForwardedContainer { client, backend } => {
-            let required_operations = if command.service.is_some() {
-                vec![
-                    "service-sandboxes.inspect-current",
-                    "service-sandboxes.stop",
-                ]
-            } else {
-                vec![
-                    "service-sandboxes.list",
-                    "service-sandboxes.inspect-current",
-                    "service-sandboxes.stop",
-                ]
-            };
-            validate_forwarded_machine_api_operations(
-                &context,
-                &client,
-                "service down",
-                &required_operations,
-            )?;
-            let targets = resolve_remote_service_down_targets(
-                &context,
-                &client,
-                &tenant,
-                command.service.as_deref(),
-            )?;
-            let mut outcomes = Vec::new();
-            for target in targets {
-                outcomes.push(stop_service_target(backend.as_ref(), &tenant, target).await?);
-            }
-            Ok(outcomes)
-        }
-    }
-}
-
-fn flush_service_log_chunk(service_name: &str, chunk: &str) -> Result<(), Error> {
-    if chunk.is_empty() {
-        return Ok(());
-    }
-    cli_ux::write_stdout(chunk).map_err(|error| {
-        Error::Internal(format!(
-            "failed to flush service logs for {}: {error}",
-            service_name
-        ))
-    })
-}
-
-fn lookup_current_remote_service_details(
-    _context: &ComposeProjectContext,
-    client: &MachineApiClient,
-    tenant: &TenantId,
-    service_name: &str,
-    operation: &str,
-) -> Result<Option<MachineApiServiceSandboxDetails>, Error> {
-    client
-        .inspect_current_service_sandbox(tenant, service_name)
-        .map(|response| response.details)
-        .map_err(|error| machine_api_operation_error(operation, client, error))
-}
-
-fn resolve_remote_service_down_targets(
-    context: &ComposeProjectContext,
-    client: &MachineApiClient,
-    tenant: &TenantId,
-    requested_service: Option<&str>,
-) -> Result<Vec<ServiceLifecycleTarget>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            let details = lookup_current_remote_service_details(
-                context,
-                client,
-                tenant,
-                service_name,
-                "resolve persisted sandbox state",
-            )?
-            .ok_or_else(|| {
-                missing_persisted_service_error(
-                    &context.control_plane.project_name,
-                    tenant,
-                    service_name,
-                )
-            })?;
-            Ok(vec![ServiceLifecycleTarget {
-                sandbox_id: details.summary.sandbox_id,
-                service_name: details.summary.service_name,
-                status: details.summary.status,
-            }])
-        }
-        None => {
-            let service_names = client
-                .list_service_sandboxes(Some(tenant))
-                .map_err(|error| {
-                    machine_api_operation_error("list persisted sandbox state", client, error)
-                })?
-                .into_iter()
-                .map(|summary| summary.service_name)
-                .collect::<BTreeSet<_>>();
-
-            service_names
-                .into_iter()
-                .map(|service_name| {
-                    lookup_current_remote_service_details(
-                        context,
-                        client,
-                        tenant,
-                        &service_name,
-                        "resolve persisted sandbox state",
-                    )?
-                    .map(|details| ServiceLifecycleTarget {
-                        sandbox_id: details.summary.sandbox_id,
-                        service_name: details.summary.service_name,
-                        status: details.summary.status,
-                    })
-                    .ok_or_else(|| {
-                        Error::Internal(format!(
-                            "persisted sandbox state changed while resolving service {} in tenant {} under project {}",
-                            service_name, tenant, context.control_plane.project_name
-                        ))
-                    })
-                })
-                .collect()
-        }
-    }
-}
-
-fn missing_persisted_service_error(
-    project_name: &str,
-    tenant: &TenantId,
-    service_name: &str,
-) -> Error {
-    Error::InvalidInput(format!(
-        "no persisted sandbox state found for service {} in tenant {} under project {}",
-        service_name, tenant, project_name
-    ))
-}
-
-fn machine_api_operation_error(operation: &str, client: &MachineApiClient, error: Error) -> Error {
-    Error::Internal(format!(
-        "failed to {operation} through the default machine API at {}: {error}",
-        client.socket_path().display()
-    ))
 }
 
 #[cfg(test)]
@@ -1026,298 +635,6 @@ async fn service_down_outcomes(
     .await
 }
 
-fn requested_service_names(
-    context: &ComposeProjectContext,
-    requested_service: Option<&str>,
-) -> Result<Vec<String>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            if !context.plan.services.contains_key(service_name) {
-                return Err(Error::InvalidInput(format!(
-                    "service {} is not declared in compose project {}",
-                    service_name, context.control_plane.project_name
-                )));
-            }
-            Ok(vec![service_name.to_owned()])
-        }
-        None => Ok(context.plan.services.keys().cloned().collect()),
-    }
-}
-
-fn require_krun_backend_for_service_operation(
-    context: &ComposeProjectContext,
-    requested_service: Option<&str>,
-    operation: &str,
-) -> Result<(), Error> {
-    let backend = required_project_backend(context, requested_service, operation)?;
-    if backend == SandboxBackendKind::Krun {
-        return Ok(());
-    }
-
-    match requested_service {
-        Some(service_name) => Err(Error::InvalidInput(format!(
-            "service {} in compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
-            service_name,
-            context.control_plane.project_name,
-            sandbox_backend_name(backend),
-            operation,
-        ))),
-        None => Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend {}, but neovex {} only supports the krun backend today",
-            context.control_plane.project_name,
-            sandbox_backend_name(backend),
-            operation,
-        ))),
-    }
-}
-
-fn required_project_backend(
-    context: &ComposeProjectContext,
-    requested_service: Option<&str>,
-    operation: &str,
-) -> Result<SandboxBackendKind, Error> {
-    match requested_service {
-        Some(service_name) => context
-            .plan
-            .services
-            .get(service_name)
-            .map(|service| service.backend)
-            .ok_or_else(|| {
-                Error::InvalidInput(format!(
-                    "service {} is not declared in compose project {}",
-                    service_name, context.control_plane.project_name
-                ))
-            }),
-        None => {
-            let mut services = context.plan.services.iter();
-            let Some((_, first_service)) = services.next() else {
-                return Err(Error::InvalidInput(format!(
-                    "compose project {} does not declare any services",
-                    context.control_plane.project_name
-                )));
-            };
-            let first_backend = first_service.backend;
-            if services.any(|(_, service)| service.backend != first_backend) {
-                return Err(Error::InvalidInput(format!(
-                    "compose project {} mixes sandbox backends across services ({}); neovex {} currently requires one backend family per project-wide operation",
-                    context.control_plane.project_name,
-                    project_backend_assignments(context),
-                    operation,
-                )));
-            }
-            Ok(first_backend)
-        }
-    }
-}
-
-fn load_sandbox_service_catalog_for_execution_platform(
-    file: &Path,
-    host_platform: ServiceHostPlatform,
-) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    let mut plan = compose::ComposeProjectPlan::load(file)?;
-    apply_platform_backend_defaults(&mut plan, host_platform);
-    Ok(Arc::new(plan.into_service_catalog()?))
-}
-
-fn apply_platform_backend_defaults(
-    plan: &mut compose::ComposeProjectPlan,
-    host_platform: ServiceHostPlatform,
-) {
-    if host_platform != ServiceHostPlatform::Macos {
-        return;
-    }
-
-    for service in plan.services.values_mut() {
-        if service.backend == SandboxBackendKind::Krun && !service_declares_backend(service) {
-            service.backend = SandboxBackendKind::Container;
-        }
-    }
-}
-
-fn effective_service_backend(
-    service: &compose::ComposeServicePlan,
-    host_platform: ServiceHostPlatform,
-) -> SandboxBackendKind {
-    if host_platform == ServiceHostPlatform::Macos
-        && service.backend == SandboxBackendKind::Krun
-        && !service_declares_backend(service)
-    {
-        SandboxBackendKind::Container
-    } else {
-        service.backend
-    }
-}
-
-fn service_declares_backend(service: &compose::ComposeServicePlan) -> bool {
-    service
-        .x_neovex
-        .as_ref()
-        .and_then(|extensions| extensions.backend)
-        .is_some()
-}
-
-fn required_effective_project_backend(
-    context: &ComposeProjectContext,
-    requested_service: Option<&str>,
-    operation: &str,
-    host_platform: ServiceHostPlatform,
-) -> Result<SandboxBackendKind, Error> {
-    match requested_service {
-        Some(service_name) => context
-            .plan
-            .services
-            .get(service_name)
-            .map(|service| effective_service_backend(service, host_platform))
-            .ok_or_else(|| {
-                Error::InvalidInput(format!(
-                    "service {} is not declared in compose project {}",
-                    service_name, context.control_plane.project_name
-                ))
-            }),
-        None => {
-            let mut services = context.plan.services.iter();
-            let Some((_, first_service)) = services.next() else {
-                return Err(Error::InvalidInput(format!(
-                    "compose project {} does not declare any services",
-                    context.control_plane.project_name
-                )));
-            };
-            let first_backend = effective_service_backend(first_service, host_platform);
-            if services.any(|(_, service)| {
-                effective_service_backend(service, host_platform) != first_backend
-            }) {
-                return Err(Error::InvalidInput(format!(
-                    "compose project {} mixes sandbox backends across services ({}); neovex {} currently requires one backend family per project-wide operation",
-                    context.control_plane.project_name,
-                    effective_project_backend_assignments(context, host_platform),
-                    operation,
-                )));
-            }
-            Ok(first_backend)
-        }
-    }
-}
-
-fn effective_project_backend_assignments(
-    context: &ComposeProjectContext,
-    host_platform: ServiceHostPlatform,
-) -> String {
-    context
-        .plan
-        .services
-        .iter()
-        .map(|(service_name, service)| {
-            format!(
-                "{service_name}={}",
-                sandbox_backend_name(effective_service_backend(service, host_platform))
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn load_host_backed_project_backend(
-    context: &ComposeProjectContext,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<Arc<dyn SandboxBackend>, Error> {
-    let backend = required_effective_project_backend(
-        context,
-        None,
-        "load a compose-backed sandbox manager",
-        host_platform,
-    )?;
-    match backend {
-        SandboxBackendKind::Krun => Ok(Arc::new(KrunSandboxBackend::new(
-            context.control_plane.krun_backend_config(),
-        ))),
-        SandboxBackendKind::Container => {
-            load_forwarded_machine_api_backend(context, host_platform, machine_api_client)
-        }
-    }
-}
-
-fn load_forwarded_machine_api_backend(
-    context: &ComposeProjectContext,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<Arc<dyn SandboxBackend>, Error> {
-    match host_platform {
-        ServiceHostPlatform::Macos => {
-            let client = match machine_api_client {
-                Some(client) => client,
-                None => require_default_machine_api_client()?,
-            };
-            validate_forwarded_machine_api_backend(context, &client)?;
-            Ok(Arc::new(ForwardedMachineApiSandboxBackend::new(client)))
-        }
-        ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but neovex load a compose-backed sandbox manager only supports that backend through the macOS guest machine API today",
-            context.control_plane.project_name
-        ))),
-        ServiceHostPlatform::Other => Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but neovex load a compose-backed sandbox manager does not support the current host platform for forwarded guest execution",
-            context.control_plane.project_name
-        ))),
-    }
-}
-
-fn validate_forwarded_machine_api_backend(
-    context: &ComposeProjectContext,
-    client: &MachineApiClient,
-) -> Result<(), Error> {
-    let capabilities = client.capabilities().map_err(|error| {
-        Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but the default machine API at {} is not reachable: {error}",
-            context.control_plane.project_name,
-            client.socket_path().display()
-        ))
-    })?;
-    if !capabilities
-        .supported_service_backends
-        .contains(&SandboxBackendKind::Container)
-    {
-        return Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but the default machine API at {} does not advertise container backend support",
-            context.control_plane.project_name,
-            client.socket_path().display()
-        )));
-    }
-    if !capabilities.service_execution_ready {
-        let blockers = if capabilities.service_execution_blockers.is_empty() {
-            "guest machine API did not report readiness blockers".to_owned()
-        } else {
-            capabilities.service_execution_blockers.join("; ")
-        };
-        return Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but the default machine API at {} is not ready for container-backed service execution: {}",
-            context.control_plane.project_name,
-            client.socket_path().display(),
-            blockers,
-        )));
-    }
-    Ok(())
-}
-
-fn sandbox_backend_name(backend: SandboxBackendKind) -> &'static str {
-    match backend {
-        SandboxBackendKind::Container => "container",
-        SandboxBackendKind::Krun => "krun",
-    }
-}
-
-fn project_backend_assignments(context: &ComposeProjectContext) -> String {
-    context
-        .plan
-        .services
-        .iter()
-        .map(|(service_name, service)| {
-            format!("{service_name}={}", sandbox_backend_name(service.backend))
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ServiceHostPlatform {
     Macos,
@@ -1346,539 +663,6 @@ enum ServiceExecutionSurface {
         client: MachineApiClient,
         backend: Arc<dyn SandboxBackend>,
     },
-}
-
-fn resolve_service_execution_surface(
-    context: &ComposeProjectContext,
-    requested_service: Option<&str>,
-    operation: &str,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<ServiceExecutionSurface, Error> {
-    let backend =
-        required_effective_project_backend(context, requested_service, operation, host_platform)?;
-    match backend {
-        SandboxBackendKind::Krun => Ok(ServiceExecutionSurface::Krun {
-            state_view: KrunSandboxStateView::from_config(
-                &context.control_plane.krun_backend_config(),
-            ),
-            backend: Arc::new(KrunSandboxBackend::new(
-                context.control_plane.krun_backend_config(),
-            )),
-        }),
-        SandboxBackendKind::Container => {
-            let client = resolve_forwarded_machine_api_client(
-                context,
-                host_platform,
-                machine_api_client,
-                operation,
-            )?;
-            let backend: Arc<dyn SandboxBackend> =
-                Arc::new(ForwardedMachineApiSandboxBackend::new(client.clone()));
-            Ok(ServiceExecutionSurface::ForwardedContainer { client, backend })
-        }
-    }
-}
-
-fn resolve_forwarded_machine_api_client(
-    context: &ComposeProjectContext,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-    operation: &str,
-) -> Result<MachineApiClient, Error> {
-    match host_platform {
-        ServiceHostPlatform::Macos => match machine_api_client {
-            Some(client) => Ok(client),
-            None => require_default_machine_api_client(),
-        },
-        ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but neovex {} only supports that backend through the macOS guest machine API today",
-            context.control_plane.project_name, operation,
-        ))),
-        ServiceHostPlatform::Other => Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but neovex {} does not support the current host platform for forwarded guest execution",
-            context.control_plane.project_name, operation,
-        ))),
-    }
-}
-
-fn validate_forwarded_machine_api_operations(
-    context: &ComposeProjectContext,
-    client: &MachineApiClient,
-    operation: &str,
-    required_operations: &[&str],
-) -> Result<(), Error> {
-    let capabilities = client.capabilities().map_err(|error| {
-        Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but the default machine API at {} is not reachable: {error}",
-            context.control_plane.project_name,
-            client.socket_path().display()
-        ))
-    })?;
-    if !capabilities
-        .supported_service_backends
-        .contains(&SandboxBackendKind::Container)
-    {
-        return Err(Error::InvalidInput(format!(
-            "compose project {} selects sandbox backend container, but the default machine API at {} does not advertise container backend support",
-            context.control_plane.project_name,
-            client.socket_path().display()
-        )));
-    }
-
-    let missing = required_operations
-        .iter()
-        .copied()
-        .filter(|required_operation| {
-            !capabilities
-                .supported_operations
-                .iter()
-                .any(|advertised| advertised == required_operation)
-        })
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    let operation_blockers = capabilities.blockers_for_operations(missing.iter().copied());
-    let blockers = if !operation_blockers.is_empty() {
-        operation_blockers.join("; ")
-    } else if capabilities.service_execution_blockers.is_empty() {
-        "guest machine API did not report readiness blockers".to_owned()
-    } else {
-        capabilities.service_execution_blockers.join("; ")
-    };
-    Err(Error::InvalidInput(format!(
-        "compose project {} selects sandbox backend container, but neovex {} requires guest machine API operations [{}] that are not available at {}: {}",
-        context.control_plane.project_name,
-        operation,
-        missing.join(", "),
-        client.socket_path().display(),
-        blockers,
-    )))
-}
-
-fn resolve_service_down_targets(
-    state_view: &KrunSandboxStateView,
-    tenant: &TenantId,
-    requested_service: Option<&str>,
-    project_name: &str,
-) -> Result<Vec<ServiceLifecycleTarget>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            let details = state_view
-                .inspect_service(tenant, service_name)
-                .map_err(|error| render_state_lookup_error("resolve persisted sandbox state", error))?
-                .ok_or_else(|| {
-                    Error::InvalidInput(format!(
-                        "no persisted sandbox state found for service {} in tenant {} under project {}",
-                        service_name, tenant, project_name
-                    ))
-                })?;
-            Ok(vec![ServiceLifecycleTarget::from_details(details)])
-        }
-        None => {
-            let service_names = state_view
-                .list_for_tenant(tenant)
-                .map_err(|error| render_state_lookup_error("list persisted sandbox state", error))?
-                .into_iter()
-                .map(|summary| summary.service_name)
-                .collect::<BTreeSet<_>>();
-
-            service_names
-                .into_iter()
-                .map(|service_name| {
-                    state_view
-                        .inspect_service(tenant, &service_name)
-                        .map_err(|error| {
-                            render_state_lookup_error("resolve persisted sandbox state", error)
-                        })?
-                        .map(ServiceLifecycleTarget::from_details)
-                        .ok_or_else(|| {
-                            Error::Internal(format!(
-                                "persisted sandbox state changed while resolving service {} in tenant {} under project {}",
-                                service_name, tenant, project_name
-                            ))
-                        })
-                })
-                .collect()
-        }
-    }
-}
-
-async fn resolve_live_service_handle(
-    state_view: &KrunSandboxStateView,
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    service_name: &str,
-) -> Result<Option<SandboxHandle>, Error> {
-    let Some(details) = state_view
-        .inspect_service(tenant, service_name)
-        .map_err(|error| render_state_lookup_error("resolve persisted sandbox state", error))?
-    else {
-        return Ok(None);
-    };
-
-    let refreshed = backend
-        .inspect(&details.summary.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("inspect", tenant, service_name, error))?;
-
-    Ok(refreshed.filter(|handle| is_active_status(handle.status)))
-}
-
-async fn start_service_launch(
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    service_name: &str,
-    launch: SandboxServiceLaunch,
-) -> Result<SandboxHandle, Error> {
-    if launch.spec().name != service_name {
-        return Err(Error::InvalidInput(format!(
-            "sandbox service catalog returned launch spec name {} for requested service {}",
-            launch.spec().name,
-            service_name
-        )));
-    }
-    if &launch.spec().tenant_id != tenant {
-        return Err(Error::InvalidInput(format!(
-            "sandbox service catalog returned tenant {} for requested tenant {}",
-            launch.spec().tenant_id,
-            tenant
-        )));
-    }
-    if launch.spec().backend != backend.kind() {
-        return Err(Error::InvalidInput(format!(
-            "sandbox service {} for tenant {} requested backend {:?}, but the configured backend is {:?}",
-            service_name,
-            tenant,
-            launch.spec().backend,
-            backend.kind()
-        )));
-    }
-
-    match launch {
-        SandboxServiceLaunch::Image(launch) => backend
-            .start_from_image(launch)
-            .await
-            .map_err(|error| backend_operation_error("start", tenant, service_name, error)),
-        SandboxServiceLaunch::Build(launch) => backend
-            .start_from_build(launch)
-            .await
-            .map_err(|error| backend_operation_error("start", tenant, service_name, error)),
-    }
-}
-
-async fn stop_service_target(
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    target: ServiceLifecycleTarget,
-) -> Result<ServiceLifecycleOutcome, Error> {
-    let refreshed = backend
-        .inspect(&target.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?;
-
-    if refreshed
-        .as_ref()
-        .is_none_or(|handle| !is_active_status(handle.status))
-    {
-        let status = refreshed
-            .map(|handle| handle.status)
-            .unwrap_or(target.status);
-        return Ok(ServiceLifecycleOutcome {
-            action: ServiceLifecycleAction::AlreadyStopped,
-            tenant_id: tenant.clone(),
-            service_name: target.service_name,
-            sandbox_id: target.sandbox_id,
-            status,
-        });
-    }
-
-    backend
-        .stop(&target.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("stop", tenant, &target.service_name, error))?;
-    let status = backend
-        .inspect(&target.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?
-        .map(|handle| handle.status)
-        .unwrap_or(SandboxStatus::Stopped);
-
-    Ok(ServiceLifecycleOutcome {
-        action: ServiceLifecycleAction::Stopped,
-        tenant_id: tenant.clone(),
-        service_name: target.service_name,
-        sandbox_id: target.sandbox_id,
-        status,
-    })
-}
-
-fn backend_operation_error(
-    operation: &str,
-    tenant: &TenantId,
-    service_name: &str,
-    error: neovex::SandboxError,
-) -> Error {
-    Error::Internal(format!(
-        "failed to {operation} service {} for tenant {}: {error}",
-        service_name, tenant
-    ))
-}
-
-fn is_active_status(status: SandboxStatus) -> bool {
-    matches!(
-        status,
-        SandboxStatus::Starting
-            | SandboxStatus::Ready
-            | SandboxStatus::NotReady
-            | SandboxStatus::Stopping
-    )
-}
-
-fn resolve_service_ctr_log_path(
-    command: &ServiceLogsCommand,
-    control_data_dir: &Path,
-) -> Result<PathBuf, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    require_krun_backend_for_service_operation(&context, Some(&command.service), "service logs")?;
-    let state_view =
-        KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    let details = state_view
-        .inspect_service(&tenant, &command.service)
-        .map_err(|error| render_state_lookup_error("resolve persisted service logs", error))?
-        .ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "no persisted sandbox state found for service {} in tenant {} under project {}",
-                command.service, tenant, context.control_plane.project_name
-            ))
-        })?;
-    Ok(details.log_paths.ctr_log)
-}
-
-fn resolve_service_process_snapshot(
-    command: &ServicePsCommand,
-    control_data_dir: &Path,
-) -> Result<ServiceProcessSnapshot, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    require_krun_backend_for_service_operation(&context, Some(&command.service), "service ps")?;
-    let state_view =
-        KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    let details = state_view
-        .inspect_service(&tenant, &command.service)
-        .map_err(|error| render_state_lookup_error("resolve persisted service processes", error))?
-        .ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "no persisted sandbox state found for service {} in tenant {} under project {}",
-                command.service, tenant, context.control_plane.project_name
-            ))
-        })?;
-
-    let runtime_pidfile = details.state_dir.join("pidfile");
-    let conmon_pidfile = details.state_dir.join("conmon.pid");
-    let runtime_pid = read_pid_file_if_exists(&runtime_pidfile)?;
-    let conmon_pid = read_pid_file_if_exists(&conmon_pidfile)?;
-    let process_rows = snapshot_process_rows(runtime_pid, conmon_pid)?;
-
-    Ok(ServiceProcessSnapshot {
-        sandbox_id: details.summary.sandbox_id,
-        tenant_id: details.summary.tenant_id,
-        service_name: details.summary.service_name,
-        status: details.summary.status,
-        runtime_pidfile,
-        conmon_pidfile,
-        runtime_pid,
-        conmon_pid,
-        process_rows,
-    })
-}
-
-fn resolve_service_process_snapshot_for_platform(
-    command: &ServicePsCommand,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<ServiceProcessSnapshot, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    match resolve_service_execution_surface(
-        &context,
-        Some(&command.service),
-        "service ps",
-        host_platform,
-        machine_api_client,
-    )? {
-        ServiceExecutionSurface::Krun { .. } => {
-            resolve_service_process_snapshot(command, control_data_dir)
-        }
-        ServiceExecutionSurface::ForwardedContainer { client, .. } => {
-            validate_forwarded_machine_api_operations(
-                &context,
-                &client,
-                "service ps",
-                &["service-sandboxes.inspect-current", "service-sandboxes.ps"],
-            )?;
-            let details = lookup_current_remote_service_details(
-                &context,
-                &client,
-                &tenant,
-                &command.service,
-                "resolve persisted service processes",
-            )?
-            .ok_or_else(|| {
-                missing_persisted_service_error(
-                    &context.control_plane.project_name,
-                    &tenant,
-                    &command.service,
-                )
-            })?;
-            let snapshot = client
-                .service_process_snapshot(&details.summary.sandbox_id)
-                .map_err(|error| {
-                    machine_api_operation_error(
-                        "resolve persisted service processes",
-                        &client,
-                        error,
-                    )
-                })?;
-
-            Ok(ServiceProcessSnapshot {
-                sandbox_id: snapshot.sandbox_id,
-                tenant_id: snapshot.tenant_id,
-                service_name: snapshot.service_name,
-                status: snapshot.status,
-                runtime_pidfile: snapshot.runtime_pidfile,
-                conmon_pidfile: snapshot.conmon_pidfile,
-                runtime_pid: snapshot.runtime_pid,
-                conmon_pid: snapshot.conmon_pid,
-                process_rows: snapshot
-                    .process_rows
-                    .into_iter()
-                    .map(|row| ServiceProcessRow {
-                        pid: row.pid,
-                        ppid: row.ppid,
-                        command: row.command,
-                    })
-                    .collect(),
-            })
-        }
-    }
-}
-
-fn read_log_chunk(path: &Path, offset: u64) -> Result<(String, u64), Error> {
-    let Ok(mut file) = File::open(path) else {
-        return Ok((String::new(), offset));
-    };
-
-    let metadata = file.metadata().map_err(|error| {
-        Error::Internal(format!(
-            "failed to inspect persisted log file {}: {error}",
-            path.display()
-        ))
-    })?;
-    let file_len = metadata.len();
-    let start = offset.min(file_len);
-    file.seek(SeekFrom::Start(start)).map_err(|error| {
-        Error::Internal(format!(
-            "failed to seek persisted log file {}: {error}",
-            path.display()
-        ))
-    })?;
-
-    let mut buffer = String::new();
-    file.read_to_string(&mut buffer).map_err(|error| {
-        Error::Internal(format!(
-            "failed to read persisted log file {}: {error}",
-            path.display()
-        ))
-    })?;
-
-    Ok((buffer, file_len))
-}
-
-fn read_pid_file_if_exists(path: &Path) -> Result<Option<u32>, Error> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Ok(None);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    trimmed.parse::<u32>().map(Some).map_err(|error| {
-        Error::InvalidInput(format!(
-            "failed to parse pidfile {} containing {:?}: {error}",
-            path.display(),
-            trimmed
-        ))
-    })
-}
-
-fn snapshot_process_rows(
-    runtime_pid: Option<u32>,
-    conmon_pid: Option<u32>,
-) -> Result<Vec<ServiceProcessRow>, Error> {
-    let pid_set = [runtime_pid, conmon_pid]
-        .into_iter()
-        .flatten()
-        .collect::<BTreeSet<_>>();
-    if pid_set.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let output = Command::new("ps")
-        .args(["-ax", "-o", "pid=,ppid=,command="])
-        .output()
-        .map_err(|error| {
-            Error::Internal(format!("failed to run ps for service snapshot: {error}"))
-        })?;
-    if !output.status.success() {
-        return Err(Error::Internal(format!(
-            "ps exited with status {} while collecting service snapshot",
-            output.status
-        )));
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|error| Error::Serialization(format!("ps output was not valid utf-8: {error}")))?;
-    Ok(parse_process_rows(&stdout, &pid_set))
-}
-
-fn parse_process_rows(stdout: &str, pid_set: &BTreeSet<u32>) -> Vec<ServiceProcessRow> {
-    let mut rows = stdout
-        .lines()
-        .filter_map(parse_process_row)
-        .filter(|row| pid_set.contains(&row.pid))
-        .collect::<Vec<_>>();
-    rows.sort_by_key(|row| (row.ppid, row.pid));
-    rows
-}
-
-fn parse_process_row(line: &str) -> Option<ServiceProcessRow> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let mut parts = trimmed.split_whitespace();
-    let pid = parts.next()?.parse::<u32>().ok()?;
-    let ppid = parts.next()?.parse::<u32>().ok()?;
-    let command = parts.collect::<Vec<_>>().join(" ");
-    if command.is_empty() {
-        return None;
-    }
-
-    Some(ServiceProcessRow { pid, ppid, command })
 }
 
 fn control_data_dir_from_service_config(config: &ServicePersistenceConfig) -> &Path {
@@ -1933,39 +717,6 @@ impl ServiceLifecycleAction {
     }
 }
 
-fn render_sandbox_status(status: SandboxStatus) -> &'static str {
-    match status {
-        SandboxStatus::Starting => "starting",
-        SandboxStatus::Ready => "ready",
-        SandboxStatus::NotReady => "not_ready",
-        SandboxStatus::Stopping => "stopping",
-        SandboxStatus::Stopped => "stopped",
-        SandboxStatus::Failed => "failed",
-    }
-}
-
-fn render_service_lifecycle_action_summary(
-    summary: &str,
-    project_name: &str,
-    tenant: &TenantId,
-    outcomes: &[ServiceLifecycleOutcome],
-) -> String {
-    let header = format!("{summary} for project {project_name} (tenant {tenant})");
-    let detail_lines = outcomes
-        .iter()
-        .map(|outcome| {
-            format!(
-                "{}: {} (sandbox {}, status {})",
-                outcome.service_name,
-                outcome.action.as_str(),
-                outcome.sandbox_id,
-                render_sandbox_status(outcome.status),
-            )
-        })
-        .collect::<Vec<_>>();
-    cli_ux::format_action_block(&header, &detail_lines)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ServiceLifecycleTarget {
     sandbox_id: neovex::SandboxId,
@@ -2015,193 +766,9 @@ struct ServiceSandboxSummaryView {
     shutdown_requested: bool,
 }
 
-fn render_service_list_view(
-    summaries: &[ServiceSandboxSummaryView],
-    format: ServiceListOutputFormat,
-    no_heading: bool,
-) -> Result<String, Error> {
-    match format {
-        ServiceListOutputFormat::Json => serde_json::to_string_pretty(summaries).map_err(|error| {
-            Error::Serialization(format!("failed to render service list: {error}"))
-        }),
-        ServiceListOutputFormat::Yaml => serde_yaml::to_string(summaries).map_err(|error| {
-            Error::Serialization(format!("failed to render service list: {error}"))
-        }),
-        ServiceListOutputFormat::Table => Ok(render_service_list_table(summaries, no_heading)),
-    }
-}
-
-fn render_service_list_table(summaries: &[ServiceSandboxSummaryView], no_heading: bool) -> String {
-    let columns = [
-        cli_ux::TableColumn::left("SERVICE", 12),
-        cli_ux::TableColumn::left("TENANT", 16),
-        cli_ux::TableColumn::left("STATUS", 12),
-        cli_ux::TableColumn::left("SANDBOX", 14),
-        cli_ux::TableColumn::right("RESTARTS", 8),
-        cli_ux::TableColumn::right("EXIT", 4),
-        cli_ux::TableColumn::left("ENDPOINTS", 12),
-    ];
-    let rows = summaries
-        .iter()
-        .map(|summary| {
-            vec![
-                summary.service_name.clone(),
-                summary.tenant_id.to_string(),
-                render_sandbox_status(summary.status).to_owned(),
-                summary.sandbox_id.to_string(),
-                summary.restart_count.to_string(),
-                summary
-                    .last_exit_code
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "-".to_owned()),
-                render_published_endpoints(&summary.published_endpoints),
-            ]
-        })
-        .collect::<Vec<_>>();
-    cli_ux::render_table_with_options(
-        &columns,
-        &rows,
-        cli_ux::TableRenderOptions {
-            omit_header: no_heading,
-        },
-    )
-}
-
-fn render_service_inspect_view<T: Serialize>(
-    details: &T,
-    format: ServiceInspectOutputFormat,
-    service_name: &str,
-) -> Result<String, Error> {
-    match format {
-        ServiceInspectOutputFormat::Json => {
-            serde_json::to_string_pretty(details).map_err(|error| {
-                Error::Serialization(format!(
-                    "failed to render sandbox details for service {}: {error}",
-                    service_name
-                ))
-            })
-        }
-        ServiceInspectOutputFormat::Yaml => serde_yaml::to_string(details).map_err(|error| {
-            Error::Serialization(format!(
-                "failed to render sandbox details for service {}: {error}",
-                service_name
-            ))
-        }),
-    }
-}
-
-fn render_service_process_snapshot_view(
-    snapshot: &ServiceProcessSnapshot,
-    format: ServicePsOutputFormat,
-    no_heading: bool,
-) -> Result<String, Error> {
-    match format {
-        ServicePsOutputFormat::Json => serde_json::to_string_pretty(snapshot)
-            .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
-        ServicePsOutputFormat::Yaml => serde_yaml::to_string(snapshot)
-            .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
-        ServicePsOutputFormat::Table => {
-            Ok(render_service_process_snapshot_table(snapshot, no_heading))
-        }
-    }
-}
-
-fn render_service_process_snapshot_table(
-    snapshot: &ServiceProcessSnapshot,
-    no_heading: bool,
-) -> String {
-    let mut detail_lines = vec![
-        format!("sandbox: {}", snapshot.sandbox_id),
-        format!("status: {}", render_sandbox_status(snapshot.status)),
-        format!(
-            "runtime pid: {}",
-            snapshot
-                .runtime_pid
-                .map(|pid| pid.to_string())
-                .unwrap_or_else(|| "-".to_owned())
-        ),
-        format!(
-            "conmon pid: {}",
-            snapshot
-                .conmon_pid
-                .map(|pid| pid.to_string())
-                .unwrap_or_else(|| "-".to_owned())
-        ),
-    ];
-    if snapshot.process_rows.is_empty() {
-        detail_lines.push("tracked processes: none".to_owned());
-        return cli_ux::format_action_block(
-            &format!(
-                "Service process snapshot for {} (tenant {})",
-                snapshot.service_name, snapshot.tenant_id
-            ),
-            &detail_lines,
-        );
-    }
-
-    let mut rendered = cli_ux::format_action_block(
-        &format!(
-            "Service process snapshot for {} (tenant {})",
-            snapshot.service_name, snapshot.tenant_id
-        ),
-        &detail_lines,
-    );
-    let columns = [
-        cli_ux::TableColumn::right("PID", 5),
-        cli_ux::TableColumn::right("PPID", 5),
-        cli_ux::TableColumn::left("COMMAND", 24),
-    ];
-    let rows = snapshot
-        .process_rows
-        .iter()
-        .map(|row| {
-            vec![
-                row.pid.to_string(),
-                row.ppid.to_string(),
-                row.command.clone(),
-            ]
-        })
-        .collect::<Vec<_>>();
-    rendered.push_str(&cli_ux::render_table_with_options(
-        &columns,
-        &rows,
-        cli_ux::TableRenderOptions {
-            omit_header: no_heading,
-        },
-    ));
-    rendered
-}
-
-fn render_published_endpoints(endpoints: &[PublishedEndpoint]) -> String {
-    if endpoints.is_empty() {
-        return "-".to_owned();
-    }
-
-    endpoints
-        .iter()
-        .map(|endpoint| {
-            format!(
-                "{}={}/{}",
-                endpoint.name,
-                endpoint.address,
-                render_published_endpoint_protocol(endpoint.protocol)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn render_published_endpoint_protocol(protocol: neovex::PublishedEndpointProtocol) -> &'static str {
-    match protocol {
-        neovex::PublishedEndpointProtocol::Tcp => "tcp",
-        neovex::PublishedEndpointProtocol::Http => "http",
-        neovex::PublishedEndpointProtocol::Https => "https",
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::path::Path;
@@ -2212,7 +779,8 @@ mod tests {
     use clap::Parser;
     use neovex::{
         SandboxBackendKind, SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxId,
-        SandboxImageLaunchSpec, SandboxProcessSpec, SandboxSpec, SandboxStatus,
+        SandboxImageLaunchSpec, SandboxProcessSpec, SandboxServiceLaunch, SandboxSpec,
+        SandboxStatus,
     };
     use neovex_sandbox::SandboxFuture;
     use neovex_sandbox::backends::container::{
@@ -2225,6 +793,12 @@ mod tests {
         MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
         default_guest_helper_binary_dirs, serve_machine_api,
     };
+    use crate::service::execution::{
+        load_host_backed_project_backend, should_auto_start_default_machine_for_host_loader,
+    };
+    use crate::service::lifecycle::{start_service_launch, stop_service_target};
+    use crate::service::logs::{read_log_chunk, resolve_service_ctr_log_path};
+    use crate::service::process::{parse_process_rows, read_pid_file_if_exists};
 
     #[derive(Debug, clap::Parser)]
     struct RootCli {
@@ -2813,8 +1387,9 @@ mod tests {
             SandboxStatus::Ready,
         );
         let container_dir = krun_config.state_root.join("containers").join("db-01aaa");
-        fs::write(container_dir.join("pidfile"), "2002\n").expect("pidfile should write");
-        fs::write(container_dir.join("conmon.pid"), "1001\n").expect("conmon pidfile should write");
+        fs::write(container_dir.join("pidfile"), "4294967294\n").expect("pidfile should write");
+        fs::write(container_dir.join("conmon.pid"), "4294967295\n")
+            .expect("conmon pidfile should write");
 
         let rendered = render_service_ps_for_platform(
             &ServicePsCommand {
@@ -2831,8 +1406,8 @@ mod tests {
         .expect("service ps should render");
         assert!(rendered.contains("Service process snapshot for db"));
         assert!(rendered.contains("db-01aaa"));
-        assert!(rendered.contains("runtime pid: 2002"));
-        assert!(rendered.contains("conmon pid: 1001"));
+        assert!(rendered.contains("runtime pid: 4294967294"));
+        assert!(rendered.contains("conmon pid: 4294967295"));
         assert!(rendered.contains("tracked processes: none"));
     }
 
@@ -3485,8 +2060,8 @@ services:
             .expect("current sandbox should exist");
         fs::write(&current.log_paths.ctr_log, "guest log line\n")
             .expect("guest ctr.log should write");
-        fs::write(current.state_dir.join("pidfile"), "2002\n").expect("pidfile should write");
-        fs::write(current.state_dir.join("conmon.pid"), "1001\n")
+        fs::write(current.state_dir.join("pidfile"), "4294967294\n").expect("pidfile should write");
+        fs::write(current.state_dir.join("conmon.pid"), "4294967295\n")
             .expect("conmon pidfile should write");
 
         let rendered_ps = render_service_ps_for_platform(
@@ -3502,8 +2077,14 @@ services:
             Some(client.clone()),
         )
         .expect("service ps should render");
-        assert!(rendered_ps.contains("runtime pid: 2002"), "{rendered_ps}");
-        assert!(rendered_ps.contains("conmon pid: 1001"), "{rendered_ps}");
+        assert!(
+            rendered_ps.contains("runtime pid: 4294967294"),
+            "{rendered_ps}"
+        );
+        assert!(
+            rendered_ps.contains("conmon pid: 4294967295"),
+            "{rendered_ps}"
+        );
         assert!(
             rendered_ps.contains("tracked processes: none"),
             "{rendered_ps}"
