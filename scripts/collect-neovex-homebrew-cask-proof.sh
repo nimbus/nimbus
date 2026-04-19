@@ -554,7 +554,7 @@ capture_command \
   "capture.machine_status_running" \
   "${output_dir}/machine-status-running-command.txt" \
   "${output_dir}/machine-status-running.txt" \
-  "${base_cmd[@]}" machine status
+  "${base_cmd[@]}" machine status --format yaml
 
 capture_command \
   "capture.machine_ssh_mounts" \

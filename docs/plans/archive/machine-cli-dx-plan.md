@@ -694,3 +694,23 @@ original comparative audit, or the exact DX closeout sequence.
   artifacts `run/machine-cp-upload.txt`, `run/machine-cp-download.txt`, and
   `run/machine-cp-host-roundtrip.txt` showed `Copy successful` in both
   directions and preserved the exact `dx10-copy-proof` file contents.
+- 2026-04-18: Completed the archived-plan release closeout on the shipped
+  macOS/Homebrew path. Real proof against the published `v0.1.16` darwin
+  archive, using the isolated bundle rooted at
+  `/tmp/neovex-v0.1.16-homebrew-proof`, exposed that the previously pinned
+  immutable Podman machine image digest had gone missing on Quay
+  (`manifest unknown`) even though the CLI DX feature work itself was complete.
+  The release-quality fix refreshed the checked-in Podman machine image digest
+  to the live immutable `quay.io/podman/machine-os:6.0` index
+  `sha256:972a9fb73e96c903320b3bef32cd212eb0c386f9b6a19737878a063d4703c6ff`,
+  updated `docs/reference/macos-machine-flow.md` to match, and changed
+  `scripts/collect-neovex-homebrew-cask-proof.sh` to request
+  `neovex machine status --format yaml` so packaged-release assertions stay
+  stable across CLI presentation changes. Re-running the isolated proof with
+  the fixed tree succeeded in `/tmp/neovex-v0.1.16-homebrew-proof-fixed2`,
+  proving `machine start`, structured `machine status`, guest SSH, guest
+  `neovex --version`, guest machine-API `/healthz` and `/capabilities`,
+  packaged `libexec/gvproxy`, and the `/Users` virtiofs mount without touching
+  the user's installed state. That closeout preserved the completed DX status
+  while documenting the exact release-quality macOS verification and the
+  follow-on release boundary needed to ship the fix.

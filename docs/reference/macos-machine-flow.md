@@ -47,7 +47,7 @@ machine (`neovex machine init` or `neovex machine start` on a clean host) is
 currently:
 
 ```text
-docker://quay.io/podman/machine-os@sha256:02ce56eb3a353f3d909eeb6742db7052e13fcad01937ef9536d41178c4865000
+docker://quay.io/podman/machine-os@sha256:972a9fb73e96c903320b3bef32cd212eb0c386f9b6a19737878a063d4703c6ff
 ```
 
 Current contract note:

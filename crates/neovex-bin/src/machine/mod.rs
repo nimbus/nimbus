@@ -58,7 +58,7 @@ const DEFAULT_MACHINE_NAME: &str = "default";
 const DEFAULT_NEOVEX_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/agentstation/neovex-machine-os";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
 const DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST: &str =
-    "sha256:02ce56eb3a353f3d909eeb6742db7052e13fcad01937ef9536d41178c4865000";
+    "sha256:972a9fb73e96c903320b3bef32cd212eb0c386f9b6a19737878a063d4703c6ff";
 
 fn current_machine_release_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
