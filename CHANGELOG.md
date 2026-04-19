@@ -7,17 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.20] - 2026-04-19
 
-### Machine
+### Documentation
 
-- Complete the machine CLI follow-on UX wave with archived control-plan closeout, stronger `machine list` ergonomics, and final real macOS host proof by @jackspirou
+- Update CHANGELOG.md for v0.1.18 by @github-actions[bot]
 
 ### Fixed
 
-- Collapse `cli_ux` progress helper conditionals to satisfy the enforced Clippy release contract by @jackspirou
-
-### Release
-
-- Prepare v0.1.20 by @jackspirou
+- Gate cli progress helpers to unix builds by @jackspirou
 
 
 
@@ -25,17 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.19] - 2026-04-19
 
-### Machine
+### Added
 
-- Close the machine/service CLI alignment control plane with archived guidance, checked-in isolated CLI proof helpers, and refreshed macOS local-binary plus Homebrew proof bundles by @jackspirou
-
-### Fixed
-
-- Update the macOS service proof collector to accept the shipped `service inspect` readiness shape across the aligned CLI surface by @jackspirou
-
-### Release
-
-- Prepare v0.1.19 by @jackspirou
+- Close out CLI alignment and add install tooling by @jackspirou
 
 
 
@@ -56,6 +44,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.17...v0.1.18
 
 ## [0.1.17] - 2026-04-19
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.16 by @github-actions[bot]
+- Update CHANGELOG.md for v0.1.15 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.16...v0.1.17
+
+## [0.1.16] - 2026-04-19
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.15...v0.1.16
+
+## [0.1.15] - 2026-04-19
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.14 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.14...v0.1.15
+
+## [0.1.14] - 2026-04-18
+
+### Machine
+
+- Reflect guest override in non-unix stub by @jackspirou
+
+
+
 **Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.13...v0.1.14
 
 ## [0.1.13] - 2026-04-18
