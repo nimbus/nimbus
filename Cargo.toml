@@ -13,7 +13,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.18"
+version = "0.1.19"
 edition = "2024"
 publish = false
 repository = "https://github.com/agentstation/neovex"
@@ -30,11 +30,13 @@ arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
 deadpool-postgres = "0.14"
 deno_core = { version = "0.395", features = ["unsafe_use_unprotected_platform"] }
 deno_error = "0.7"
 futures = "0.3"
 fs2 = "0.4"
+indicatif = "0.18"
 hyper = "0.14.32"
 http = "1"
 signal-hook-registry = "1"
@@ -55,6 +57,7 @@ serde_yaml = "0.9"
 semver = "1"
 shell-words = "1"
 sha2 = "0.10"
+tar = "0.4"
 tempfile = "3"
 testcontainers-modules = "0.15"
 thiserror = "2"

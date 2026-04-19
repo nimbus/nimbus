@@ -17,7 +17,9 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 clap.workspace = true
+comfy-table.workspace = true
 fs2.workspace = true
+indicatif.workspace = true
 libc.workspace = true
 neovex = { path = "../neovex" }
 neovex-sandbox = { path = "../neovex-sandbox" }
@@ -29,6 +31,7 @@ serde_yaml.workspace = true
 sha2.workspace = true
 signal-hook-registry.workspace = true
 shell-words.workspace = true
+tar.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true

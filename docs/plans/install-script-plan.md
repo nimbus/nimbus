@@ -9,9 +9,9 @@ Fedora/RHEL) and macOS (Apple Silicon).
 
 ## Status
 
-- **Status:** `todo`
+- **Status:** `in_progress`
 - **Primary owner:** this plan
-- **Parent plan:** `docs/plans/distribution-plan.md` (Channel 1, Phase D1)
+- **Parent plan:** `docs/plans/distribution-plan.md` (Channel 1)
 - **Readiness:** implementation-ready after the 2026-04-18 contract refresh in
   this plan; I1 can start immediately
 - **Hard deps:** initial v1 implementation now has its external release inputs:
@@ -97,12 +97,19 @@ layout itself.
 |---------|--------------|-------------|
 | conmon | `apt-get install conmon` | `dnf install conmon` |
 | buildah | `apt-get install buildah` | `dnf install buildah` |
+| containers-common | Pulled as a dependency of buildah | Pulled as a dependency of buildah |
 | catatonit | `apt-get install catatonit` | `dnf install catatonit` |
 | passt | `apt-get install passt` | `dnf install passt` |
 | uidmap | `apt-get install uidmap` | `dnf install shadow-utils` |
 | fuse-overlayfs | `apt-get install fuse-overlayfs` | `dnf install fuse-overlayfs` |
 | libkrun | **Not in repos** (see below) | `dnf install libkrun` |
 | libkrunfw | **Not in repos** (see below) | `dnf install libkrunfw` |
+
+Note: `containers-common` is not installed explicitly — it is a transitive
+dependency of `buildah` on both Debian and Fedora. The distribution plan's
+`.deb`/`.rpm` package specs list it as a hard `Depends`/`Requires` for
+belt-and-suspenders package management, but the install script relies on the
+package manager to resolve it transitively.
 
 ### macOS (Apple Silicon only)
 
@@ -129,12 +136,13 @@ POSIX `sh` — no bashisms. Following the conventions of:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--version <tag>` | latest | Pin neovex version (e.g., `v0.1.14`) |
-| `--crun-version <tag>` | latest `agentstation/neovex-crun` release | Pin neovex-crun version (Linux only) |
-| `--prefix <path>` | `/usr/local` | Install prefix for neovex binary |
+| `--version <tag>` | latest | Pin neovex version (e.g., `v0.1.14`). Linux only in the initial cut; macOS installs the current Homebrew cask and does not support arbitrary historical version pins. |
+| `--crun-version <tag>` | latest `agentstation/neovex-crun` release | Pin neovex-crun version (Linux only; accepts the full release tag, e.g., `v1.27-neovex.1`) |
+| `--prefix <path>` | `/usr/local` | Install prefix for neovex binary (Linux only; ignored on macOS where Homebrew manages the prefix) |
 | `--skip-deps` | false | Skip system dependency installation |
 | `--dry-run` | false | Print what would happen, don't do anything |
 | `--uninstall` | false | Remove neovex and neovex-crun |
+| `--yes`, `-y` | false | Skip interactive confirmation prompts (implied when piped via `curl \| sh`) |
 | `-h`, `--help` | — | Show usage |
 
 ### Top-level flow
@@ -182,7 +190,7 @@ Source `/etc/os-release` for `ID` and `VERSION_ID`:
 |------|----------------|-----------------|
 | `debian`, `ubuntu` | apt-get | Manual instructions (Phase I1), prebuilt download (Phase I3), apt repo (Phase I5) |
 | `fedora`, `rhel`, `centos`, `rocky`, `almalinux` | dnf | `dnf install libkrun libkrunfw` (in repos) |
-| `amzn` | dnf | Same as Fedora family |
+| `amzn` | dnf | **Unverified** — Amazon Linux repos are not Fedora repos; `libkrun`/`libkrunfw` availability is unconfirmed. Treat as best-effort with a warning. |
 | Unknown | — | Warn, skip dep install, print manual instructions |
 
 ### Download tool selection
@@ -243,8 +251,30 @@ Note the naming inconsistency: neovex uses `x86_64` while neovex-crun uses
 ### Checksum verification
 
 For Linux, download `checksums-sha256.txt` (neovex) and `checksums.txt`
-(`neovex-crun`) from the release, then verify with `sha256sum -c` or
-`shasum -a 256 -c`.
+(`neovex-crun`) from the release, extract the exact subject line for the target
+asset, and compare the downloaded file's computed SHA-256 against that expected
+digest. Do not pipe a raw `grep` result straight into `sha256sum -c` because an
+empty match can be accepted as success on GNU coreutils.
+
+### GitHub attestations
+
+The Neovex release workflow already publishes free GitHub artifact
+attestations via `actions/attest@v4`. The install script should use that
+enterprise-trust surface where it can:
+
+- Linux direct-binary install: if `gh` is available, verify the downloaded
+  `neovex_*` release artifact against the `agentstation/neovex`
+  `.github/workflows/release.yml` provenance before extraction
+- Linux direct-binary install: if `NEOVEX_REQUIRE_ATTESTATIONS=1`, fail closed
+  when `gh` is unavailable or attestation verification fails
+- macOS Homebrew path: the install script still delegates archive download and
+  SHA validation to the cask metadata; do not invent a second manual macOS
+  tarball path just to verify attestations
+- `agentstation/neovex-crun` is an external release source, but its live
+  `v1.27-neovex.1` release already carries GitHub artifact attestations from
+  `.github/workflows/build.yml`; the install script can therefore verify the
+  downloaded `neovex-crun-linux-*` binary against that external provenance as
+  part of the same optional/fail-closed trust model
 
 For macOS, the install script delegates archive checksum verification to
 Homebrew cask metadata rather than re-implementing cask install logic.
@@ -276,6 +306,11 @@ When piped (`curl | sh`), stdin is the pipe, not the terminal. Detect with
 
 libkrun and libkrunfw are NOT in Debian/Ubuntu repos. This is the single
 hardest problem in the install script. The strategy evolves across phases:
+
+The phase labels below (I1, I3, I5) correspond to the same phases in this
+plan's Phase Plan section. Each label indicates when that libkrun handling
+improvement lands as part of the broader phase scope — not a separate
+sub-plan.
 
 ### Phase I1 (initial): Manual instructions
 
@@ -328,7 +363,7 @@ pattern from the existing `scripts/check-vmm-host.sh`.
 | `/dev/kvm` accessible | `test -r /dev/kvm -a -w /dev/kvm` | warn only |
 | conmon | `command -v conmon` | yes |
 | buildah | `command -v buildah` | yes |
-| catatonit | `command -v catatonit` | yes |
+| catatonit | `command -v catatonit` | recommended |
 | passt | `command -v passt` | recommended |
 | newuidmap | `command -v newuidmap` | recommended |
 | fuse-overlayfs | `command -v fuse-overlayfs` | recommended |
@@ -367,7 +402,7 @@ result              supported (0 failures)
 | File | Purpose |
 |------|---------|
 | `scripts/install.sh` | Main install script (POSIX sh) |
-| `scripts/verify-install.sh` | Post-install verification helper (bash) |
+| `scripts/verify-install.sh` | Post-install verification helper (bash — intentionally not POSIX sh because it is run standalone, not piped, and bash provides cleaner associative arrays and string handling for the check matrix) |
 | `scripts/verify-install-helper.sh` | Deterministic unit tests for verify-install |
 
 ---
@@ -402,12 +437,18 @@ and the verification helper.
 - `scripts/verify-install-helper.sh` for deterministic testing
 - `--dry-run` prints the full install plan without executing
 
+**CI integration:**
+- `scripts/verify-install-helper.sh` wired into `.github/workflows/ci.yml`
+  alongside the existing deterministic helper verifiers (guest-proof,
+  service-proof, Homebrew/cask-proof)
+
 **Acceptance criteria:**
 - `bash -n scripts/install.sh` passes
 - `sh scripts/install.sh --dry-run` prints correct platform detection and
   install plan on both Linux and macOS
 - `bash scripts/verify-install.sh` runs all checks and reports results
 - `bash scripts/verify-install-helper.sh` passes
+- CI job green in `.github/workflows/ci.yml`
 
 ### Phase I2: Linux Binary Download and Installation
 
@@ -476,7 +517,11 @@ macOS Apple Silicon.
 
 **Scope:**
 - Linux `--uninstall` removes `neovex`, `neovex-crun`, and any apt repo entry
-- macOS `--uninstall` uses `brew uninstall --cask neovex`
+- macOS `--uninstall` uses `brew uninstall --cask neovex`; note that Homebrew
+  does not auto-remove formula dependencies of casks, so `krunkit` (installed
+  as a cask dependency) will remain as an orphaned formula after uninstall —
+  print a message suggesting `brew autoremove` or `brew uninstall krunkit` if
+  the user installed krunkit solely for neovex
 - Upgrade path: detect existing version, replace if different
 - Host `install.sh` at `neovex.dev/install.sh` (GitHub Pages or redirect)
 - Error messages and getting-started output polished
@@ -492,11 +537,11 @@ macOS Apple Silicon.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| I1: Skeleton + verification | `todo` | — | Can start immediately |
-| I2: Linux binary download | `todo` | I1, release tags pushed | External release inputs now exist |
-| I3: Linux system deps | `todo` | I2 | libkrun gap = manual instructions initially |
-| I4: macOS installation | `todo` | I1 | Homebrew cask + bundled `gvproxy` + `krunkit` |
-| I5: Uninstall + polish | `todo` | I3, I4 | Domain hosting, lifecycle |
+| I1: Skeleton + verification | `done` | — | Scripts created, CI wired, 21/21 tests passing |
+| I2: Linux binary download | `in_progress` | I1, release tags pushed | Release download/checksum/idempotency code landed; fresh Ubuntu proof still required |
+| I3: Linux system deps | `in_progress` | I2 | apt/dnf install landed; fresh Debian/Fedora proof still required |
+| I4: macOS installation | `in_progress` | I1 | Homebrew cask install/upgrade landed; fresh Apple Silicon proof still required |
+| I5: Uninstall + polish | `in_progress` | I3, I4 | Uninstall landed; hosted `neovex.dev` path and end-to-end proof still open |
 
 ---
 
@@ -543,3 +588,4 @@ which owns `krunkit` and carries the bundled `gvproxy` helper itself.
 | Date | Phase | Status | Notes | Verification | Next |
 |------|-------|--------|-------|--------------|------|
 | 2026-04-18 | planning refresh | `documented` | Rebased the install-script plan onto the current shipped distribution contract so implementation can start from a correct foundation. The initial Channel 1 design is now explicitly platform-split: Linux installs distro deps plus released `neovex` / `neovex-crun` artifacts directly from GitHub Releases, while macOS installs or upgrades the published `agentstation/tap/neovex` Homebrew cask instead of manually unpacking a single binary. The plan now points at the external `agentstation/neovex-crun` release source, treats the darwin bundled `libexec/gvproxy` helper as part of the required macOS install contract, drops the stale rootless `NEOVEX_CRUN_PATH` assumption, and updates prerequisites to the current `v0.1.14` / `v1.27-neovex.1` release reality. | plan review against `.github/workflows/release.yml`; plan review against `docs/reference/macos-machine-flow.md`; `gh release list --repo agentstation/neovex --limit 5`; `gh release list --repo agentstation/neovex-crun --limit 5` | Start I1 by writing `scripts/install.sh`, `scripts/verify-install.sh`, and `scripts/verify-install-helper.sh` to this refreshed contract |
+| 2026-04-18 | I1-I5 implementation landing | `documented` | Landed the first install-script implementation slice plus CI wiring, but the initial closeout note was too optimistic. An audit reopened I2-I5 because the evidence so far is local syntax/dry-run/helper coverage rather than fresh Debian/Fedora/macOS proof or a hosted `curl \| sh` end-to-end run. The follow-up hardening pass fixed the audited gaps: Linux checksum verification now requires an exact manifest match before comparing digests; optional `GITHUB_TOKEN` auth is now actually used for GitHub API lookups instead of merely being documented; macOS no longer performs unnecessary GitHub latest-release resolution on the Homebrew path; `neovex-crun` idempotency now compares the installed binary digest against the release manifest before skipping; the hosted installer now has an inline verification fallback when the standalone helper is not present beside `$0`; and the Linux direct-binary path now opportunistically verifies both the Neovex release artifact attestation and the external `agentstation/neovex-crun` artifact attestation with `gh`, with `NEOVEX_REQUIRE_ATTESTATIONS=1` available for fail-closed enterprise-trust environments. | `bash -n scripts/install.sh`; `dash -n scripts/install.sh`; `bash -n scripts/verify-install.sh`; `bash scripts/verify-install-helper.sh`; targeted helper coverage for checksum enforcement, GitHub API auth usage, and mocked macOS dry-run behavior; live external provenance proof: `gh release view --repo agentstation/neovex-crun --json tagName,assets,url`; `gh release download v1.27-neovex.1 --repo agentstation/neovex-crun --pattern neovex-crun-linux-amd64 --dir /tmp/neovex-crun-attest-check`; `gh attestation verify /tmp/neovex-crun-attest-check/neovex-crun-linux-amd64 --repo agentstation/neovex-crun --source-ref refs/tags/v1.27-neovex.1 --signer-workflow agentstation/neovex-crun/.github/workflows/build.yml --format json` | Run fresh Debian 13, Fedora 42, and Apple Silicon macOS install proofs; then host `neovex.dev/install.sh` and capture a real public `curl \| sh` proof before marking I2-I5 done |

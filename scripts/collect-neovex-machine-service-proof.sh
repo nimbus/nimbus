@@ -283,8 +283,8 @@ capture_command_with_retries \
   "capture.service_ready" \
   "${output_dir}/service-inspect-command.txt" \
   "${output_dir}/service-inspect.txt" \
-  '^[[:space:]]*status: ready$' \
-  '^[[:space:]]*status: (failed|stopped)$' \
+  '^[[:space:]]*status: ready$|"status"[[:space:]]*:[[:space:]]*"ready"' \
+  '^[[:space:]]*status: (failed|stopped)$|"status"[[:space:]]*:[[:space:]]*"(failed|stopped)"' \
   30 \
   "${base_cmd[@]}" service inspect "${service_name}" --file "${compose_file}" || true
 

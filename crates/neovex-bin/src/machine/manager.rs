@@ -32,8 +32,10 @@ use reqwest::blocking::Client as BlockingClient;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use signal_hook_registry::{SigId, register as register_signal, unregister as unregister_signal};
-use tempfile::{NamedTempFile, tempdir_in};
+use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
+
+use crate::cli_ux;
 
 use super::bootstrap::{GUEST_NEOVEX_BIN, GUEST_NEOVEX_SOCKET, resolve_ignition_file};
 use super::client::MachineApiClient;
@@ -329,6 +331,20 @@ impl MachineHelperBinaryPaths {
     }
 }
 
+fn emit_machine_progress(message: impl AsRef<str>) {
+    let _ = cli_ux::emit_phase(message.as_ref());
+}
+
+fn emit_machine_info(message: impl AsRef<str>) {
+    if cli_ux::info_output_enabled() {
+        let _ = cli_ux::write_stderr_prefixed_line("info:", message.as_ref());
+    }
+}
+
+fn emit_machine_warning(message: impl AsRef<str>) {
+    let _ = cli_ux::write_stderr_prefixed_line("warning:", message.as_ref());
+}
+
 impl MachineLaunchPlan {
     pub(super) fn build(
         paths: &MachinePaths,
@@ -479,6 +495,7 @@ pub(super) fn start_machine(
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
+    emit_machine_progress(format!("Starting machine \"{}\"", config.name));
     ensure_machine_can_start(paths, config, state)?;
     converge_machine_image_contract(paths, config, state)?;
     ensure_machine_bootstrap_identity(paths, config)?;
@@ -498,6 +515,7 @@ pub(super) fn start_machine(
     let _ignition_server = start_bootstrap_server(paths, config, &launch_plan)?;
 
     let mut gvproxy_child = None;
+    emit_machine_progress("Starting machine networking");
     if let Err(error) = pre_start_networking(
         paths,
         config,
@@ -516,6 +534,7 @@ pub(super) fn start_machine(
     }
 
     let mut krunkit_child = None;
+    emit_machine_progress("Booting virtual machine");
     if let Err(error) = start_vm(config, &launch_plan, &mut krunkit_child) {
         return handle_start_machine_error(
             paths,
@@ -526,6 +545,7 @@ pub(super) fn start_machine(
             gvproxy_child.as_mut(),
         );
     }
+    emit_machine_progress("Waiting for guest boot");
     if let Err(error) = wait_for_machine_ready(
         config,
         &ready_listener,
@@ -552,6 +572,7 @@ pub(super) fn start_machine(
             gvproxy_child.as_mut(),
         );
     }
+    emit_machine_progress("Waiting for guest SSH");
     if let Err(error) = conduct_readiness_check(
         config,
         launch_plan.runtime().ssh_port,
@@ -601,6 +622,7 @@ fn ensure_machine_bootstrap_identity(
         return Ok(());
     }
 
+    emit_machine_progress("Generating machine SSH identity");
     let identity_path = paths.data_dir.join("machine");
     ensure_machine_ssh_keypair(&identity_path)?;
     config.guest.ssh_identity_path = Some(identity_path);
@@ -798,6 +820,7 @@ fn ensure_guest_machine_api_ready(
         sync_guest_neovex_binary(paths, config, ssh_port)?;
     }
 
+    emit_machine_progress("Waiting for forwarded machine API");
     wait_for_machine_api_ready(
         paths,
         resolve_machine_api_ready_wait_timeout(),
@@ -812,10 +835,12 @@ fn sync_guest_neovex_binary(
     config: &MachineConfigRecord,
     ssh_port: u16,
 ) -> Result<(), Error> {
+    emit_machine_progress("Ensuring guest neovex binary");
     let guest_binary = resolve_guest_neovex_binary(paths)?;
     let desired_hash = compute_sha256(&guest_binary)?;
     let current_hash = read_guest_neovex_hash(config, ssh_port)?;
     if current_hash.as_deref() != Some(desired_hash.as_str()) {
+        emit_machine_progress("Updating guest neovex binary inside the machine");
         stream_guest_file_over_ssh(
             config,
             ssh_port,
@@ -1012,9 +1037,17 @@ fn resolve_guest_neovex_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
     let archive_path = cache_dir.join(format!("{release_tag}-{archive_name}"));
     if !archive_path.is_file() {
         let download_url = guest_neovex_release_url(&release_tag, archive_name);
-        download_guest_neovex_archive(&archive_path, &download_url)?;
+        download_guest_neovex_archive(
+            &archive_path,
+            &download_url,
+            &format!("Downloading guest neovex {release_tag}"),
+        )?;
     }
-    extract_guest_neovex_archive(&archive_path, &binary_path)?;
+    extract_guest_neovex_archive(
+        &archive_path,
+        &binary_path,
+        &format!("Extracting guest neovex {release_tag}"),
+    )?;
     Ok(binary_path)
 }
 
@@ -1034,9 +1067,14 @@ fn guest_neovex_release_url(release_tag: &str, archive_name: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), release_tag).to_owned() + "/" + archive_name
 }
 
-fn download_guest_neovex_archive(destination: &Path, url: &str) -> Result<(), Error> {
+fn download_guest_neovex_archive(
+    destination: &Path,
+    url: &str,
+    progress_message: &str,
+) -> Result<(), Error> {
     let destination = destination.to_path_buf();
     let url = url.to_owned();
+    let progress_message = progress_message.to_owned();
     run_blocking_in_thread("guest neovex archive download", move || {
         let parent = destination.parent().ok_or_else(|| {
             Error::Internal(format!(
@@ -1054,7 +1092,7 @@ fn download_guest_neovex_archive(destination: &Path, url: &str) -> Result<(), Er
             .timeout(HTTP_IMAGE_TIMEOUT)
             .build()
             .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
-        let mut response = client
+        let response = client
             .get(&url)
             .send()
             .and_then(|response| response.error_for_status())
@@ -1063,12 +1101,18 @@ fn download_guest_neovex_archive(destination: &Path, url: &str) -> Result<(), Er
                     "failed to download guest neovex archive from {url}: {error}. To continue without the release asset, {LOCAL_GUEST_BINARY_HELP_TEXT} to a local Linux guest binary."
                 ))
             })?;
-        io::copy(&mut response, &mut temp).map_err(|error| {
+        let mut progress = cli_ux::ByteProgress::new(progress_message, response.content_length())
+            .map_err(|error| {
+            Error::Internal(format!("failed to initialize progress output: {error}"))
+        })?;
+        let mut reader = progress.wrap_read(response);
+        io::copy(&mut reader, &mut temp).map_err(|error| {
             Error::Internal(format!(
                 "failed to write guest neovex archive from {url} into {}: {error}",
                 destination.display()
             ))
         })?;
+        progress.finish();
         temp.flush().map_err(|error| {
             Error::Internal(format!(
                 "failed to flush guest neovex archive from {url}: {error}"
@@ -1085,61 +1129,104 @@ fn download_guest_neovex_archive(destination: &Path, url: &str) -> Result<(), Er
     })
 }
 
-fn extract_guest_neovex_archive(archive_path: &Path, output_path: &Path) -> Result<(), Error> {
+fn extract_guest_neovex_archive(
+    archive_path: &Path,
+    output_path: &Path,
+    progress_message: &str,
+) -> Result<(), Error> {
     let parent = output_path.parent().ok_or_else(|| {
         Error::Internal(format!(
             "failed to resolve parent directory for guest neovex binary {}",
             output_path.display()
         ))
     })?;
-    let extract_dir = tempdir_in(parent).map_err(|error| {
-        Error::Internal(format!(
-            "failed to create temporary extraction directory under {}: {error}",
-            parent.display()
-        ))
-    })?;
-    let status = Command::new("tar")
-        .arg("-xzf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(extract_dir.path())
-        .arg("neovex")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|error| {
-            Error::Internal(format!(
-                "failed to start tar while extracting guest neovex archive {}: {error}",
-                archive_path.display()
-            ))
-        })?;
-    if !status.success() {
-        return Err(Error::Internal(format!(
-            "tar failed while extracting guest neovex archive {} with status {status}",
-            archive_path.display()
-        )));
-    }
-
-    let extracted_binary = extract_dir.path().join("neovex");
-    if !extracted_binary.is_file() {
-        return Err(Error::Internal(format!(
-            "guest neovex archive {} did not contain a top-level 'neovex' binary",
-            archive_path.display()
-        )));
-    }
-
     let temp_output = NamedTempFile::new_in(parent).map_err(|error| {
         Error::Internal(format!(
             "failed to create temporary guest neovex binary under {}: {error}",
             parent.display()
         ))
     })?;
-    fs::copy(&extracted_binary, temp_output.path()).map_err(|error| {
-        Error::Internal(format!(
-            "failed to stage extracted guest neovex binary {}: {error}",
-            extracted_binary.display()
-        ))
+    let archive_path = archive_path.to_path_buf();
+    let temp_output_path = temp_output.path().to_path_buf();
+    let progress_message = progress_message.to_owned();
+    run_blocking_in_thread("guest neovex archive extraction", move || {
+        let input = fs::File::open(&archive_path).map_err(|error| {
+            Error::Internal(format!(
+                "failed to open guest neovex archive {}: {error}",
+                archive_path.display()
+            ))
+        })?;
+        let mut progress = cli_ux::ByteProgress::new(
+            progress_message,
+            Some(file_size(&archive_path).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to determine guest neovex archive size {}: {error}",
+                    archive_path.display()
+                ))
+            })?),
+        )
+        .map_err(|error| {
+            Error::Internal(format!("failed to initialize progress output: {error}"))
+        })?;
+        let reader = progress.wrap_read(BufReader::new(input));
+        let decoder = GzDecoder::new(reader);
+        let mut archive = tar::Archive::new(decoder);
+
+        let mut entry_found = false;
+        for entry in archive.entries().map_err(|error| {
+            Error::Internal(format!(
+                "failed to read guest neovex archive {}: {error}",
+                archive_path.display()
+            ))
+        })? {
+            let mut entry = entry.map_err(|error| {
+                Error::Internal(format!(
+                    "failed to read an entry from guest neovex archive {}: {error}",
+                    archive_path.display()
+                ))
+            })?;
+            let entry_path = entry.path().map_err(|error| {
+                Error::Internal(format!(
+                    "failed to resolve an entry path from guest neovex archive {}: {error}",
+                    archive_path.display()
+                ))
+            })?;
+            if entry_path.as_ref() != Path::new("neovex") {
+                continue;
+            }
+
+            let mut output = fs::File::create(&temp_output_path).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to stage extracted guest neovex binary {}: {error}",
+                    temp_output_path.display()
+                ))
+            })?;
+            io::copy(&mut entry, &mut output).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to extract guest neovex binary from {}: {error}",
+                    archive_path.display()
+                ))
+            })?;
+            output.flush().map_err(|error| {
+                Error::Internal(format!(
+                    "failed to flush staged guest neovex binary {}: {error}",
+                    temp_output_path.display()
+                ))
+            })?;
+            entry_found = true;
+            break;
+        }
+
+        progress.finish();
+
+        if !entry_found {
+            return Err(Error::Internal(format!(
+                "guest neovex archive {} did not contain a top-level 'neovex' binary",
+                archive_path.display()
+            )));
+        }
+
+        Ok(())
     })?;
     fs::set_permissions(temp_output.path(), fs::Permissions::from_mode(0o755)).map_err(
         |error| {
@@ -2526,7 +2613,7 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
             .timeout(HTTP_IMAGE_TIMEOUT)
             .build()
             .map_err(|error| Error::Internal(format!("failed to build HTTP client: {error}")))?;
-        let mut response = client
+        let response = client
             .get(&download_url)
             .send()
             .and_then(|response| response.error_for_status())
@@ -2535,6 +2622,11 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
                     "failed to download machine guest image from {download_url}: {error}"
                 ))
             })?;
+        let mut progress =
+            cli_ux::ByteProgress::new("Downloading machine image", response.content_length())
+                .map_err(|error| {
+                    Error::Internal(format!("failed to initialize progress output: {error}"))
+                })?;
 
         let mut writer = download.reopen().map_err(|error| {
             Error::Internal(format!(
@@ -2542,12 +2634,14 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
                 image_cache_dir.display()
             ))
         })?;
-        io::copy(&mut response, &mut writer).map_err(|error| {
+        let mut reader = progress.wrap_read(response);
+        io::copy(&mut reader, &mut writer).map_err(|error| {
             Error::Internal(format!(
                 "failed to write downloaded machine image from {download_url} into {}: {error}",
                 image_cache_dir.display()
             ))
         })?;
+        progress.finish();
         writer.flush().map_err(|error| {
             Error::Internal(format!(
                 "failed to flush downloaded machine image for {download_url}: {error}"
@@ -2570,7 +2664,19 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
                 "failed to reopen temporary download file for gzip decode: {error}"
             ))
         })?;
-        let mut decoder = GzDecoder::new(BufReader::new(input));
+        let mut progress = cli_ux::ByteProgress::new(
+            "Extracting compressed machine image",
+            Some(file_size(download.path()).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to determine downloaded machine image size for gzip decode: {error}"
+                ))
+            })?),
+        )
+        .map_err(|error| {
+            Error::Internal(format!("failed to initialize progress output: {error}"))
+        })?;
+        let reader = progress.wrap_read(BufReader::new(input));
+        let mut decoder = GzDecoder::new(reader);
         let mut output = temp_output.reopen().map_err(|error| {
             Error::Internal(format!(
                 "failed to reopen temporary materialization file for gzip decode: {error}"
@@ -2581,15 +2687,44 @@ fn materialize_http_image(paths: &MachinePaths, url: &str) -> Result<PathBuf, Er
                 "failed to decompress gzip machine image from {url}: {error}"
             ))
         })?;
+        progress.finish();
         output.flush().map_err(|error| {
             Error::Internal(format!(
                 "failed to flush decompressed machine image for {url}: {error}"
             ))
         })?;
     } else {
-        fs::copy(download.path(), temp_output.path()).map_err(|error| {
+        let input = fs::File::open(download.path()).map_err(|error| {
+            Error::Internal(format!(
+                "failed to reopen temporary download file for materialization: {error}"
+            ))
+        })?;
+        let mut output = temp_output.reopen().map_err(|error| {
+            Error::Internal(format!(
+                "failed to reopen temporary materialization file for raw copy: {error}"
+            ))
+        })?;
+        let mut progress = cli_ux::ByteProgress::new(
+            "Materializing machine disk",
+            Some(file_size(download.path()).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to determine downloaded machine image size for materialization: {error}"
+                ))
+            })?),
+        )
+        .map_err(|error| {
+            Error::Internal(format!("failed to initialize progress output: {error}"))
+        })?;
+        let mut reader = progress.wrap_read(BufReader::new(input));
+        io::copy(&mut reader, &mut output).map_err(|error| {
             Error::Internal(format!(
                 "failed to stage downloaded machine image from {url}: {error}"
+            ))
+        })?;
+        progress.finish();
+        output.flush().map_err(|error| {
+            Error::Internal(format!(
+                "failed to flush materialized machine image for {url}: {error}"
             ))
         })?;
     }
@@ -2685,7 +2820,7 @@ async fn pull_oci_artifact_to_cache(
         })?;
     }
 
-    let mut output = tokio::fs::File::create(&download_path)
+    let output = tokio::fs::File::create(&download_path)
         .await
         .map_err(|error| {
             Error::Internal(format!(
@@ -2693,6 +2828,12 @@ async fn pull_oci_artifact_to_cache(
                 download_path.display()
             ))
         })?;
+    let mut progress = cli_ux::ByteProgress::new(
+        "Pulling machine image",
+        u64::try_from(selected_artifact.layer.size).ok(),
+    )
+    .map_err(|error| Error::Internal(format!("failed to initialize progress output: {error}")))?;
+    let mut output = progress.wrap_async_write(output);
     let layer = to_oci_descriptor(&selected_artifact.layer);
     client
         .pull_blob(&selected_artifact.child_reference, &layer, &mut output)
@@ -2703,6 +2844,7 @@ async fn pull_oci_artifact_to_cache(
                 reference
             ))
         })?;
+    progress.finish();
     output.flush().await.map_err(|error| {
         Error::Internal(format!(
             "failed to flush downloaded machine guest OCI artifact '{}': {error}",
@@ -2988,10 +3130,14 @@ fn annotation_value(
 
 fn log_machine_artifact_metadata(reference: &str, metadata: &MachineArtifactMetadata) {
     if let Some(neovex_version) = metadata.neovex_version.as_deref() {
-        eprintln!("info: machine image '{reference}' embeds neovex {neovex_version}");
+        emit_machine_info(format!(
+            "machine image '{reference}' embeds neovex {neovex_version}"
+        ));
     }
     if let Some(source_repository_url) = metadata.source_repository_url.as_deref() {
-        eprintln!("info: machine image '{reference}' source={source_repository_url}");
+        emit_machine_info(format!(
+            "machine image '{reference}' source={source_repository_url}"
+        ));
     }
 }
 
@@ -3030,7 +3176,7 @@ fn check_build_attestation(
         {
             Ok(client) => client,
             Err(error) => {
-                eprintln!("warning: attestation lookup failed: {error}");
+                emit_machine_warning(format!("attestation lookup failed: {error}"));
                 return Ok(());
             }
         };
@@ -3038,19 +3184,22 @@ fn check_build_attestation(
         for repo in &repos_to_check {
             match query_attestations(&client, repo, &subject_digest) {
                 Ok(count) if count > 0 => {
-                    eprintln!(
-                        "verified: {count} build attestation(s) found for {subject_digest} in {repo}"
+                    let _ = cli_ux::write_stderr_prefixed_line(
+                        "verified:",
+                        &format!(
+                            "{count} build attestation(s) found for {subject_digest} in {repo}"
+                        ),
                     );
                     return Ok(());
                 }
                 Ok(_) => {}
                 Err(msg) => {
-                    eprintln!("warning: attestation lookup for {repo}: {msg}");
+                    emit_machine_warning(format!("attestation lookup for {repo}: {msg}"));
                 }
             }
         }
 
-        eprintln!("warning: no build attestations found for {subject_digest}");
+        emit_machine_warning(format!("no build attestations found for {subject_digest}"));
         Ok(())
     });
 }
@@ -3188,11 +3337,43 @@ fn materialize_cached_disk(
     let compression = detect_disk_compression(source_path)?;
     match compression {
         DiskCompression::None => {
-            fs::copy(source_path, temp_output.path()).map_err(|error| {
+            let input = fs::File::open(source_path).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to open {} for materialization: {error}",
+                    source_path.display()
+                ))
+            })?;
+            let mut output = temp_output.reopen().map_err(|error| {
+                Error::Internal(format!(
+                    "failed to reopen {} for materialization: {error}",
+                    temp_output.path().display()
+                ))
+            })?;
+            let mut progress = cli_ux::ByteProgress::new(
+                "Materializing machine disk",
+                Some(file_size(source_path).map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to determine {} size for materialization: {error}",
+                        source_path.display()
+                    ))
+                })?),
+            )
+            .map_err(|error| {
+                Error::Internal(format!("failed to initialize progress output: {error}"))
+            })?;
+            let mut reader = progress.wrap_read(BufReader::new(input));
+            io::copy(&mut reader, &mut output).map_err(|error| {
                 Error::Internal(format!(
                     "failed to stage {} into {}: {error}",
                     source_label,
                     temp_output.path().display()
+                ))
+            })?;
+            progress.finish();
+            output.flush().map_err(|error| {
+                Error::Internal(format!(
+                    "failed to flush materialized {}: {error}",
+                    source_label
                 ))
             })?;
         }
@@ -3203,7 +3384,20 @@ fn materialize_cached_disk(
                     source_path.display()
                 ))
             })?;
-            let mut decoder = GzDecoder::new(BufReader::new(input));
+            let mut progress = cli_ux::ByteProgress::new(
+                "Extracting compressed machine image",
+                Some(file_size(source_path).map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to determine {} size for gzip decode: {error}",
+                        source_path.display()
+                    ))
+                })?),
+            )
+            .map_err(|error| {
+                Error::Internal(format!("failed to initialize progress output: {error}"))
+            })?;
+            let reader = progress.wrap_read(BufReader::new(input));
+            let mut decoder = GzDecoder::new(reader);
             let mut output = temp_output.reopen().map_err(|error| {
                 Error::Internal(format!(
                     "failed to reopen {} for gzip decode: {error}",
@@ -3216,6 +3410,7 @@ fn materialize_cached_disk(
                     source_label
                 ))
             })?;
+            progress.finish();
             output.flush().map_err(|error| {
                 Error::Internal(format!(
                     "failed to flush decompressed {}: {error}",
@@ -3230,18 +3425,32 @@ fn materialize_cached_disk(
                     source_path.display()
                 ))
             })?;
+            let mut progress = cli_ux::ByteProgress::new(
+                "Extracting compressed machine image",
+                Some(file_size(source_path).map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to determine {} size for zstd decode: {error}",
+                        source_path.display()
+                    ))
+                })?),
+            )
+            .map_err(|error| {
+                Error::Internal(format!("failed to initialize progress output: {error}"))
+            })?;
+            let reader = progress.wrap_read(BufReader::new(input));
             let mut output = temp_output.reopen().map_err(|error| {
                 Error::Internal(format!(
                     "failed to reopen {} for zstd decode: {error}",
                     temp_output.path().display()
                 ))
             })?;
-            zstd::stream::copy_decode(BufReader::new(input), &mut output).map_err(|error| {
+            zstd::stream::copy_decode(reader, &mut output).map_err(|error| {
                 Error::Internal(format!(
                     "failed to decompress zstd {}: {error}",
                     source_label
                 ))
             })?;
+            progress.finish();
             output.flush().map_err(|error| {
                 Error::Internal(format!(
                     "failed to flush decompressed {}: {error}",
@@ -3259,6 +3468,10 @@ fn materialize_cached_disk(
         ))
     })?;
     Ok(())
+}
+
+fn file_size(path: &Path) -> io::Result<u64> {
+    fs::metadata(path).map(|metadata| metadata.len())
 }
 
 fn ensure_materialized_image_parent(output_path: &Path) -> Result<(), Error> {

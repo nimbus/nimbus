@@ -1,7 +1,7 @@
 # CLI Reference
 
-Neovex serves HTTP/WebSocket traffic by default and also exposes service
-management subcommands.
+Neovex serves HTTP/WebSocket traffic through an explicit `serve` subcommand and
+also exposes service and machine management subcommands.
 
 Current shipped CLI shape:
 
@@ -26,11 +26,11 @@ neovex service down [service] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex service list [--file compose.yaml] [--all-tenants]
+neovex service list [--file compose.yaml] [--all-tenants] [--format json|yaml|table]
 ```
 
 ```bash
-neovex service inspect <service> [--file compose.yaml] [--tenant <tenant-id>]
+neovex service inspect <service> [--file compose.yaml] [--tenant <tenant-id>] [--format json|yaml]
 ```
 
 ```bash
@@ -38,7 +38,7 @@ neovex service logs <service> [--file compose.yaml] [--tenant <tenant-id>] [--fo
 ```
 
 ```bash
-neovex service ps <service> [--file compose.yaml] [--tenant <tenant-id>]
+neovex service ps <service> [--file compose.yaml] [--tenant <tenant-id>] [--format json|yaml|table]
 ```
 
 Current shipped machine commands:
@@ -48,7 +48,7 @@ neovex machine init [--cpus N] [--memory N] [--disk-size N] [--image SOURCE] [--
 ```
 
 ```bash
-neovex machine start [--cpus N] [--memory N] [--disk-size N] [--image SOURCE] [--identity PATH] [--ignition-path PATH] [--firmware PATH] [--volume HOST:GUEST] [NAME]
+neovex machine start [--cpus N] [--memory N] [--disk-size N] [--image SOURCE] [--identity PATH] [--ignition-path PATH] [--firmware PATH] [--volume HOST:GUEST] [--quiet] [--no-info] [NAME]
 ```
 
 ```bash
@@ -182,7 +182,8 @@ environment variables or the JSON config file referenced by `--config` or
 
 ## Startup Behavior
 
-When no subcommand is provided, Neovex starts the server. On startup, it:
+Neovex requires an explicit subcommand. `neovex serve` starts the server. On
+startup, it:
 
 - initializes tracing
 - loads the service with the configured data directory
@@ -232,17 +233,17 @@ explicit lifecycle control:
 | `neovex service config` | parse `compose.yaml`, validate the supported subset, and print the resolved service plan as YAML |
 | `neovex service config --file ./stack.yml` | validate a specific Compose file |
 | `neovex service config --services` | list only service names, one per line |
-| `neovex service up` | start all declared services for the deterministic local project tenant; active current services report `already_running` |
-| `neovex service up db --tenant tenant-a` | start only service `db` for an explicit tenant |
-| `neovex service down` | stop one current persisted sandbox per service identity for the deterministic local project tenant |
-| `neovex service down db` | stop the current persisted sandbox for service `db` in the deterministic local project tenant |
-| `neovex service list` | list persisted sandbox state for the deterministic local project tenant as YAML |
-| `neovex service list --all-tenants` | list all persisted sandboxes under the project-scoped backend root |
-| `neovex service inspect db` | inspect persisted sandbox details for service `db` in the deterministic local project tenant |
-| `neovex service inspect db --tenant tenant-a` | inspect persisted sandbox details for service `db` in an explicit tenant |
+| `neovex service up` | start all declared services for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump; active current services are reported inline as `already_running` |
+| `neovex service up db --tenant tenant-a` | start only service `db` for an explicit tenant and print the same action-summary contract |
+| `neovex service down` | stop one current persisted sandbox per service identity for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump |
+| `neovex service down db` | stop the current persisted sandbox for service `db` in the deterministic local project tenant with the same action-summary contract |
+| `neovex service list` | list persisted sandbox state for the deterministic local project tenant in a human table by default; use `--format json` or `--format yaml` for structured output |
+| `neovex service list --all-tenants` | list all persisted sandboxes under the project-scoped backend root with the same table-vs-structured contract |
+| `neovex service inspect db` | inspect persisted sandbox details for service `db` in the deterministic local project tenant as JSON by default; `--format yaml` is the explicit structured alternative |
+| `neovex service inspect db --tenant tenant-a` | inspect persisted sandbox details for service `db` in an explicit tenant with the same structured contract |
 | `neovex service logs db` | print the persisted `ctr.log` for service `db` in the deterministic local project tenant |
 | `neovex service logs db --follow` | keep polling the persisted `ctr.log` for appended output |
-| `neovex service ps db` | show the persisted PID snapshot and matching host `ps` rows for service `db` |
+| `neovex service ps db` | show the persisted PID snapshot and matching host `ps` rows for service `db` as a human summary by default; use `--format json` or `--format yaml` for structured output |
 
 Current scope:
 
@@ -282,18 +283,18 @@ The current landed machine surface is the checked-in macOS machine contract:
 
 | Command | Meaning |
 | --- | --- |
-| `neovex machine init [NAME]` | write the named machine config and state files, record the guest resource contract, and optionally start immediately with `--now`; omitting `NAME` still targets `default` |
-| `neovex machine start [NAME]` | start the named machine, creating it with defaults first when it does not already exist, then wait for machine-ready, guest SSH, and forwarded machine-API reachability |
-| `neovex machine stop [NAME]` | stop the named machine helpers, including stale-helper recovery, and persist the stopped machine state |
+| `neovex machine init [NAME]` | write the named machine config and state files, record the guest resource contract, and optionally start immediately with `--now`; omitting `NAME` still targets `default` and action commands print a concise success summary instead of the full structured status view |
+| `neovex machine start [NAME]` | start the named machine, creating it with defaults first when it does not already exist, then wait for machine-ready, guest SSH, and forwarded machine-API reachability while emitting human progress updates for slow first-start convergence on stderr; `--quiet` suppresses the phase chatter but still prints the final success summary, while `--no-info` suppresses advisory `info:` notices without hiding the normal phase banners |
+| `neovex machine stop [NAME]` | stop the named machine helpers, including stale-helper recovery, and persist the stopped machine state before printing a concise success summary |
 | `neovex machine status [NAME]` | print the current named machine status in table form by default, emit the full structured view with `--format json` / `--format yaml`, or print the machine name only with `--quiet` |
-| `neovex machine list` / `neovex machine ls` | list initialized machines from the Neovex config root in a compact table by default, or emit JSON / names-only output with `--format json` or `--quiet` |
+| `neovex machine list` / `neovex machine ls` | list initialized machines from the Neovex config root in a compact table by default; `--quiet` stays names-only when no explicit `--format` is requested, while an explicit `--format json` wins if both switches are present |
 | `neovex machine inspect [NAME]` | print the persisted config plus refreshed state record for the named machine as JSON by default, or YAML with `--format yaml` |
 | `neovex machine set [NAME]` | update the recorded CPU, memory, or disk contract for a stopped named machine without recreating it |
 | `neovex machine cp [--quiet] SRC_PATH DEST_PATH` | recursively copy files or directories between the host and a running machine using Podman-style `NAME:/path` guest endpoints and the machine's configured SSH contract |
 | `neovex machine ssh [NAME] [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running; as with Podman, if the first argument names an existing machine it is treated as `NAME`, otherwise it is passed through as the guest command on `default` |
 | `neovex machine rm [NAME]` | remove the persisted config, state, and short runtime-root layout for the named machine when it is not running |
-| `neovex machine os apply <oci-ref-or-digest>` | record an explicit immutable OCI machine-image rollout and invalidate boot artifacts so the next boot recreates from that image |
-| `neovex machine os upgrade` | move back to the host-supported machine-image stream for this `neovex` version, with `--dry-run` for status-only checks |
+| `neovex machine os apply <oci-ref-or-digest>` | record an explicit immutable OCI machine-image rollout, invalidate boot artifacts so the next boot recreates from that image, and print a concise action summary with restart/start guidance when relevant |
+| `neovex machine os upgrade` | move back to the host-supported machine-image stream for this `neovex` version; `--dry-run` now reports the current/target image pair as a concise action summary instead of a structured status dump |
 
 Current scope:
 
@@ -328,6 +329,18 @@ Current scope:
   artifacts when the recorded base image drifts from the desired digest,
   hash-sync `/usr/local/bin/neovex` inside the guest, and only then report
   success after the forwarded machine API is reachable
+- treats mutating machine commands as action-oriented UX surfaces: `init`,
+  `start`, `stop`, `set`, and `rm` now print concise human summaries, while
+  `machine status` and `machine inspect` remain the structured diagnostic
+  surfaces
+- emits step-oriented progress to stderr during long-running `machine start`
+  convergence phases such as image pull/materialization, guest-binary fetch,
+  VM boot, SSH readiness, and forwarded machine-API readiness, so first-start
+  waits look active instead of silent
+- keeps `machine start` Podman-aligned on output controls: `--quiet` suppresses
+  phase/progress chatter but still prints the final success summary on stdout,
+  while `--no-info` only suppresses advisory `info:` notices and leaves the
+  normal phase banners intact
 - auto-materializes OCI machine-image references plus `http(s)` image sources
   into the reserved machine-state raw disk path, with OCI artifact selection
   based on linux/arch plus the provider disk type (`applehv` on macOS),

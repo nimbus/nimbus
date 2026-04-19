@@ -11,6 +11,8 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
+use crate::cli_ux::{self, TableColumn};
+
 #[cfg(unix)]
 mod api;
 #[cfg(not(unix))]
@@ -132,6 +134,11 @@ const CURRENT_MACHINE_CONFIG_VERSION: u32 = 2;
 const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_HELP_EXAMPLES,
+    subcommand_help_heading = "Available Commands"
+)]
 pub(crate) struct MachineCommand {
     #[command(subcommand)]
     command: MachineSubcommand,
@@ -168,6 +175,11 @@ enum MachineSubcommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_OS_HELP_EXAMPLES,
+    subcommand_help_heading = "Available Commands"
+)]
 struct MachineOsCommand {
     #[command(subcommand)]
     command: MachineOsSubcommand,
@@ -182,6 +194,10 @@ enum MachineOsSubcommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_OS_APPLY_HELP_EXAMPLES
+)]
 struct MachineOsApplyCommand {
     /// OCI image reference or digest to use on the next boot.
     image: String,
@@ -192,6 +208,10 @@ struct MachineOsApplyCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_OS_UPGRADE_HELP_EXAMPLES
+)]
 struct MachineOsUpgradeCommand {
     /// Check whether an upgrade is available.
     #[arg(long)]
@@ -203,6 +223,10 @@ struct MachineOsUpgradeCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_INIT_HELP_EXAMPLES
+)]
 struct MachineInitCommand {
     /// Number of CPUs.
     #[arg(short = 'c', long, value_name = "COUNT", default_value_t = DEFAULT_MACHINE_CPUS)]
@@ -261,6 +285,10 @@ struct MachineInitCommand {
 }
 
 #[derive(Debug, Args, Clone, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_START_HELP_EXAMPLES
+)]
 struct MachineStartCommand {
     /// Number of CPUs to use if start creates the machine.
     #[arg(short = 'c', long, value_name = "COUNT")]
@@ -299,6 +327,14 @@ struct MachineStartCommand {
     )]
     volumes: Vec<MachineVolume>,
 
+    /// Suppress machine starting status output.
+    #[arg(short = 'q', long)]
+    quiet: bool,
+
+    /// Suppress informational tips.
+    #[arg(long)]
+    no_info: bool,
+
     /// Machine name.
     #[arg(value_name = "NAME")]
     name: Option<String>,
@@ -318,6 +354,14 @@ impl MachineStartCommand {
             || self.ignition_file.is_some()
             || self.efi_store.is_some()
             || !self.volumes.is_empty()
+    }
+
+    fn output_mode(&self) -> cli_ux::OutputMode {
+        cli_ux::OutputMode {
+            suppress_phase: self.quiet,
+            suppress_info: self.quiet || self.no_info,
+            suppress_progress: self.quiet,
+        }
     }
 
     fn into_init_command(self) -> MachineInitCommand {
@@ -343,6 +387,10 @@ impl MachineInitCommand {
 }
 
 #[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_STOP_HELP_EXAMPLES
+)]
 struct MachineStopCommand {
     /// Machine name.
     #[arg(value_name = "NAME")]
@@ -356,6 +404,10 @@ impl MachineStopCommand {
 }
 
 #[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_STATUS_HELP_EXAMPLES
+)]
 struct MachineStatusCommand {
     /// Output format.
     #[arg(long, value_enum, default_value_t = MachineStatusOutputFormat::Table)]
@@ -377,17 +429,31 @@ impl MachineStatusCommand {
 }
 
 #[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_LIST_HELP_EXAMPLES
+)]
 struct MachineListCommand {
-    /// Output format.
-    #[arg(long, value_enum, default_value_t = MachineListOutputFormat::Table)]
-    format: MachineListOutputFormat,
+    /// Output format. Defaults to table.
+    #[arg(long, value_enum)]
+    format: Option<MachineListOutputFormat>,
 
     /// Print machine names only.
     #[arg(short = 'q', long)]
     quiet: bool,
 }
 
+impl MachineListCommand {
+    fn format(&self) -> MachineListOutputFormat {
+        self.format.unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_INSPECT_HELP_EXAMPLES
+)]
 struct MachineInspectCommand {
     /// Output format.
     #[arg(long, value_enum, default_value_t = MachineInspectOutputFormat::Json)]
@@ -427,6 +493,10 @@ enum MachineInspectOutputFormat {
 }
 
 #[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_SET_HELP_EXAMPLES
+)]
 struct MachineSetCommand {
     /// Number of CPUs.
     #[arg(short = 'c', long, value_name = "COUNT")]
@@ -456,6 +526,10 @@ impl MachineSetCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_CP_HELP_EXAMPLES
+)]
 struct MachineCpCommand {
     /// Suppress copy status output.
     #[arg(short = 'q', long)]
@@ -471,6 +545,10 @@ struct MachineCpCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_SSH_HELP_EXAMPLES
+)]
 struct MachineSshCommand {
     /// Optional command to execute in the guest once SSH wiring is available.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -478,6 +556,10 @@ struct MachineSshCommand {
 }
 
 #[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_RM_HELP_EXAMPLES
+)]
 struct MachineRmCommand {
     /// Machine name.
     #[arg(value_name = "NAME")]
@@ -676,10 +758,7 @@ fn run_machine_init(command: MachineInitCommand, roots: &MachineRootLayout) -> R
         MachineCommandResult::Initialized
     };
 
-    print!(
-        "{}",
-        render_machine_view(result, &paths, Some(&config), Some(&state))?
-    );
+    emit_machine_stdout(&render_machine_action_view(result, &paths)?)?;
     Ok(())
 }
 
@@ -740,14 +819,18 @@ fn initialize_machine_record(
 }
 
 fn run_machine_start(command: MachineStartCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let output_mode = command.output_mode();
     let machine_name = command.name().to_owned();
     let paths = roots.paths(&machine_name);
     let (paths, mut config, mut state, created) = if paths.config_path.exists() {
         if command.has_create_overrides() {
             return Err(Error::AlreadyExists(format!(
-                "machine '{}' is already initialized at {}; `neovex machine start` only uses init flags when creating a new machine",
+                "machine '{}' is already initialized at {}.\n{}",
                 machine_name,
-                paths.config_path.display()
+                paths.config_path.display(),
+                cli_ux::format_hint(
+                    "use `neovex machine set` to change CPU, memory, or disk for an existing machine, or `neovex machine os apply <oci-ref-or-digest>` to change its base image"
+                )
             )));
         }
         let (paths, config, state) = load_initialized_machine(roots, &machine_name)?;
@@ -757,16 +840,14 @@ fn run_machine_start(command: MachineStartCommand, roots: &MachineRootLayout) ->
         (paths, config, state, true)
     };
     paths.ensure_runtime_directories()?;
+    let _output_mode_guard = cli_ux::push_output_mode(output_mode);
     start_machine(&paths, &mut config, &mut state)?;
     let result = if created {
         MachineCommandResult::InitializedAndStarted
     } else {
         MachineCommandResult::Started
     };
-    print!(
-        "{}",
-        render_machine_view(result, &paths, Some(&config), Some(&state))?
-    );
+    emit_machine_stdout(&render_machine_action_view(result, &paths)?)?;
     Ok(())
 }
 
@@ -774,15 +855,10 @@ fn run_machine_stop(command: MachineStopCommand, roots: &MachineRootLayout) -> R
     let machine_name = command.name().to_owned();
     let (paths, config, mut state) = load_initialized_machine(roots, &machine_name)?;
     stop_machine(&paths, &config, &mut state)?;
-    print!(
-        "{}",
-        render_machine_view(
-            MachineCommandResult::Stopped,
-            &paths,
-            Some(&config),
-            Some(&state)
-        )?
-    );
+    emit_machine_stdout(&render_machine_action_view(
+        MachineCommandResult::Stopped,
+        &paths,
+    )?)?;
     Ok(())
 }
 
@@ -801,26 +877,20 @@ fn run_machine_status(
     } else {
         MachineCommandResult::Uninitialized
     };
-    print!(
-        "{}",
-        render_machine_status_view(
-            result,
-            &paths,
-            config.as_ref(),
-            state.as_ref(),
-            command.format,
-            command.quiet
-        )?
-    );
+    emit_machine_stdout(&render_machine_status_view(
+        result,
+        &paths,
+        config.as_ref(),
+        state.as_ref(),
+        command.format,
+        command.quiet,
+    )?)?;
     Ok(())
 }
 
 fn run_machine_list(command: MachineListCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let machines = build_machine_list_entries(roots)?;
-    print!(
-        "{}",
-        render_machine_list_view(&machines, command.format, command.quiet)?
-    );
+    emit_machine_stdout(&render_machine_list_view(&machines, &command)?)?;
     Ok(())
 }
 
@@ -830,10 +900,11 @@ fn run_machine_inspect(
 ) -> Result<(), Error> {
     let machine_name = command.name().to_owned();
     let (_paths, config, state) = load_initialized_machine(roots, &machine_name)?;
-    print!(
-        "{}",
-        render_machine_inspect_view(&config, &state, command.format)?
-    );
+    emit_machine_stdout(&render_machine_inspect_view(
+        &config,
+        &state,
+        command.format,
+    )?)?;
     Ok(())
 }
 
@@ -863,7 +934,8 @@ fn run_machine_cp(command: MachineCpCommand, roots: &MachineRootLayout) -> Resul
     }
 
     if !command.quiet {
-        println!("Copy successful");
+        cli_ux::write_stdout_line("Copy successful")
+            .map_err(|error| Error::Internal(format!("failed to write copy summary: {error}")))?;
     }
     Ok(())
 }
@@ -903,9 +975,13 @@ fn run_machine_set(command: MachineSetCommand, roots: &MachineRootLayout) -> Res
     let (paths, mut config, state) = load_initialized_machine(roots, &machine_name)?;
     if state.lifecycle != MachineLifecycle::Stopped {
         return Err(Error::Conflict(format!(
-            "machine '{}' is {} and must be stopped before applying `neovex machine set`",
+            "machine '{}' is {} and must be stopped before applying `neovex machine set`.\n{}",
             machine_name,
-            state.lifecycle.as_str()
+            state.lifecycle.as_str(),
+            cli_ux::format_hint(&format!(
+                "run `{}` and retry once the machine is stopped",
+                machine_command_with_optional_name("stop", &machine_name)
+            ))
         )));
     }
 
@@ -920,22 +996,16 @@ fn run_machine_set(command: MachineSetCommand, roots: &MachineRootLayout) -> Res
     }
     write_json_file(&paths.config_path, &config)?;
 
-    print!(
-        "{}",
-        render_machine_view(
-            MachineCommandResult::Updated,
-            &paths,
-            Some(&config),
-            Some(&state)
-        )?
-    );
+    emit_machine_stdout(&render_machine_action_view(
+        MachineCommandResult::Updated,
+        &paths,
+    )?)?;
     Ok(())
 }
 
 fn run_machine_rm(command: MachineRmCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let machine_name = command.name().to_owned();
     let paths = roots.paths(&machine_name);
-    let config = load_machine_config_if_exists(&paths.config_path)?;
     let state = load_machine_state_if_exists(&paths.state_path)?;
 
     if let Some(state) = state.as_ref()
@@ -945,9 +1015,13 @@ fn run_machine_rm(command: MachineRmCommand, roots: &MachineRootLayout) -> Resul
         )
     {
         return Err(Error::Conflict(format!(
-            "machine '{}' is {} and cannot be removed safely",
+            "machine '{}' is {} and cannot be removed safely.\n{}",
             machine_name,
-            state.lifecycle.as_str()
+            state.lifecycle.as_str(),
+            cli_ux::format_hint(&format!(
+                "run `{}` first, then remove the machine once it is stopped",
+                machine_command_with_optional_name("stop", &machine_name)
+            ))
         )));
     }
 
@@ -958,15 +1032,10 @@ fn run_machine_rm(command: MachineRmCommand, roots: &MachineRootLayout) -> Resul
     remove_machine_runtime_artifacts(&paths)?;
     remove_dir_if_empty(&paths.runtime_dir)?;
 
-    print!(
-        "{}",
-        render_machine_view(
-            MachineCommandResult::Removed,
-            &paths,
-            config.as_ref(),
-            state.as_ref()
-        )?
-    );
+    emit_machine_stdout(&render_machine_action_view(
+        MachineCommandResult::Removed,
+        &paths,
+    )?)?;
     Ok(())
 }
 
@@ -996,10 +1065,12 @@ fn run_machine_os_apply(
     } else {
         MachineOsCommandResult::AlreadyCurrent
     };
-    print!(
-        "{}",
-        render_machine_os_apply_view(result, &paths, &outcome, command.restart)?
-    );
+    emit_machine_stdout(&render_machine_os_apply_view(
+        result,
+        &paths,
+        &outcome,
+        command.restart,
+    )?)?;
     Ok(())
 }
 
@@ -1015,10 +1086,14 @@ fn run_machine_os_upgrade(
         } else {
             MachineOsCommandResult::AlreadyCurrent
         };
-        print!(
-            "{}",
-            render_machine_os_upgrade_view(result, &paths, &plan, command.dry_run, false, false)?
-        );
+        emit_machine_stdout(&render_machine_os_upgrade_view(
+            result,
+            &paths,
+            &plan,
+            command.dry_run,
+            false,
+            false,
+        )?)?;
         return Ok(());
     }
 
@@ -1031,18 +1106,20 @@ fn run_machine_os_upgrade(
         },
         command.restart,
     )?;
-    print!(
-        "{}",
-        render_machine_os_upgrade_view(
-            MachineOsCommandResult::Upgraded,
-            &paths,
-            &plan,
-            false,
-            command.restart,
-            outcome.restarted,
-        )?
-    );
+    emit_machine_stdout(&render_machine_os_upgrade_view(
+        MachineOsCommandResult::Upgraded,
+        &paths,
+        &plan,
+        false,
+        command.restart,
+        outcome.restarted,
+    )?)?;
     Ok(())
+}
+
+fn emit_machine_stdout(rendered: &str) -> Result<(), Error> {
+    cli_ux::write_stdout(rendered)
+        .map_err(|error| Error::Internal(format!("failed to write machine output: {error}")))
 }
 
 fn load_initialized_machine(
@@ -1111,15 +1188,20 @@ fn apply_machine_os_change(
 
     if matches!(state.lifecycle, MachineLifecycle::Starting) {
         return Err(Error::Conflict(format!(
-            "machine '{}' is starting; wait for startup to finish before applying a machine OS change",
-            DEFAULT_MACHINE_NAME
+            "machine '{}' is starting; wait for startup to finish before applying a machine OS change.\n{}",
+            DEFAULT_MACHINE_NAME,
+            cli_ux::format_hint("rerun the command after the current start completes")
         )));
     }
     let was_running = matches!(state.lifecycle, MachineLifecycle::Running);
     if was_running && !restart {
         return Err(Error::Conflict(format!(
-            "machine '{}' is running; rerun with `--restart` to apply a machine OS change safely",
-            DEFAULT_MACHINE_NAME
+            "machine '{}' is running; rerun with `--restart` to apply the machine OS change immediately, or stop it first.\n{}",
+            DEFAULT_MACHINE_NAME,
+            cli_ux::format_hint(&format!(
+                "run `{}` to stop the machine before retrying without `--restart`",
+                machine_command_with_optional_name("stop", DEFAULT_MACHINE_NAME)
+            ))
         )));
     }
     if was_running {
@@ -1224,6 +1306,14 @@ fn parse_machine_os_apply_source(value: &str) -> Result<MachineImageSource, Erro
     }
 }
 
+fn machine_command_with_optional_name(subcommand: &str, machine_name: &str) -> String {
+    if machine_name == DEFAULT_MACHINE_NAME {
+        format!("neovex machine {subcommand}")
+    } else {
+        format!("neovex machine {subcommand} {machine_name}")
+    }
+}
+
 fn current_machine_oci_reference(config: &MachineConfigRecord) -> Result<String, Error> {
     match &config.guest.image_source {
         MachineImageSource::OciReference { reference } => Ok(reference.clone()),
@@ -1298,15 +1388,40 @@ fn invalidate_materialized_machine_os(paths: &MachinePaths) -> Result<(), Error>
     remove_file_if_exists(&paths.efi_variable_store_path)
 }
 
-fn render_machine_view(
+fn render_machine_action_view(
     result: MachineCommandResult,
     paths: &MachinePaths,
-    config: Option<&MachineConfigRecord>,
-    state: Option<&MachineStateRecord>,
 ) -> Result<String, Error> {
-    let view = build_machine_status_view(result, paths, config, state);
-    serde_yaml::to_string(&view)
-        .map_err(|error| Error::Internal(format!("failed to serialize machine status: {error}")))
+    let summary = match result {
+        MachineCommandResult::Initialized => {
+            format!("Machine \"{}\" initialized successfully", paths.name)
+        }
+        MachineCommandResult::InitializedAndStarted => {
+            format!(
+                "Machine \"{}\" initialized and started successfully",
+                paths.name
+            )
+        }
+        MachineCommandResult::Started => {
+            format!("Machine \"{}\" started successfully", paths.name)
+        }
+        MachineCommandResult::Updated => {
+            format!("Machine \"{}\" updated successfully", paths.name)
+        }
+        MachineCommandResult::Stopped => {
+            format!("Machine \"{}\" stopped successfully", paths.name)
+        }
+        MachineCommandResult::Removed => {
+            format!("Machine \"{}\" removed successfully", paths.name)
+        }
+        MachineCommandResult::Status | MachineCommandResult::Uninitialized => {
+            return Err(Error::Internal(format!(
+                "machine action renderer cannot summarize {:?}",
+                result
+            )));
+        }
+    };
+    Ok(cli_ux::format_action_summary(&summary))
 }
 
 fn render_machine_status_view(
@@ -1426,25 +1541,27 @@ fn render_machine_status_table(view: &MachineStatusView) -> String {
         "unreachable"
     };
 
-    format!(
-        "{:<18} {:<14} {:<17} {:<10} {:>4} {:>12} {:>10} {:<11}\n{:<18} {:<14} {:<17} {:<10} {:>4} {:>12} {:>10} {:<11}\n",
-        "NAME",
-        "LIFECYCLE",
-        "MANAGER",
-        "PROVIDER",
-        "CPUS",
-        "MEMORY(MiB)",
-        "DISK(GiB)",
-        "API",
-        view.name,
-        view.lifecycle.as_str(),
-        view.manager.as_str(),
+    let columns = [
+        TableColumn::left("NAME", 18),
+        TableColumn::left("LIFECYCLE", 14),
+        TableColumn::left("MANAGER", 17),
+        TableColumn::left("PROVIDER", 10),
+        TableColumn::right("CPUS", 4),
+        TableColumn::right("MEMORY(MiB)", 12),
+        TableColumn::right("DISK(GiB)", 10),
+        TableColumn::left("API", 11),
+    ];
+    let rows = vec![vec![
+        view.name.clone(),
+        view.lifecycle.as_str().to_owned(),
+        view.manager.as_str().to_owned(),
         provider,
         cpus,
         memory_mib,
         disk_gib,
-        api,
-    )
+        api.to_owned(),
+    ]];
+    cli_ux::render_table(&columns, &rows)
 }
 
 fn build_machine_list_entries(
@@ -1519,14 +1636,13 @@ fn initialized_machine_names(roots: &MachineRootLayout) -> Result<Vec<String>, E
 
 fn render_machine_list_view(
     machines: &[MachineListEntryView],
-    format: MachineListOutputFormat,
-    quiet: bool,
+    command: &MachineListCommand,
 ) -> Result<String, Error> {
-    if quiet {
+    if command.quiet && command.format.is_none() {
         return Ok(render_machine_list_quiet(machines));
     }
 
-    match format {
+    match command.format() {
         MachineListOutputFormat::Json => serde_json::to_string_pretty(machines)
             .map_err(|error| Error::Internal(format!("failed to serialize machine list: {error}"))),
         MachineListOutputFormat::Table => Ok(render_machine_list_table(machines)),
@@ -1548,20 +1664,28 @@ fn render_machine_list_quiet(machines: &[MachineListEntryView]) -> String {
 }
 
 fn render_machine_list_table(machines: &[MachineListEntryView]) -> String {
-    let mut rendered =
-        String::from("NAME               LIFECYCLE      PROVIDER   CPUS  MEMORY(MiB)  DISK(GiB)\n");
-    for machine in machines {
-        rendered.push_str(&format!(
-            "{:<18} {:<14} {:<10} {:>4} {:>12} {:>10}\n",
-            machine.name,
-            machine.lifecycle.as_str(),
-            machine.provider.as_str(),
-            machine.cpus,
-            machine.memory_mib,
-            machine.disk_gib,
-        ));
-    }
-    rendered
+    let columns = [
+        TableColumn::left("NAME", 18),
+        TableColumn::left("LIFECYCLE", 14),
+        TableColumn::left("PROVIDER", 10),
+        TableColumn::right("CPUS", 4),
+        TableColumn::right("MEMORY(MiB)", 12),
+        TableColumn::right("DISK(GiB)", 10),
+    ];
+    let rows = machines
+        .iter()
+        .map(|machine| {
+            vec![
+                machine.name.clone(),
+                machine.lifecycle.as_str().to_owned(),
+                machine.provider.as_str().to_owned(),
+                machine.cpus.to_string(),
+                machine.memory_mib.to_string(),
+                machine.disk_gib.to_string(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    cli_ux::render_table(&columns, &rows)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1672,21 +1796,39 @@ fn render_machine_os_apply_view(
     outcome: &MachineOsApplyOutcome,
     restart_requested: bool,
 ) -> Result<String, Error> {
-    let view = MachineOsApplyStatusView {
-        result,
-        name: paths.name.clone(),
-        previous_image: outcome.previous_image.clone(),
-        current_image: outcome.current_image.clone(),
-        image_changed: outcome.changed,
-        restart_requested,
-        restarted: outcome.restarted,
-        lifecycle: outcome.lifecycle,
+    let summary = match result {
+        MachineOsCommandResult::Applied if outcome.restarted => format!(
+            "Machine \"{}\" machine OS applied and restarted successfully",
+            paths.name
+        ),
+        MachineOsCommandResult::Applied => {
+            format!("Machine \"{}\" machine OS applied successfully", paths.name)
+        }
+        MachineOsCommandResult::AlreadyCurrent => format!(
+            "Machine \"{}\" already uses the requested machine OS image",
+            paths.name
+        ),
+        MachineOsCommandResult::UpgradeCheck | MachineOsCommandResult::Upgraded => {
+            return Err(Error::Internal(format!(
+                "machine os apply renderer cannot summarize {:?}",
+                result
+            )));
+        }
     };
-    serde_yaml::to_string(&view).map_err(|error| {
-        Error::Internal(format!(
-            "failed to serialize machine os apply status: {error}"
-        ))
-    })
+    let mut detail_lines = vec![format!("Image: {}", outcome.current_image)];
+    if matches!(result, MachineOsCommandResult::Applied)
+        && outcome.previous_image != outcome.current_image
+    {
+        detail_lines.push(format!("Previous image: {}", outcome.previous_image));
+    }
+    if matches!(result, MachineOsCommandResult::Applied) && !outcome.restarted && !restart_requested
+    {
+        detail_lines.push(cli_ux::format_hint(&format!(
+            "run `{}` to boot the updated image",
+            machine_command_with_optional_name("start", &paths.name)
+        )));
+    }
+    Ok(cli_ux::format_action_block(&summary, &detail_lines))
 }
 
 fn render_machine_os_upgrade_view(
@@ -1697,23 +1839,52 @@ fn render_machine_os_upgrade_view(
     restart_requested: bool,
     restarted: bool,
 ) -> Result<String, Error> {
-    let view = MachineOsUpgradeStatusView {
-        result,
-        name: paths.name.clone(),
-        current_image: plan.current_image.clone(),
-        current_version: plan.current_version.clone(),
-        target_image: plan.target_image.clone(),
-        target_version: plan.target_version.clone(),
-        update_available: plan.update_available,
-        dry_run,
-        restart_requested,
-        restarted,
+    let summary = match result {
+        MachineOsCommandResult::UpgradeCheck => {
+            format!("Machine \"{}\" machine OS update available", paths.name)
+        }
+        MachineOsCommandResult::AlreadyCurrent => format!(
+            "Machine \"{}\" already uses the supported machine OS image",
+            paths.name
+        ),
+        MachineOsCommandResult::Upgraded if restarted => format!(
+            "Machine \"{}\" machine OS upgraded and restarted successfully",
+            paths.name
+        ),
+        MachineOsCommandResult::Upgraded => {
+            format!(
+                "Machine \"{}\" machine OS upgraded successfully",
+                paths.name
+            )
+        }
+        MachineOsCommandResult::Applied => {
+            return Err(Error::Internal(format!(
+                "machine os upgrade renderer cannot summarize {:?}",
+                result
+            )));
+        }
     };
-    serde_yaml::to_string(&view).map_err(|error| {
-        Error::Internal(format!(
-            "failed to serialize machine os upgrade status: {error}"
-        ))
-    })
+    let mut detail_lines = match result {
+        MachineOsCommandResult::UpgradeCheck => vec![
+            format!("Current image: {}", plan.current_image),
+            format!("Target image: {}", plan.target_image),
+        ],
+        MachineOsCommandResult::AlreadyCurrent => vec![format!("Image: {}", plan.current_image)],
+        MachineOsCommandResult::Upgraded => vec![format!("Image: {}", plan.target_image)],
+        MachineOsCommandResult::Applied => Vec::new(),
+    };
+    if matches!(result, MachineOsCommandResult::UpgradeCheck) && dry_run {
+        detail_lines.push(cli_ux::format_hint(
+            "run `neovex machine os upgrade` to apply the supported image",
+        ));
+    }
+    if matches!(result, MachineOsCommandResult::Upgraded) && !restarted && !restart_requested {
+        detail_lines.push(cli_ux::format_hint(&format!(
+            "run `{}` to boot the updated image",
+            machine_command_with_optional_name("start", &paths.name)
+        )));
+    }
+    Ok(cli_ux::format_action_block(&summary, &detail_lines))
 }
 
 fn guest_binary_status_view(
@@ -2743,32 +2914,6 @@ struct MachineGuestBinaryStatusView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct MachineOsApplyStatusView {
-    result: MachineOsCommandResult,
-    name: String,
-    previous_image: String,
-    current_image: String,
-    image_changed: bool,
-    restart_requested: bool,
-    restarted: bool,
-    lifecycle: MachineLifecycle,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct MachineOsUpgradeStatusView {
-    result: MachineOsCommandResult,
-    name: String,
-    current_image: String,
-    current_version: String,
-    target_image: String,
-    target_version: String,
-    update_available: bool,
-    dry_run: bool,
-    restart_requested: bool,
-    restarted: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct MachinePaths {
     name: String,
     config_dir: PathBuf,
@@ -3164,6 +3309,32 @@ mod tests {
                         target: PathBuf::from("/Users"),
                     }]
                 );
+                assert!(!start.quiet);
+                assert!(!start.no_info);
+            }
+            _ => panic!("expected start subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_start_accepts_quiet_and_no_info_flags() {
+        let cli = RootCli::parse_from([
+            "neovex",
+            "machine",
+            "start",
+            "--quiet",
+            "--no-info",
+            "team-a",
+        ]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine start should parse");
+        };
+
+        match machine.command {
+            MachineSubcommand::Start(start) => {
+                assert!(start.quiet);
+                assert!(start.no_info);
+                assert_eq!(start.name.as_deref(), Some("team-a"));
             }
             _ => panic!("expected start subcommand"),
         }
@@ -3311,6 +3482,11 @@ mod tests {
             .expect_err("help should short-circuit");
         assert_eq!(error.kind(), ErrorKind::DisplayHelp);
         let rendered = error.to_string();
+        assert!(rendered.contains("Usage:"));
+        assert!(rendered.contains("Available Commands:"));
+        assert!(rendered.contains("Examples:"));
+        assert!(rendered.contains("neovex machine init --now"));
+        assert!(rendered.contains("neovex machine status --format json"));
         assert!(rendered.contains("Initialize a new machine"));
         assert!(rendered.contains("Start a machine, creating it if needed"));
         assert!(rendered.contains("Stop a running machine"));
@@ -3393,6 +3569,12 @@ mod tests {
         assert!(rendered.contains("--ignition-path"));
         assert!(rendered.contains("--firmware"));
         assert!(rendered.contains("--volume"));
+        assert!(rendered.contains("--quiet"));
+        assert!(rendered.contains("-q"));
+        assert!(rendered.contains("--no-info"));
+        assert!(rendered.contains("Examples:"));
+        assert!(rendered.contains("neovex machine start"));
+        assert!(rendered.contains("neovex machine start --quiet team-a"));
     }
 
     #[test]
@@ -3418,7 +3600,8 @@ mod tests {
         };
         match machine.command {
             MachineSubcommand::List(list) => {
-                assert_eq!(list.format, MachineListOutputFormat::Table);
+                assert_eq!(list.format(), MachineListOutputFormat::Table);
+                assert!(list.format.is_none());
                 assert!(!list.quiet);
             }
             _ => panic!("expected list subcommand"),
@@ -3430,7 +3613,8 @@ mod tests {
         };
         match machine.command {
             MachineSubcommand::List(list) => {
-                assert_eq!(list.format, MachineListOutputFormat::Json);
+                assert_eq!(list.format(), MachineListOutputFormat::Json);
+                assert_eq!(list.format, Some(MachineListOutputFormat::Json));
                 assert!(list.quiet);
             }
             _ => panic!("expected list subcommand"),
@@ -3541,6 +3725,65 @@ mod tests {
         assert!(rendered.contains("Number of CPUs"));
         assert!(rendered.contains("Memory in MiB"));
         assert!(rendered.contains("Disk size in GiB"));
+    }
+
+    #[test]
+    fn machine_leaf_help_uses_shared_template_and_examples() {
+        let cases = [
+            (
+                vec!["neovex", "machine", "init", "--help"],
+                "neovex machine init --now",
+            ),
+            (
+                vec!["neovex", "machine", "stop", "--help"],
+                "neovex machine stop",
+            ),
+            (
+                vec!["neovex", "machine", "status", "--help"],
+                "neovex machine status --format json",
+            ),
+            (
+                vec!["neovex", "machine", "list", "--help"],
+                "neovex machine list --format json",
+            ),
+            (
+                vec!["neovex", "machine", "inspect", "--help"],
+                "neovex machine inspect --format yaml team-a",
+            ),
+            (
+                vec!["neovex", "machine", "set", "--help"],
+                "neovex machine set --cpus 4 --memory 4096",
+            ),
+            (
+                vec!["neovex", "machine", "cp", "--help"],
+                "neovex machine cp ./local.txt default:/tmp/remote.txt",
+            ),
+            (
+                vec!["neovex", "machine", "ssh", "--help"],
+                "neovex machine ssh team-a uname -a",
+            ),
+            (
+                vec!["neovex", "machine", "rm", "--help"],
+                "neovex machine rm team-a",
+            ),
+            (
+                vec!["neovex", "machine", "os", "apply", "--help"],
+                "neovex machine os apply docker://quay.io/podman/machine-os@sha256:<digest>",
+            ),
+            (
+                vec!["neovex", "machine", "os", "upgrade", "--help"],
+                "neovex machine os upgrade --dry-run",
+            ),
+        ];
+
+        for (argv, example_snippet) in cases {
+            let error = RootCli::try_parse_from(argv).expect_err("help should short-circuit");
+            assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+            let rendered = error.to_string();
+            assert!(rendered.contains("Usage:"), "{rendered}");
+            assert!(rendered.contains("Examples:"), "{rendered}");
+            assert!(rendered.contains(example_snippet), "{rendered}");
+        }
     }
 
     #[test]
@@ -4163,6 +4406,8 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("machine 'team-a'"));
         assert!(rendered.contains("must be stopped"));
+        assert!(rendered.contains("Hint:"));
+        assert!(rendered.contains("neovex machine stop team-a"));
     }
 
     #[test]
@@ -4593,13 +4838,120 @@ mod tests {
         );
         let paths = layout.paths(DEFAULT_MACHINE_NAME);
 
-        let rendered = render_machine_view(MachineCommandResult::Uninitialized, &paths, None, None)
-            .expect("uninitialized machine view should render");
+        let rendered = render_machine_status_view(
+            MachineCommandResult::Uninitialized,
+            &paths,
+            None,
+            None,
+            MachineStatusOutputFormat::Yaml,
+            false,
+        )
+        .expect("uninitialized machine view should render");
 
         assert!(rendered.contains("result: uninitialized"));
         assert!(rendered.contains("initialized: false"));
         assert!(rendered.contains("lifecycle: uninitialized"));
         assert!(rendered.contains("reachable: false"));
+    }
+
+    #[test]
+    fn machine_action_view_renders_concise_start_summary() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+
+        let rendered = render_machine_action_view(MachineCommandResult::Started, &paths)
+            .expect("machine action summary should render");
+
+        assert_eq!(rendered, "Machine \"team-a\" started successfully\n");
+    }
+
+    #[test]
+    fn machine_action_view_rejects_status_results() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+
+        let error = render_machine_action_view(MachineCommandResult::Status, &paths)
+            .expect_err("status result should not render as an action summary");
+
+        assert!(
+            error
+                .to_string()
+                .contains("machine action renderer cannot summarize")
+        );
+    }
+
+    #[test]
+    fn machine_os_apply_view_renders_action_summary_and_hint() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+
+        let rendered = render_machine_os_apply_view(
+            MachineOsCommandResult::Applied,
+            &paths,
+            &MachineOsApplyOutcome {
+                previous_image: "docker://example.com/old@sha256:old".to_owned(),
+                current_image: "docker://example.com/new@sha256:new".to_owned(),
+                changed: true,
+                restarted: false,
+                lifecycle: MachineLifecycle::Stopped,
+            },
+            false,
+        )
+        .expect("machine os apply summary should render");
+
+        assert!(rendered.contains("Machine \"default\" machine OS applied successfully"));
+        assert!(rendered.contains("Image: docker://example.com/new@sha256:new"));
+        assert!(rendered.contains("Previous image: docker://example.com/old@sha256:old"));
+        assert!(rendered.contains("Hint: run `neovex machine start` to boot the updated image"));
+    }
+
+    #[test]
+    fn machine_os_upgrade_view_renders_dry_run_action_summary_and_hint() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+
+        let rendered = render_machine_os_upgrade_view(
+            MachineOsCommandResult::UpgradeCheck,
+            &paths,
+            &MachineOsUpgradePlan {
+                current_image: "docker://example.com/current@sha256:aaa".to_owned(),
+                current_version: "sha256:aaa".to_owned(),
+                target_image: "docker://example.com/target@sha256:bbb".to_owned(),
+                target_version: "sha256:bbb".to_owned(),
+                update_available: true,
+            },
+            true,
+            false,
+            false,
+        )
+        .expect("machine os upgrade summary should render");
+
+        assert!(rendered.contains("Machine \"default\" machine OS update available"));
+        assert!(rendered.contains("Current image: docker://example.com/current@sha256:aaa"));
+        assert!(rendered.contains("Target image: docker://example.com/target@sha256:bbb"));
+        assert!(
+            rendered.contains("Hint: run `neovex machine os upgrade` to apply the supported image")
+        );
     }
 
     #[test]
@@ -4755,8 +5107,14 @@ mod tests {
             },
         ];
 
-        let rendered = render_machine_list_view(&machines, MachineListOutputFormat::Table, false)
-            .expect("table output should render");
+        let rendered = render_machine_list_view(
+            &machines,
+            &MachineListCommand {
+                format: None,
+                quiet: false,
+            },
+        )
+        .expect("table output should render");
 
         assert!(rendered.contains("NAME"));
         assert!(rendered.contains("LIFECYCLE"));
@@ -4779,8 +5137,14 @@ mod tests {
             disk_gib: 40,
         }];
 
-        let rendered = render_machine_list_view(&machines, MachineListOutputFormat::Json, false)
-            .expect("json output should render");
+        let rendered = render_machine_list_view(
+            &machines,
+            &MachineListCommand {
+                format: Some(MachineListOutputFormat::Json),
+                quiet: false,
+            },
+        )
+        .expect("json output should render");
         let json: serde_json::Value =
             serde_json::from_str(&rendered).expect("machine list JSON should parse");
 
@@ -4811,10 +5175,40 @@ mod tests {
             },
         ];
 
-        let rendered = render_machine_list_view(&machines, MachineListOutputFormat::Table, true)
-            .expect("quiet output should render");
+        let rendered = render_machine_list_view(
+            &machines,
+            &MachineListCommand {
+                format: None,
+                quiet: true,
+            },
+        )
+        .expect("quiet output should render");
 
         assert_eq!(rendered, "default\nteam-a\n");
+    }
+
+    #[test]
+    fn machine_list_explicit_format_wins_over_quiet() {
+        let machines = vec![MachineListEntryView {
+            name: "default".to_owned(),
+            lifecycle: MachineLifecycle::Stopped,
+            provider: MachineProvider::Krunkit,
+            cpus: 2,
+            memory_mib: 2048,
+            disk_gib: 20,
+        }];
+
+        let rendered = render_machine_list_view(
+            &machines,
+            &MachineListCommand {
+                format: Some(MachineListOutputFormat::Json),
+                quiet: true,
+            },
+        )
+        .expect("explicit format should win over quiet");
+
+        assert!(rendered.contains("\"name\": \"default\""));
+        assert!(rendered.contains("\"lifecycle\": \"stopped\""));
     }
 
     #[test]
@@ -5114,11 +5508,13 @@ mod tests {
         fs::write(&desired.desired_path, b"release guest binary")
             .expect("guest binary should write");
 
-        let rendered = render_machine_view(
+        let rendered = render_machine_status_view(
             MachineCommandResult::Status,
             &paths,
             Some(&config),
             Some(&MachineStateRecord::initialized()),
+            MachineStatusOutputFormat::Yaml,
+            false,
         )
         .expect("machine view should render");
         let desired = inspect_desired_guest_neovex_binary(&paths);
@@ -5189,11 +5585,13 @@ mod tests {
             roots: layout,
         };
 
-        let rendered = render_machine_view(
+        let rendered = render_machine_status_view(
             MachineCommandResult::Status,
             &paths,
             Some(&config),
             Some(&MachineStateRecord::initialized()),
+            MachineStatusOutputFormat::Yaml,
+            false,
         )
         .expect("machine view should render");
         let desired = inspect_desired_guest_neovex_binary(&paths);
@@ -5338,7 +5736,7 @@ mod tests {
         let layout = MachineRootLayout::new(
             temp_dir.path().join("config"),
             temp_dir.path().join("state"),
-            PathBuf::from("/tmp/neovex"),
+            temp_dir.path().join("runtime"),
         );
         let paths = layout.paths(DEFAULT_MACHINE_NAME);
         let config = MachineConfigRecord {
@@ -5497,6 +5895,8 @@ mod tests {
                         source: PathBuf::from("/Users"),
                         target: PathBuf::from("/Users"),
                     }],
+                    quiet: false,
+                    no_info: false,
                     name: None,
                 }),
             },
@@ -5645,9 +6045,13 @@ mod tests {
         .expect_err("machine start should reject create-only overrides on existing machines");
 
         assert!(
-            error
-                .to_string()
-                .contains("only uses init flags when creating a new machine"),
+            error.to_string().contains(
+                "use `neovex machine set` to change CPU, memory, or disk for an existing machine"
+            ),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.to_string().contains("Hint:"),
             "unexpected error: {error}"
         );
     }

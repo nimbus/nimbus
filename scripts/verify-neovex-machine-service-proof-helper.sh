@@ -125,23 +125,31 @@ OUT
     printf '%s\n' "\${inspect_count}" > "\${inspect_count_file}"
     if [[ "\${inspect_count}" -lt 3 ]]; then
       cat <<'OUT'
-summary:
-  tenant_id: local-demo
-  service_name: db
-  sandbox_id: db-01aaa
-  status: starting
-log_paths:
-  ctr_log: /var/lib/neovex/service-sandboxes/container/state/containers/db-01aaa/ctr.log
+{
+  "summary": {
+    "tenant_id": "local-demo",
+    "service_name": "db",
+    "sandbox_id": "db-01aaa",
+    "status": "starting"
+  },
+  "log_paths": {
+    "ctr_log": "/var/lib/neovex/service-sandboxes/container/state/containers/db-01aaa/ctr.log"
+  }
+}
 OUT
     else
       cat <<'OUT'
-summary:
-  tenant_id: local-demo
-  service_name: db
-  sandbox_id: db-01aaa
-  status: ready
-log_paths:
-  ctr_log: /var/lib/neovex/service-sandboxes/container/state/containers/db-01aaa/ctr.log
+{
+  "summary": {
+    "tenant_id": "local-demo",
+    "service_name": "db",
+    "sandbox_id": "db-01aaa",
+    "status": "ready"
+  },
+  "log_paths": {
+    "ctr_log": "/var/lib/neovex/service-sandboxes/container/state/containers/db-01aaa/ctr.log"
+  }
+}
 OUT
     fi
     ;;
@@ -297,6 +305,7 @@ grep -F "context_path: ${project_dir}" "${output_dir}/service-config.txt" >/dev/
 grep -F "action: started" "${output_dir}/service-up.txt" >/dev/null
 grep -F '"sandbox_id":"db-01aaa"' "${output_dir}/machine-api-service-sandboxes.txt" >/dev/null
 grep -F "service_name: db" "${output_dir}/service-list.txt" >/dev/null
+grep -F '"status": "ready"' "${output_dir}/service-inspect.txt" >/dev/null
 grep -F "ctr.log" "${output_dir}/service-inspect.txt" >/dev/null
 grep -F "runtime_pid: 2002" "${output_dir}/service-ps.txt" >/dev/null
 grep -F "guest log line" "${output_dir}/service-logs.txt" >/dev/null

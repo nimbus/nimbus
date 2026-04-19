@@ -8,13 +8,28 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
     redb, the retained redb control plane, and local libsql replica caches
+- `docs/plans/websocket-protocol-plan.md`
+  - canonical execution plan for versioned WebSocket protocol negotiation and
+    unified error schema: subprotocol negotiation, hello/client_hello
+    handshake, structured error types with code taxonomy, reference
+    documents (`websocket-protocol.md`, `errors.md`); prerequisite for the
+    desktop UI plan
+- `docs/plans/localhost-server-security-plan.md`
+  - canonical execution plan for localhost server security hardening:
+    XDG-compliant token file lifecycle, origin allowlist middleware, session
+    cookie bootstrap, CSP headers, server discovery file, audit log, `neovex
+    token rotate` CLI subcommand; prerequisite for the desktop UI plan
+- `docs/plans/system-tenant-api-plan.md`
+  - canonical execution plan for the `_neovex` system tenant and management
+    API: machine/service state persistence as documents, HTTP lifecycle
+    endpoints, Convex function bundle with typed query surface, read/write
+    path split; prerequisite for the desktop UI plan
 - `docs/plans/desktop-ui-plan.md`
   - canonical execution plan for a Docker Desktop / Podman Desktop-style
-    graphical interface: embedded React SPA served from `neovex-server` at
-    `/ui/*`, reactive dashboard via existing WebSocket/useQuery hooks,
-    localhost auth token-gate, protocol version negotiation, machine/service/
-    data/logs/runs tabs, optional Tauri/Electron native shell (Phase 2)
-
+    graphical interface: embedded React SPA at `/ui/*` via `rust-embed`,
+    dashboard/machines/services/functions/data/logs/runs/settings tabs,
+    dark mode, a11y, optional Electron shell (Phase 2); depends on the three
+    prerequisite plans above
 ## Stable implementation baselines
 
 - `docs/reference/microvm-service-baseline.md`
@@ -164,6 +179,11 @@ completed plans unless explicitly asked to review historical work.
     rollout for version/help polish, Podman-aligned machine flags and flows,
     list/inspect/set/cp, quiet scripting modes, and the final real macOS proof
     bundles
+- `docs/plans/archive/machine-cli-alignment-plan.md`
+  - completed machine/service CLI alignment control plane; records the
+    `CLIA1`-`CLIA10` rollout for shared help/output/progress/table contracts,
+    deterministic proof helpers, and the final local-binary plus
+    packaged/Homebrew macOS proof bundles
 
 ## How To Use This Folder
 
@@ -174,6 +194,11 @@ completed plans unless explicitly asked to review historical work.
 - For current macOS developer-machine behavior, start with
   `docs/reference/microvm-service-baseline.md` and
   `docs/reference/macos-machine-flow.md`.
+- For historical machine/service CLI alignment work, start with
+  `docs/plans/archive/machine-cli-alignment-plan.md`, then promote a new
+  active plan before starting another CLI-wide change wave.
+- Use `docs/plans/archive/machine-cli-dx-plan.md` only for the completed first
+  DX wave, older comparative audit context, or archived proof bundles.
 - Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
   the historical MAC1-MAC7 execution record or exact proof-bundle paths.
 - For historical shared machine-lifecycle hardening context or Windows

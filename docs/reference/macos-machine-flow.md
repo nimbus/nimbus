@@ -358,8 +358,18 @@ Linux production:
 
 ## Proof Helpers
 
-The repo now owns three checked-in macOS proof collectors for this flow:
+The repo now owns four checked-in macOS proof collectors for this flow:
 
+- `make collect-neovex-machine-cli-proof`
+  captures the isolated-root/local-binary machine UX lane: a selected Neovex
+  binary is run under dedicated HOME/XDG/runtime roots, `machine start` is
+  PTY-captured, `machine status` is recorded in table/JSON/YAML form, and the
+  helper cleans up the temporary machine state afterward. This is the
+  copy-pasteable proof lane for current-worktree/local-binary CLI changes; it
+  does not touch the installed/Homebrew binary or the user's default machine
+  roots. For real contract proof, leave the image unset so the helper
+  exercises the shipped pinned-image path; `--image` is a debug-only override
+  and can bypass the host-managed machine-image contract
 - `make collect-neovex-machine-guest-proof`
   captures guest-image and guest machine-API proof through `neovex machine ssh`
 - `make collect-neovex-machine-service-proof`
@@ -376,12 +386,13 @@ The repo now owns three checked-in macOS proof collectors for this flow:
   collector path uses the tagged guest release asset; `--guest-binary` is only
   an explicit override for local guest-build debugging
 
-The repo also now owns deterministic verifiers for the guest, service, and
-Homebrew/cask proof harnesses, including
-`make verify-neovex-homebrew-cask-proof-helper` for the packaged macOS path.
-Those helper verifiers are the CI-safe automation lane for the harness logic
-itself; the full `krunkit` guest boot remains a checked-in local proof lane
-rather than a GitHub-hosted runner contract.
+The repo also now owns deterministic verifiers for the isolated CLI, guest,
+service, and Homebrew/cask proof harnesses, including
+`make verify-neovex-machine-cli-proof-helper` for the isolated-root
+local-binary flow and `make verify-neovex-homebrew-cask-proof-helper` for the
+packaged macOS path. Those helper verifiers are the CI-safe automation lane
+for the harness logic itself; the full `krunkit` guest boot remains a
+checked-in local proof lane rather than a GitHub-hosted runner contract.
 
 The current real-host cask-proof bundle at
 `/tmp/neovex-d4a-proof-release-asset` shows `guest.binary.override <none>`,
