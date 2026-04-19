@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-04-19
+
+### Testing
+
+- Widen the Postgres repeated direct CRUD CI timeout so the workspace test lane stays green under full-runner contention while preserving the repeated CRUD correctness coverage by @jackspirou
+
+### Release
+
+- Prepare v0.1.18 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.17...v0.1.18
+
 ## [0.1.17] - 2026-04-19
 
 ### Documentation
