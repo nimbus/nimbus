@@ -50,13 +50,15 @@ Reviewed against:
 
 ## Status
 
-- **Status:** `active`
-- **Primary owner:** this plan
+- **Status:** `archived-complete`
+- **Primary owner:** archived historical record
 - **Activation gate:** promoted to the active shared machine-hardening control
-  plane on 2026-04-16 by explicit enterprise-readiness direction. These items
-  are now the source of truth for machine-lifecycle reliability work across
-  macOS and the future Windows provider, while the platform plans continue to
-  own platform-specific architecture and UX.
+  plane on 2026-04-16 by explicit enterprise-readiness direction, then
+  administratively closed and archived on 2026-04-18 after `MLH1` through
+  `MLH7` all landed. Use this document for historical review of the shared
+  Podman-aligned hardening rollout and for Windows/macOS prerequisite context;
+  current behavior now lives in the stable references plus the owning active
+  platform or follow-on plans.
 - **Related plans:**
   - `docs/reference/macos-machine-flow.md` — current macOS delivery contract;
     that reference owns the developer-machine topology, guest-image contract,
@@ -339,10 +341,11 @@ Source of truth:
 
 General rules:
 
-- This is the active shared control plan for machine-lifecycle hardening.
-  Treat it as the durable source of truth for new agents, handoff, and
-  compaction whenever the work touches machine robustness or shared provider
-  orchestration.
+- This is the archived historical control record for shared
+  machine-lifecycle hardening. Treat it as durable background context for
+  handoff, review, and prerequisite analysis when work touches machine
+  robustness or shared provider orchestration, but promote a new active plan
+  before starting additional shared hardening scope.
 - These items harden existing infrastructure. They do not change the macOS or
   Windows architecture — those are owned by their respective platform plans.
 - Before changing code for this workstream, reread `Current Assessed State`,
@@ -677,6 +680,12 @@ prep for Windows but also clean up the macOS code.
 
 ## Execution Log
 
+- 2026-04-18: Administratively closed and archived this plan after confirming
+  the shared `MLH1`-`MLH7` ledger is fully complete and the follow-on machine
+  work has returned to the owning platform plans and stable reference docs.
+  Updated the repo entrypoints and plan index so new agents treat this
+  document as historical execution context rather than an active control
+  plane.
 - 2026-04-15: Created this plan based on source-backed review of Podman's
   machine infrastructure against the existing neovex machine module. Identified
   7 robustness gaps by comparing `manager.rs` against Podman's `shim/host.go`,

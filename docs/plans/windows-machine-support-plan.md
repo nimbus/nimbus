@@ -90,10 +90,10 @@ Reviewed against:
     microVM and service-control baseline
   - `docs/plans/distribution-plan.md` — packaging/distribution umbrella; this
     plan owns the detailed execution of the Windows row
-  - `docs/plans/machine-lifecycle-hardening-plan.md` — shared machine lifecycle
-    robustness improvements (port allocation, config persistence, provider
-    capability flags, networking phases); `WIN2` should build on the hardened
-    infrastructure from that plan
+  - `docs/plans/archive/machine-lifecycle-hardening-plan.md` — completed
+    shared machine lifecycle hardening record (port allocation, config
+    persistence, provider capability flags, networking phases); `WIN2` should
+    build on that landed hardened infrastructure
 
 ## Current Assessed State
 
@@ -682,7 +682,7 @@ Rejected because:
 
 ```text
 PowerShell / cmd.exe
-  -> neovex.exe machine init [--name default] [--cpus 4] [--memory-mib 4096]
+  -> neovex.exe machine init [--name default] [--cpus 4] [--memory 4096]
       -> download Tar rootfs from neovex-machine-os (OCI or URL)
       -> wsl --import neovex-{name} {dataDir}\wsldist\{name} {tarball} --version 2
          (all WSL commands use WSL_UTF8=1 env, CREATE_NO_WINDOW for background)

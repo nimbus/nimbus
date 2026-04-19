@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-04-18
+
+### Machine
+
+- Complete the machine CLI DX surface with `machine list`/`ls`, `machine inspect`, `machine set`, `status --quiet`, and Podman-aligned `machine cp` by @jackspirou
+
+### Documentation
+
+- Archive the completed machine CLI DX control plan and update the CLI, macOS, and agent guidance references to the shipped surface by @jackspirou
+
+### Release
+
+- Prepare v0.1.15 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.14...v0.1.15
+
 ## [0.1.14] - 2026-04-18
 
 ### Machine

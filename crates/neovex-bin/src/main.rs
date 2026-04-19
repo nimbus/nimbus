@@ -50,7 +50,11 @@ const MYSQL_MIN_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MIN_CONNECTIONS";
 const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 
 #[derive(Debug, Parser)]
-#[command(name = "neovex", version, about = "Reactive document database")]
+#[command(
+    name = "neovex",
+    version,
+    about = "Reactive document database with machine and service orchestration"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -815,6 +819,7 @@ fn optional_env_usize(key: &str) -> neovex::Result<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -887,11 +892,25 @@ mod tests {
     fn cli_supports_top_level_version_flag() {
         let error = Cli::try_parse_from(["neovex", "--version"])
             .expect_err("top-level version flag should short-circuit with display output");
-        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(error.kind(), ErrorKind::DisplayVersion);
         assert_eq!(
             error.to_string(),
             format!("neovex {}\n", env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[test]
+    fn cli_help_describes_machine_and_service_surface() {
+        let error =
+            Cli::try_parse_from(["neovex", "--help"]).expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("Reactive document database with machine and service orchestration")
+        );
+        assert!(rendered.contains("serve"));
+        assert!(rendered.contains("machine"));
+        assert!(rendered.contains("service"));
     }
 
     #[test]

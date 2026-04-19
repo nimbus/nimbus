@@ -22,12 +22,12 @@ options:
                                (default: <repo>/target/debug/neovex)
   --image <source>             Explicit machine image source override passed to
                                `neovex machine init` for diagnostics only
-  --ssh-identity <path>        SSH identity path for guest debugging
-  --ignition-file <path>       Ignition file to serve over first-boot vsock
-  --efi-store <path>           EFI variable-store path
+  --identity <path>            SSH identity path for guest debugging
+  --ignition-path <path>       Ignition file to serve over first-boot vsock
+  --firmware <path>            EFI variable-store path
   --cpus <count>               Guest CPU count (default: 2)
-  --memory-mib <mib>           Guest memory MiB (default: 2048)
-  --disk-gib <gib>             Guest disk size GiB (default: 20)
+  --memory <mib>               Guest memory MiB (default: 2048)
+  --disk-size <gib>            Guest disk size GiB (default: 20)
   --volume <host:guest>        virtiofs mount (repeatable; default: /Users:/Users)
   --skip-pre-diagnostics       Skip pre-recreate diagnostics capture
   --log-lines <count>          Log lines to include in diagnostics bundles
@@ -37,8 +37,8 @@ examples:
   bash scripts/recreate-neovex-machine.sh \
     --home /tmp/neovex-home \
     --runtime-root /tmp/neovex \
-    --ssh-identity /absolute/path/to/machine-key \
-    --ignition-file /absolute/path/to/neovex-machine.ign
+    --identity /absolute/path/to/machine-key \
+    --ignition-path /absolute/path/to/neovex-machine.ign
 EOF
 }
 
@@ -125,15 +125,15 @@ while [[ $# -gt 0 ]]; do
       image_path="${2:?missing image path}"
       shift 2
       ;;
-    --ssh-identity)
+    --identity)
       ssh_identity="${2:?missing ssh identity path}"
       shift 2
       ;;
-    --ignition-file)
+    --ignition-path)
       ignition_file="${2:?missing ignition file path}"
       shift 2
       ;;
-    --efi-store)
+    --firmware)
       efi_store="${2:?missing efi store path}"
       shift 2
       ;;
@@ -141,11 +141,11 @@ while [[ $# -gt 0 ]]; do
       cpus="${2:?missing cpu count}"
       shift 2
       ;;
-    --memory-mib)
+    --memory)
       memory_mib="${2:?missing memory amount}"
       shift 2
       ;;
-    --disk-gib)
+    --disk-size)
       disk_gib="${2:?missing disk size}"
       shift 2
       ;;
@@ -265,8 +265,8 @@ init_cmd=(
   machine
   init
   --cpus "${cpus}"
-  --memory-mib "${memory_mib}"
-  --disk-gib "${disk_gib}"
+  --memory "${memory_mib}"
+  --disk-size "${disk_gib}"
 )
 
 if [[ -n "${image_path}" ]]; then
@@ -274,13 +274,13 @@ if [[ -n "${image_path}" ]]; then
 fi
 
 if [[ -n "${ssh_identity}" ]]; then
-  init_cmd+=( --ssh-identity "${ssh_identity}" )
+  init_cmd+=( --identity "${ssh_identity}" )
 fi
 if [[ -n "${ignition_file}" ]]; then
-  init_cmd+=( --ignition-file "${ignition_file}" )
+  init_cmd+=( --ignition-path "${ignition_file}" )
 fi
 if [[ -n "${efi_store}" ]]; then
-  init_cmd+=( --efi-store "${efi_store}" )
+  init_cmd+=( --firmware "${efi_store}" )
 fi
 
 for volume in "${volumes[@]}"; do

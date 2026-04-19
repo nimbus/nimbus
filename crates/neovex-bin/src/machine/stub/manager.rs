@@ -118,6 +118,16 @@ pub(super) fn build_ssh_command(
     Err(unsupported_machine_host_error())
 }
 
+pub(super) fn build_scp_command(
+    _config: &MachineConfigRecord,
+    _state: &MachineStateRecord,
+    _guest_is_src: bool,
+    _guest_path: &str,
+    _host_path: &str,
+) -> Result<Command, Error> {
+    Err(unsupported_machine_host_error())
+}
+
 pub(super) fn release_machine_ssh_port(
     _roots: &MachineRootLayout,
     _machine_name: &str,

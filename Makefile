@@ -194,7 +194,7 @@ recreate-podman-machine:
 
 # Recreate a Neovex machine with the shipped machine CLI and capture diagnostics artifacts
 recreate-neovex-machine:
-	bash scripts/recreate-neovex-machine.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(IMAGE),--image "$(IMAGE)",) $(if $(SSH_IDENTITY),--ssh-identity "$(SSH_IDENTITY)",) $(if $(IGNITION_FILE),--ignition-file "$(IGNITION_FILE)",) $(if $(EFI_STORE),--efi-store "$(EFI_STORE)",) $(if $(CPUS),--cpus "$(CPUS)",) $(if $(MEMORY_MIB),--memory-mib "$(MEMORY_MIB)",) $(if $(DISK_GIB),--disk-gib "$(DISK_GIB)",) $(if $(VOLUME),--volume "$(VOLUME)",) $(if $(SKIP_PRE_DIAGNOSTICS),--skip-pre-diagnostics,) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",)
+	bash scripts/recreate-neovex-machine.sh $(if $(MACHINE),--machine "$(MACHINE)",) $(if $(HOME_DIR),--home "$(HOME_DIR)",) $(if $(RUNTIME_ROOT),--runtime-root "$(RUNTIME_ROOT)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) $(if $(NEOVEX),--neovex "$(NEOVEX)",) $(if $(IMAGE),--image "$(IMAGE)",) $(if $(SSH_IDENTITY),--identity "$(SSH_IDENTITY)",) $(if $(IGNITION_FILE),--ignition-path "$(IGNITION_FILE)",) $(if $(EFI_STORE),--firmware "$(EFI_STORE)",) $(if $(CPUS),--cpus "$(CPUS)",) $(if $(MEMORY_MIB),--memory "$(MEMORY_MIB)",) $(if $(DISK_GIB),--disk-size "$(DISK_GIB)",) $(if $(VOLUME),--volume "$(VOLUME)",) $(if $(SKIP_PRE_DIAGNOSTICS),--skip-pre-diagnostics,) $(if $(LOG_LINES),--log-lines "$(LOG_LINES)",)
 
 # Prepare a deterministic Linux-host LH1-LH6 execution bundle
 prepare-linux-vmm-validation-bundle:

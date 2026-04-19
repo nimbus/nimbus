@@ -542,7 +542,7 @@ capture_command \
   "capture.machine_init" \
   "${output_dir}/machine-init-command.txt" \
   "${output_dir}/machine-init.txt" \
-  "${base_cmd[@]}" machine init --ssh-identity "${ssh_identity}"
+  "${base_cmd[@]}" machine init --identity "${ssh_identity}"
 
 capture_command \
   "capture.machine_start" \

@@ -481,6 +481,7 @@ pub(super) fn start_machine(
 ) -> Result<(), Error> {
     ensure_machine_can_start(paths, config, state)?;
     converge_machine_image_contract(paths, config, state)?;
+    ensure_machine_bootstrap_identity(paths, config)?;
     validate_machine_bootstrap_contract(config)?;
 
     cleanup_runtime_artifacts(paths)?;
@@ -592,6 +593,94 @@ pub(super) fn start_machine(
     Ok(())
 }
 
+fn ensure_machine_bootstrap_identity(
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+) -> Result<(), Error> {
+    if !requires_host_guest_neovex_sync(config) || config.guest.ssh_identity_path.is_some() {
+        return Ok(());
+    }
+
+    let identity_path = paths.data_dir.join("machine");
+    ensure_machine_ssh_keypair(&identity_path)?;
+    config.guest.ssh_identity_path = Some(identity_path);
+    write_json_file(&paths.config_path, config)?;
+    Ok(())
+}
+
+fn ensure_machine_ssh_keypair(identity_path: &Path) -> Result<(), Error> {
+    let public_key_path = PathBuf::from(format!("{}.pub", identity_path.display()));
+    if identity_path.is_file() {
+        if public_key_path.is_file() {
+            return Ok(());
+        }
+        return Err(Error::InvalidInput(format!(
+            "machine SSH identity exists at {}, but the public key is missing at {}",
+            identity_path.display(),
+            public_key_path.display()
+        )));
+    }
+
+    let parent = identity_path.parent().ok_or_else(|| {
+        Error::Internal(format!(
+            "machine SSH identity path {} has no parent directory",
+            identity_path.display()
+        ))
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        Error::Internal(format!(
+            "failed to create machine SSH identity directory {}: {error}",
+            parent.display()
+        ))
+    })?;
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).map_err(|error| {
+        Error::Internal(format!(
+            "failed to set machine SSH identity directory permissions on {}: {error}",
+            parent.display()
+        ))
+    })?;
+
+    let output = Command::new("ssh-keygen")
+        .arg("-N")
+        .arg("")
+        .arg("-t")
+        .arg("ed25519")
+        .arg("-f")
+        .arg(identity_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to start ssh-keygen for machine identity {}: {error}",
+                identity_path.display()
+            ))
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail = if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(Error::Internal(format!(
+            "failed to generate machine SSH identity at {}: {}",
+            identity_path.display(),
+            detail
+        )));
+    }
+
+    if !public_key_path.is_file() {
+        return Err(Error::Internal(format!(
+            "ssh-keygen completed, but the machine public key is missing at {}",
+            public_key_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
 fn converge_machine_image_contract(
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
@@ -671,7 +760,7 @@ fn validate_machine_bootstrap_contract(config: &MachineConfigRecord) -> Result<(
 
     let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
         Error::InvalidInput(format!(
-            "machine '{}' uses the host-managed macOS machine-image contract and requires `--ssh-identity <path>` so neovex can stage the guest binary and validate the forwarded machine API",
+            "machine '{}' uses the host-managed macOS machine-image contract and requires `--identity <path>` so neovex can stage the guest binary and validate the forwarded machine API",
             config.name
         ))
     })?;
@@ -1481,6 +1570,48 @@ pub(super) fn build_ssh_command(
     config: &MachineConfigRecord,
     state: &MachineStateRecord,
 ) -> Result<Command, Error> {
+    let ssh_target = resolve_localhost_ssh_target(config, state)?;
+    let mut command = Command::new("ssh");
+    append_localhost_ssh_options(
+        &mut command,
+        ssh_target.identity_path,
+        ssh_target.ssh_port,
+        ssh_target.ssh_user,
+    );
+    Ok(command)
+}
+
+pub(super) fn build_scp_command(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+    guest_is_src: bool,
+    guest_path: &str,
+    host_path: &str,
+) -> Result<Command, Error> {
+    let ssh_target = resolve_localhost_ssh_target(config, state)?;
+    let guest_path = format!("{}@127.0.0.1:{guest_path}", ssh_target.ssh_user);
+
+    let mut command = Command::new("scp");
+    append_localhost_scp_options(&mut command, ssh_target.identity_path, ssh_target.ssh_port);
+    command.arg("-r");
+    if guest_is_src {
+        command.arg(guest_path).arg(host_path);
+    } else {
+        command.arg(host_path).arg(guest_path);
+    }
+    Ok(command)
+}
+
+struct LocalhostSshTarget<'a> {
+    identity_path: &'a Path,
+    ssh_port: u16,
+    ssh_user: &'a str,
+}
+
+fn resolve_localhost_ssh_target<'a>(
+    config: &'a MachineConfigRecord,
+    state: &'a MachineStateRecord,
+) -> Result<LocalhostSshTarget<'a>, Error> {
     if state.lifecycle != MachineLifecycle::Running {
         return Err(Error::Conflict(format!(
             "machine '{}' is {} and cannot accept SSH",
@@ -1497,7 +1628,7 @@ pub(super) fn build_ssh_command(
     })?;
     let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
         Error::InvalidInput(format!(
-            "machine '{}' has no SSH identity configured; re-run `neovex machine init --ssh-identity <path>` or wait for MAC4 guest bootstrap",
+            "machine '{}' has no SSH identity configured; start the machine to auto-generate one or re-run `neovex machine init --identity <path>`",
             config.name
         ))
     })?;
@@ -1509,14 +1640,11 @@ pub(super) fn build_ssh_command(
         )));
     }
 
-    let mut command = Command::new("ssh");
-    append_localhost_ssh_options(
-        &mut command,
+    Ok(LocalhostSshTarget {
         identity_path,
-        runtime.ssh_port,
-        &config.guest.ssh_user,
-    );
-    Ok(command)
+        ssh_port: runtime.ssh_port,
+        ssh_user: &config.guest.ssh_user,
+    })
 }
 
 fn append_localhost_ssh_options(
@@ -1545,6 +1673,28 @@ fn append_localhost_ssh_options(
         .arg("-p")
         .arg(ssh_port.to_string())
         .arg(format!("{ssh_user}@127.0.0.1"));
+}
+
+fn append_localhost_scp_options(command: &mut Command, identity_path: &Path, ssh_port: u16) {
+    command
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("IdentitiesOnly=yes")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("-o")
+        .arg("CheckHostIP=no")
+        .arg("-o")
+        .arg("LogLevel=ERROR")
+        .arg("-o")
+        .arg("SetEnv=LC_ALL=")
+        .arg("-i")
+        .arg(identity_path)
+        .arg("-P")
+        .arg(ssh_port.to_string());
 }
 
 fn build_localhost_ssh_command(
@@ -3388,9 +3538,9 @@ mod tests {
 
     use super::*;
     use crate::machine::{
-        CURRENT_MACHINE_CONFIG_VERSION, MachineBootstrapMode, MachineGuestConfig,
-        MachineImageFormat, MachineImageSource, MachineProvider, MachineResources,
-        MachineRootLayout, machine_image_reference_repository,
+        CURRENT_MACHINE_CONFIG_VERSION, DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY,
+        MachineBootstrapMode, MachineGuestConfig, MachineImageFormat, MachineImageSource,
+        MachineProvider, MachineResources, MachineRootLayout, machine_image_reference_repository,
     };
 
     fn sample_config(image: &Path) -> MachineConfigRecord {
@@ -3499,10 +3649,48 @@ mod tests {
         if cfg!(target_os = "macos") {
             let error = validate_machine_bootstrap_contract(&config)
                 .expect_err("podman machine-os should require ssh identity");
-            assert!(error.to_string().contains("--ssh-identity"));
+            assert!(error.to_string().contains("--identity"));
         } else {
             validate_machine_bootstrap_contract(&config)
                 .expect("non-macOS hosts should not require macOS SSH bootstrapping");
+        }
+    }
+
+    #[test]
+    fn ensure_machine_bootstrap_identity_generates_machine_owned_key_for_host_managed_contract() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        fs::write(&image_path, []).expect("image should write");
+        let mut config = sample_config(&image_path);
+        config.guest.image_source = MachineImageSource::OciReference {
+            reference: format!("docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@sha256:abc123"),
+        };
+
+        let paths = config.roots.paths("default");
+        paths.ensure_directories().expect("paths should initialize");
+        write_json_file(&paths.config_path, &config).expect("config should write");
+
+        ensure_machine_bootstrap_identity(&paths, &mut config)
+            .expect("bootstrap identity generation should succeed");
+
+        if cfg!(target_os = "macos") {
+            let identity_path = config
+                .guest
+                .ssh_identity_path
+                .clone()
+                .expect("macOS host-managed contract should record an identity path");
+            let public_key_path = PathBuf::from(format!("{}.pub", identity_path.display()));
+            assert_eq!(identity_path, paths.data_dir.join("machine"));
+            assert!(identity_path.is_file());
+            assert!(public_key_path.is_file());
+
+            let stored: MachineConfigRecord = serde_json::from_slice(
+                &fs::read(&paths.config_path).expect("config should still read"),
+            )
+            .expect("stored config should deserialize");
+            assert_eq!(stored.guest.ssh_identity_path, Some(identity_path));
+        } else {
+            assert_eq!(config.guest.ssh_identity_path, None);
         }
     }
 
@@ -4667,6 +4855,111 @@ mod tests {
         );
         assert!(args.windows(2).any(|window| window == ["-p", "2222"]));
         assert_eq!(args.last().map(String::as_str), Some("core@127.0.0.1"));
+    }
+
+    #[test]
+    fn scp_command_applies_localhost_machine_safety_options() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        let identity_path = temp_dir.path().join("machine");
+        fs::write(&image_path, []).expect("image should write");
+        fs::write(&identity_path, "fake-private-key").expect("identity should write");
+
+        let mut config = sample_config(&image_path);
+        config.guest.ssh_identity_path = Some(identity_path.clone());
+
+        let mut state = MachineStateRecord::initialized();
+        state.lifecycle = MachineLifecycle::Running;
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path,
+            efi_variable_store_path: PathBuf::from("/tmp/efi"),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_port: 2222,
+            rest_uri: "unix:///tmp/krunkit.sock".to_owned(),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        let command = build_scp_command(&config, &state, false, "/tmp/remote.txt", "./local.txt")
+            .expect("scp command should build");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-o", "BatchMode=yes"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-o", "StrictHostKeyChecking=no"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-o", "UserKnownHostsFile=/dev/null"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-i", identity_path.to_string_lossy().as_ref()])
+        );
+        assert!(args.windows(2).any(|window| window == ["-P", "2222"]));
+        assert!(args.iter().any(|arg| arg == "-r"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "core@127.0.0.1:/tmp/remote.txt")
+        );
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("core@127.0.0.1:/tmp/remote.txt")
+        );
+    }
+
+    #[test]
+    fn scp_command_formats_guest_source_for_downloads() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let image_path = temp_dir.path().join("disk.raw");
+        let identity_path = temp_dir.path().join("machine");
+        fs::write(&image_path, []).expect("image should write");
+        fs::write(&identity_path, "fake-private-key").expect("identity should write");
+
+        let mut config = sample_config(&image_path);
+        config.guest.ssh_identity_path = Some(identity_path);
+
+        let mut state = MachineStateRecord::initialized();
+        state.lifecycle = MachineLifecycle::Running;
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+                gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+            },
+            image_path,
+            efi_variable_store_path: PathBuf::from("/tmp/efi"),
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_port: 2222,
+            rest_uri: "unix:///tmp/krunkit.sock".to_owned(),
+            ready_vsock_port: READY_VSOCK_PORT,
+        });
+
+        let command = build_scp_command(&config, &state, true, "/tmp/remote.txt", "./local.txt")
+            .expect("scp command should build");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        let src_index = args
+            .iter()
+            .position(|arg| arg == "core@127.0.0.1:/tmp/remote.txt")
+            .expect("remote source should exist");
+        let dst_index = args
+            .iter()
+            .position(|arg| arg == "./local.txt")
+            .expect("local destination should exist");
+        assert!(src_index < dst_index);
     }
 
     fn serve_single_http_response(body: Vec<u8>, path: Option<&str>) -> String {

@@ -465,8 +465,8 @@ Files to update (non-exhaustive):
 - `docs/reference/macos-machine-flow.md`
 - `docs/reference/krun-vmm-host-validation.md`
 - `docs/reference/macos-machine-flow.md`
-- `docs/plans/machine-lifecycle-hardening-plan.md`
-- `docs/plans/machine-cli-dx-plan.md`
+- `docs/plans/archive/machine-lifecycle-hardening-plan.md`
+- `docs/plans/archive/machine-cli-dx-plan.md`
 - `docs/plans/windows-machine-support-plan.md`
 - `docs/plans/distribution-plan.md`
 - `docs/plans/install-script-plan.md`

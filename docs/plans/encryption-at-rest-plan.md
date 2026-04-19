@@ -99,12 +99,26 @@ deployment "compliant" on its own.
 
 - `ServicePersistenceConfig` already splits `tenant_provider` from the
   redb-backed control plane.
+- service persistence config already lowers through typed CLI, environment, and
+  JSON config-file inputs with precedence `CLI > env > file`.
+- `data_dir` still defaults to `./data`.
+- `control_data_dir` defaults to `data_dir` but is already independently
+  configurable, so the host control-plane file root may diverge from tenant
+  data roots.
 - CLI startup defaults the tenant provider to embedded SQLite.
+- embedded providers still route tenant files through `DirectoryPerTenant`
+  under `data_dir`, producing `<tenant>.sqlite3` for SQLite and
+  `<tenant>.redb` for retained redb.
 - retained embedded redb remains selectable for tenant data.
 - `EmbeddedRedbControlPlaneProvider` still opens the cross-tenant
-  `neovex-control.db` usage store.
+  `neovex-control.db` usage store under `control_data_dir`.
 - `LibsqlReplicaProvider` materializes local SQLite replica cache files under
   `replica_cache_dir` and opens them through `SqliteTenantStore`.
+- libsql replica config already has separate host-side routing state:
+  `metadata_namespace` defaults to `neovex_provider`,
+  `tenant_namespace_prefix` defaults to `tenant_`, and both are overridable.
+- provider-specific host config overrides already fail closed unless the
+  matching `tenant_provider` is selected.
 - Postgres and MySQL providers keep tenant data outside Neovex-owned local
   files.
 - there is no typed encryption config in the CLI, server, or storage layer.
@@ -137,8 +151,12 @@ This plan covers:
 - opt-in encryption at rest for retained embedded redb tenant databases
 - opt-in encryption at rest for the retained redb control-plane database
 - opt-in encryption at rest for local libsql replica cache files
-- encrypted-by-default Neovex-owned on-disk snapshot, bootstrap, rebuild, and
-  recovery artifacts produced from encryption-enabled local stores
+- encrypted-by-default Neovex-managed on-disk working artifacts that already
+  exist in local-provider flows, including rebuild staging files, migration
+  working copies, and retired local replica caches pending cleanup
+- the same encrypted-by-default rule for any future built-in persisted
+  snapshot/bootstrap/recovery file export surface; current HTTP or in-memory
+  bootstrap/snapshot responses remain transport payloads, not at-rest artifacts
 - one typed runtime config surface for local encryption
 - one cross-provider key-management model with wrapped per-subject keys
 - migration, recovery, and rotation flows tailored to each provider family
@@ -151,6 +169,8 @@ This plan does not cover:
 - field-level or application-level selective encryption
 - Neovex-managed at-rest encryption of external Postgres or MySQL data files
 - encryption of remote libsql/Turso primary storage
+- in-memory snapshot/bootstrap structs or HTTP responses that are not persisted
+  to disk by a Neovex-owned workflow
 - blanket claims of HIPAA, SOC2, ISO, or FIPS compliance
 
 For external providers, Neovex must document operator responsibilities and
@@ -180,8 +200,8 @@ This plan is successful only when all of the following are true:
    files it owns.
 6. One typed config surface governs local encryption across CLI, env, config
    file, and programmatic API use.
-7. Every local database and every persisted encrypted export artifact gets its
-   own random data-encryption key (DEK).
+7. Every protected local database and every covered Neovex-owned persisted
+   artifact gets its own random data-encryption key (DEK).
 8. DEKs are wrapped by a provider-managed wrapping mechanism so KEK rotation
    does not require rewriting database pages.
 9. The default local enablement path is operationally simple and reasonable
@@ -190,9 +210,10 @@ This plan is successful only when all of the following are true:
 11. Provider-specific migration and recovery paths exist:
     plaintext to encrypted, encrypted to plaintext where meaningful, and
     encrypted key rotation.
-12. Neovex-owned on-disk snapshot, bootstrap, rebuild, and recovery artifacts
-    emitted from encryption-enabled local stores are encrypted by default, or
-    explicitly surfaced as plaintext exceptions.
+12. Current Neovex-managed on-disk migration/rebuild/cutover artifacts emitted
+    from encryption-enabled local stores are encrypted by default, and any
+    future persisted snapshot/bootstrap/recovery file export must follow the
+    same rule or be surfaced as a plaintext exception.
 13. Successful migration and rotation retire predecessor plaintext artifacts
     from active Neovex-managed paths and surface `retirement_pending` until
     residue is cleared.
@@ -212,8 +233,10 @@ This plan is successful only when all of the following are true:
   `docs/architecture/storage/encryption.md`; update both together when a
   design decision changes.
 - Keep the architecture framing correct: storage is provider-shaped now.
-- Treat Neovex-owned on-disk snapshot, bootstrap, rebuild, and recovery
-  artifacts as in-scope persistence once local encryption is enabled.
+- Treat the concrete Neovex-managed on-disk migration, rebuild, cutover, and
+  retired-cache artifacts that exist today as in-scope persistence once local
+  encryption is enabled. Any future built-in persisted snapshot/bootstrap/
+  recovery export must follow the same rule.
 - Do not regress the unencrypted path.
 - Do not invent custom cryptographic primitives.
 - Keep key-management vocabulary provider-agnostic. Do not design everything
@@ -223,6 +246,8 @@ This plan is successful only when all of the following are true:
   managed paths after cutover.
 - Do not emit plaintext exports from an encryption-enabled local store unless
   the operator has explicitly requested that exception.
+- Do not treat in-memory structs or HTTP/JSON responses as at-rest artifacts
+  unless a Neovex-owned workflow persists them to disk.
 - Fail fast when encryption is requested for a provider path that is not fully
   wired or not compiled in.
 - Update this plan's ledger and execution log in the same change set as
@@ -243,6 +268,10 @@ This plan is successful only when all of the following are true:
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test -p neovex-storage`
 - `cargo test -p neovex-engine -p neovex-server`
+- packaging- or linkage-affecting items must add release-target or packaging
+  proof before they can be marked `done`; `EAR4` specifically must prove the
+  SQLCipher-capable build across the supported release matrix and Linux
+  packaging consumers
 
 Add provider-specific or benchmark verification where the item requires it.
 
@@ -255,11 +284,11 @@ Add provider-specific or benchmark verification where the item requires it.
 | EAR1 | todo | Add typed local-encryption config and provider-agnostic key-management interfaces | none |
 | EAR2 | todo | Add authenticated sidecar key manifests plus local `master-key-file` and `key-dir` providers | EAR1 |
 | EAR3 | todo | Implement retained redb encrypted backend and wire it into tenant/control redb stores | EAR1, EAR2 |
-| EAR4 | todo | Implement encrypted embedded SQLite via SQLCipher | EAR1, EAR2 |
-| EAR5 | todo | Encrypt local libsql replica cache files using libsql's encryption support | EAR1, EAR2 |
+| EAR4 | todo | Establish the shared local-SQLite encrypted-open seam and implement encrypted embedded SQLite via SQLCipher | EAR1, EAR2 |
+| EAR5 | todo | Encrypt local libsql replica cache files using libsql's encryption support on top of the shared local-SQLite seam | EAR1, EAR2, EAR4 |
 | EAR6 | todo | Wire provider-aware coverage into service startup, status, and diagnostics | EAR3, EAR4, EAR5 |
 | EAR7 | todo | Add provider-specific migration, recovery, and rotation flows | EAR3, EAR4, EAR5 |
-| EAR8 | todo | Add AWS KMS provider for enterprise-managed keys | EAR1, EAR6 |
+| EAR8 | todo | Add AWS KMS provider for enterprise-managed keys | EAR1, EAR2, EAR6 |
 | EAR9 | todo | Publish operator docs, performance data, and verification evidence | EAR6, EAR7, EAR8 |
 
 ---
@@ -269,12 +298,18 @@ Add provider-specific or benchmark verification where the item requires it.
 - `EAR1` defines the typed config and key-management seam. Everything else
   builds on it.
 - `EAR2` defines local manifest handling and the first local key sources.
-- `EAR3`, `EAR4`, and `EAR5` are parallel-safe provider implementations once
+- `EAR3` and `EAR4` are parallel-safe provider implementation lanes once
   `EAR1` and `EAR2` exist.
+- `EAR4` owns the shared local-SQLite encrypted-open seam because the current
+  libsql replica cache still lowers through `SqliteTenantStore`.
+- `EAR5` depends on `EAR4` so libsql cache encryption reuses that shared
+  local-SQLite contract instead of forking a second cache-open path.
 - `EAR6` depends on the provider implementations because it owns startup
   wiring, coverage reporting, and safe failure behavior.
 - `EAR7` depends on each provider implementation because migration and
   rotation are provider-specific.
+- `EAR8` depends on `EAR2` because AWS KMS must reuse the authenticated sidecar
+  manifest and wrapped-DEK envelope rather than inventing a KMS-only format.
 - `EAR8` depends on the config seam and diagnostics but can proceed in
   parallel with later migration polish once the interface is stable.
 - `EAR9` closes the loop with docs, benchmarks, and verification evidence.
@@ -285,11 +320,12 @@ Add provider-specific or benchmark verification where the item requires it.
 
 1. `EAR1`
 2. `EAR2`
-3. `EAR3`, `EAR4`, and `EAR5`
-4. `EAR6`
-5. `EAR7`
-6. `EAR8`
-7. `EAR9`
+3. `EAR3` and `EAR4`
+4. `EAR5`
+5. `EAR6`
+6. `EAR7`
+7. `EAR8`
+8. `EAR9`
 
 ---
 
@@ -520,6 +556,8 @@ The manifest must be authenticated:
 - local providers bind manifest metadata as AEAD associated data when wrapping
   the DEK
 - AWS KMS binds the same metadata through `EncryptionContext`
+- `aws-kms` changes who wraps the DEK, not the manifest shape; it must reuse
+  the same authenticated sidecar contract from `EAR2`
 
 This gives Neovex one consistent key-metadata story across redb, SQLCipher,
 and libsql replica cache files.
@@ -645,6 +683,26 @@ Migration and rotation consequences:
 - encrypted SQLite to plaintext recovery also uses `sqlcipher_export()`
 - encrypted SQLite DEK rotation uses `PRAGMA rekey` with a newly generated raw
   key
+
+### Shared local-SQLite seam before libsql cache encryption
+
+The current libsql replica cache path materializes a local SQLite file and then
+reopens it through `SqliteTenantStore`. That means embedded SQLite encryption
+and libsql local-cache encryption are not independent implementation lanes
+today.
+
+Before libsql cache encryption can land, Neovex needs one explicit local-SQLite
+open/materialization seam that:
+
+- separates shared local SQLite lifecycle ownership from provider-specific
+  page-encryption mechanics
+- allows embedded SQLite tenants to use a SQLCipher-capable `rusqlite` path
+- allows libsql replica caches to use libsql's provider-native encryption
+  without pretending the cache is a SQLCipher database
+- keeps diagnostics and per-subject key ownership uniform across both families
+
+This seam belongs to `EAR4`; `EAR5` builds on it instead of forking
+incompatible local-cache open logic.
 
 ### libsql replica local cache strategy
 
@@ -776,8 +834,11 @@ storage engine.
    - per-subject or per-role key files for advanced deployments
 5. Add atomic sidecar writes and rewrap helpers.
 6. Add safe manifest inspection helpers for diagnostics.
-7. Extend the same envelope model to persisted snapshot/bootstrap/recovery
-   artifacts emitted by encryption-enabled local stores.
+7. Extend the same envelope model to the concrete Neovex-managed on-disk
+   artifacts in scope today: migration working copies, rebuild staging files,
+   and retired local replica cache generations pending cleanup. Any future
+   built-in persisted snapshot/bootstrap/recovery file export must reuse the
+   same envelope instead of inventing a second format.
 
 #### Files likely to change
 
@@ -789,8 +850,9 @@ storage engine.
 
 - every encrypted local database can be opened using a wrapped DEK from its
   sidecar manifest
-- encrypted persisted snapshot/bootstrap/recovery artifacts use the same
-  wrapped-DEK model
+- current in-scope on-disk artifacts use the same wrapped-DEK model, and any
+  future built-in persisted snapshot/bootstrap/recovery file export is required
+  to do the same
 - manifest tampering is detected
 - `master-key-file` and `key-dir` both support create, open, and rewrap flows
 - sidecar writes are atomic and crash-safe
@@ -841,22 +903,33 @@ and the retained control plane.
 
 **Priority:** highest after EAR1 and EAR2
 **Expected impact:** gives the default embedded tenant provider a first-class
-encryption path.
+encryption path and establishes the shared local-SQLite contract that the
+libsql replica cache path can build on.
 
 #### Implementation plan
 
-1. Switch the embedded SQLite build to a SQLCipher-capable configuration once
+1. Extract a shared local-SQLite open/materialization seam from the current
+   `SqliteTenantStore` path so embedded SQLite and libsql replica caches do not
+   fork incompatible open logic.
+2. Switch the embedded SQLite build to a SQLCipher-capable configuration once
    verified for Neovex's release targets.
-2. Add encrypted open/create helpers for `SqliteTenantStore`.
-3. Pass raw per-database DEKs to SQLCipher from the sidecar manifest flow.
-4. Harden temporary storage:
+3. Add encrypted open/create helpers for `SqliteTenantStore` on top of that
+   seam.
+4. Pass raw per-database DEKs to SQLCipher from the sidecar manifest flow.
+5. Harden temporary storage:
    - build and runtime configuration must avoid plaintext temp-file spills
    - verify WAL and rollback journal behavior under the encrypted build
-5. Add provider-owned migration helpers:
+6. Add provider-owned migration helpers:
    - plaintext to encrypted via `sqlcipher_export()`
    - encrypted to plaintext recovery via `sqlcipher_export()`
    - encrypted rekey via `PRAGMA rekey`
-6. Verify that the plaintext path still works when encryption is disabled.
+7. Prove the SQLCipher-capable build on every supported Neovex release target
+   and on the Linux packaging workflows that consume the Linux tarballs:
+   - `x86_64-unknown-linux-gnu`
+   - `aarch64-unknown-linux-gnu`
+   - `aarch64-apple-darwin`
+   - `x86_64-pc-windows-msvc`
+8. Verify that the plaintext path still works when encryption is disabled.
 
 #### Files likely to change
 
@@ -864,14 +937,19 @@ encryption path.
 - `crates/neovex-storage/Cargo.toml`
 - `crates/neovex-storage/src/sqlite.rs`
 - `crates/neovex-storage/src/async_storage/sqlite.rs`
+- `crates/neovex-storage/src/libsql.rs`
 - `crates/neovex-storage/src/tests.rs`
 
 #### Acceptance criteria
 
+- a shared local-SQLite open/materialization seam exists for embedded SQLite
+  and libsql replica-cache consumers
 - embedded SQLite tenants can be created and reopened encrypted
 - SQLCipher migration flows work for encrypt, decrypt, and rekey
 - WAL and rollback journal handling are verified under the encrypted build
 - temp-file hardening is enforced for encrypted SQLite mode
+- the SQLCipher-capable build is proven on Neovex's supported release targets
+  and Linux packaging consumers before `EAR4` closes
 - the unencrypted SQLite path remains supported when encryption is disabled
 
 ---
@@ -884,13 +962,15 @@ libsql replica provider family.
 
 #### Implementation plan
 
-1. Enable libsql's encryption support in the workspace dependency.
-2. Add encrypted open/materialization flows for local replica cache files using
+1. Build on the shared local-SQLite seam from `EAR4`; do not fork
+   `SqliteTenantStore`'s open/materialization contract inside libsql.
+2. Enable libsql's encryption support in the workspace dependency.
+3. Add encrypted open/materialization flows for local replica cache files using
    `EncryptionConfig`.
-3. Feed raw DEKs from the same sidecar manifest model used elsewhere.
-4. Keep the remote primary encryption story provider-managed and clearly
+4. Feed raw DEKs from the same sidecar manifest model used elsewhere.
+5. Keep the remote primary encryption story provider-managed and clearly
    documented as such.
-5. Use cache rebuild flows for:
+6. Use cache rebuild flows for:
    - first-time encryption enablement
    - DEK rotation
    - corruption recovery
@@ -906,6 +986,8 @@ libsql replica provider family.
 
 - libsql local cache files can be materialized and reopened encrypted
 - local cache re-materialization works under encryption
+- libsql cache encryption reuses the shared local-SQLite seam from `EAR4`
+  instead of introducing a second cache-open contract
 - diagnostics distinguish local cache encryption from remote primary
   provider-managed encryption
 - cache rebuild flows remain correct after restart and refresh
@@ -981,8 +1063,10 @@ experience.
    - embedded SQLite: use `sqlcipher_export()`
    - libsql replica cache: rebuild cache rather than export
 5. Artifact rules:
-   - persisted Neovex-owned snapshot/bootstrap/recovery artifacts produced from
-     encryption-enabled local stores are encrypted by default
+   - current Neovex-managed on-disk migration/rebuild/cutover artifacts
+     produced from encryption-enabled local stores are encrypted by default
+   - any future built-in persisted snapshot/bootstrap/recovery file export must
+     reuse the same envelope and default-encrypted posture
    - plaintext artifact output requires an explicit operator override and is
      tracked as a plaintext exception
 6. Cutover and retirement rules:
@@ -1026,16 +1110,18 @@ path instead of stopping at local files.
 
 #### Implementation plan
 
-1. Add `AwsKmsKeyProvider` as the first managed provider.
-2. Use:
+1. Reuse the `EAR2` sidecar manifest and wrapped-DEK envelope; AWS KMS changes
+   the wrapping provider, not the protected-subject metadata contract.
+2. Add `AwsKmsKeyProvider` as the first managed provider.
+3. Use:
    - `GenerateDataKey` on create
    - `Decrypt` on open
    - `ReEncrypt` for wrapping-key rotation where applicable
-3. Bind `LocalKeySubject` metadata into AWS `EncryptionContext`.
-4. Support safe key descriptors and failure diagnostics without exposing
+4. Bind `LocalKeySubject` metadata into AWS `EncryptionContext`.
+5. Support safe key descriptors and failure diagnostics without exposing
    ciphertext blobs.
-5. Add test coverage against LocalStack or an equivalent AWS KMS test setup.
-6. Keep `master-key-file` as the default local path; AWS KMS is the required
+6. Add test coverage against LocalStack or an equivalent AWS KMS test setup.
+7. Keep `master-key-file` as the default local path; AWS KMS is the required
    enterprise-managed option, not the default for all deployments.
 
 #### Files likely to change
@@ -1048,6 +1134,8 @@ path instead of stopping at local files.
 #### Acceptance criteria
 
 - AWS KMS create, open, and rewrap flows work
+- AWS KMS reuses the shared manifest/envelope contract from `EAR2`; no
+  KMS-only sidecar format is introduced
 - `EncryptionContext` is stable and validated
 - failures distinguish auth, missing key, policy, and network errors
 - managed-key diagnostics are safe and useful
@@ -1066,7 +1154,8 @@ can actually evaluate.
    - provider coverage matrix
    - key-provider options
    - migration and rotation rules
-   - snapshot/bootstrap/export artifact rules
+   - current on-disk working-artifact coverage plus the rule for any future
+     persisted snapshot/bootstrap/recovery file export
    - plaintext exception and retirement-pending semantics
    - external-provider responsibilities
    - operational caveats and recovery flows
@@ -1101,3 +1190,5 @@ can actually evaluate.
 | 2026-04-16 | plan | rewritten | Reframed the plan around the live provider architecture: embedded SQLite default, retained redb, separate redb control plane, and libsql local cache coverage. Removed the invalid redb header design, replaced it with authenticated sidecar key manifests, moved embedded SQLite to a SQLCipher-based strategy, added explicit external-provider responsibility rules for Postgres/MySQL, and made AWS KMS a required v1 enterprise-managed key provider. |
 | 2026-04-16 | docs | architecture added | Added `docs/architecture/storage/encryption.md` as the stable architecture baseline, including provider-boundary diagrams, key-management rationale, and lifecycle flows; retargeted the plan to it and updated the docs index. |
 | 2026-04-16 | review | findings resolved | Expanded scope to cover persisted snapshot/bootstrap/recovery artifacts, broadened the key-subject model beyond databases, and added explicit cutover plus retirement semantics so predecessor plaintext artifacts cannot silently linger after migration or rotation. |
+| 2026-04-18 | review | plan hardened | Tightened roadmap dependencies so `EAR4` owns the shared local-SQLite seam and `EAR5` depends on it, made `EAR8` depend on the `EAR2` manifest contract, added release-matrix plus packaging proof to `EAR4` exit criteria, and narrowed persisted-artifact scope to concrete on-disk working files plus future built-in export rules rather than in-memory or HTTP responses. |
+| 2026-04-18 | review | config state refreshed | Re-read the live service-persistence assembly path after recent host-side config and file-layout changes. Recorded the current precedence (`CLI > env > file`), `data_dir` and `control_data_dir` defaults, concrete tenant/control/cache file roots, libsql namespace defaults, and fail-closed provider override behavior in `Current Verified State`. |

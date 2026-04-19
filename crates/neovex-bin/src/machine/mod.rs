@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use fs2::FileExt;
 use neovex::Error;
 use semver::Version;
@@ -47,7 +47,7 @@ pub(crate) use self::backend::ForwardedMachineApiSandboxBackend;
 pub(crate) use self::client::MachineApiClient;
 use self::manager::{
     GuestNeovexBinarySourceKind, MACHINE_API_FORWARD_TRANSPORT, MACHINE_API_FORWARD_USER,
-    MachineRuntimeState, build_ssh_command, inspect_desired_guest_neovex_binary,
+    MachineRuntimeState, build_scp_command, build_ssh_command, inspect_desired_guest_neovex_binary,
     inspect_observed_guest_neovex_binary, refresh_machine_state, release_machine_ssh_port,
     start_machine, stop_machine,
 };
@@ -139,19 +139,28 @@ pub(crate) struct MachineCommand {
 
 #[derive(Debug, Subcommand)]
 enum MachineSubcommand {
-    /// Initialize the local machine config and state roots.
+    /// Initialize a new machine.
     Init(MachineInitCommand),
-    /// Validate persisted machine state and prepare runtime roots for startup.
+    /// Start a machine, creating it if needed.
     Start(MachineStartCommand),
-    /// Validate persisted machine state before a future graceful stop.
+    /// Stop a running machine.
     Stop(MachineStopCommand),
-    /// Show the current machine config, state, and derived paths.
+    /// Display machine status.
     Status(MachineStatusCommand),
-    /// Show the future guest SSH target once host orchestration is available.
+    /// List initialized machines.
+    #[command(visible_alias = "ls")]
+    List(MachineListCommand),
+    /// Inspect a machine record.
+    Inspect(MachineInspectCommand),
+    /// Update a stopped machine.
+    Set(MachineSetCommand),
+    /// Securely copy files between the host and a machine.
+    Cp(MachineCpCommand),
+    /// Log in to a machine using SSH.
     Ssh(MachineSshCommand),
-    /// Remove the local machine config, state, and runtime roots.
+    /// Remove an existing machine.
     Rm(MachineRmCommand),
-    /// Manage the pinned machine OS image contract for this host.
+    /// Manage machine OS images.
     Os(MachineOsCommand),
     /// Internal guest machine API daemon for macOS machine support.
     #[command(hide = true)]
@@ -166,80 +175,315 @@ struct MachineOsCommand {
 
 #[derive(Debug, Subcommand)]
 enum MachineOsSubcommand {
-    /// Apply a specific immutable OCI image reference or digest as the next machine OS.
+    /// Use a specific machine OS image on the next boot.
     Apply(MachineOsApplyCommand),
-    /// Upgrade the machine OS to the supported image that matches this neovex host version.
+    /// Switch to the supported machine OS image for this neovex release.
     Upgrade(MachineOsUpgradeCommand),
 }
 
 #[derive(Debug, Args)]
 struct MachineOsApplyCommand {
-    /// OCI image reference or digest to apply on the next machine boot.
+    /// OCI image reference or digest to use on the next boot.
     image: String,
 
-    /// Stop and restart the machine immediately if it is running.
+    /// Restart the machine immediately if it is running.
     #[arg(long)]
     restart: bool,
 }
 
 #[derive(Debug, Args)]
 struct MachineOsUpgradeCommand {
-    /// Only report whether an upgrade is available in the current supported release stream.
+    /// Check whether an upgrade is available.
     #[arg(long)]
     dry_run: bool,
 
-    /// Stop and restart the machine immediately if an upgrade is applied while it is running.
+    /// Restart the machine immediately if an upgrade is applied.
     #[arg(long)]
     restart: bool,
 }
 
 #[derive(Debug, Args)]
 struct MachineInitCommand {
-    /// Guest vCPU count to record in the machine config.
-    #[arg(long, default_value_t = DEFAULT_MACHINE_CPUS)]
+    /// Number of CPUs.
+    #[arg(short = 'c', long, value_name = "COUNT", default_value_t = DEFAULT_MACHINE_CPUS)]
     cpus: u8,
 
-    /// Guest memory size in MiB to record in the machine config.
-    #[arg(long, default_value_t = DEFAULT_MACHINE_MEMORY_MIB)]
+    /// Memory in MiB.
+    #[arg(
+        short = 'm',
+        long = "memory",
+        value_name = "MIB",
+        default_value_t = DEFAULT_MACHINE_MEMORY_MIB
+    )]
     memory_mib: u32,
 
-    /// Guest disk size in GiB to record in the machine config.
-    #[arg(long, default_value_t = DEFAULT_MACHINE_DISK_GIB)]
+    /// Disk size in GiB.
+    #[arg(
+        short = 'd',
+        long = "disk-size",
+        value_name = "GIB",
+        default_value_t = DEFAULT_MACHINE_DISK_GIB
+    )]
     disk_gib: u32,
 
-    /// Guest image source. Accepts a published OCI reference, an absolute local
-    /// raw-disk path, or an http(s) URL override for diagnostics.
-    #[arg(long, default_value_t = default_machine_image())]
+    /// Machine OS image.
+    #[arg(long, value_name = "SOURCE", default_value_t = default_machine_image())]
     image: String,
 
-    /// Optional SSH identity path used for direct guest debugging on bootable
-    /// local disk images.
-    #[arg(long)]
+    /// Path to SSH identity for guest access.
+    #[arg(long = "identity", value_name = "PATH")]
     ssh_identity: Option<PathBuf>,
 
-    /// Optional first-boot Ignition file to serve over the guest bootstrap
-    /// vsock channel.
-    #[arg(long)]
+    /// Path to Ignition config file.
+    #[arg(long = "ignition-path", value_name = "PATH")]
     ignition_file: Option<PathBuf>,
 
-    /// Optional EFI variable-store path for booting an existing disk with its
-    /// known-good firmware state.
-    #[arg(long)]
+    /// Path to EFI variable store.
+    #[arg(long = "firmware", value_name = "PATH")]
     efi_store: Option<PathBuf>,
 
-    /// Host:guest volume mapping to record for future virtiofs setup.
-    #[arg(long = "volume", value_parser = parse_machine_volume)]
+    /// Host:guest volume mount.
+    #[arg(
+        short = 'v',
+        long = "volume",
+        value_name = "HOST:GUEST",
+        value_parser = parse_machine_volume
+    )]
     volumes: Vec<MachineVolume>,
+
+    /// Start the machine after initializing it.
+    #[arg(long)]
+    now: bool,
+
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+#[derive(Debug, Args, Clone, Default)]
+struct MachineStartCommand {
+    /// Number of CPUs to use if start creates the machine.
+    #[arg(short = 'c', long, value_name = "COUNT")]
+    cpus: Option<u8>,
+
+    /// Memory in MiB to use if start creates the machine.
+    #[arg(short = 'm', long = "memory", value_name = "MIB")]
+    memory_mib: Option<u32>,
+
+    /// Disk size in GiB to use if start creates the machine.
+    #[arg(short = 'd', long = "disk-size", value_name = "GIB")]
+    disk_gib: Option<u32>,
+
+    /// Machine OS image to use if start creates the machine.
+    #[arg(long, value_name = "SOURCE")]
+    image: Option<String>,
+
+    /// Path to SSH identity for guest access if start creates the machine.
+    #[arg(long = "identity", value_name = "PATH")]
+    ssh_identity: Option<PathBuf>,
+
+    /// Path to Ignition config file if start creates the machine.
+    #[arg(long = "ignition-path", value_name = "PATH")]
+    ignition_file: Option<PathBuf>,
+
+    /// Path to EFI variable store if start creates the machine.
+    #[arg(long = "firmware", value_name = "PATH")]
+    efi_store: Option<PathBuf>,
+
+    /// Host:guest volume mount if start creates the machine.
+    #[arg(
+        short = 'v',
+        long = "volume",
+        value_name = "HOST:GUEST",
+        value_parser = parse_machine_volume
+    )]
+    volumes: Vec<MachineVolume>,
+
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+impl MachineStartCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+
+    fn has_create_overrides(&self) -> bool {
+        self.cpus.is_some()
+            || self.memory_mib.is_some()
+            || self.disk_gib.is_some()
+            || self.image.is_some()
+            || self.ssh_identity.is_some()
+            || self.ignition_file.is_some()
+            || self.efi_store.is_some()
+            || !self.volumes.is_empty()
+    }
+
+    fn into_init_command(self) -> MachineInitCommand {
+        MachineInitCommand {
+            cpus: self.cpus.unwrap_or(DEFAULT_MACHINE_CPUS),
+            memory_mib: self.memory_mib.unwrap_or(DEFAULT_MACHINE_MEMORY_MIB),
+            disk_gib: self.disk_gib.unwrap_or(DEFAULT_MACHINE_DISK_GIB),
+            image: self.image.unwrap_or_else(default_machine_image),
+            ssh_identity: self.ssh_identity,
+            ignition_file: self.ignition_file,
+            efi_store: self.efi_store,
+            volumes: self.volumes,
+            now: false,
+            name: self.name,
+        }
+    }
+}
+
+impl MachineInitCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+}
+
+#[derive(Debug, Args, Default)]
+struct MachineStopCommand {
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+impl MachineStopCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+}
+
+#[derive(Debug, Args, Default)]
+struct MachineStatusCommand {
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = MachineStatusOutputFormat::Table)]
+    format: MachineStatusOutputFormat,
+
+    /// Print the machine name only.
+    #[arg(short = 'q', long)]
+    quiet: bool,
+
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+impl MachineStatusCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+}
+
+#[derive(Debug, Args, Default)]
+struct MachineListCommand {
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = MachineListOutputFormat::Table)]
+    format: MachineListOutputFormat,
+
+    /// Print machine names only.
+    #[arg(short = 'q', long)]
+    quiet: bool,
+}
+
+#[derive(Debug, Args, Default)]
+struct MachineInspectCommand {
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = MachineInspectOutputFormat::Json)]
+    format: MachineInspectOutputFormat,
+
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+impl MachineInspectCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum MachineStatusOutputFormat {
+    Json,
+    Yaml,
+    Table,
+}
+
+impl Default for MachineStatusOutputFormat {
+    fn default() -> Self {
+        Self::Table
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum MachineListOutputFormat {
+    Json,
+    Table,
+}
+
+impl Default for MachineListOutputFormat {
+    fn default() -> Self {
+        Self::Table
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum MachineInspectOutputFormat {
+    Json,
+    Yaml,
+}
+
+impl Default for MachineInspectOutputFormat {
+    fn default() -> Self {
+        Self::Json
+    }
+}
+
+#[derive(Debug, Args, Default)]
+struct MachineSetCommand {
+    /// Number of CPUs.
+    #[arg(short = 'c', long, value_name = "COUNT")]
+    cpus: Option<u8>,
+
+    /// Memory in MiB.
+    #[arg(short = 'm', long = "memory", value_name = "MIB")]
+    memory_mib: Option<u32>,
+
+    /// Disk size in GiB.
+    #[arg(short = 'd', long = "disk-size", value_name = "GIB")]
+    disk_gib: Option<u32>,
+
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+impl MachineSetCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+
+    fn has_changes(&self) -> bool {
+        self.cpus.is_some() || self.memory_mib.is_some() || self.disk_gib.is_some()
+    }
 }
 
 #[derive(Debug, Args)]
-struct MachineStartCommand {}
+struct MachineCpCommand {
+    /// Suppress copy status output.
+    #[arg(short = 'q', long)]
+    quiet: bool,
 
-#[derive(Debug, Args)]
-struct MachineStopCommand {}
+    /// Source path.
+    #[arg(value_name = "SRC_PATH")]
+    src_path: String,
 
-#[derive(Debug, Args)]
-struct MachineStatusCommand {}
+    /// Destination path.
+    #[arg(value_name = "DEST_PATH")]
+    dest_path: String,
+}
 
 #[derive(Debug, Args)]
 struct MachineSshCommand {
@@ -248,8 +492,18 @@ struct MachineSshCommand {
     args: Vec<String>,
 }
 
-#[derive(Debug, Args)]
-struct MachineRmCommand {}
+#[derive(Debug, Args, Default)]
+struct MachineRmCommand {
+    /// Machine name.
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+}
+
+impl MachineRmCommand {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
+    }
+}
 
 #[derive(Debug, Args)]
 struct MachineApiCommand {
@@ -282,7 +536,7 @@ fn resolve_roots_for_command(command: &MachineCommand) -> Result<MachineRootLayo
 pub(crate) fn require_default_machine_api_client() -> Result<MachineApiClient, Error> {
     let roots = MachineRootLayout::resolve()?;
     let (paths, state) = with_default_machine_lock(&roots, || {
-        let (paths, _, state) = load_initialized_machine(&roots)?;
+        let (paths, _, state) = load_initialized_machine(&roots, DEFAULT_MACHINE_NAME)?;
         Ok((paths, state))
     })?;
     if !matches!(state.lifecycle, MachineLifecycle::Running) {
@@ -314,7 +568,8 @@ pub(crate) fn require_default_machine_api_client() -> Result<MachineApiClient, E
 pub(crate) fn ensure_default_machine_api_client_started() -> Result<MachineApiClient, Error> {
     let roots = MachineRootLayout::resolve()?;
     let paths = with_default_machine_lock(&roots, || {
-        let (paths, mut config, mut state) = load_initialized_machine(&roots)?;
+        let (paths, mut config, mut state) =
+            load_initialized_machine(&roots, DEFAULT_MACHINE_NAME)?;
         if !matches!(state.lifecycle, MachineLifecycle::Running) {
             paths.ensure_runtime_directories()?;
             start_machine(&paths, &mut config, &mut state)?;
@@ -347,99 +602,192 @@ async fn run_machine_command_with_layout(
 ) -> Result<(), Error> {
     match command.command {
         MachineSubcommand::Init(init) => {
-            with_default_machine_lock(roots, || run_machine_init(init, roots))
+            let machine_name = init.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_init(init, roots))
         }
         MachineSubcommand::Start(start) => {
-            with_default_machine_lock(roots, || run_machine_start(start, roots))
+            let machine_name = start.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_start(start, roots))
         }
         MachineSubcommand::Stop(stop) => {
-            with_default_machine_lock(roots, || run_machine_stop(stop, roots))
+            let machine_name = stop.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_stop(stop, roots))
         }
         MachineSubcommand::Status(status) => {
-            with_default_machine_lock(roots, || run_machine_status(status, roots))
+            let machine_name = status.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_status(status, roots))
+        }
+        MachineSubcommand::List(list) => run_machine_list(list, roots),
+        MachineSubcommand::Inspect(inspect) => {
+            let machine_name = inspect.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_inspect(inspect, roots))
+        }
+        MachineSubcommand::Set(set) => {
+            let machine_name = set.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_set(set, roots))
+        }
+        MachineSubcommand::Cp(copy) => {
+            let machine_name = resolve_machine_cp_target_name(&copy)?;
+            with_machine_lock(roots, &machine_name, || run_machine_cp(copy, roots))
         }
         MachineSubcommand::Ssh(ssh) => {
-            with_default_machine_lock(roots, || run_machine_ssh(ssh, roots))
+            let machine_name = resolve_machine_ssh_target_name(&ssh, roots)?.to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_ssh(ssh, roots))
         }
         MachineSubcommand::Rm(remove) => {
-            with_default_machine_lock(roots, || run_machine_rm(remove, roots))
+            let machine_name = remove.name().to_owned();
+            with_machine_lock(roots, &machine_name, || run_machine_rm(remove, roots))
         }
         MachineSubcommand::Os(os) => with_default_machine_lock(roots, || run_machine_os(os, roots)),
         MachineSubcommand::Api(api) => api::run_machine_api_command(api, roots).await,
     }
 }
 
+fn machine_record_exists(roots: &MachineRootLayout, machine_name: &str) -> bool {
+    roots.paths(machine_name).config_path.exists()
+}
+
+fn resolve_machine_ssh_target(
+    command: &MachineSshCommand,
+    roots: &MachineRootLayout,
+) -> Result<(String, Vec<String>), Error> {
+    let Some(first_arg) = command.args.first() else {
+        return Ok((DEFAULT_MACHINE_NAME.to_owned(), Vec::new()));
+    };
+
+    if machine_record_exists(roots, first_arg) {
+        return Ok((first_arg.clone(), command.args[1..].to_vec()));
+    }
+
+    Ok((DEFAULT_MACHINE_NAME.to_owned(), command.args.clone()))
+}
+
+fn resolve_machine_ssh_target_name<'a>(
+    command: &'a MachineSshCommand,
+    roots: &'a MachineRootLayout,
+) -> Result<&'a str, Error> {
+    if let Some(first_arg) = command.args.first()
+        && machine_record_exists(roots, first_arg)
+    {
+        return Ok(first_arg.as_str());
+    }
+
+    Ok(DEFAULT_MACHINE_NAME)
+}
+
+fn resolve_machine_cp_target_name(command: &MachineCpCommand) -> Result<String, Error> {
+    Ok(resolve_machine_cp_transfer(&command.src_path, &command.dest_path)?.machine_name)
+}
+
 fn run_machine_init(command: MachineInitCommand, roots: &MachineRootLayout) -> Result<(), Error> {
-    let paths = roots.paths(DEFAULT_MACHINE_NAME);
+    let now = command.now;
+    let (paths, mut config, mut state) = initialize_machine_record(command, roots)?;
+
+    let result = if now {
+        paths.ensure_runtime_directories()?;
+        start_machine(&paths, &mut config, &mut state)?;
+        MachineCommandResult::InitializedAndStarted
+    } else {
+        MachineCommandResult::Initialized
+    };
+
+    print!(
+        "{}",
+        render_machine_view(result, &paths, Some(&config), Some(&state))?
+    );
+    Ok(())
+}
+
+fn initialize_machine_record(
+    command: MachineInitCommand,
+    roots: &MachineRootLayout,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    let machine_name = command.name().to_owned();
+    let paths = roots.paths(&machine_name);
     if paths.config_path.exists() {
         return Err(Error::AlreadyExists(format!(
             "machine '{}' is already initialized at {}",
-            DEFAULT_MACHINE_NAME,
+            machine_name,
             paths.config_path.display()
         )));
     }
 
     paths.ensure_directories()?;
+    let MachineInitCommand {
+        cpus,
+        memory_mib,
+        disk_gib,
+        image,
+        ssh_identity,
+        ignition_file,
+        efi_store,
+        volumes,
+        now: _,
+        name: _,
+    } = command;
     let config = MachineConfigRecord {
         version: CURRENT_MACHINE_CONFIG_VERSION,
-        name: DEFAULT_MACHINE_NAME.to_owned(),
+        name: machine_name,
         provider: MachineProvider::Krunkit,
         guest: MachineGuestConfig {
-            image_source: MachineImageSource::parse(&command.image)?,
+            image_source: MachineImageSource::parse(&image)?,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
-            ssh_identity_path: command.ssh_identity,
-            ignition_file_path: command.ignition_file,
-            efi_variable_store_path: command.efi_store,
+            ssh_identity_path: ssh_identity,
+            ignition_file_path: ignition_file,
+            efi_variable_store_path: efi_store,
         },
         resources: MachineResources {
-            cpus: command.cpus,
-            memory_mib: command.memory_mib,
-            disk_gib: command.disk_gib,
+            cpus,
+            memory_mib,
+            disk_gib,
         },
-        volumes: if command.volumes.is_empty() {
+        volumes: if volumes.is_empty() {
             default_machine_volumes()
         } else {
-            command.volumes
+            volumes
         },
         roots: roots.clone(),
     };
     let state = MachineStateRecord::initialized();
     write_json_file(&paths.config_path, &config)?;
     write_json_file(&paths.state_path, &state)?;
-
-    print!(
-        "{}",
-        render_machine_view(
-            MachineCommandResult::Initialized,
-            &paths,
-            Some(&config),
-            Some(&state)
-        )?
-    );
-    Ok(())
+    Ok((paths, config, state))
 }
 
-fn run_machine_start(
-    _command: MachineStartCommand,
-    roots: &MachineRootLayout,
-) -> Result<(), Error> {
-    let (paths, mut config, mut state) = load_initialized_machine(roots)?;
+fn run_machine_start(command: MachineStartCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let machine_name = command.name().to_owned();
+    let paths = roots.paths(&machine_name);
+    let (paths, mut config, mut state, created) = if paths.config_path.exists() {
+        if command.has_create_overrides() {
+            return Err(Error::AlreadyExists(format!(
+                "machine '{}' is already initialized at {}; `neovex machine start` only uses init flags when creating a new machine",
+                machine_name,
+                paths.config_path.display()
+            )));
+        }
+        let (paths, config, state) = load_initialized_machine(roots, &machine_name)?;
+        (paths, config, state, false)
+    } else {
+        let (paths, config, state) = initialize_machine_record(command.into_init_command(), roots)?;
+        (paths, config, state, true)
+    };
     paths.ensure_runtime_directories()?;
     start_machine(&paths, &mut config, &mut state)?;
+    let result = if created {
+        MachineCommandResult::InitializedAndStarted
+    } else {
+        MachineCommandResult::Started
+    };
     print!(
         "{}",
-        render_machine_view(
-            MachineCommandResult::Started,
-            &paths,
-            Some(&config),
-            Some(&state)
-        )?
+        render_machine_view(result, &paths, Some(&config), Some(&state))?
     );
     Ok(())
 }
 
-fn run_machine_stop(_command: MachineStopCommand, roots: &MachineRootLayout) -> Result<(), Error> {
-    let (paths, config, mut state) = load_initialized_machine(roots)?;
+fn run_machine_stop(command: MachineStopCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let machine_name = command.name().to_owned();
+    let (paths, config, mut state) = load_initialized_machine(roots, &machine_name)?;
     stop_machine(&paths, &config, &mut state)?;
     print!(
         "{}",
@@ -454,10 +802,10 @@ fn run_machine_stop(_command: MachineStopCommand, roots: &MachineRootLayout) -> 
 }
 
 fn run_machine_status(
-    _command: MachineStatusCommand,
+    command: MachineStatusCommand,
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
-    let paths = roots.paths(DEFAULT_MACHINE_NAME);
+    let paths = roots.paths(command.name());
     let config = load_machine_config_if_exists(&paths.config_path)?;
     let mut state = load_machine_state_if_exists(&paths.state_path)?;
     if let Some(state) = state.as_mut() {
@@ -470,13 +818,74 @@ fn run_machine_status(
     };
     print!(
         "{}",
-        render_machine_view(result, &paths, config.as_ref(), state.as_ref())?
+        render_machine_status_view(
+            result,
+            &paths,
+            config.as_ref(),
+            state.as_ref(),
+            command.format,
+            command.quiet
+        )?
     );
     Ok(())
 }
 
+fn run_machine_list(command: MachineListCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let machines = build_machine_list_entries(roots)?;
+    print!(
+        "{}",
+        render_machine_list_view(&machines, command.format, command.quiet)?
+    );
+    Ok(())
+}
+
+fn run_machine_inspect(
+    command: MachineInspectCommand,
+    roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    let machine_name = command.name().to_owned();
+    let (_paths, config, state) = load_initialized_machine(roots, &machine_name)?;
+    print!(
+        "{}",
+        render_machine_inspect_view(&config, &state, command.format)?
+    );
+    Ok(())
+}
+
+fn run_machine_cp(command: MachineCpCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let transfer = resolve_machine_cp_transfer(&command.src_path, &command.dest_path)?;
+    let (_paths, config, state) = load_initialized_machine(roots, &transfer.machine_name)?;
+
+    let mut scp = build_scp_command(
+        &config,
+        &state,
+        transfer.guest_is_src,
+        &transfer.machine_path,
+        &transfer.host_path,
+    )?;
+    if !command.quiet {
+        scp.stdout(Stdio::inherit());
+    }
+    scp.stderr(Stdio::inherit());
+
+    let status = scp
+        .status()
+        .map_err(|error| Error::Internal(format!("failed to start scp: {error}")))?;
+    if !status.success() {
+        return Err(Error::Internal(format!(
+            "scp exited unsuccessfully with status {status}"
+        )));
+    }
+
+    if !command.quiet {
+        println!("Copy successful");
+    }
+    Ok(())
+}
+
 fn run_machine_ssh(command: MachineSshCommand, roots: &MachineRootLayout) -> Result<(), Error> {
-    let (paths, config, mut state) = load_initialized_machine(roots)?;
+    let (machine_name, ssh_args) = resolve_machine_ssh_target(&command, roots)?;
+    let (paths, config, mut state) = load_initialized_machine(roots, &machine_name)?;
     refresh_machine_state(&paths, &mut state)?;
     write_json_file(&paths.state_path, &state)?;
 
@@ -484,7 +893,7 @@ fn run_machine_ssh(command: MachineSshCommand, roots: &MachineRootLayout) -> Res
     ssh.stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    ssh.args(command.args);
+    ssh.args(ssh_args);
 
     let status = ssh
         .status()
@@ -497,8 +906,50 @@ fn run_machine_ssh(command: MachineSshCommand, roots: &MachineRootLayout) -> Res
     )))
 }
 
-fn run_machine_rm(_command: MachineRmCommand, roots: &MachineRootLayout) -> Result<(), Error> {
-    let paths = roots.paths(DEFAULT_MACHINE_NAME);
+fn run_machine_set(command: MachineSetCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    if !command.has_changes() {
+        return Err(Error::InvalidInput(
+            "machine set requires at least one of `--cpus`, `--memory`, or `--disk-size`"
+                .to_owned(),
+        ));
+    }
+
+    let machine_name = command.name().to_owned();
+    let (paths, mut config, state) = load_initialized_machine(roots, &machine_name)?;
+    if state.lifecycle != MachineLifecycle::Stopped {
+        return Err(Error::Conflict(format!(
+            "machine '{}' is {} and must be stopped before applying `neovex machine set`",
+            machine_name,
+            state.lifecycle.as_str()
+        )));
+    }
+
+    if let Some(cpus) = command.cpus {
+        config.resources.cpus = cpus;
+    }
+    if let Some(memory_mib) = command.memory_mib {
+        config.resources.memory_mib = memory_mib;
+    }
+    if let Some(disk_gib) = command.disk_gib {
+        config.resources.disk_gib = disk_gib;
+    }
+    write_json_file(&paths.config_path, &config)?;
+
+    print!(
+        "{}",
+        render_machine_view(
+            MachineCommandResult::Updated,
+            &paths,
+            Some(&config),
+            Some(&state)
+        )?
+    );
+    Ok(())
+}
+
+fn run_machine_rm(command: MachineRmCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let machine_name = command.name().to_owned();
+    let paths = roots.paths(&machine_name);
     let config = load_machine_config_if_exists(&paths.config_path)?;
     let state = load_machine_state_if_exists(&paths.state_path)?;
 
@@ -510,12 +961,12 @@ fn run_machine_rm(_command: MachineRmCommand, roots: &MachineRootLayout) -> Resu
     {
         return Err(Error::Conflict(format!(
             "machine '{}' is {} and cannot be removed safely",
-            DEFAULT_MACHINE_NAME,
+            machine_name,
             state.lifecycle.as_str()
         )));
     }
 
-    release_machine_ssh_port(roots, DEFAULT_MACHINE_NAME)?;
+    release_machine_ssh_port(roots, &machine_name)?;
     remove_dir_if_exists(&paths.config_dir)?;
     remove_dir_if_exists(&paths.state_dir)?;
     remove_dir_if_exists(&paths.data_dir)?;
@@ -545,7 +996,7 @@ fn run_machine_os_apply(
     command: MachineOsApplyCommand,
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
-    let (paths, mut config, mut state) = load_initialized_machine(roots)?;
+    let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
     let target_source = parse_machine_os_apply_source(&command.image)?;
     let outcome = apply_machine_os_change(
         &paths,
@@ -571,7 +1022,7 @@ fn run_machine_os_upgrade(
     command: MachineOsUpgradeCommand,
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
-    let (paths, mut config, mut state) = load_initialized_machine(roots)?;
+    let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
     let plan = plan_machine_os_upgrade(&config)?;
     if command.dry_run || !plan.update_available {
         let result = if plan.update_available {
@@ -611,12 +1062,13 @@ fn run_machine_os_upgrade(
 
 fn load_initialized_machine(
     roots: &MachineRootLayout,
+    machine_name: &str,
 ) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
-    let paths = roots.paths(DEFAULT_MACHINE_NAME);
+    let paths = roots.paths(machine_name);
     let config = load_machine_config_if_exists(&paths.config_path)?.ok_or_else(|| {
         Error::InvalidInput(format!(
-            "machine '{}' is not initialized; run `neovex machine init` first",
-            DEFAULT_MACHINE_NAME
+            "machine '{}' is not initialized; run `neovex machine start` to create it with defaults or `neovex machine init` to configure it first",
+            machine_name
         ))
     })?;
     let mut state = load_machine_state_if_exists(&paths.state_path)?
@@ -867,6 +1319,40 @@ fn render_machine_view(
     config: Option<&MachineConfigRecord>,
     state: Option<&MachineStateRecord>,
 ) -> Result<String, Error> {
+    let view = build_machine_status_view(result, paths, config, state);
+    serde_yaml::to_string(&view)
+        .map_err(|error| Error::Internal(format!("failed to serialize machine status: {error}")))
+}
+
+fn render_machine_status_view(
+    result: MachineCommandResult,
+    paths: &MachinePaths,
+    config: Option<&MachineConfigRecord>,
+    state: Option<&MachineStateRecord>,
+    format: MachineStatusOutputFormat,
+    quiet: bool,
+) -> Result<String, Error> {
+    let view = build_machine_status_view(result, paths, config, state);
+    if quiet {
+        return Ok(format!("{}\n", view.name));
+    }
+    match format {
+        MachineStatusOutputFormat::Json => serde_json::to_string_pretty(&view).map_err(|error| {
+            Error::Internal(format!("failed to serialize machine status: {error}"))
+        }),
+        MachineStatusOutputFormat::Yaml => serde_yaml::to_string(&view).map_err(|error| {
+            Error::Internal(format!("failed to serialize machine status: {error}"))
+        }),
+        MachineStatusOutputFormat::Table => Ok(render_machine_status_table(&view)),
+    }
+}
+
+fn build_machine_status_view(
+    result: MachineCommandResult,
+    paths: &MachinePaths,
+    config: Option<&MachineConfigRecord>,
+    state: Option<&MachineStateRecord>,
+) -> MachineStatusView {
     let machine_image_contract = config.map(|config| {
         let desired_source = desired_machine_image_source(config);
         let configured_image = describe_machine_image_source(&config.guest.image_source);
@@ -908,10 +1394,10 @@ fn render_machine_view(
             rebuild_reason,
         }
     });
-    let view = MachineStatusView {
+    MachineStatusView {
         result,
         initialized: config.is_some(),
-        name: DEFAULT_MACHINE_NAME.to_owned(),
+        name: paths.name.clone(),
         lifecycle: state
             .map(|state| state.lifecycle)
             .unwrap_or(MachineLifecycle::Uninitialized),
@@ -931,9 +1417,268 @@ fn render_machine_view(
         machine_api: machine_api_status_view(paths, config),
         guest_binary_contract: guest_binary_status_view(paths, config, state),
         last_error: state.and_then(|state| state.last_error.clone()),
+    }
+}
+
+fn render_machine_status_table(view: &MachineStatusView) -> String {
+    let provider = view
+        .provider
+        .map(|provider| provider.as_str().to_owned())
+        .unwrap_or_else(|| "-".to_owned());
+    let (cpus, memory_mib, disk_gib) = view
+        .resources
+        .map(|resources| {
+            (
+                resources.cpus.to_string(),
+                resources.memory_mib.to_string(),
+                resources.disk_gib.to_string(),
+            )
+        })
+        .unwrap_or_else(|| ("-".to_owned(), "-".to_owned(), "-".to_owned()));
+    let api = if view.machine_api.reachable {
+        "reachable"
+    } else {
+        "unreachable"
     };
-    serde_yaml::to_string(&view)
-        .map_err(|error| Error::Internal(format!("failed to serialize machine status: {error}")))
+
+    format!(
+        "{:<18} {:<14} {:<17} {:<10} {:>4} {:>12} {:>10} {:<11}\n{:<18} {:<14} {:<17} {:<10} {:>4} {:>12} {:>10} {:<11}\n",
+        "NAME",
+        "LIFECYCLE",
+        "MANAGER",
+        "PROVIDER",
+        "CPUS",
+        "MEMORY(MiB)",
+        "DISK(GiB)",
+        "API",
+        view.name,
+        view.lifecycle.as_str(),
+        view.manager.as_str(),
+        provider,
+        cpus,
+        memory_mib,
+        disk_gib,
+        api,
+    )
+}
+
+fn build_machine_list_entries(
+    roots: &MachineRootLayout,
+) -> Result<Vec<MachineListEntryView>, Error> {
+    let mut entries = Vec::new();
+    for machine_name in initialized_machine_names(roots)? {
+        let entry = with_machine_lock(roots, &machine_name, || {
+            let paths = roots.paths(&machine_name);
+            let Some(config) = load_machine_config_if_exists(&paths.config_path)? else {
+                return Ok(None);
+            };
+            let mut state = load_machine_state_if_exists(&paths.state_path)?
+                .unwrap_or_else(MachineStateRecord::initialized);
+            refresh_machine_state(&paths, &mut state)?;
+            write_json_file(&paths.state_path, &state)?;
+            Ok(Some(MachineListEntryView {
+                name: machine_name.clone(),
+                lifecycle: state.lifecycle,
+                provider: config.provider,
+                cpus: config.resources.cpus,
+                memory_mib: config.resources.memory_mib,
+                disk_gib: config.resources.disk_gib,
+            }))
+        })?;
+        if let Some(entry) = entry {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+fn initialized_machine_names(roots: &MachineRootLayout) -> Result<Vec<String>, Error> {
+    let mut names = Vec::new();
+    let entries = match fs::read_dir(&roots.config_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(names),
+        Err(error) => {
+            return Err(Error::Internal(format!(
+                "failed to read machine config root {}: {error}",
+                roots.config_root.display()
+            )));
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error::Internal(format!(
+                "failed to read machine config root entry under {}: {error}",
+                roots.config_root.display()
+            ))
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            Error::Internal(format!(
+                "failed to inspect machine config root entry {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if roots.paths(&name).config_path.is_file() {
+            names.push(name);
+        }
+    }
+
+    names.sort();
+    Ok(names)
+}
+
+fn render_machine_list_view(
+    machines: &[MachineListEntryView],
+    format: MachineListOutputFormat,
+    quiet: bool,
+) -> Result<String, Error> {
+    if quiet {
+        return Ok(render_machine_list_quiet(machines));
+    }
+
+    match format {
+        MachineListOutputFormat::Json => serde_json::to_string_pretty(machines)
+            .map_err(|error| Error::Internal(format!("failed to serialize machine list: {error}"))),
+        MachineListOutputFormat::Table => Ok(render_machine_list_table(machines)),
+    }
+}
+
+fn render_machine_list_quiet(machines: &[MachineListEntryView]) -> String {
+    if machines.is_empty() {
+        return String::new();
+    }
+
+    let mut rendered = machines
+        .iter()
+        .map(|machine| machine.name.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    rendered.push('\n');
+    rendered
+}
+
+fn render_machine_list_table(machines: &[MachineListEntryView]) -> String {
+    let mut rendered =
+        String::from("NAME               LIFECYCLE      PROVIDER   CPUS  MEMORY(MiB)  DISK(GiB)\n");
+    for machine in machines {
+        rendered.push_str(&format!(
+            "{:<18} {:<14} {:<10} {:>4} {:>12} {:>10}\n",
+            machine.name,
+            machine.lifecycle.as_str(),
+            machine.provider.as_str(),
+            machine.cpus,
+            machine.memory_mib,
+            machine.disk_gib,
+        ));
+    }
+    rendered
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MachineCpEndpoint {
+    Host(String),
+    Machine { name: String, path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MachineCpTransfer {
+    machine_name: String,
+    machine_path: String,
+    host_path: String,
+    guest_is_src: bool,
+}
+
+fn resolve_machine_cp_transfer(
+    src_path: &str,
+    dest_path: &str,
+) -> Result<MachineCpTransfer, Error> {
+    let src = parse_machine_cp_endpoint(src_path)?;
+    let dest = parse_machine_cp_endpoint(dest_path)?;
+
+    match (src, dest) {
+        (MachineCpEndpoint::Machine { name, path }, MachineCpEndpoint::Host(host_path)) => {
+            Ok(MachineCpTransfer {
+                machine_name: name,
+                machine_path: path,
+                host_path,
+                guest_is_src: true,
+            })
+        }
+        (MachineCpEndpoint::Host(host_path), MachineCpEndpoint::Machine { name, path }) => {
+            Ok(MachineCpTransfer {
+                machine_name: name,
+                machine_path: path,
+                host_path,
+                guest_is_src: false,
+            })
+        }
+        (MachineCpEndpoint::Machine { .. }, MachineCpEndpoint::Machine { .. }) => Err(
+            Error::InvalidInput("copying between two machines is unsupported".to_owned()),
+        ),
+        (MachineCpEndpoint::Host(_), MachineCpEndpoint::Host(_)) => Err(Error::InvalidInput(
+            "a machine name must prefix either the source path or destination path".to_owned(),
+        )),
+    }
+}
+
+fn parse_machine_cp_endpoint(value: &str) -> Result<MachineCpEndpoint, Error> {
+    if looks_like_windows_host_path(value) {
+        return Ok(MachineCpEndpoint::Host(value.to_owned()));
+    }
+
+    let Some((name, path)) = value.split_once(':') else {
+        return Ok(MachineCpEndpoint::Host(value.to_owned()));
+    };
+    if name.is_empty() {
+        return Ok(MachineCpEndpoint::Host(value.to_owned()));
+    }
+    if path.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "machine copy path '{}' is invalid; expected <machine>:<path>",
+            value
+        )));
+    }
+
+    Ok(MachineCpEndpoint::Machine {
+        name: name.to_owned(),
+        path: path.to_owned(),
+    })
+}
+
+fn looks_like_windows_host_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+}
+
+fn render_machine_inspect_view(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+    format: MachineInspectOutputFormat,
+) -> Result<String, Error> {
+    let view = MachineInspectView {
+        config: config.clone(),
+        state: state.clone(),
+    };
+    match format {
+        MachineInspectOutputFormat::Json => serde_json::to_string_pretty(&view).map_err(|error| {
+            Error::Internal(format!(
+                "failed to serialize machine inspect output: {error}"
+            ))
+        }),
+        MachineInspectOutputFormat::Yaml => serde_yaml::to_string(&view).map_err(|error| {
+            Error::Internal(format!(
+                "failed to serialize machine inspect output: {error}"
+            ))
+        }),
+    }
 }
 
 fn render_machine_os_apply_view(
@@ -1371,12 +2116,20 @@ struct MachineRecordLock {
     _file: fs::File,
 }
 
+fn with_machine_lock<T>(
+    roots: &MachineRootLayout,
+    machine_name: &str,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    let _lock = lock_machine_records(roots, machine_name)?;
+    operation()
+}
+
 fn with_default_machine_lock<T>(
     roots: &MachineRootLayout,
     operation: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
-    let _lock = lock_machine_records(roots, DEFAULT_MACHINE_NAME)?;
-    operation()
+    with_machine_lock(roots, DEFAULT_MACHINE_NAME, operation)
 }
 
 fn lock_machine_records(
@@ -1800,6 +2553,13 @@ const WSL2_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderC
 };
 
 impl MachineProvider {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Krunkit => "krunkit",
+            Self::Wsl2 => "wsl2",
+        }
+    }
+
     #[cfg(any(unix, test))]
     fn capabilities(self) -> MachineProviderCapabilities {
         match self {
@@ -1867,12 +2627,27 @@ enum MachineManagerState {
     Stale,
 }
 
+impl MachineManagerState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unconfigured => "unconfigured",
+            Self::HelpersResolved => "helpers-resolved",
+            Self::Launching => "launching",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+            Self::Stale => "stale",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum MachineCommandResult {
     Initialized,
+    InitializedAndStarted,
     Started,
     Status,
+    Updated,
     Stopped,
     Removed,
     Uninitialized,
@@ -1914,6 +2689,22 @@ struct MachineStatusView {
     machine_api: MachineApiStatusView,
     guest_binary_contract: Option<MachineGuestBinaryStatusView>,
     last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineListEntryView {
+    name: String,
+    lifecycle: MachineLifecycle,
+    provider: MachineProvider,
+    cpus: u8,
+    memory_mib: u32,
+    disk_gib: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineInspectView {
+    config: MachineConfigRecord,
+    state: MachineStateRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2087,7 +2878,7 @@ mod tests {
 
     use super::*;
     use crate::machine::manager::MachineHelperEnvGuard;
-    use clap::Parser;
+    use clap::{Parser, error::ErrorKind};
     use tempfile::TempDir;
 
     #[derive(Debug, Parser)]
@@ -2219,12 +3010,18 @@ mod tests {
             "init",
             "--cpus",
             "4",
-            "--memory-mib",
+            "--memory",
             "4096",
-            "--disk-gib",
+            "--disk-size",
             "40",
             "--image",
             "docker://ghcr.io/agentstation/neovex-machine-os:test",
+            "--identity",
+            "/tmp/neovex-test-ed25519",
+            "--ignition-path",
+            "/tmp/neovex-test.ign",
+            "--firmware",
+            "/tmp/neovex-test.efi",
             "--volume",
             "/Users:/Users",
         ]);
@@ -2241,9 +3038,15 @@ mod tests {
                     init.image,
                     "docker://ghcr.io/agentstation/neovex-machine-os:test"
                 );
-                assert_eq!(init.ssh_identity, None);
-                assert_eq!(init.ignition_file, None);
-                assert_eq!(init.efi_store, None);
+                assert_eq!(
+                    init.ssh_identity,
+                    Some(PathBuf::from("/tmp/neovex-test-ed25519"))
+                );
+                assert_eq!(
+                    init.ignition_file,
+                    Some(PathBuf::from("/tmp/neovex-test.ign"))
+                );
+                assert_eq!(init.efi_store, Some(PathBuf::from("/tmp/neovex-test.efi")));
                 assert_eq!(
                     init.volumes,
                     vec![MachineVolume {
@@ -2257,13 +3060,502 @@ mod tests {
     }
 
     #[test]
+    fn machine_init_accepts_short_flag_aliases() {
+        let cli = RootCli::parse_from([
+            "neovex",
+            "machine",
+            "init",
+            "-c",
+            "4",
+            "-m",
+            "4096",
+            "-d",
+            "40",
+            "-v",
+            "/Users:/Users",
+        ]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine subcommand should parse");
+        };
+
+        match machine.command {
+            MachineSubcommand::Init(init) => {
+                assert_eq!(init.cpus, 4);
+                assert_eq!(init.memory_mib, 4096);
+                assert_eq!(init.disk_gib, 40);
+                assert_eq!(
+                    init.volumes,
+                    vec![MachineVolume {
+                        source: PathBuf::from("/Users"),
+                        target: PathBuf::from("/Users"),
+                    }]
+                );
+            }
+            _ => panic!("expected init subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_init_rejects_legacy_flag_names() {
+        for legacy_flag in [
+            "--ssh-identity",
+            "--ignition-file",
+            "--efi-store",
+            "--memory-mib",
+            "--disk-gib",
+        ] {
+            let error =
+                RootCli::try_parse_from(["neovex", "machine", "init", legacy_flag, "value"])
+                    .expect_err("legacy flag should be rejected");
+            assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+            let rendered = error.to_string();
+            assert!(rendered.contains(legacy_flag));
+            assert!(rendered.contains("unexpected argument"));
+        }
+    }
+
+    #[test]
+    fn machine_init_parses_now_flag() {
+        let cli = RootCli::parse_from(["neovex", "machine", "init", "--now"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine init should parse");
+        };
+
+        match machine.command {
+            MachineSubcommand::Init(init) => assert!(init.now),
+            _ => panic!("expected init subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_start_parses_create_if_missing_overrides() {
+        let cli = RootCli::parse_from([
+            "neovex",
+            "machine",
+            "start",
+            "-c",
+            "4",
+            "--memory",
+            "4096",
+            "--disk-size",
+            "40",
+            "--image",
+            "docker://ghcr.io/agentstation/neovex-machine-os:test",
+            "--identity",
+            "/tmp/neovex-test-ed25519",
+            "--ignition-path",
+            "/tmp/neovex-test.ign",
+            "--firmware",
+            "/tmp/neovex-test.efi",
+            "-v",
+            "/Users:/Users",
+        ]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine start should parse");
+        };
+
+        match machine.command {
+            MachineSubcommand::Start(start) => {
+                assert_eq!(start.cpus, Some(4));
+                assert_eq!(start.memory_mib, Some(4096));
+                assert_eq!(start.disk_gib, Some(40));
+                assert_eq!(
+                    start.image,
+                    Some("docker://ghcr.io/agentstation/neovex-machine-os:test".to_owned())
+                );
+                assert_eq!(
+                    start.ssh_identity,
+                    Some(PathBuf::from("/tmp/neovex-test-ed25519"))
+                );
+                assert_eq!(
+                    start.ignition_file,
+                    Some(PathBuf::from("/tmp/neovex-test.ign"))
+                );
+                assert_eq!(start.efi_store, Some(PathBuf::from("/tmp/neovex-test.efi")));
+                assert_eq!(
+                    start.volumes,
+                    vec![MachineVolume {
+                        source: PathBuf::from("/Users"),
+                        target: PathBuf::from("/Users"),
+                    }]
+                );
+            }
+            _ => panic!("expected start subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_lifecycle_subcommands_accept_optional_name_positionals() {
+        let cli = RootCli::parse_from(["neovex", "machine", "init", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine init should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Init(init) => assert_eq!(init.name.as_deref(), Some("team-a")),
+            _ => panic!("expected init subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "start", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine start should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Start(start) => assert_eq!(start.name.as_deref(), Some("team-a")),
+            _ => panic!("expected start subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "stop", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine stop should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Stop(stop) => assert_eq!(stop.name.as_deref(), Some("team-a")),
+            _ => panic!("expected stop subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "status", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine status should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Status(status) => {
+                assert_eq!(status.name.as_deref(), Some("team-a"))
+            }
+            _ => panic!("expected status subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "inspect", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine inspect should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Inspect(inspect) => {
+                assert_eq!(inspect.name.as_deref(), Some("team-a"))
+            }
+            _ => panic!("expected inspect subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "set", "--cpus", "4", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine set should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Set(set) => {
+                assert_eq!(set.cpus, Some(4));
+                assert_eq!(set.name.as_deref(), Some("team-a"));
+            }
+            _ => panic!("expected set subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "rm", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine rm should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Rm(remove) => assert_eq!(remove.name.as_deref(), Some("team-a")),
+            _ => panic!("expected rm subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_status_defaults_to_table_output_format() {
+        let cli = RootCli::parse_from(["neovex", "machine", "status"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine status should parse");
+        };
+
+        match machine.command {
+            MachineSubcommand::Status(status) => {
+                assert!(!status.quiet);
+                assert_eq!(status.format, MachineStatusOutputFormat::Table);
+                assert_eq!(status.name.as_deref(), None);
+            }
+            _ => panic!("expected status subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_status_accepts_json_and_yaml_output_formats() {
+        for (format_value, expected) in [
+            ("json", MachineStatusOutputFormat::Json),
+            ("yaml", MachineStatusOutputFormat::Yaml),
+            ("table", MachineStatusOutputFormat::Table),
+        ] {
+            let cli =
+                RootCli::parse_from(["neovex", "machine", "status", "--format", format_value]);
+            let Some(RootCommand::Machine(machine)) = cli.command else {
+                panic!("machine status should parse");
+            };
+
+            match machine.command {
+                MachineSubcommand::Status(status) => assert_eq!(status.format, expected),
+                _ => panic!("expected status subcommand"),
+            }
+        }
+    }
+
+    #[test]
+    fn machine_status_accepts_quiet_mode() {
+        let cli = RootCli::parse_from(["neovex", "machine", "status", "--quiet", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine status should parse");
+        };
+
+        match machine.command {
+            MachineSubcommand::Status(status) => {
+                assert!(status.quiet);
+                assert_eq!(status.name.as_deref(), Some("team-a"));
+            }
+            _ => panic!("expected status subcommand"),
+        }
+    }
+
+    #[test]
     fn parses_machine_lifecycle_subcommands() {
-        for command in ["start", "stop", "status", "rm"] {
+        for command in ["start", "stop", "status", "list", "inspect", "rm"] {
             let cli = RootCli::parse_from(["neovex", "machine", command]);
             let Some(RootCommand::Machine(_)) = cli.command else {
                 panic!("machine {command} should parse");
             };
         }
+    }
+
+    #[test]
+    fn machine_help_uses_user_facing_descriptions() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Initialize a new machine"));
+        assert!(rendered.contains("Start a machine, creating it if needed"));
+        assert!(rendered.contains("Stop a running machine"));
+        assert!(rendered.contains("Display machine status"));
+        assert!(rendered.contains("List initialized machines"));
+        assert!(rendered.contains("Inspect a machine record"));
+        assert!(rendered.contains("Update a stopped machine"));
+        assert!(rendered.contains("Securely copy files between the host and a machine"));
+        assert!(rendered.contains("Log in to a machine using SSH"));
+        assert!(rendered.contains("Remove an existing machine"));
+        assert!(rendered.contains("Manage machine OS images"));
+        assert!(!rendered.contains("Validate persisted machine state"));
+        assert!(!rendered.contains("runtime roots"));
+    }
+
+    #[test]
+    fn machine_os_help_uses_user_facing_descriptions() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "os", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Use a specific machine OS image on the next boot"));
+        assert!(
+            rendered.contains("Switch to the supported machine OS image for this neovex release")
+        );
+        assert!(!rendered.contains("supported image that matches this neovex host version"));
+    }
+
+    #[test]
+    fn machine_init_help_uses_user_facing_flag_descriptions() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "init", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("--now"));
+        assert!(rendered.contains("--cpus"));
+        assert!(rendered.contains("-c"));
+        assert!(rendered.contains("--memory"));
+        assert!(rendered.contains("-m"));
+        assert!(rendered.contains("--disk-size"));
+        assert!(rendered.contains("-d"));
+        assert!(rendered.contains("--identity"));
+        assert!(rendered.contains("--ignition-path"));
+        assert!(rendered.contains("--firmware"));
+        assert!(rendered.contains("--volume"));
+        assert!(rendered.contains("-v"));
+        assert!(rendered.contains("Number of CPUs"));
+        assert!(rendered.contains("Memory in MiB"));
+        assert!(rendered.contains("Disk size in GiB"));
+        assert!(rendered.contains("Machine OS image"));
+        assert!(rendered.contains("Path to SSH identity for guest access"));
+        assert!(rendered.contains("Path to Ignition config file"));
+        assert!(rendered.contains("Path to EFI variable store"));
+        assert!(rendered.contains("Host:guest volume mount"));
+        assert!(!rendered.contains("to record in the machine config"));
+        assert!(!rendered.contains("future virtiofs setup"));
+        assert!(!rendered.contains("bootstrap vsock channel"));
+        assert!(!rendered.contains("--ssh-identity"));
+        assert!(!rendered.contains("--ignition-file"));
+        assert!(!rendered.contains("--efi-store"));
+        assert!(!rendered.contains("--memory-mib"));
+        assert!(!rendered.contains("--disk-gib"));
+    }
+
+    #[test]
+    fn machine_start_help_describes_create_if_missing_overrides() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "start", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Start a machine, creating it if needed"));
+        assert!(rendered.contains("Number of CPUs to use if start creates the machine"));
+        assert!(rendered.contains("Machine OS image to use if start creates the machine"));
+        assert!(
+            rendered.contains("Path to SSH identity for guest access if start creates the machine")
+        );
+        assert!(rendered.contains("--memory"));
+        assert!(rendered.contains("--disk-size"));
+        assert!(rendered.contains("--identity"));
+        assert!(rendered.contains("--ignition-path"));
+        assert!(rendered.contains("--firmware"));
+        assert!(rendered.contains("--volume"));
+    }
+
+    #[test]
+    fn machine_status_help_describes_output_formats() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "status", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("--format"));
+        assert!(rendered.contains("--quiet"));
+        assert!(rendered.contains("-q"));
+        assert!(rendered.contains("json"));
+        assert!(rendered.contains("yaml"));
+        assert!(rendered.contains("table"));
+        assert!(rendered.contains("[default: table]"));
+    }
+
+    #[test]
+    fn machine_list_parses_alias_formats_and_quiet_mode() {
+        let cli = RootCli::parse_from(["neovex", "machine", "list"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine list should parse");
+        };
+        match machine.command {
+            MachineSubcommand::List(list) => {
+                assert_eq!(list.format, MachineListOutputFormat::Table);
+                assert!(!list.quiet);
+            }
+            _ => panic!("expected list subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "ls", "--format", "json", "--quiet"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine ls should parse");
+        };
+        match machine.command {
+            MachineSubcommand::List(list) => {
+                assert_eq!(list.format, MachineListOutputFormat::Json);
+                assert!(list.quiet);
+            }
+            _ => panic!("expected list subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_list_help_describes_formats_and_quiet_mode() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "list", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("List initialized machines"));
+        assert!(rendered.contains("--format"));
+        assert!(rendered.contains("json"));
+        assert!(rendered.contains("table"));
+        assert!(rendered.contains("--quiet"));
+        assert!(rendered.contains("-q"));
+    }
+
+    #[test]
+    fn machine_inspect_defaults_to_json_and_accepts_yaml() {
+        let cli = RootCli::parse_from(["neovex", "machine", "inspect"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine inspect should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Inspect(inspect) => {
+                assert_eq!(inspect.format, MachineInspectOutputFormat::Json);
+                assert_eq!(inspect.name.as_deref(), None);
+            }
+            _ => panic!("expected inspect subcommand"),
+        }
+
+        let cli =
+            RootCli::parse_from(["neovex", "machine", "inspect", "--format", "yaml", "team-a"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine inspect with yaml should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Inspect(inspect) => {
+                assert_eq!(inspect.format, MachineInspectOutputFormat::Yaml);
+                assert_eq!(inspect.name.as_deref(), Some("team-a"));
+            }
+            _ => panic!("expected inspect subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_inspect_help_describes_output_formats() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "inspect", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Inspect a machine record"));
+        assert!(rendered.contains("--format"));
+        assert!(rendered.contains("json"));
+        assert!(rendered.contains("yaml"));
+        assert!(rendered.contains("[default: json]"));
+    }
+
+    #[test]
+    fn machine_cp_parses_paths_and_quiet_mode() {
+        let cli = RootCli::parse_from([
+            "neovex",
+            "machine",
+            "cp",
+            "--quiet",
+            "./local.txt",
+            "default:/tmp/remote.txt",
+        ]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine cp should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Cp(copy) => {
+                assert!(copy.quiet);
+                assert_eq!(copy.src_path, "./local.txt");
+                assert_eq!(copy.dest_path, "default:/tmp/remote.txt");
+            }
+            _ => panic!("expected cp subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_cp_help_describes_machine_prefixed_paths() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "cp", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Securely copy files between the host and a machine"));
+        assert!(rendered.contains("SRC_PATH"));
+        assert!(rendered.contains("DEST_PATH"));
+        assert!(rendered.contains("--quiet"));
+        assert!(rendered.contains("-q"));
+    }
+
+    #[test]
+    fn machine_set_help_describes_resource_flags() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "set", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Update a stopped machine"));
+        assert!(rendered.contains("--cpus"));
+        assert!(rendered.contains("--memory"));
+        assert!(rendered.contains("--disk-size"));
+        assert!(rendered.contains("Number of CPUs"));
+        assert!(rendered.contains("Memory in MiB"));
+        assert!(rendered.contains("Disk size in GiB"));
     }
 
     #[test]
@@ -2326,6 +3618,71 @@ mod tests {
             }
             _ => panic!("expected ssh subcommand"),
         }
+    }
+
+    #[test]
+    fn machine_ssh_prefers_existing_machine_name_before_guest_command() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+        paths.ensure_directories().expect("paths should exist");
+        write_json_file(
+            &paths.config_path,
+            &MachineConfigRecord {
+                version: CURRENT_MACHINE_CONFIG_VERSION,
+                name: "team-a".to_owned(),
+                provider: MachineProvider::Krunkit,
+                guest: MachineGuestConfig {
+                    image_source: MachineImageSource::parse(&default_machine_image())
+                        .expect("default image should parse"),
+                    ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                    ssh_identity_path: None,
+                    ignition_file_path: None,
+                    efi_variable_store_path: None,
+                },
+                resources: MachineResources {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                },
+                volumes: Vec::new(),
+                roots: layout.clone(),
+            },
+        )
+        .expect("config should write");
+
+        let ssh = MachineSshCommand {
+            args: vec!["team-a".to_owned(), "uname".to_owned(), "-a".to_owned()],
+        };
+
+        let (machine_name, args) =
+            resolve_machine_ssh_target(&ssh, &layout).expect("ssh target should resolve");
+
+        assert_eq!(machine_name, "team-a");
+        assert_eq!(args, vec!["uname", "-a"]);
+    }
+
+    #[test]
+    fn machine_ssh_treats_unknown_first_arg_as_guest_command() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let ssh = MachineSshCommand {
+            args: vec!["uname".to_owned(), "-a".to_owned()],
+        };
+
+        let (machine_name, args) =
+            resolve_machine_ssh_target(&ssh, &layout).expect("ssh target should resolve");
+
+        assert_eq!(machine_name, DEFAULT_MACHINE_NAME);
+        assert_eq!(args, vec!["uname", "-a"]);
     }
 
     #[test]
@@ -2459,6 +3816,8 @@ mod tests {
                         source: PathBuf::from("/Users"),
                         target: PathBuf::from("/Users"),
                     }],
+                    now: false,
+                    name: None,
                 }),
             },
             &layout,
@@ -2494,6 +3853,46 @@ mod tests {
         assert!(paths.image_cache_dir.exists());
         assert!(paths.guest_binary_cache_dir.exists());
         assert!(paths.runtime_dir.exists());
+    }
+
+    #[test]
+    fn machine_init_writes_named_machine_records() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: default_machine_image().to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                    now: false,
+                    name: Some("team-a".to_owned()),
+                }),
+            },
+            &layout,
+        )
+        .expect("named machine init should succeed");
+
+        let named_paths = layout.paths("team-a");
+        let default_paths = layout.paths(DEFAULT_MACHINE_NAME);
+        let config = read_json_file_if_exists::<MachineConfigRecord>(&named_paths.config_path)
+            .expect("named config should read")
+            .expect("named config should exist");
+
+        assert_eq!(config.name, "team-a");
+        assert!(named_paths.config_path.is_file());
+        assert!(named_paths.state_path.is_file());
+        assert!(!default_paths.config_path.exists());
     }
 
     #[test]
@@ -2535,6 +3934,8 @@ mod tests {
                     ignition_file: None,
                     efi_store: None,
                     volumes: Vec::new(),
+                    now: false,
+                    name: None,
                 }),
             },
             &layout,
@@ -2553,7 +3954,7 @@ mod tests {
 
         run_machine_command_for_test(
             MachineCommand {
-                command: MachineSubcommand::Rm(MachineRmCommand {}),
+                command: MachineSubcommand::Rm(MachineRmCommand { name: None }),
             },
             &layout,
         )
@@ -2575,6 +3976,211 @@ mod tests {
     }
 
     #[test]
+    fn machine_remove_only_deletes_requested_machine() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        for machine_name in [DEFAULT_MACHINE_NAME, "team-a"] {
+            run_machine_command_for_test(
+                MachineCommand {
+                    command: MachineSubcommand::Init(MachineInitCommand {
+                        cpus: DEFAULT_MACHINE_CPUS,
+                        memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                        disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                        image: default_machine_image().to_owned(),
+                        ssh_identity: None,
+                        ignition_file: None,
+                        efi_store: None,
+                        volumes: Vec::new(),
+                        now: false,
+                        name: Some(machine_name.to_owned()),
+                    }),
+                },
+                &layout,
+            )
+            .expect("machine init should succeed");
+        }
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Rm(MachineRmCommand {
+                    name: Some("team-a".to_owned()),
+                }),
+            },
+            &layout,
+        )
+        .expect("named machine rm should succeed");
+
+        assert!(layout.paths(DEFAULT_MACHINE_NAME).config_path.exists());
+        assert!(layout.paths(DEFAULT_MACHINE_NAME).state_path.exists());
+        assert!(!layout.paths("team-a").config_path.exists());
+        assert!(!layout.paths("team-a").state_path.exists());
+    }
+
+    #[test]
+    fn machine_set_updates_stopped_machine_config() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: default_machine_image().to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                    now: false,
+                    name: Some("team-a".to_owned()),
+                }),
+            },
+            &layout,
+        )
+        .expect("machine init should succeed");
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Set(MachineSetCommand {
+                    cpus: Some(4),
+                    memory_mib: Some(4096),
+                    disk_gib: Some(40),
+                    name: Some("team-a".to_owned()),
+                }),
+            },
+            &layout,
+        )
+        .expect("machine set should succeed");
+
+        let config =
+            read_json_file_if_exists::<MachineConfigRecord>(&layout.paths("team-a").config_path)
+                .expect("config should read")
+                .expect("config should exist");
+        assert_eq!(config.resources.cpus, 4);
+        assert_eq!(config.resources.memory_mib, 4096);
+        assert_eq!(config.resources.disk_gib, 40);
+    }
+
+    #[test]
+    fn machine_set_requires_at_least_one_resource_flag() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: default_machine_image().to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                    now: false,
+                    name: None,
+                }),
+            },
+            &layout,
+        )
+        .expect("machine init should succeed");
+
+        let error = run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Set(MachineSetCommand::default()),
+            },
+            &layout,
+        )
+        .expect_err("machine set without flags should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires at least one of `--cpus`, `--memory`, or `--disk-size`")
+        );
+    }
+
+    #[test]
+    fn machine_set_rejects_running_machine() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+        paths
+            .ensure_directories()
+            .expect("machine directories should exist");
+        write_json_file(
+            &paths.config_path,
+            &MachineConfigRecord {
+                version: CURRENT_MACHINE_CONFIG_VERSION,
+                name: "team-a".to_owned(),
+                provider: MachineProvider::Krunkit,
+                guest: MachineGuestConfig {
+                    image_source: MachineImageSource::parse(&default_machine_image())
+                        .expect("default image should parse"),
+                    ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                    ssh_identity_path: None,
+                    ignition_file_path: None,
+                    efi_variable_store_path: None,
+                },
+                resources: MachineResources {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                },
+                volumes: Vec::new(),
+                roots: layout.clone(),
+            },
+        )
+        .expect("config should write");
+        write_json_file(
+            &paths.state_path,
+            &MachineStateRecord {
+                version: CURRENT_MACHINE_STATE_VERSION,
+                lifecycle: MachineLifecycle::Running,
+                manager: MachineManagerState::Ready,
+                runtime: None,
+                last_error: None,
+            },
+        )
+        .expect("state should write");
+
+        let error = run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Set(MachineSetCommand {
+                    cpus: Some(4),
+                    memory_mib: None,
+                    disk_gib: None,
+                    name: Some("team-a".to_owned()),
+                }),
+            },
+            &layout,
+        )
+        .expect_err("machine set should reject running machine");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("machine 'team-a'"));
+        assert!(rendered.contains("must be stopped"));
+    }
+
+    #[test]
     fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let layout = MachineRootLayout::new(
@@ -2593,6 +4199,8 @@ mod tests {
                     ignition_file: None,
                     efi_store: None,
                     volumes: Vec::new(),
+                    now: false,
+                    name: None,
                 }),
             },
             &layout,
@@ -3010,6 +4618,456 @@ mod tests {
     }
 
     #[test]
+    fn machine_status_table_output_is_default_human_summary() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: "team-a".to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::parse(&default_machine_image())
+                    .expect("default image should parse"),
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: 4,
+                memory_mib: 4096,
+                disk_gib: 40,
+            },
+            volumes: Vec::new(),
+            roots: layout,
+        };
+        let state = MachineStateRecord {
+            version: CURRENT_MACHINE_STATE_VERSION,
+            lifecycle: MachineLifecycle::Running,
+            manager: MachineManagerState::Ready,
+            runtime: None,
+            last_error: None,
+        };
+
+        let rendered = render_machine_status_view(
+            MachineCommandResult::Status,
+            &paths,
+            Some(&config),
+            Some(&state),
+            MachineStatusOutputFormat::Table,
+            false,
+        )
+        .expect("table output should render");
+
+        assert!(rendered.contains("NAME"));
+        assert!(rendered.contains("LIFECYCLE"));
+        assert!(rendered.contains("MEMORY(MiB)"));
+        assert!(rendered.contains("team-a"));
+        assert!(rendered.contains("running"));
+        assert!(rendered.contains("krunkit"));
+        assert!(rendered.contains("4096"));
+        assert!(rendered.contains("reachable") || rendered.contains("unreachable"));
+        assert!(!rendered.contains("guest:"));
+    }
+
+    #[test]
+    fn machine_status_json_output_serializes_full_status_view() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: "team-a".to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::parse(&default_machine_image())
+                    .expect("default image should parse"),
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+            },
+            volumes: Vec::new(),
+            roots: layout,
+        };
+
+        let rendered = render_machine_status_view(
+            MachineCommandResult::Status,
+            &paths,
+            Some(&config),
+            Some(&MachineStateRecord::initialized()),
+            MachineStatusOutputFormat::Json,
+            false,
+        )
+        .expect("json output should render");
+        let json: serde_json::Value =
+            serde_json::from_str(&rendered).expect("status JSON should parse");
+
+        assert_eq!(json["name"], "team-a");
+        assert_eq!(json["result"], "status");
+        assert_eq!(json["provider"], "krunkit");
+        assert_eq!(json["resources"]["cpus"], DEFAULT_MACHINE_CPUS);
+        assert_eq!(json["initialized"], true);
+    }
+
+    #[test]
+    fn machine_status_yaml_output_serializes_full_status_view() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+
+        let rendered = render_machine_status_view(
+            MachineCommandResult::Uninitialized,
+            &paths,
+            None,
+            None,
+            MachineStatusOutputFormat::Yaml,
+            false,
+        )
+        .expect("yaml output should render");
+
+        assert!(rendered.contains("result: uninitialized"));
+        assert!(rendered.contains("name: team-a"));
+        assert!(rendered.contains("initialized: false"));
+    }
+
+    #[test]
+    fn machine_list_table_output_is_human_summary() {
+        let machines = vec![
+            MachineListEntryView {
+                name: "default".to_owned(),
+                lifecycle: MachineLifecycle::Stopped,
+                provider: MachineProvider::Krunkit,
+                cpus: 2,
+                memory_mib: 2048,
+                disk_gib: 20,
+            },
+            MachineListEntryView {
+                name: "team-a".to_owned(),
+                lifecycle: MachineLifecycle::Running,
+                provider: MachineProvider::Krunkit,
+                cpus: 4,
+                memory_mib: 4096,
+                disk_gib: 40,
+            },
+        ];
+
+        let rendered = render_machine_list_view(&machines, MachineListOutputFormat::Table, false)
+            .expect("table output should render");
+
+        assert!(rendered.contains("NAME"));
+        assert!(rendered.contains("LIFECYCLE"));
+        assert!(rendered.contains("PROVIDER"));
+        assert!(rendered.contains("MEMORY(MiB)"));
+        assert!(rendered.contains("default"));
+        assert!(rendered.contains("team-a"));
+        assert!(rendered.contains("running"));
+        assert!(!rendered.contains("\"name\""));
+    }
+
+    #[test]
+    fn machine_list_json_output_serializes_machine_summaries() {
+        let machines = vec![MachineListEntryView {
+            name: "team-a".to_owned(),
+            lifecycle: MachineLifecycle::Running,
+            provider: MachineProvider::Krunkit,
+            cpus: 4,
+            memory_mib: 4096,
+            disk_gib: 40,
+        }];
+
+        let rendered = render_machine_list_view(&machines, MachineListOutputFormat::Json, false)
+            .expect("json output should render");
+        let json: serde_json::Value =
+            serde_json::from_str(&rendered).expect("machine list JSON should parse");
+
+        assert_eq!(json[0]["name"], "team-a");
+        assert_eq!(json[0]["lifecycle"], "running");
+        assert_eq!(json[0]["provider"], "krunkit");
+        assert_eq!(json[0]["cpus"], 4);
+    }
+
+    #[test]
+    fn machine_list_quiet_output_prints_names_only() {
+        let machines = vec![
+            MachineListEntryView {
+                name: "default".to_owned(),
+                lifecycle: MachineLifecycle::Stopped,
+                provider: MachineProvider::Krunkit,
+                cpus: 2,
+                memory_mib: 2048,
+                disk_gib: 20,
+            },
+            MachineListEntryView {
+                name: "team-a".to_owned(),
+                lifecycle: MachineLifecycle::Running,
+                provider: MachineProvider::Krunkit,
+                cpus: 4,
+                memory_mib: 4096,
+                disk_gib: 40,
+            },
+        ];
+
+        let rendered = render_machine_list_view(&machines, MachineListOutputFormat::Table, true)
+            .expect("quiet output should render");
+
+        assert_eq!(rendered, "default\nteam-a\n");
+    }
+
+    #[test]
+    fn machine_list_scans_initialized_machine_records_in_sorted_order() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        for (name, cpus, memory_mib, disk_gib) in [
+            ("team-b", 6, 6144, 60),
+            ("default", 2, 2048, 20),
+            ("team-a", 4, 4096, 40),
+        ] {
+            let paths = layout.paths(name);
+            paths.ensure_directories().expect("paths should exist");
+            write_json_file(
+                &paths.config_path,
+                &MachineConfigRecord {
+                    version: CURRENT_MACHINE_CONFIG_VERSION,
+                    name: name.to_owned(),
+                    provider: MachineProvider::Krunkit,
+                    guest: MachineGuestConfig {
+                        image_source: MachineImageSource::parse(&default_machine_image())
+                            .expect("default image should parse"),
+                        ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                        ssh_identity_path: None,
+                        ignition_file_path: None,
+                        efi_variable_store_path: None,
+                    },
+                    resources: MachineResources {
+                        cpus,
+                        memory_mib,
+                        disk_gib,
+                    },
+                    volumes: Vec::new(),
+                    roots: layout.clone(),
+                },
+            )
+            .expect("config should write");
+            write_json_file(
+                &paths.state_path,
+                &MachineStateRecord {
+                    version: CURRENT_MACHINE_STATE_VERSION,
+                    lifecycle: MachineLifecycle::Stopped,
+                    manager: MachineManagerState::Unconfigured,
+                    runtime: None,
+                    last_error: None,
+                },
+            )
+            .expect("state should write");
+        }
+
+        let machines = build_machine_list_entries(&layout).expect("machine list should build");
+
+        assert_eq!(
+            machines
+                .iter()
+                .map(|machine| machine.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default", "team-a", "team-b"]
+        );
+        assert_eq!(machines[0].lifecycle, MachineLifecycle::Stopped);
+        assert_eq!(machines[1].cpus, 4);
+        assert_eq!(machines[2].disk_gib, 60);
+    }
+
+    #[test]
+    fn machine_cp_transfer_resolves_host_to_guest() {
+        let transfer = resolve_machine_cp_transfer("./local.txt", "team-a:/tmp/remote.txt")
+            .expect("host to guest transfer should parse");
+
+        assert_eq!(transfer.machine_name, "team-a");
+        assert_eq!(transfer.machine_path, "/tmp/remote.txt");
+        assert_eq!(transfer.host_path, "./local.txt");
+        assert!(!transfer.guest_is_src);
+    }
+
+    #[test]
+    fn machine_cp_transfer_resolves_guest_to_host() {
+        let transfer = resolve_machine_cp_transfer("team-a:/tmp/remote.txt", "./local.txt")
+            .expect("guest to host transfer should parse");
+
+        assert_eq!(transfer.machine_name, "team-a");
+        assert_eq!(transfer.machine_path, "/tmp/remote.txt");
+        assert_eq!(transfer.host_path, "./local.txt");
+        assert!(transfer.guest_is_src);
+    }
+
+    #[test]
+    fn machine_cp_transfer_rejects_invalid_endpoint_combinations() {
+        let error = resolve_machine_cp_transfer("./left", "./right")
+            .expect_err("host to host transfer should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("a machine name must prefix either the source path or destination path")
+        );
+
+        let error = resolve_machine_cp_transfer("one:/tmp/a", "two:/tmp/b")
+            .expect_err("machine to machine transfer should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("copying between two machines is unsupported")
+        );
+    }
+
+    #[test]
+    fn machine_cp_treats_windows_drive_paths_as_host_paths() {
+        assert_eq!(
+            parse_machine_cp_endpoint(r"C:\temp\artifact.txt")
+                .expect("windows path should parse as host"),
+            MachineCpEndpoint::Host(r"C:\temp\artifact.txt".to_owned())
+        );
+    }
+
+    #[test]
+    fn machine_status_quiet_output_prints_name_only() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+
+        let rendered = render_machine_status_view(
+            MachineCommandResult::Uninitialized,
+            &paths,
+            None,
+            None,
+            MachineStatusOutputFormat::Json,
+            true,
+        )
+        .expect("quiet output should render");
+
+        assert_eq!(rendered, "team-a\n");
+    }
+
+    #[test]
+    fn machine_inspect_json_output_serializes_full_config_and_state() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: "team-a".to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::parse(&default_machine_image())
+                    .expect("default image should parse"),
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: Some(PathBuf::from("/tmp/team-a")),
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: 4,
+                memory_mib: 4096,
+                disk_gib: 40,
+            },
+            volumes: vec![MachineVolume {
+                source: PathBuf::from("/Users"),
+                target: PathBuf::from("/Users"),
+            }],
+            roots: layout,
+        };
+        let state = MachineStateRecord {
+            version: CURRENT_MACHINE_STATE_VERSION,
+            lifecycle: MachineLifecycle::Stopped,
+            manager: MachineManagerState::Unconfigured,
+            runtime: None,
+            last_error: Some("none".to_owned()),
+        };
+
+        let rendered =
+            render_machine_inspect_view(&config, &state, MachineInspectOutputFormat::Json)
+                .expect("inspect json should render");
+        let json: serde_json::Value =
+            serde_json::from_str(&rendered).expect("inspect JSON should parse");
+
+        assert_eq!(json["config"]["name"], "team-a");
+        assert_eq!(json["config"]["provider"], "krunkit");
+        assert_eq!(json["config"]["resources"]["cpus"], 4);
+        assert_eq!(json["state"]["lifecycle"], "stopped");
+        assert_eq!(json["state"]["manager"], "unconfigured");
+    }
+
+    #[test]
+    fn machine_inspect_yaml_output_serializes_full_config_and_state() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: "default".to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::parse(&default_machine_image())
+                    .expect("default image should parse"),
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+            },
+            volumes: Vec::new(),
+            roots: layout,
+        };
+
+        let rendered = render_machine_inspect_view(
+            &config,
+            &MachineStateRecord::initialized(),
+            MachineInspectOutputFormat::Yaml,
+        )
+        .expect("inspect yaml should render");
+
+        assert!(rendered.contains("config:"));
+        assert!(rendered.contains("state:"));
+        assert!(rendered.contains("name: default"));
+        assert!(rendered.contains("provider: krunkit"));
+        assert!(rendered.contains("lifecycle: stopped"));
+    }
+
+    #[test]
     fn machine_status_marks_missing_machine_api_socket_as_unreachable() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let layout = MachineRootLayout::new(
@@ -3361,6 +5419,8 @@ mod tests {
                     ignition_file: None,
                     efi_store: None,
                     volumes: Vec::new(),
+                    now: false,
+                    name: None,
                 }),
             },
             &layout,
@@ -3372,7 +5432,7 @@ mod tests {
             .expect("derived krunkit socket should write");
         run_machine_command_for_test(
             MachineCommand {
-                command: MachineSubcommand::Rm(MachineRmCommand {}),
+                command: MachineSubcommand::Rm(MachineRmCommand { name: None }),
             },
             &layout,
         )
@@ -3405,6 +5465,8 @@ mod tests {
                     ignition_file: None,
                     efi_store: None,
                     volumes: Vec::new(),
+                    now: false,
+                    name: None,
                 }),
             },
             &layout,
@@ -3413,7 +5475,7 @@ mod tests {
 
         let error = run_machine_command_for_test(
             MachineCommand {
-                command: MachineSubcommand::Start(MachineStartCommand {}),
+                command: MachineSubcommand::Start(MachineStartCommand::default()),
             },
             &layout,
         )
@@ -3423,6 +5485,185 @@ mod tests {
         assert!(
             error_message.contains("failed to resolve machine guest OCI reference"),
             "expected OCI resolution error, got: {error_message}"
+        );
+    }
+
+    #[test]
+    fn machine_start_auto_initializes_before_start_failure() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        let error = run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Start(MachineStartCommand {
+                    cpus: Some(4),
+                    memory_mib: Some(4096),
+                    disk_gib: Some(40),
+                    image: Some("docker://127.0.0.1:1/example/neovex-machine-os:test".to_owned()),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: vec![MachineVolume {
+                        source: PathBuf::from("/Users"),
+                        target: PathBuf::from("/Users"),
+                    }],
+                    name: None,
+                }),
+            },
+            &layout,
+        )
+        .expect_err("machine start should surface OCI pull failure after auto-init");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to resolve machine guest OCI reference")
+        );
+
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        let config = read_json_file_if_exists::<MachineConfigRecord>(&paths.config_path)
+            .expect("config should read")
+            .expect("config should exist after auto-init");
+        assert_eq!(config.resources.cpus, 4);
+        assert_eq!(config.resources.memory_mib, 4096);
+        assert_eq!(config.resources.disk_gib, 40);
+        assert_eq!(
+            config.guest.image_source,
+            MachineImageSource::OciReference {
+                reference: "docker://127.0.0.1:1/example/neovex-machine-os:test".to_owned(),
+            }
+        );
+        assert_eq!(
+            config.volumes,
+            vec![MachineVolume {
+                source: PathBuf::from("/Users"),
+                target: PathBuf::from("/Users"),
+            }]
+        );
+    }
+
+    #[test]
+    fn machine_start_auto_initializes_named_machine_before_start_failure() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        let error = run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Start(MachineStartCommand {
+                    image: Some("docker://127.0.0.1:1/example/neovex-machine-os:test".to_owned()),
+                    name: Some("team-a".to_owned()),
+                    ..MachineStartCommand::default()
+                }),
+            },
+            &layout,
+        )
+        .expect_err("machine start should surface OCI pull failure after named auto-init");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to resolve machine guest OCI reference")
+        );
+
+        assert!(layout.paths("team-a").config_path.is_file());
+        assert!(layout.paths("team-a").state_path.is_file());
+        assert!(!layout.paths(DEFAULT_MACHINE_NAME).config_path.exists());
+    }
+
+    #[test]
+    fn machine_init_now_attempts_start_after_initialization() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        let error = run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: "docker://127.0.0.1:1/example/neovex-machine-os:test".to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                    now: true,
+                    name: None,
+                }),
+            },
+            &layout,
+        )
+        .expect_err("machine init --now should attempt start");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to resolve machine guest OCI reference")
+        );
+
+        let paths = layout.paths(DEFAULT_MACHINE_NAME);
+        assert!(paths.config_path.is_file());
+        assert!(paths.state_path.is_file());
+    }
+
+    #[test]
+    fn machine_start_rejects_create_if_missing_overrides_when_machine_exists() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+
+        run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Init(MachineInitCommand {
+                    cpus: DEFAULT_MACHINE_CPUS,
+                    memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                    disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                    image: default_machine_image().to_owned(),
+                    ssh_identity: None,
+                    ignition_file: None,
+                    efi_store: None,
+                    volumes: Vec::new(),
+                    now: false,
+                    name: None,
+                }),
+            },
+            &layout,
+        )
+        .expect("machine init should succeed");
+
+        let error = run_machine_command_for_test(
+            MachineCommand {
+                command: MachineSubcommand::Start(MachineStartCommand {
+                    memory_mib: Some(4096),
+                    ..MachineStartCommand::default()
+                }),
+            },
+            &layout,
+        )
+        .expect_err("machine start should reject create-only overrides on existing machines");
+
+        assert!(
+            error
+                .to_string()
+                .contains("only uses init flags when creating a new machine"),
+            "unexpected error: {error}"
         );
     }
 

@@ -12,13 +12,18 @@ Fedora/RHEL) and macOS (Apple Silicon).
 - **Status:** `todo`
 - **Primary owner:** this plan
 - **Parent plan:** `docs/plans/distribution-plan.md` (Channel 1, Phase D1)
-- **Hard deps:** at least one `v*` release tag pushed (neovex binary), at
-  least one `crun/v*` release tag pushed (neovex-crun binary)
+- **Readiness:** implementation-ready after the 2026-04-18 contract refresh in
+  this plan; I1 can start immediately
+- **Hard deps:** initial v1 implementation now has its external release inputs:
+  at least one `v*` Neovex release tag and at least one
+  `agentstation/neovex-crun` release tag already exist
 - **Related CI:**
   - `.github/workflows/release.yml` — neovex binary builds (linux x86_64,
-    linux arm64, darwin arm64, windows x86_64) on `v*` tags
-  - `.github/workflows/neovex-crun.yml` — neovex-crun builds (linux amd64,
-    linux arm64) on `crun/v*` tags
+    linux arm64, darwin arm64, windows x86_64) on `v*` tags, bundles
+    `libexec/gvproxy` into the darwin archive, publishes checksums, dispatches
+    machine-os, and updates the Homebrew cask
+  - `agentstation/neovex-crun` release workflow — publishes
+    `neovex-crun-linux-amd64` and `neovex-crun-linux-arm64`
   - `agentstation/neovex-machine-os/.github/workflows/build.yml` — machine
     guest image build/publish lane, called from the neovex `v*` release
     workflow and available for standalone image-repo `v*` tags
@@ -39,7 +44,9 @@ Source of truth:
 curl -fsSL https://neovex.dev/install.sh | sh
 
 # Pinned version
-curl -fsSL https://neovex.dev/install.sh | sh -s -- --version v0.1.0
+# Linux direct-binary path in the initial cut; macOS initially follows the
+# latest Homebrew cask rather than supporting arbitrary historical cask pins.
+curl -fsSL https://neovex.dev/install.sh | sh -s -- --version v0.1.14
 
 # Dry run (print what would happen)
 curl -fsSL https://neovex.dev/install.sh | sh -s -- --dry-run
@@ -53,6 +60,27 @@ curl -fsSL https://raw.githubusercontent.com/agentstation/neovex/main/scripts/in
 
 ---
 
+## Channel 1 Contract
+
+The install script is a bootstrapper, not a single artifact installer.
+
+- On Linux in the initial cut, it installs distro dependencies via `apt` or
+  `dnf`, then installs the released `neovex` and `neovex-crun` binaries
+  directly from GitHub Releases with checksum verification.
+- On macOS in the initial cut, it installs or upgrades the published
+  `agentstation/tap/neovex` Homebrew cask. That cask owns `krunkit` as an
+  explicit dependency and ships the bundled `libexec/gvproxy` helper.
+- Once the public apt/COPR channels are fully proved, the Linux branch of the
+  script can switch from direct-release installs to package-repo installs
+  without changing the user-facing `curl | sh` entrypoint.
+
+Do not design the macOS branch as a manual `curl`/untar copy into
+`/usr/local/bin`. That would diverge from the shipped cask path and strand the
+bundled `libexec/gvproxy` helper unless the script recreated the same prefix
+layout itself.
+
+---
+
 ## What Gets Installed
 
 ### Linux
@@ -60,7 +88,7 @@ curl -fsSL https://raw.githubusercontent.com/agentstation/neovex/main/scripts/in
 | Component | Source | Install path |
 |-----------|--------|-------------|
 | `neovex` | GitHub Release `v*` | `/usr/local/bin/neovex` |
-| `neovex-crun` | GitHub Release `crun/v*` | `/usr/libexec/neovex/crun` |
+| `neovex-crun` | `agentstation/neovex-crun` GitHub Release `v*` | `/usr/libexec/neovex/crun` |
 | System deps | OS package repos | System paths (via apt/dnf) |
 
 **System dependencies installed via package manager:**
@@ -80,8 +108,9 @@ curl -fsSL https://raw.githubusercontent.com/agentstation/neovex/main/scripts/in
 
 | Component | Source | Install path |
 |-----------|--------|-------------|
-| `neovex` | GitHub Release `v*` | `/usr/local/bin/neovex` |
-| krunkit | Homebrew (`slp/krunkit`) | Homebrew prefix |
+| `neovex` | Homebrew cask `agentstation/tap/neovex` | Homebrew Caskroom + `$(brew --prefix)/bin/neovex` symlink |
+| `gvproxy` | Bundled inside the neovex darwin cask/archive | `$(brew --prefix)/Caskroom/neovex/<version>/libexec/gvproxy` |
+| krunkit | Homebrew (`slp/krunkit/krunkit`) via cask dependency | Homebrew prefix |
 
 No crun, conmon, buildah, or other Linux deps — everything runs inside the
 machine VM guest.
@@ -100,8 +129,8 @@ POSIX `sh` — no bashisms. Following the conventions of:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--version <tag>` | latest | Pin neovex version (e.g., `v0.1.0`) |
-| `--crun-version <tag>` | latest `crun/v*` | Pin neovex-crun version |
+| `--version <tag>` | latest | Pin neovex version (e.g., `v0.1.14`) |
+| `--crun-version <tag>` | latest `agentstation/neovex-crun` release | Pin neovex-crun version (Linux only) |
 | `--prefix <path>` | `/usr/local` | Install prefix for neovex binary |
 | `--skip-deps` | false | Skip system dependency installation |
 | `--dry-run` | false | Print what would happen, don't do anything |
@@ -125,8 +154,7 @@ main()
     print_getting_started_linux()
   if macOS:
     ensure_homebrew()
-    install_krunkit()         # brew tap + install
-    download_and_install_neovex()
+    install_or_upgrade_homebrew_cask()
     verify_installation()
     print_getting_started_macos()
 ```
@@ -177,17 +205,20 @@ Respects `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (inherited by curl/wget).
 
 ### Version resolution
 
-Query GitHub API for latest release:
+For Linux, query GitHub API for the latest releases:
 
 ```
 GET https://api.github.com/repos/agentstation/neovex/releases/latest
-  → .tag_name → v0.1.0
+  → .tag_name → v0.1.14
 
-GET https://api.github.com/repos/agentstation/neovex/releases
-  → filter tags starting with crun/v → latest crun/v1.27
+GET https://api.github.com/repos/agentstation/neovex-crun/releases/latest
+  → .tag_name → v1.27-neovex.1
 ```
 
-If rate-limited (HTTP 403), suggest `--version` flag or `GITHUB_TOKEN` env.
+If rate-limited (HTTP 403), suggest `--version` on Linux or `GITHUB_TOKEN`.
+
+For macOS in the initial cut, the script installs the current Homebrew cask and
+does not attempt to synthesize a historical cask for `--version`.
 
 ### Release asset naming
 
@@ -199,7 +230,7 @@ neovex_darwin_arm64.tar.gz
 checksums-sha256.txt
 ```
 
-**neovex-crun** (from `neovex-crun.yml`):
+**neovex-crun** (from `agentstation/neovex-crun` releases):
 ```
 neovex-crun-linux-amd64
 neovex-crun-linux-arm64
@@ -211,8 +242,12 @@ Note the naming inconsistency: neovex uses `x86_64` while neovex-crun uses
 
 ### Checksum verification
 
-Download `checksums-sha256.txt` (neovex) or `checksums.txt` (crun) from
-the release, then verify with `sha256sum -c` or `shasum -a 256 -c`.
+For Linux, download `checksums-sha256.txt` (neovex) and `checksums.txt`
+(`neovex-crun`) from the release, then verify with `sha256sum -c` or
+`shasum -a 256 -c`.
+
+For macOS, the install script delegates archive checksum verification to
+Homebrew cask metadata rather than re-implementing cask install logic.
 
 ### Sudo handling
 
@@ -221,6 +256,8 @@ the release, then verify with `sha256sum -c` or `shasum -a 256 -c`.
 - For `/usr/local/bin`: some systems allow user writes, check first
 - For `/usr/libexec/neovex/crun`: always needs sudo
 - For package manager commands (apt-get, dnf): always needs sudo
+- For macOS Homebrew installs: do not use `sudo`; rely on the invoking user's
+  Homebrew ownership and fail clearly if Homebrew itself is unavailable
 
 ### Non-interactive detection
 
@@ -305,6 +342,7 @@ pattern from the existing `scripts/check-vmm-host.sh`.
 |-------|-----|----------|
 | `neovex --version` | command + version output | yes |
 | `krunkit --version` | `command -v krunkit` | yes |
+| bundled `gvproxy` exists | resolve installed `neovex` path into Caskroom and check adjacent `libexec/gvproxy` | yes |
 | macOS version >= 14 | `sw_vers -productVersion` | yes |
 | Architecture arm64 | `uname -m` | yes |
 
@@ -338,11 +376,12 @@ result              supported (0 failures)
 
 | Prerequisite | Status | Needed by |
 |-------------|--------|-----------|
-| neovex binary CI (`release.yml`) | exists, no tag pushed yet | Phase I2 |
-| neovex-crun CI (`neovex-crun.yml`) | exists, no tag pushed yet | Phase I2 |
-| At least one `v*` release tag | not pushed | Phase I2 |
-| At least one `crun/v*` release tag | not pushed | Phase I2 |
-| `neovex.dev` domain serving script | not configured | Phase I4 |
+| neovex binary CI (`release.yml`) | exists, publishes tagged releases | Phase I2 |
+| neovex-crun release source (`agentstation/neovex-crun`) | exists, publishes tagged releases | Phase I2 |
+| At least one `v*` Neovex release tag | pushed (`v0.1.14`) | Phase I2 |
+| At least one `agentstation/neovex-crun` release tag | pushed (`v1.27-neovex.1`) | Phase I2 |
+| Homebrew cask auto-update in release workflow | exists | Phase I4 |
+| `neovex.dev` domain serving script | not configured | Phase I5 |
 | libkrun prebuilt .so CI | does not exist | Phase I3 |
 | neovex apt repo at `apt.neovex.dev` | does not exist | Phase I5 |
 
@@ -370,20 +409,22 @@ and the verification helper.
 - `bash scripts/verify-install.sh` runs all checks and reports results
 - `bash scripts/verify-install-helper.sh` passes
 
-### Phase I2: Binary Download and Installation
+### Phase I2: Linux Binary Download and Installation
 
-**Goal:** Download neovex and neovex-crun from GitHub Releases, verify
-checksums, install to correct paths.
+**Goal:** Download `neovex` and `neovex-crun` on Linux from their GitHub
+releases, verify checksums, and install to the correct paths.
 
 **Scope:**
 - Version resolution via GitHub API (latest or `--version`)
-- Download neovex tarball and neovex-crun binary
+- Download Neovex tarball from `agentstation/neovex`
+- Download `neovex-crun` binary from `agentstation/neovex-crun`
 - SHA256 checksum verification
 - Install to `/usr/local/bin/neovex` and `/usr/libexec/neovex/crun`
 - Sudo handling for system paths
 - Idempotent: skip if same version already installed
 
-**Hard deps:** at least one `v*` tag and one `crun/v*` tag pushed.
+**Hard deps:** at least one `agentstation/neovex` tag and one
+`agentstation/neovex-crun` tag pushed.
 
 **Acceptance criteria:**
 - `sh scripts/install.sh` on a clean Ubuntu VM downloads and installs both
@@ -412,18 +453,21 @@ checksums, install to correct paths.
 
 ### Phase I4: macOS Installation
 
-**Goal:** Install neovex + krunkit on macOS Apple Silicon.
+**Goal:** Install or upgrade the published `agentstation/tap/neovex` cask on
+macOS Apple Silicon.
 
 **Scope:**
 - Check Homebrew is available
-- `brew tap slp/krunkit && brew install krunkit`
-- Download neovex darwin binary
-- Remove quarantine xattr
+- `brew tap agentstation/tap` and `brew tap slp/krunkit`
+- `brew install --cask agentstation/tap/neovex` or
+  `brew upgrade --cask agentstation/tap/neovex`
+- Verify the installed cask layout includes bundled `libexec/gvproxy`
 - Print getting-started: `neovex machine init` + `neovex serve`
 
 **Acceptance criteria:**
-- `sh scripts/install.sh` on a clean macOS M1+ installs neovex and krunkit
+- `sh scripts/install.sh` on a clean macOS M1+ installs `agentstation/tap/neovex`
 - `neovex --version` and `krunkit --version` work
+- the installed cask layout includes bundled `libexec/gvproxy`
 - Intel Mac: script fails with clear message
 
 ### Phase I5: Uninstall, Upgrade, and Polish
@@ -431,14 +475,15 @@ checksums, install to correct paths.
 **Goal:** Complete lifecycle management and production readiness.
 
 **Scope:**
-- `--uninstall` removes neovex, neovex-crun, and any apt repo entry
+- Linux `--uninstall` removes `neovex`, `neovex-crun`, and any apt repo entry
+- macOS `--uninstall` uses `brew uninstall --cask neovex`
 - Upgrade path: detect existing version, replace if different
 - Host `install.sh` at `neovex.dev/install.sh` (GitHub Pages or redirect)
 - Error messages and getting-started output polished
 
 **Acceptance criteria:**
 - `sh scripts/install.sh --uninstall` cleanly removes everything
-- Upgrade from v0.1.0 to v0.2.0 works
+- Upgrade from v0.1.11 to v0.1.14 works
 - `curl -fsSL https://neovex.dev/install.sh | sh` works end-to-end
 
 ---
@@ -448,9 +493,9 @@ checksums, install to correct paths.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | I1: Skeleton + verification | `todo` | — | Can start immediately |
-| I2: Binary download | `todo` | I1, release tags pushed | Needs real releases to test |
+| I2: Linux binary download | `todo` | I1, release tags pushed | External release inputs now exist |
 | I3: Linux system deps | `todo` | I2 | libkrun gap = manual instructions initially |
-| I4: macOS installation | `todo` | I2 | Homebrew + krunkit |
+| I4: macOS installation | `todo` | I1 | Homebrew cask + bundled `gvproxy` + `krunkit` |
 | I5: Uninstall + polish | `todo` | I3, I4 | Domain hosting, lifecycle |
 
 ---
@@ -459,16 +504,19 @@ checksums, install to correct paths.
 
 ### Rootless install
 
-If the user lacks sudo, install to `$HOME/.local/bin/neovex` and
-`$HOME/.local/libexec/neovex/crun`. This requires neovex to respect a
-`NEOVEX_CRUN_PATH` env var or config file for finding the crun binary.
+Linux user-prefix installs are out of scope for the first cut. The current
+Linux runtime contract assumes `/usr/libexec/neovex/crun`, and the codebase
+does not currently expose a supported runtime-path override for a user-prefix
+install. If rootless/user-prefix support becomes important, document and land
+that runtime-path contract explicitly first rather than letting the install
+script invent it.
 
 ### GitHub API rate limits
 
 Unauthenticated: 60 requests/hour. If rate-limited (HTTP 403), print:
 ```
 GitHub API rate limit reached. Either:
-  - Specify version: sh install.sh --version v0.1.0
+  - Specify version: sh install.sh --version v0.1.14
   - Set GITHUB_TOKEN: export GITHUB_TOKEN=ghp_...
 ```
 
@@ -484,9 +532,14 @@ Podman. It does NOT modify Docker configuration or conflict with existing
 container runtimes. neovex-crun installs to `/usr/libexec/neovex/crun`,
 not the system crun path.
 
+On macOS, the script should not treat Homebrew `podman` or Podman Desktop as
+Neovex's dependency manager. The supported install path is the Neovex cask,
+which owns `krunkit` and carries the bundled `gvproxy` helper itself.
+
 ---
 
 ## Execution Log
 
 | Date | Phase | Status | Notes | Verification | Next |
 |------|-------|--------|-------|--------------|------|
+| 2026-04-18 | planning refresh | `documented` | Rebased the install-script plan onto the current shipped distribution contract so implementation can start from a correct foundation. The initial Channel 1 design is now explicitly platform-split: Linux installs distro deps plus released `neovex` / `neovex-crun` artifacts directly from GitHub Releases, while macOS installs or upgrades the published `agentstation/tap/neovex` Homebrew cask instead of manually unpacking a single binary. The plan now points at the external `agentstation/neovex-crun` release source, treats the darwin bundled `libexec/gvproxy` helper as part of the required macOS install contract, drops the stale rootless `NEOVEX_CRUN_PATH` assumption, and updates prerequisites to the current `v0.1.14` / `v1.27-neovex.1` release reality. | plan review against `.github/workflows/release.yml`; plan review against `docs/reference/macos-machine-flow.md`; `gh release list --repo agentstation/neovex --limit 5`; `gh release list --repo agentstation/neovex-crun --limit 5` | Start I1 by writing `scripts/install.sh`, `scripts/verify-install.sh`, and `scripts/verify-install-helper.sh` to this refreshed contract |

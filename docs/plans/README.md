@@ -8,17 +8,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
     redb, the retained redb control plane, and local libsql replica caches
-- `docs/plans/machine-lifecycle-hardening-plan.md`
-  - canonical shared control plan for enterprise-grade machine lifecycle
-    reliability across macOS and the future Windows provider: provider-owned
-    stop sequencing, startup signal handling, file-locked SSH port allocation,
-    atomic config/state writes, record versioning, provider capability flags,
-    and phased networking orchestration
-- `docs/plans/machine-cli-dx-plan.md`
-  - canonical execution plan for machine CLI developer experience: `--version`,
-    user-facing help text, Podman-aligned flag names and short aliases,
-    combined init+start flow, machine name positional arg, `--format` output,
-    `list`/`inspect`/`set`/`cp` subcommands, `--quiet` flag
+- `docs/plans/desktop-ui-plan.md`
+  - canonical execution plan for a Docker Desktop / Podman Desktop-style
+    graphical interface: embedded React SPA served from `neovex-server` at
+    `/ui/*`, reactive dashboard via existing WebSocket/useQuery hooks,
+    localhost auth token-gate, protocol version negotiation, machine/service/
+    data/logs/runs tabs, optional Tauri/Electron native shell (Phase 2)
 
 ## Stable implementation baselines
 
@@ -159,6 +154,16 @@ completed plans unless explicitly asked to review historical work.
   - completed macOS developer-machine closeout plan; records the MAC1-MAC7
     execution history, real-host proof bundles, and the final Podman-aligned
     macOS developer contract
+- `docs/plans/archive/machine-lifecycle-hardening-plan.md`
+  - completed shared machine-lifecycle hardening plan; records the landed
+    `MLH1`-`MLH7` Podman-aligned robustness rollout for stop/start lifecycle,
+    file-locked SSH port allocation, atomic record writes, schema versioning,
+    provider capabilities, and phased machine startup
+- `docs/plans/archive/machine-cli-dx-plan.md`
+  - completed machine CLI developer-experience plan; records the `DX1`-`DX11`
+    rollout for version/help polish, Podman-aligned machine flags and flows,
+    list/inspect/set/cp, quiet scripting modes, and the final real macOS proof
+    bundles
 
 ## How To Use This Folder
 
@@ -171,9 +176,10 @@ completed plans unless explicitly asked to review historical work.
   `docs/reference/macos-machine-flow.md`.
 - Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
   the historical MAC1-MAC7 execution record or exact proof-bundle paths.
-- For shared machine-lifecycle hardening or enterprise machine-management
-  reliability work, open `docs/plans/machine-lifecycle-hardening-plan.md`
-  after the baseline and the relevant platform plan.
+- For historical shared machine-lifecycle hardening context or Windows
+  provider prerequisites, open
+  `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the baseline
+  and the relevant platform plan.
 - Do not resume a plan from `docs/plans/archive/` unless you were explicitly
   asked to review historical work.
 - If no active plan owns the work, promote or author a new active plan instead

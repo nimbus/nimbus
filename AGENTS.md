@@ -40,13 +40,21 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/macos-machine-flow.md` after the microVM baseline.
   Open `docs/plans/archive/macos-machine-support-plan.md` only when a task
   needs the historical MAC1-MAC7 execution record or exact proof-bundle paths.
+- For historical machine CLI ergonomics work, operator-facing machine UX, or
+  machine-command surface closeout evidence, open
+  `docs/plans/archive/machine-cli-dx-plan.md` after the microVM baseline.
+  That archived plan records the completed `DX1`-`DX11` rollout, proof bundle
+  paths, and the final Podman-aligned CLI decisions; use it as historical
+  context, then promote a new active plan before starting new machine CLI
+  scope.
 - For shared machine-lifecycle hardening, enterprise machine-management
   reliability, or Windows-provider groundwork that reuses the existing machine
-  manager seams, open `docs/plans/machine-lifecycle-hardening-plan.md` after
-  the microVM baseline. That plan is the active shared control plane for
-  machine robustness; resume the earliest `MLH*` item that is not `done`, or
-  continue any item already marked `in_progress`, before starting new shared
-  machine-hardening scope.
+  manager seams, open
+  `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the microVM
+  baseline. That archived plan records the landed `MLH1`-`MLH7` robustness
+  baseline; use it for historical context and prerequisites, then resume the
+  owning active platform plan or promote a new active plan before starting new
+  shared machine-hardening scope.
 
 ## Context Window Discipline
 
@@ -61,15 +69,28 @@ Use the repo docs for architecture and behavior details:
   Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
   the historical MAC1-MAC7 execution record, exact real-host proof paths, or
   phase-by-phase closeout context.
+- For historical machine CLI DX context, open
+  `docs/plans/archive/machine-cli-dx-plan.md` after the microVM baseline and
+  reread its `Current Assessed State`, `Current Review Findings`,
+  `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log` when
+  a task needs the original comparative audit, closeout order, or proof bundle
+  paths. Promote a new active plan before resuming new machine-command UX
+  scope.
 - For shared machine-lifecycle hardening work, open
-  `docs/plans/machine-lifecycle-hardening-plan.md` after the microVM baseline
-  and reread its `Current Assessed State`, `Current Review Findings`,
+  `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the microVM
+  baseline and reread its `Current Assessed State`, `Current Review Findings`,
   `Podman Alignment Matrix`, `Control Plan Rules`,
   `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log`
-  before changing code.
-- If work spans a platform plan and the lifecycle hardening plan, treat the
-  platform plan as the architecture owner and the lifecycle plan as the shared
-  reliability owner; update both ledgers when both materially advance.
+  when the task needs the landed shared reliability baseline or exact closeout
+  evidence.
+- If work spans a platform/reference doc and the archived machine CLI DX plan,
+  treat the platform/reference doc as the active architecture owner and the
+  archived CLI DX plan as historical user-surface context; promote a new
+  active plan before landing new machine-command UX scope.
+- If work spans a platform plan and the archived lifecycle hardening plan,
+  treat the platform plan as the active owner and the archived lifecycle plan
+  as historical reliability context; promote a new active plan before landing
+  new shared lifecycle scope.
 - Treat the current git worktree plus the owning active plan, when there is
   one, as progress state. Do not rely on chat history to remember where work
   stopped.

@@ -51,11 +51,12 @@ durable journal state are also in scope.
 
 Examples include:
 
-- materialized snapshot exports
-- durable journal bootstrap bundles
 - restore or rebuild staging files
 - migration working copies
 - retired local replica cache files pending cleanup
+
+If Neovex later adds built-in persisted file exports, the same rules apply to
+materialized snapshot export files and durable journal bootstrap bundle files.
 
 Rules:
 
@@ -68,6 +69,9 @@ Rules:
 - if Neovex supports a plaintext recovery or interoperability export, it must
   require an explicit operator override and surface a durable
   `plaintext-exception` status in diagnostics
+- current in-memory structs and HTTP/JSON bootstrap or snapshot responses are
+  transport payloads, not on-disk artifacts, unless a built-in Neovex workflow
+  persists them to disk
 - in-memory copies and network streams are not at-rest artifacts and are not
   covered by this document
 
@@ -128,8 +132,9 @@ artifact gets its own random 256-bit data-encryption key (DEK). That includes:
 - each embedded redb tenant database
 - the retained redb control-plane database
 - each local libsql replica cache database
-- each persisted snapshot, bootstrap, or encrypted recovery artifact emitted by
-  Neovex under encrypted mode
+- each currently implemented persisted on-disk working artifact protected by
+  this architecture, plus any future built-in snapshot/bootstrap/recovery file
+  export emitted by Neovex under encrypted mode
 
 Neovex wraps each DEK through a selected key provider and stores the wrapped
 DEK plus non-secret metadata in an adjacent authenticated sidecar manifest next
@@ -186,7 +191,7 @@ per-subject DEKs.
 | redb page encryption | Embedded redb tenant databases and retained redb control plane | **AES-256-GCM-SIV** per page | Neovex owns the custom page layer, so misuse resistance matters |
 | Embedded SQLite page encryption | Default embedded SQLite tenant provider | **SQLCipher profile**: AES-256-CBC per page plus HMAC-SHA512 integrity, using raw 256-bit DEKs | Mature SQLite-native pager encryption with WAL and rekey support |
 | libsql local cache encryption | Local libsql replica cache files only | **Provider-native libsql encryption**, currently `Cipher::Aes256Cbc` | Use the provider-supported cache mode instead of layering a second pager |
-| Snapshot and bootstrap artifact encryption | Neovex-owned on-disk exports, bootstraps, rebuilds, and recovery artifacts from encrypted local stores | **Encrypted by default** with per-artifact DEKs and the same envelope family | Prevents backup and recovery flows from silently recreating plaintext state |
+| Persisted artifact encryption | Current Neovex-owned on-disk migration/rebuild/cutover artifacts, plus any future persisted snapshot/bootstrap/recovery export files from encrypted local stores | **Encrypted by default** with per-artifact DEKs and the same envelope family | Prevents backup, rebuild, and recovery flows from silently recreating plaintext state |
 | External tenant stores | Postgres, MySQL, remote libsql primary | **External-provider-managed** | Neovex does not own those underlying data files |
 
 Important trust rule: the libsql local-cache profile is currently weaker and

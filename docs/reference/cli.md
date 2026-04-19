@@ -44,27 +44,47 @@ neovex service ps <service> [--file compose.yaml] [--tenant <tenant-id>]
 Current shipped machine commands:
 
 ```bash
-neovex machine init [--cpus N] [--memory-mib N] [--disk-gib N] [--image SOURCE] [--ssh-identity PATH] [--ignition-file PATH] [--efi-store PATH] [--volume HOST:GUEST]
+neovex machine init [--cpus N] [--memory N] [--disk-size N] [--image SOURCE] [--identity PATH] [--ignition-path PATH] [--firmware PATH] [--volume HOST:GUEST] [--now] [NAME]
 ```
 
 ```bash
-neovex machine start
+neovex machine start [--cpus N] [--memory N] [--disk-size N] [--image SOURCE] [--identity PATH] [--ignition-path PATH] [--firmware PATH] [--volume HOST:GUEST] [NAME]
 ```
 
 ```bash
-neovex machine stop
+neovex machine stop [NAME]
 ```
 
 ```bash
-neovex machine status
+neovex machine status [--format json|yaml|table] [--quiet] [NAME]
 ```
 
 ```bash
-neovex machine ssh [COMMAND...]
+neovex machine list [--format json|table] [--quiet]
 ```
 
 ```bash
-neovex machine rm
+neovex machine ls [--format json|table] [--quiet]
+```
+
+```bash
+neovex machine inspect [--format json|yaml] [NAME]
+```
+
+```bash
+neovex machine set [--cpus N] [--memory N] [--disk-size N] [NAME]
+```
+
+```bash
+neovex machine cp [--quiet] SRC_PATH DEST_PATH
+```
+
+```bash
+neovex machine ssh [NAME] [COMMAND...]
+```
+
+```bash
+neovex machine rm [NAME]
 ```
 
 ```bash
@@ -262,12 +282,16 @@ The current landed machine surface is the checked-in macOS machine contract:
 
 | Command | Meaning |
 | --- | --- |
-| `neovex machine init` | write the default machine config and state files, create the typed config/state/runtime roots, and record future guest resource settings |
-| `neovex machine start` | launch `krunkit` + `gvproxy`, wait for machine-ready plus guest SSH reachability, and report guest machine-API reachability separately |
-| `neovex machine stop` | stop the current machine helpers, including stale-helper recovery, and persist the stopped machine state |
-| `neovex machine status` | print the current machine config, lifecycle state, derived runtime/socket/log paths, the configured machine-API forwarding contract, and guest machine-API reachability |
-| `neovex machine ssh [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running |
-| `neovex machine rm` | remove the persisted machine config, state, and short runtime-root layout when the machine is not running |
+| `neovex machine init [NAME]` | write the named machine config and state files, record the guest resource contract, and optionally start immediately with `--now`; omitting `NAME` still targets `default` |
+| `neovex machine start [NAME]` | start the named machine, creating it with defaults first when it does not already exist, then wait for machine-ready, guest SSH, and forwarded machine-API reachability |
+| `neovex machine stop [NAME]` | stop the named machine helpers, including stale-helper recovery, and persist the stopped machine state |
+| `neovex machine status [NAME]` | print the current named machine status in table form by default, emit the full structured view with `--format json` / `--format yaml`, or print the machine name only with `--quiet` |
+| `neovex machine list` / `neovex machine ls` | list initialized machines from the Neovex config root in a compact table by default, or emit JSON / names-only output with `--format json` or `--quiet` |
+| `neovex machine inspect [NAME]` | print the persisted config plus refreshed state record for the named machine as JSON by default, or YAML with `--format yaml` |
+| `neovex machine set [NAME]` | update the recorded CPU, memory, or disk contract for a stopped named machine without recreating it |
+| `neovex machine cp [--quiet] SRC_PATH DEST_PATH` | recursively copy files or directories between the host and a running machine using Podman-style `NAME:/path` guest endpoints and the machine's configured SSH contract |
+| `neovex machine ssh [NAME] [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running; as with Podman, if the first argument names an existing machine it is treated as `NAME`, otherwise it is passed through as the guest command on `default` |
+| `neovex machine rm [NAME]` | remove the persisted config, state, and short runtime-root layout for the named machine when it is not running |
 | `neovex machine os apply <oci-ref-or-digest>` | record an explicit immutable OCI machine-image rollout and invalidate boot artifacts so the next boot recreates from that image |
 | `neovex machine os upgrade` | move back to the host-supported machine-image stream for this `neovex` version, with `--dry-run` for status-only checks |
 
@@ -292,9 +316,13 @@ Current scope:
   `NEOVEX_MACHINE_HELPER_BINARY_DIR` explicitly; moving only the `neovex`
   binary is not a supported machine install shape
 - auto-generates a Neovex-owned Ignition file when no explicit
-  `--ignition-file` override is configured, carrying the machine ready signal,
+  `--ignition-path` override is configured, carrying the machine ready signal,
   guest `neovex.socket` plus `neovex.service`, and virtiofs mount-unit wiring
   into the guest
+- auto-generates a machine-owned SSH identity under the Neovex machine data
+  root for the host-managed macOS contract when no explicit `--identity`
+  override was recorded, so the default `machine start` path does not require
+  a separate SSH-key setup step
 - makes `neovex machine start` the primary convergence path on macOS: cache
   missing machine-image and guest-Linux-`neovex` artifacts, rebuild boot
   artifacts when the recorded base image drifts from the desired digest,
@@ -320,6 +348,30 @@ Current scope:
 - treats `neovex machine rm` as a full config/state-root removal, including the
   per-machine image and guest-binary caches under the state root, so a clean
   recreate path intentionally repulls or rehydrates artifacts on the next boot
+- threads an optional `[NAME]` positional through the machine lifecycle
+  surface (`init`, `start`, `stop`, `status`, `inspect`, `set`, `ssh`, `rm`),
+  defaulting to `default` so multi-machine targeting does not require a second
+  command family; `machine cp` follows Podman's embedded `NAME:/path` machine
+  targeting instead of adding a second positional name
+- defaults `neovex machine status` to a condensed operator table while keeping
+  the full serialized status view available through `--format json` and
+  `--format yaml` for scripts and diagnostics
+- lets `neovex machine status --quiet` short-circuit those richer renderers and
+  print only the selected machine name, matching the precedence rule that
+  `machine list --quiet` already uses
+- adds `neovex machine list` / `neovex machine ls` as the multi-machine
+  summary surface, scanning initialized machine records from the config root
+  and refreshing each machine's persisted state before rendering
+- adds `neovex machine inspect` as the raw machine-record surface for scripts
+  and debugging, returning the persisted config contract plus the refreshed
+  state record without the extra derived status fields
+- keeps `neovex machine set` intentionally narrow and Podman-aligned for the
+  current contract: it updates stopped-machine CPU, memory, and disk settings
+  in `config.json`, then requires the next `machine start` to apply them
+- adds `neovex machine cp` as the host↔guest transfer surface, using
+  machine-prefixed guest paths (`default:/tmp/file`), recursive `scp`, the
+  same localhost SSH safety options as `machine ssh`, and `--quiet` to suppress
+  the success message when scripts want silence
 
 Related references:
 
