@@ -404,41 +404,26 @@ impl MachineInspectCommand {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 enum MachineStatusOutputFormat {
     Json,
     Yaml,
+    #[default]
     Table,
 }
 
-impl Default for MachineStatusOutputFormat {
-    fn default() -> Self {
-        Self::Table
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 enum MachineListOutputFormat {
     Json,
+    #[default]
     Table,
 }
 
-impl Default for MachineListOutputFormat {
-    fn default() -> Self {
-        Self::Table
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 enum MachineInspectOutputFormat {
+    #[default]
     Json,
     Yaml,
-}
-
-impl Default for MachineInspectOutputFormat {
-    fn default() -> Self {
-        Self::Json
-    }
 }
 
 #[derive(Debug, Args, Default)]
