@@ -5,30 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.17] - 2026-04-18
+## [0.1.17] - 2026-04-19
 
-### Fixed
+### Documentation
 
-- Refresh the macOS Podman machine-os digest pin to the current live immutable `quay.io/podman/machine-os:6.0` index after the previous digest went missing on Quay by @jackspirou
-- Make the Homebrew macOS proof collector request `machine status --format yaml` so packaged-release assertions stay stable across CLI presentation changes by @jackspirou
-
-### Release
-
-- Prepare v0.1.17 by @jackspirou
+- Update CHANGELOG.md for v0.1.16 by @github-actions[bot]
+- Update CHANGELOG.md for v0.1.15 by @github-actions[bot]
 
 
 
 **Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.16...v0.1.17
 
 ## [0.1.16] - 2026-04-19
-
-### Fixed
-
-- Derive the machine output-format defaults idiomatically so the shipped machine CLI DX surface stays green under the workspace clippy gate by @jackspirou
-
-### Release
-
-- Prepare v0.1.16 by @jackspirou
 
 
 
