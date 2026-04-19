@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] - 2026-04-19
+
+### Machine
+
+- Complete the machine CLI follow-on UX wave with archived control-plan closeout, stronger `machine list` ergonomics, and final real macOS host proof by @jackspirou
+
+### Fixed
+
+- Collapse `cli_ux` progress helper conditionals to satisfy the enforced Clippy release contract by @jackspirou
+
+### Release
+
+- Prepare v0.1.20 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.19...v0.1.20
+
 ## [0.1.19] - 2026-04-19
 
 ### Machine

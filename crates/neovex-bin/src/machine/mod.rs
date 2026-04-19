@@ -5548,11 +5548,11 @@ mod tests {
     #[test]
     fn machine_info_renders_yaml_by_default() {
         let view = MachineInfoView {
-            version: "0.1.19".to_owned(),
+            version: "0.1.20".to_owned(),
             host: MachineHostInfoView {
                 arch: "aarch64".to_owned(),
                 os: "macos".to_owned(),
-                current_release: "v0.1.19".to_owned(),
+                current_release: "v0.1.20".to_owned(),
                 default_machine_name: DEFAULT_MACHINE_NAME.to_owned(),
                 machine_count: 1,
                 running_machine_count: 1,
@@ -5577,8 +5577,8 @@ mod tests {
 
         let rendered = render_machine_info_view(&view, MachineInfoOutputFormat::Yaml)
             .expect("machine info should render");
-        assert!(rendered.contains("version: 0.1.19"));
-        assert!(rendered.contains("current_release: v0.1.19"));
+        assert!(rendered.contains("version: 0.1.20"));
+        assert!(rendered.contains("current_release: v0.1.20"));
         assert!(rendered.contains("default_machine_name: default"));
         assert!(rendered.contains("api_reachable: true"));
     }
@@ -5586,11 +5586,11 @@ mod tests {
     #[test]
     fn machine_info_renders_json_when_requested() {
         let view = MachineInfoView {
-            version: "0.1.19".to_owned(),
+            version: "0.1.20".to_owned(),
             host: MachineHostInfoView {
                 arch: "aarch64".to_owned(),
                 os: "macos".to_owned(),
-                current_release: "v0.1.19".to_owned(),
+                current_release: "v0.1.20".to_owned(),
                 default_machine_name: DEFAULT_MACHINE_NAME.to_owned(),
                 machine_count: 0,
                 running_machine_count: 0,
@@ -5615,8 +5615,8 @@ mod tests {
 
         let rendered = render_machine_info_view(&view, MachineInfoOutputFormat::Json)
             .expect("machine info should render");
-        assert!(rendered.contains("\"version\": \"0.1.19\""));
-        assert!(rendered.contains("\"current_release\": \"v0.1.19\""));
+        assert!(rendered.contains("\"version\": \"0.1.20\""));
+        assert!(rendered.contains("\"current_release\": \"v0.1.20\""));
         assert!(rendered.contains("\"initialized\": false"));
     }
 

@@ -120,7 +120,7 @@ Examples:
 pub(crate) const MACHINE_OS_APPLY_HELP_EXAMPLES: &str = "\
 Examples:
   neovex machine os apply docker://quay.io/podman/machine-os@sha256:<digest>
-  neovex machine os apply docker://ghcr.io/agentstation/neovex-machine-os:v0.1.19 --restart";
+  neovex machine os apply docker://ghcr.io/agentstation/neovex-machine-os:v0.1.20 --restart";
 
 pub(crate) const MACHINE_OS_UPGRADE_HELP_EXAMPLES: &str = "\
 Examples:
