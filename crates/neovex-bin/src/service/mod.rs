@@ -119,8 +119,12 @@ struct ServiceListCommand {
     file: PathBuf,
 
     /// Output format.
-    #[arg(long, value_enum, default_value_t = ServiceListOutputFormat::Table)]
+    #[arg(short = 'f', long, value_enum, default_value_t = ServiceListOutputFormat::Table)]
     format: ServiceListOutputFormat,
+
+    /// Omit table headings from table output.
+    #[arg(short = 'n', long = "noheading")]
+    no_heading: bool,
 
     /// Show all tenants under the project-scoped backend root, not just the
     /// deterministic local project tenant.
@@ -146,7 +150,7 @@ struct ServiceInspectCommand {
     tenant: Option<TenantId>,
 
     /// Output format.
-    #[arg(long, value_enum, default_value_t = ServiceInspectOutputFormat::Json)]
+    #[arg(short = 'f', long, value_enum, default_value_t = ServiceInspectOutputFormat::Json)]
     format: ServiceInspectOutputFormat,
 }
 
@@ -190,8 +194,12 @@ struct ServicePsCommand {
     tenant: Option<TenantId>,
 
     /// Output format.
-    #[arg(long, value_enum, default_value_t = ServicePsOutputFormat::Table)]
+    #[arg(short = 'f', long, value_enum, default_value_t = ServicePsOutputFormat::Table)]
     format: ServicePsOutputFormat,
+
+    /// Omit table headings from table output.
+    #[arg(short = 'n', long = "noheading")]
+    no_heading: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
@@ -470,7 +478,7 @@ fn render_service_list_for_platform(
                     shutdown_requested: summary.shutdown_requested,
                 })
                 .collect::<Vec<_>>();
-            render_service_list_view(&views, command.format)
+            render_service_list_view(&views, command.format, command.no_heading)
         }
         ServiceExecutionSurface::ForwardedContainer { client, .. } => {
             validate_forwarded_machine_api_operations(
@@ -499,7 +507,7 @@ fn render_service_list_for_platform(
                     shutdown_requested: summary.shutdown_requested,
                 })
                 .collect::<Vec<_>>();
-            render_service_list_view(&views, command.format)
+            render_service_list_view(&views, command.format, command.no_heading)
         }
     }
 }
@@ -700,7 +708,7 @@ fn render_service_ps_for_platform(
         host_platform,
         machine_api_client,
     )?;
-    render_service_process_snapshot_view(&snapshot, command.format)
+    render_service_process_snapshot_view(&snapshot, command.format, command.no_heading)
 }
 
 async fn service_up_outcomes_for_platform(
@@ -2010,6 +2018,7 @@ struct ServiceSandboxSummaryView {
 fn render_service_list_view(
     summaries: &[ServiceSandboxSummaryView],
     format: ServiceListOutputFormat,
+    no_heading: bool,
 ) -> Result<String, Error> {
     match format {
         ServiceListOutputFormat::Json => serde_json::to_string_pretty(summaries).map_err(|error| {
@@ -2018,11 +2027,11 @@ fn render_service_list_view(
         ServiceListOutputFormat::Yaml => serde_yaml::to_string(summaries).map_err(|error| {
             Error::Serialization(format!("failed to render service list: {error}"))
         }),
-        ServiceListOutputFormat::Table => Ok(render_service_list_table(summaries)),
+        ServiceListOutputFormat::Table => Ok(render_service_list_table(summaries, no_heading)),
     }
 }
 
-fn render_service_list_table(summaries: &[ServiceSandboxSummaryView]) -> String {
+fn render_service_list_table(summaries: &[ServiceSandboxSummaryView], no_heading: bool) -> String {
     let columns = [
         cli_ux::TableColumn::left("SERVICE", 12),
         cli_ux::TableColumn::left("TENANT", 16),
@@ -2049,7 +2058,13 @@ fn render_service_list_table(summaries: &[ServiceSandboxSummaryView]) -> String 
             ]
         })
         .collect::<Vec<_>>();
-    cli_ux::render_table(&columns, &rows)
+    cli_ux::render_table_with_options(
+        &columns,
+        &rows,
+        cli_ux::TableRenderOptions {
+            omit_header: no_heading,
+        },
+    )
 }
 
 fn render_service_inspect_view<T: Serialize>(
@@ -2078,17 +2093,23 @@ fn render_service_inspect_view<T: Serialize>(
 fn render_service_process_snapshot_view(
     snapshot: &ServiceProcessSnapshot,
     format: ServicePsOutputFormat,
+    no_heading: bool,
 ) -> Result<String, Error> {
     match format {
         ServicePsOutputFormat::Json => serde_json::to_string_pretty(snapshot)
             .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
         ServicePsOutputFormat::Yaml => serde_yaml::to_string(snapshot)
             .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
-        ServicePsOutputFormat::Table => Ok(render_service_process_snapshot_table(snapshot)),
+        ServicePsOutputFormat::Table => {
+            Ok(render_service_process_snapshot_table(snapshot, no_heading))
+        }
     }
 }
 
-fn render_service_process_snapshot_table(snapshot: &ServiceProcessSnapshot) -> String {
+fn render_service_process_snapshot_table(
+    snapshot: &ServiceProcessSnapshot,
+    no_heading: bool,
+) -> String {
     let mut detail_lines = vec![
         format!("sandbox: {}", snapshot.sandbox_id),
         format!("status: {}", render_sandbox_status(snapshot.status)),
@@ -2141,7 +2162,13 @@ fn render_service_process_snapshot_table(snapshot: &ServiceProcessSnapshot) -> S
             ]
         })
         .collect::<Vec<_>>();
-    rendered.push_str(&cli_ux::render_table(&columns, &rows));
+    rendered.push_str(&cli_ux::render_table_with_options(
+        &columns,
+        &rows,
+        cli_ux::TableRenderOptions {
+            omit_header: no_heading,
+        },
+    ));
     rendered
 }
 
@@ -2315,14 +2342,15 @@ mod tests {
                 assert_eq!(list.file, PathBuf::from(compose::DEFAULT_COMPOSE_FILE));
                 assert!(list.all_tenants);
                 assert_eq!(list.format, ServiceListOutputFormat::Table);
+                assert!(!list.no_heading);
             }
             _ => panic!("expected list subcommand"),
         }
     }
 
     #[test]
-    fn parses_service_list_format_flag() {
-        let cli = RootCli::parse_from(["neovex", "service", "list", "--format", "json"]);
+    fn parses_service_list_output_shaping_flags() {
+        let cli = RootCli::parse_from(["neovex", "service", "list", "-f", "json", "--noheading"]);
         let Some(RootCommand::Service(service)) = cli.command else {
             panic!("service subcommand should parse");
         };
@@ -2330,6 +2358,7 @@ mod tests {
         match service.command {
             ServiceSubcommand::List(list) => {
                 assert_eq!(list.format, ServiceListOutputFormat::Json);
+                assert!(list.no_heading);
             }
             _ => panic!("expected list subcommand"),
         }
@@ -2398,7 +2427,7 @@ mod tests {
 
     #[test]
     fn parses_service_inspect_format_flag() {
-        let cli = RootCli::parse_from(["neovex", "service", "inspect", "db", "--format", "yaml"]);
+        let cli = RootCli::parse_from(["neovex", "service", "inspect", "db", "-f", "yaml"]);
         let Some(RootCommand::Service(service)) = cli.command else {
             panic!("service subcommand should parse");
         };
@@ -2444,14 +2473,15 @@ mod tests {
                     "svc-demo"
                 );
                 assert_eq!(ps.format, ServicePsOutputFormat::Table);
+                assert!(!ps.no_heading);
             }
             _ => panic!("expected ps subcommand"),
         }
     }
 
     #[test]
-    fn parses_service_ps_format_flag() {
-        let cli = RootCli::parse_from(["neovex", "service", "ps", "db", "--format", "json"]);
+    fn parses_service_ps_output_shaping_flags() {
+        let cli = RootCli::parse_from(["neovex", "service", "ps", "db", "-f", "json", "-n"]);
         let Some(RootCommand::Service(service)) = cli.command else {
             panic!("service subcommand should parse");
         };
@@ -2460,9 +2490,55 @@ mod tests {
             ServiceSubcommand::Ps(ps) => {
                 assert_eq!(ps.service, "db");
                 assert_eq!(ps.format, ServicePsOutputFormat::Json);
+                assert!(ps.no_heading);
             }
             _ => panic!("expected ps subcommand"),
         }
+    }
+
+    #[test]
+    fn service_list_help_describes_output_shaping_flags() {
+        let error = RootCli::try_parse_from(["neovex", "service", "list", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("--format"), "{rendered}");
+        assert!(rendered.contains("-f"), "{rendered}");
+        assert!(rendered.contains("--noheading"), "{rendered}");
+        assert!(rendered.contains("-n"), "{rendered}");
+        assert!(rendered.contains("json"), "{rendered}");
+        assert!(rendered.contains("yaml"), "{rendered}");
+        assert!(rendered.contains("table"), "{rendered}");
+    }
+
+    #[test]
+    fn service_inspect_help_describes_short_format_flag() {
+        let error = RootCli::try_parse_from(["neovex", "service", "inspect", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("--format"), "{rendered}");
+        assert!(rendered.contains("-f"), "{rendered}");
+        assert!(rendered.contains("json"), "{rendered}");
+        assert!(rendered.contains("yaml"), "{rendered}");
+    }
+
+    #[test]
+    fn service_ps_help_describes_output_shaping_flags() {
+        let error = RootCli::try_parse_from(["neovex", "service", "ps", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("--format"), "{rendered}");
+        assert!(rendered.contains("-f"), "{rendered}");
+        assert!(rendered.contains("--noheading"), "{rendered}");
+        assert!(rendered.contains("-n"), "{rendered}");
+        assert!(rendered.contains("json"), "{rendered}");
+        assert!(rendered.contains("yaml"), "{rendered}");
+        assert!(rendered.contains("table"), "{rendered}");
     }
 
     #[test]
@@ -2493,6 +2569,7 @@ mod tests {
             &ServiceListCommand {
                 file: compose_path.clone(),
                 format: ServiceListOutputFormat::Table,
+                no_heading: false,
                 all_tenants: false,
             },
             &control_data_dir,
@@ -2510,6 +2587,7 @@ mod tests {
             &ServiceListCommand {
                 file: compose_path,
                 format: ServiceListOutputFormat::Table,
+                no_heading: false,
                 all_tenants: true,
             },
             &control_data_dir,
@@ -2519,6 +2597,28 @@ mod tests {
         .expect("all-tenant list should render");
         assert!(rendered_all.contains(context.control_plane.local_tenant_id.as_str()));
         assert!(rendered_all.contains("tenant-other"));
+    }
+
+    #[test]
+    fn render_service_list_can_omit_headings() {
+        let summaries = vec![ServiceSandboxSummaryView {
+            sandbox_id: SandboxId::new("db-01aaa"),
+            tenant_id: TenantId::new("tenant-a").expect("tenant should parse"),
+            service_name: "db".to_owned(),
+            status: SandboxStatus::Ready,
+            published_endpoints: Vec::new(),
+            restart_count: 1,
+            last_exit_code: None,
+            shutdown_requested: false,
+        }];
+
+        let rendered = render_service_list_view(&summaries, ServiceListOutputFormat::Table, true)
+            .expect("table output without headings should render");
+
+        assert!(!rendered.contains("SERVICE"));
+        assert!(!rendered.contains("TENANT"));
+        assert!(rendered.contains("db"));
+        assert!(rendered.contains("tenant-a"));
     }
 
     #[test]
@@ -2722,6 +2822,7 @@ mod tests {
                 file: compose_path,
                 tenant: None,
                 format: ServicePsOutputFormat::Table,
+                no_heading: false,
             },
             &control_data_dir,
             ServiceHostPlatform::Linux,
@@ -2733,6 +2834,34 @@ mod tests {
         assert!(rendered.contains("runtime pid: 2002"));
         assert!(rendered.contains("conmon pid: 1001"));
         assert!(rendered.contains("tracked processes: none"));
+    }
+
+    #[test]
+    fn render_service_ps_can_omit_process_table_headings() {
+        let snapshot = ServiceProcessSnapshot {
+            sandbox_id: SandboxId::new("db-01aaa"),
+            tenant_id: TenantId::new("tenant-a").expect("tenant should parse"),
+            service_name: "db".to_owned(),
+            status: SandboxStatus::Ready,
+            runtime_pidfile: PathBuf::from("/run/db/pidfile"),
+            conmon_pidfile: PathBuf::from("/run/db/conmon.pid"),
+            runtime_pid: Some(2002),
+            conmon_pid: Some(1001),
+            process_rows: vec![ServiceProcessRow {
+                pid: 2002,
+                ppid: 1001,
+                command: "/usr/bin/neovex".to_owned(),
+            }],
+        };
+
+        let rendered =
+            render_service_process_snapshot_view(&snapshot, ServicePsOutputFormat::Table, true)
+                .expect("table output without headings should render");
+
+        assert!(rendered.contains("Service process snapshot for db"));
+        assert!(!rendered.contains("PID"));
+        assert!(!rendered.contains("PPID"));
+        assert!(rendered.contains("/usr/bin/neovex"));
     }
 
     #[test]
@@ -3316,6 +3445,7 @@ services:
             &ServiceListCommand {
                 file: compose_path.clone(),
                 format: ServiceListOutputFormat::Table,
+                no_heading: false,
                 all_tenants: false,
             },
             &control_data_dir,
@@ -3365,6 +3495,7 @@ services:
                 file: compose_path.clone(),
                 tenant: None,
                 format: ServicePsOutputFormat::Table,
+                no_heading: false,
             },
             &control_data_dir,
             ServiceHostPlatform::Macos,

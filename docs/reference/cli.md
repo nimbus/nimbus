@@ -26,11 +26,11 @@ neovex service down [service] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex service list [--file compose.yaml] [--all-tenants] [--format json|yaml|table]
+neovex service list [-f json|yaml|table] [--noheading] [--file compose.yaml] [--all-tenants]
 ```
 
 ```bash
-neovex service inspect <service> [--file compose.yaml] [--tenant <tenant-id>] [--format json|yaml]
+neovex service inspect <service> [-f json|yaml] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 ```bash
@@ -38,7 +38,7 @@ neovex service logs <service> [--file compose.yaml] [--tenant <tenant-id>] [--fo
 ```
 
 ```bash
-neovex service ps <service> [--file compose.yaml] [--tenant <tenant-id>] [--format json|yaml|table]
+neovex service ps <service> [-f json|yaml|table] [--noheading] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 Current shipped machine commands:
@@ -56,19 +56,23 @@ neovex machine stop [NAME]
 ```
 
 ```bash
-neovex machine status [--format json|yaml|table] [--quiet] [NAME]
+neovex machine status [-f json|yaml|table] [--noheading] [--quiet] [NAME]
 ```
 
 ```bash
-neovex machine list [--format json|table] [--quiet]
+neovex machine list [-f json|table] [--noheading] [--quiet]
 ```
 
 ```bash
-neovex machine ls [--format json|table] [--quiet]
+neovex machine ls [-f json|table] [--noheading] [--quiet]
 ```
 
 ```bash
-neovex machine inspect [--format json|yaml] [NAME]
+neovex machine info [-f json|yaml] [--format json|yaml]
+```
+
+```bash
+neovex machine inspect [-f json|yaml] [NAME]
 ```
 
 ```bash
@@ -220,8 +224,18 @@ This is why `serve` and `service` are not the same concept:
 - the shipped MAC2 surface owns persisted machine config, typed path layout,
   CLI/state-model wiring, and the initial direct `krunkit` + `gvproxy`
   machine-manager seam
-- guest-image/bootstrap completion and transparent developer UX remain owned by
-  the active macOS machine-support plan
+- guest-image/bootstrap completion, packaging behavior, and transparent
+  developer UX are documented in `docs/reference/macos-machine-flow.md`
+
+Output-shaping contract:
+
+- human summary commands use compact tables by default
+- `-f` and `--format` are equivalent where structured output is supported
+- `--noheading` only affects table-producing human output
+- `neovex machine list` marks the default machine with `*` in human table
+  output and sorts active machines ahead of inactive ones
+- Go-template output is intentionally not supported in the current shipped CLI;
+  `json` and `yaml` remain the stable machine-readable formats
 
 ## Service Commands
 
@@ -237,13 +251,13 @@ explicit lifecycle control:
 | `neovex service up db --tenant tenant-a` | start only service `db` for an explicit tenant and print the same action-summary contract |
 | `neovex service down` | stop one current persisted sandbox per service identity for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump |
 | `neovex service down db` | stop the current persisted sandbox for service `db` in the deterministic local project tenant with the same action-summary contract |
-| `neovex service list` | list persisted sandbox state for the deterministic local project tenant in a human table by default; use `--format json` or `--format yaml` for structured output |
+| `neovex service list` | list persisted sandbox state for the deterministic local project tenant in a human table by default; use `-f json` or `-f yaml` for structured output, or `--noheading` to suppress table headers |
 | `neovex service list --all-tenants` | list all persisted sandboxes under the project-scoped backend root with the same table-vs-structured contract |
-| `neovex service inspect db` | inspect persisted sandbox details for service `db` in the deterministic local project tenant as JSON by default; `--format yaml` is the explicit structured alternative |
+| `neovex service inspect db` | inspect persisted sandbox details for service `db` in the deterministic local project tenant as JSON by default; `-f yaml` is the explicit structured alternative |
 | `neovex service inspect db --tenant tenant-a` | inspect persisted sandbox details for service `db` in an explicit tenant with the same structured contract |
 | `neovex service logs db` | print the persisted `ctr.log` for service `db` in the deterministic local project tenant |
 | `neovex service logs db --follow` | keep polling the persisted `ctr.log` for appended output |
-| `neovex service ps db` | show the persisted PID snapshot and matching host `ps` rows for service `db` as a human summary by default; use `--format json` or `--format yaml` for structured output |
+| `neovex service ps db` | show the persisted PID snapshot and matching host `ps` rows for service `db` as a human summary by default; use `-f json` or `-f yaml` for structured output, or `--noheading` to suppress the process table headings |
 
 Current scope:
 
@@ -286,9 +300,10 @@ The current landed machine surface is the checked-in macOS machine contract:
 | `neovex machine init [NAME]` | write the named machine config and state files, record the guest resource contract, and optionally start immediately with `--now`; omitting `NAME` still targets `default` and action commands print a concise success summary instead of the full structured status view |
 | `neovex machine start [NAME]` | start the named machine, creating it with defaults first when it does not already exist, then wait for machine-ready, guest SSH, and forwarded machine-API reachability while emitting human progress updates for slow first-start convergence on stderr; `--quiet` suppresses the phase chatter but still prints the final success summary, while `--no-info` suppresses advisory `info:` notices without hiding the normal phase banners |
 | `neovex machine stop [NAME]` | stop the named machine helpers, including stale-helper recovery, and persist the stopped machine state before printing a concise success summary |
-| `neovex machine status [NAME]` | print the current named machine status in table form by default, emit the full structured view with `--format json` / `--format yaml`, or print the machine name only with `--quiet` |
-| `neovex machine list` / `neovex machine ls` | list initialized machines from the Neovex config root in a compact table by default; `--quiet` stays names-only when no explicit `--format` is requested, while an explicit `--format json` wins if both switches are present |
-| `neovex machine inspect [NAME]` | print the persisted config plus refreshed state record for the named machine as JSON by default, or YAML with `--format yaml` |
+| `neovex machine status [NAME]` | print the current named machine status in table form by default, emit the full structured view with `-f json` / `-f yaml`, suppress table headings with `--noheading`, or print the machine name only with `--quiet` |
+| `neovex machine list` / `neovex machine ls` | list initialized machines from the Neovex config root in a compact table by default; active machines sort ahead of inactive ones, the default machine is marked with `*`, `--quiet` stays names-only when no explicit `-f` is requested, `--noheading` suppresses table headers, and `-f json` exposes the same `default` bit structurally |
+| `neovex machine info` | print host-level machine information in YAML by default, or JSON with `-f json`; this is the operator-facing summary for the machine roots, cache locations, current `neovex` machine release, and the default-machine summary contract |
+| `neovex machine inspect [NAME]` | print the persisted config plus refreshed state record for the named machine as JSON by default, or YAML with `-f yaml` |
 | `neovex machine set [NAME]` | update the recorded CPU, memory, or disk contract for a stopped named machine without recreating it |
 | `neovex machine cp [--quiet] SRC_PATH DEST_PATH` | recursively copy files or directories between the host and a running machine using Podman-style `NAME:/path` guest endpoints and the machine's configured SSH contract |
 | `neovex machine ssh [NAME] [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running; as with Podman, if the first argument names an existing machine it is treated as `NAME`, otherwise it is passed through as the guest command on `default` |
@@ -367,8 +382,8 @@ Current scope:
   command family; `machine cp` follows Podman's embedded `NAME:/path` machine
   targeting instead of adding a second positional name
 - defaults `neovex machine status` to a condensed operator table while keeping
-  the full serialized status view available through `--format json` and
-  `--format yaml` for scripts and diagnostics
+  the full serialized status view available through `-f json` and `-f yaml`
+  for scripts and diagnostics
 - lets `neovex machine status --quiet` short-circuit those richer renderers and
   print only the selected machine name, matching the precedence rule that
   `machine list --quiet` already uses

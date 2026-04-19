@@ -157,6 +157,8 @@ enum MachineSubcommand {
     /// List initialized machines.
     #[command(visible_alias = "ls")]
     List(MachineListCommand),
+    /// Display machine host info.
+    Info(MachineInfoCommand),
     /// Inspect a machine record.
     Inspect(MachineInspectCommand),
     /// Update a stopped machine.
@@ -410,12 +412,16 @@ impl MachineStopCommand {
 )]
 struct MachineStatusCommand {
     /// Output format.
-    #[arg(long, value_enum, default_value_t = MachineStatusOutputFormat::Table)]
+    #[arg(short = 'f', long, value_enum, default_value_t = MachineStatusOutputFormat::Table)]
     format: MachineStatusOutputFormat,
 
     /// Print the machine name only.
     #[arg(short = 'q', long)]
     quiet: bool,
+
+    /// Omit table headings from table output.
+    #[arg(short = 'n', long = "noheading")]
+    no_heading: bool,
 
     /// Machine name.
     #[arg(value_name = "NAME")]
@@ -435,12 +441,16 @@ impl MachineStatusCommand {
 )]
 struct MachineListCommand {
     /// Output format. Defaults to table.
-    #[arg(long, value_enum)]
+    #[arg(short = 'f', long, value_enum)]
     format: Option<MachineListOutputFormat>,
 
     /// Print machine names only.
     #[arg(short = 'q', long)]
     quiet: bool,
+
+    /// Omit table headings from table output.
+    #[arg(short = 'n', long = "noheading")]
+    no_heading: bool,
 }
 
 impl MachineListCommand {
@@ -452,11 +462,22 @@ impl MachineListCommand {
 #[derive(Debug, Args, Default)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::MACHINE_INFO_HELP_EXAMPLES
+)]
+struct MachineInfoCommand {
+    /// Output format.
+    #[arg(short = 'f', long, value_enum, default_value_t = MachineInfoOutputFormat::Yaml)]
+    format: MachineInfoOutputFormat,
+}
+
+#[derive(Debug, Args, Default)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
     after_help = cli_ux::MACHINE_INSPECT_HELP_EXAMPLES
 )]
 struct MachineInspectCommand {
     /// Output format.
-    #[arg(long, value_enum, default_value_t = MachineInspectOutputFormat::Json)]
+    #[arg(short = 'f', long, value_enum, default_value_t = MachineInspectOutputFormat::Json)]
     format: MachineInspectOutputFormat,
 
     /// Machine name.
@@ -483,6 +504,13 @@ enum MachineListOutputFormat {
     Json,
     #[default]
     Table,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum MachineInfoOutputFormat {
+    Json,
+    #[default]
+    Yaml,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
@@ -685,6 +713,7 @@ async fn run_machine_command_with_layout(
             with_machine_lock(roots, &machine_name, || run_machine_status(status, roots))
         }
         MachineSubcommand::List(list) => run_machine_list(list, roots),
+        MachineSubcommand::Info(info) => run_machine_info(info, roots),
         MachineSubcommand::Inspect(inspect) => {
             let machine_name = inspect.name().to_owned();
             with_machine_lock(roots, &machine_name, || run_machine_inspect(inspect, roots))
@@ -883,6 +912,7 @@ fn run_machine_status(
         config.as_ref(),
         state.as_ref(),
         command.format,
+        command.no_heading,
         command.quiet,
     )?)?;
     Ok(())
@@ -891,6 +921,12 @@ fn run_machine_status(
 fn run_machine_list(command: MachineListCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let machines = build_machine_list_entries(roots)?;
     emit_machine_stdout(&render_machine_list_view(&machines, &command)?)?;
+    Ok(())
+}
+
+fn run_machine_info(command: MachineInfoCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let view = build_machine_info_view(roots)?;
+    emit_machine_stdout(&render_machine_info_view(&view, command.format)?)?;
     Ok(())
 }
 
@@ -1430,6 +1466,7 @@ fn render_machine_status_view(
     config: Option<&MachineConfigRecord>,
     state: Option<&MachineStateRecord>,
     format: MachineStatusOutputFormat,
+    no_heading: bool,
     quiet: bool,
 ) -> Result<String, Error> {
     let view = build_machine_status_view(result, paths, config, state);
@@ -1443,7 +1480,7 @@ fn render_machine_status_view(
         MachineStatusOutputFormat::Yaml => serde_yaml::to_string(&view).map_err(|error| {
             Error::Internal(format!("failed to serialize machine status: {error}"))
         }),
-        MachineStatusOutputFormat::Table => Ok(render_machine_status_table(&view)),
+        MachineStatusOutputFormat::Table => Ok(render_machine_status_table(&view, no_heading)),
     }
 }
 
@@ -1520,7 +1557,7 @@ fn build_machine_status_view(
     }
 }
 
-fn render_machine_status_table(view: &MachineStatusView) -> String {
+fn render_machine_status_table(view: &MachineStatusView, no_heading: bool) -> String {
     let provider = view
         .provider
         .map(|provider| provider.as_str().to_owned())
@@ -1561,7 +1598,13 @@ fn render_machine_status_table(view: &MachineStatusView) -> String {
         disk_gib,
         api.to_owned(),
     ]];
-    cli_ux::render_table(&columns, &rows)
+    cli_ux::render_table_with_options(
+        &columns,
+        &rows,
+        cli_ux::TableRenderOptions {
+            omit_header: no_heading,
+        },
+    )
 }
 
 fn build_machine_list_entries(
@@ -1580,6 +1623,7 @@ fn build_machine_list_entries(
             write_json_file(&paths.state_path, &state)?;
             Ok(Some(MachineListEntryView {
                 name: machine_name.clone(),
+                is_default: machine_name == DEFAULT_MACHINE_NAME,
                 lifecycle: state.lifecycle,
                 provider: config.provider,
                 cpus: config.resources.cpus,
@@ -1591,7 +1635,22 @@ fn build_machine_list_entries(
             entries.push(entry);
         }
     }
+    entries.sort_by(|left, right| {
+        machine_list_sort_rank(left)
+            .cmp(&machine_list_sort_rank(right))
+            .then_with(|| left.name.cmp(&right.name))
+    });
     Ok(entries)
+}
+
+fn machine_list_sort_rank(machine: &MachineListEntryView) -> u8 {
+    match machine.lifecycle {
+        MachineLifecycle::Starting | MachineLifecycle::Running => 0,
+        _ if machine.is_default => 1,
+        MachineLifecycle::Failed => 2,
+        MachineLifecycle::Stopped => 3,
+        MachineLifecycle::Uninitialized => 4,
+    }
 }
 
 fn initialized_machine_names(roots: &MachineRootLayout) -> Result<Vec<String>, Error> {
@@ -1645,7 +1704,9 @@ fn render_machine_list_view(
     match command.format() {
         MachineListOutputFormat::Json => serde_json::to_string_pretty(machines)
             .map_err(|error| Error::Internal(format!("failed to serialize machine list: {error}"))),
-        MachineListOutputFormat::Table => Ok(render_machine_list_table(machines)),
+        MachineListOutputFormat::Table => {
+            Ok(render_machine_list_table(machines, command.no_heading))
+        }
     }
 }
 
@@ -1663,7 +1724,15 @@ fn render_machine_list_quiet(machines: &[MachineListEntryView]) -> String {
     rendered
 }
 
-fn render_machine_list_table(machines: &[MachineListEntryView]) -> String {
+fn render_machine_list_name(machine: &MachineListEntryView) -> String {
+    if machine.is_default {
+        format!("{}*", machine.name)
+    } else {
+        machine.name.clone()
+    }
+}
+
+fn render_machine_list_table(machines: &[MachineListEntryView], no_heading: bool) -> String {
     let columns = [
         TableColumn::left("NAME", 18),
         TableColumn::left("LIFECYCLE", 14),
@@ -1676,7 +1745,7 @@ fn render_machine_list_table(machines: &[MachineListEntryView]) -> String {
         .iter()
         .map(|machine| {
             vec![
-                machine.name.clone(),
+                render_machine_list_name(machine),
                 machine.lifecycle.as_str().to_owned(),
                 machine.provider.as_str().to_owned(),
                 machine.cpus.to_string(),
@@ -1685,7 +1754,85 @@ fn render_machine_list_table(machines: &[MachineListEntryView]) -> String {
             ]
         })
         .collect::<Vec<_>>();
-    cli_ux::render_table(&columns, &rows)
+    cli_ux::render_table_with_options(
+        &columns,
+        &rows,
+        cli_ux::TableRenderOptions {
+            omit_header: no_heading,
+        },
+    )
+}
+
+fn build_machine_info_view(roots: &MachineRootLayout) -> Result<MachineInfoView, Error> {
+    let machines = build_machine_list_entries(roots)?;
+    let default_paths = roots.paths(DEFAULT_MACHINE_NAME);
+    let (
+        default_initialized,
+        default_lifecycle,
+        default_manager,
+        default_provider,
+        default_api_reachable,
+    ) = with_default_machine_lock(roots, || {
+        let default_config = load_machine_config_if_exists(&default_paths.config_path)?;
+        Ok(if let Some(config) = default_config.as_ref() {
+            let mut state = load_machine_state_if_exists(&default_paths.state_path)?
+                .unwrap_or_else(MachineStateRecord::initialized);
+            refresh_machine_state(&default_paths, &mut state)?;
+            write_json_file(&default_paths.state_path, &state)?;
+            (
+                true,
+                state.lifecycle,
+                state.manager,
+                Some(config.provider),
+                machine_api_status_view(&default_paths, Some(config)).reachable,
+            )
+        } else {
+            (
+                false,
+                MachineLifecycle::Uninitialized,
+                MachineManagerState::Unconfigured,
+                None,
+                false,
+            )
+        })
+    })?;
+
+    Ok(MachineInfoView {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        host: MachineHostInfoView {
+            arch: env::consts::ARCH.to_owned(),
+            os: env::consts::OS.to_owned(),
+            current_release: current_machine_release_tag(),
+            default_machine_name: DEFAULT_MACHINE_NAME.to_owned(),
+            machine_count: machines.len(),
+            running_machine_count: machines
+                .iter()
+                .filter(|machine| machine.lifecycle == MachineLifecycle::Running)
+                .count(),
+            image_cache_dir: default_paths.image_cache_dir.clone(),
+            guest_binary_cache_dir: default_paths.guest_binary_cache_dir.clone(),
+            roots: roots_view(&default_paths),
+            default_machine: MachineInfoDefaultMachineView {
+                initialized: default_initialized,
+                lifecycle: default_lifecycle,
+                manager: default_manager,
+                provider: default_provider,
+                api_reachable: default_api_reachable,
+            },
+        },
+    })
+}
+
+fn render_machine_info_view(
+    view: &MachineInfoView,
+    format: MachineInfoOutputFormat,
+) -> Result<String, Error> {
+    match format {
+        MachineInfoOutputFormat::Json => serde_json::to_string_pretty(view)
+            .map_err(|error| Error::Internal(format!("failed to serialize machine info: {error}"))),
+        MachineInfoOutputFormat::Yaml => serde_yaml::to_string(view)
+            .map_err(|error| Error::Internal(format!("failed to serialize machine info: {error}"))),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2828,6 +2975,35 @@ struct MachineRootsView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineInfoView {
+    version: String,
+    host: MachineHostInfoView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineHostInfoView {
+    arch: String,
+    os: String,
+    current_release: String,
+    default_machine_name: String,
+    machine_count: usize,
+    running_machine_count: usize,
+    image_cache_dir: PathBuf,
+    guest_binary_cache_dir: PathBuf,
+    roots: MachineRootsView,
+    default_machine: MachineInfoDefaultMachineView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MachineInfoDefaultMachineView {
+    initialized: bool,
+    lifecycle: MachineLifecycle,
+    manager: MachineManagerState,
+    provider: Option<MachineProvider>,
+    api_reachable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct MachineStatusView {
     result: MachineCommandResult,
     initialized: bool,
@@ -2850,6 +3026,8 @@ struct MachineStatusView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct MachineListEntryView {
     name: String,
+    #[serde(rename = "default")]
+    is_default: bool,
     lifecycle: MachineLifecycle,
     provider: MachineProvider,
     cpus: u8,
@@ -3423,6 +3601,7 @@ mod tests {
         match machine.command {
             MachineSubcommand::Status(status) => {
                 assert!(!status.quiet);
+                assert!(!status.no_heading);
                 assert_eq!(status.format, MachineStatusOutputFormat::Table);
                 assert_eq!(status.name.as_deref(), None);
             }
@@ -3431,14 +3610,13 @@ mod tests {
     }
 
     #[test]
-    fn machine_status_accepts_json_and_yaml_output_formats() {
+    fn machine_status_accepts_output_shaping_flags() {
         for (format_value, expected) in [
             ("json", MachineStatusOutputFormat::Json),
             ("yaml", MachineStatusOutputFormat::Yaml),
             ("table", MachineStatusOutputFormat::Table),
         ] {
-            let cli =
-                RootCli::parse_from(["neovex", "machine", "status", "--format", format_value]);
+            let cli = RootCli::parse_from(["neovex", "machine", "status", "-f", format_value]);
             let Some(RootCommand::Machine(machine)) = cli.command else {
                 panic!("machine status should parse");
             };
@@ -3447,6 +3625,15 @@ mod tests {
                 MachineSubcommand::Status(status) => assert_eq!(status.format, expected),
                 _ => panic!("expected status subcommand"),
             }
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "status", "--noheading"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine status with noheading should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Status(status) => assert!(status.no_heading),
+            _ => panic!("expected status subcommand"),
         }
     }
 
@@ -3468,7 +3655,7 @@ mod tests {
 
     #[test]
     fn parses_machine_lifecycle_subcommands() {
-        for command in ["start", "stop", "status", "list", "inspect", "rm"] {
+        for command in ["start", "stop", "status", "list", "info", "inspect", "rm"] {
             let cli = RootCli::parse_from(["neovex", "machine", command]);
             let Some(RootCommand::Machine(_)) = cli.command else {
                 panic!("machine {command} should parse");
@@ -3486,12 +3673,13 @@ mod tests {
         assert!(rendered.contains("Available Commands:"));
         assert!(rendered.contains("Examples:"));
         assert!(rendered.contains("neovex machine init --now"));
-        assert!(rendered.contains("neovex machine status --format json"));
+        assert!(rendered.contains("neovex machine status -f json"));
         assert!(rendered.contains("Initialize a new machine"));
         assert!(rendered.contains("Start a machine, creating it if needed"));
         assert!(rendered.contains("Stop a running machine"));
         assert!(rendered.contains("Display machine status"));
         assert!(rendered.contains("List initialized machines"));
+        assert!(rendered.contains("Display machine host info"));
         assert!(rendered.contains("Inspect a machine record"));
         assert!(rendered.contains("Update a stopped machine"));
         assert!(rendered.contains("Securely copy files between the host and a machine"));
@@ -3584,8 +3772,11 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::DisplayHelp);
         let rendered = error.to_string();
         assert!(rendered.contains("--format"));
+        assert!(rendered.contains("-f"));
         assert!(rendered.contains("--quiet"));
         assert!(rendered.contains("-q"));
+        assert!(rendered.contains("--noheading"));
+        assert!(rendered.contains("-n"));
         assert!(rendered.contains("json"));
         assert!(rendered.contains("yaml"));
         assert!(rendered.contains("table"));
@@ -3603,11 +3794,12 @@ mod tests {
                 assert_eq!(list.format(), MachineListOutputFormat::Table);
                 assert!(list.format.is_none());
                 assert!(!list.quiet);
+                assert!(!list.no_heading);
             }
             _ => panic!("expected list subcommand"),
         }
 
-        let cli = RootCli::parse_from(["neovex", "machine", "ls", "--format", "json", "--quiet"]);
+        let cli = RootCli::parse_from(["neovex", "machine", "ls", "-f", "json", "--quiet", "-n"]);
         let Some(RootCommand::Machine(machine)) = cli.command else {
             panic!("machine ls should parse");
         };
@@ -3616,6 +3808,7 @@ mod tests {
                 assert_eq!(list.format(), MachineListOutputFormat::Json);
                 assert_eq!(list.format, Some(MachineListOutputFormat::Json));
                 assert!(list.quiet);
+                assert!(list.no_heading);
             }
             _ => panic!("expected list subcommand"),
         }
@@ -3629,10 +3822,53 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("List initialized machines"));
         assert!(rendered.contains("--format"));
+        assert!(rendered.contains("-f"));
         assert!(rendered.contains("json"));
         assert!(rendered.contains("table"));
         assert!(rendered.contains("--quiet"));
         assert!(rendered.contains("-q"));
+        assert!(rendered.contains("--noheading"));
+        assert!(rendered.contains("-n"));
+    }
+
+    #[test]
+    fn machine_info_defaults_to_yaml_and_accepts_short_format_flag() {
+        let cli = RootCli::parse_from(["neovex", "machine", "info"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine info should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Info(info) => {
+                assert_eq!(info.format, MachineInfoOutputFormat::Yaml);
+            }
+            _ => panic!("expected info subcommand"),
+        }
+
+        let cli = RootCli::parse_from(["neovex", "machine", "info", "-f", "json"]);
+        let Some(RootCommand::Machine(machine)) = cli.command else {
+            panic!("machine info with json format should parse");
+        };
+        match machine.command {
+            MachineSubcommand::Info(info) => {
+                assert_eq!(info.format, MachineInfoOutputFormat::Json);
+            }
+            _ => panic!("expected info subcommand"),
+        }
+    }
+
+    #[test]
+    fn machine_info_help_describes_structured_formats() {
+        let error = RootCli::try_parse_from(["neovex", "machine", "info", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("Display machine host info"));
+        assert!(rendered.contains("--format"));
+        assert!(rendered.contains("-f"));
+        assert!(rendered.contains("json"));
+        assert!(rendered.contains("yaml"));
+        assert!(rendered.contains("[default: yaml]"));
+        assert!(rendered.contains("neovex machine info"));
     }
 
     #[test]
@@ -3649,8 +3885,7 @@ mod tests {
             _ => panic!("expected inspect subcommand"),
         }
 
-        let cli =
-            RootCli::parse_from(["neovex", "machine", "inspect", "--format", "yaml", "team-a"]);
+        let cli = RootCli::parse_from(["neovex", "machine", "inspect", "-f", "yaml", "team-a"]);
         let Some(RootCommand::Machine(machine)) = cli.command else {
             panic!("machine inspect with yaml should parse");
         };
@@ -3671,6 +3906,7 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("Inspect a machine record"));
         assert!(rendered.contains("--format"));
+        assert!(rendered.contains("-f"));
         assert!(rendered.contains("json"));
         assert!(rendered.contains("yaml"));
         assert!(rendered.contains("[default: json]"));
@@ -3740,15 +3976,15 @@ mod tests {
             ),
             (
                 vec!["neovex", "machine", "status", "--help"],
-                "neovex machine status --format json",
+                "neovex machine status -f json",
             ),
             (
                 vec!["neovex", "machine", "list", "--help"],
-                "neovex machine list --format json",
+                "neovex machine list -f json",
             ),
             (
                 vec!["neovex", "machine", "inspect", "--help"],
-                "neovex machine inspect --format yaml team-a",
+                "neovex machine inspect -f yaml team-a",
             ),
             (
                 vec!["neovex", "machine", "set", "--help"],
@@ -4845,6 +5081,7 @@ mod tests {
             None,
             MachineStatusOutputFormat::Yaml,
             false,
+            false,
         )
         .expect("uninitialized machine view should render");
 
@@ -4998,6 +5235,7 @@ mod tests {
             Some(&state),
             MachineStatusOutputFormat::Table,
             false,
+            false,
         )
         .expect("table output should render");
 
@@ -5010,6 +5248,60 @@ mod tests {
         assert!(rendered.contains("4096"));
         assert!(rendered.contains("reachable") || rendered.contains("unreachable"));
         assert!(!rendered.contains("guest:"));
+    }
+
+    #[test]
+    fn machine_status_table_output_can_omit_headings() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let layout = MachineRootLayout::new(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = layout.paths("team-a");
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: "team-a".to_owned(),
+            provider: MachineProvider::Krunkit,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::parse(&default_machine_image())
+                    .expect("default image should parse"),
+                ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: 4,
+                memory_mib: 4096,
+                disk_gib: 40,
+            },
+            volumes: Vec::new(),
+            roots: layout,
+        };
+        let state = MachineStateRecord {
+            version: CURRENT_MACHINE_STATE_VERSION,
+            lifecycle: MachineLifecycle::Running,
+            manager: MachineManagerState::Ready,
+            runtime: None,
+            last_error: None,
+        };
+
+        let rendered = render_machine_status_view(
+            MachineCommandResult::Status,
+            &paths,
+            Some(&config),
+            Some(&state),
+            MachineStatusOutputFormat::Table,
+            true,
+            false,
+        )
+        .expect("table output without headings should render");
+
+        assert!(!rendered.contains("NAME"));
+        assert!(!rendered.contains("LIFECYCLE"));
+        assert!(rendered.contains("team-a"));
+        assert!(rendered.contains("running"));
     }
 
     #[test]
@@ -5049,6 +5341,7 @@ mod tests {
             Some(&MachineStateRecord::initialized()),
             MachineStatusOutputFormat::Json,
             false,
+            false,
         )
         .expect("json output should render");
         let json: serde_json::Value =
@@ -5078,6 +5371,7 @@ mod tests {
             None,
             MachineStatusOutputFormat::Yaml,
             false,
+            false,
         )
         .expect("yaml output should render");
 
@@ -5091,6 +5385,7 @@ mod tests {
         let machines = vec![
             MachineListEntryView {
                 name: "default".to_owned(),
+                is_default: true,
                 lifecycle: MachineLifecycle::Stopped,
                 provider: MachineProvider::Krunkit,
                 cpus: 2,
@@ -5099,6 +5394,7 @@ mod tests {
             },
             MachineListEntryView {
                 name: "team-a".to_owned(),
+                is_default: false,
                 lifecycle: MachineLifecycle::Running,
                 provider: MachineProvider::Krunkit,
                 cpus: 4,
@@ -5112,6 +5408,7 @@ mod tests {
             &MachineListCommand {
                 format: None,
                 quiet: false,
+                no_heading: false,
             },
         )
         .expect("table output should render");
@@ -5120,7 +5417,7 @@ mod tests {
         assert!(rendered.contains("LIFECYCLE"));
         assert!(rendered.contains("PROVIDER"));
         assert!(rendered.contains("MEMORY(MiB)"));
-        assert!(rendered.contains("default"));
+        assert!(rendered.contains("default*"));
         assert!(rendered.contains("team-a"));
         assert!(rendered.contains("running"));
         assert!(!rendered.contains("\"name\""));
@@ -5130,6 +5427,7 @@ mod tests {
     fn machine_list_json_output_serializes_machine_summaries() {
         let machines = vec![MachineListEntryView {
             name: "team-a".to_owned(),
+            is_default: false,
             lifecycle: MachineLifecycle::Running,
             provider: MachineProvider::Krunkit,
             cpus: 4,
@@ -5142,6 +5440,7 @@ mod tests {
             &MachineListCommand {
                 format: Some(MachineListOutputFormat::Json),
                 quiet: false,
+                no_heading: false,
             },
         )
         .expect("json output should render");
@@ -5149,9 +5448,38 @@ mod tests {
             serde_json::from_str(&rendered).expect("machine list JSON should parse");
 
         assert_eq!(json[0]["name"], "team-a");
+        assert_eq!(json[0]["default"], false);
         assert_eq!(json[0]["lifecycle"], "running");
         assert_eq!(json[0]["provider"], "krunkit");
         assert_eq!(json[0]["cpus"], 4);
+    }
+
+    #[test]
+    fn machine_list_table_output_can_omit_headings() {
+        let machines = vec![MachineListEntryView {
+            name: "team-a".to_owned(),
+            is_default: false,
+            lifecycle: MachineLifecycle::Running,
+            provider: MachineProvider::Krunkit,
+            cpus: 4,
+            memory_mib: 4096,
+            disk_gib: 40,
+        }];
+
+        let rendered = render_machine_list_view(
+            &machines,
+            &MachineListCommand {
+                format: None,
+                quiet: false,
+                no_heading: true,
+            },
+        )
+        .expect("table output without headings should render");
+
+        assert!(!rendered.contains("NAME"));
+        assert!(!rendered.contains("LIFECYCLE"));
+        assert!(rendered.contains("team-a"));
+        assert!(rendered.contains("running"));
     }
 
     #[test]
@@ -5159,6 +5487,7 @@ mod tests {
         let machines = vec![
             MachineListEntryView {
                 name: "default".to_owned(),
+                is_default: true,
                 lifecycle: MachineLifecycle::Stopped,
                 provider: MachineProvider::Krunkit,
                 cpus: 2,
@@ -5167,6 +5496,7 @@ mod tests {
             },
             MachineListEntryView {
                 name: "team-a".to_owned(),
+                is_default: false,
                 lifecycle: MachineLifecycle::Running,
                 provider: MachineProvider::Krunkit,
                 cpus: 4,
@@ -5180,6 +5510,7 @@ mod tests {
             &MachineListCommand {
                 format: None,
                 quiet: true,
+                no_heading: false,
             },
         )
         .expect("quiet output should render");
@@ -5191,6 +5522,7 @@ mod tests {
     fn machine_list_explicit_format_wins_over_quiet() {
         let machines = vec![MachineListEntryView {
             name: "default".to_owned(),
+            is_default: true,
             lifecycle: MachineLifecycle::Stopped,
             provider: MachineProvider::Krunkit,
             cpus: 2,
@@ -5203,16 +5535,93 @@ mod tests {
             &MachineListCommand {
                 format: Some(MachineListOutputFormat::Json),
                 quiet: true,
+                no_heading: false,
             },
         )
         .expect("explicit format should win over quiet");
 
         assert!(rendered.contains("\"name\": \"default\""));
+        assert!(rendered.contains("\"default\": true"));
         assert!(rendered.contains("\"lifecycle\": \"stopped\""));
     }
 
     #[test]
-    fn machine_list_scans_initialized_machine_records_in_sorted_order() {
+    fn machine_info_renders_yaml_by_default() {
+        let view = MachineInfoView {
+            version: "0.1.19".to_owned(),
+            host: MachineHostInfoView {
+                arch: "aarch64".to_owned(),
+                os: "macos".to_owned(),
+                current_release: "v0.1.19".to_owned(),
+                default_machine_name: DEFAULT_MACHINE_NAME.to_owned(),
+                machine_count: 1,
+                running_machine_count: 1,
+                image_cache_dir: PathBuf::from("/tmp/cache/images"),
+                guest_binary_cache_dir: PathBuf::from("/tmp/cache/guest-neovex"),
+                roots: MachineRootsView {
+                    config_root: PathBuf::from("/tmp/config"),
+                    state_root: PathBuf::from("/tmp/state"),
+                    data_root: PathBuf::from("/tmp/data"),
+                    cache_root: PathBuf::from("/tmp/cache"),
+                    runtime_root: PathBuf::from("/tmp/runtime"),
+                },
+                default_machine: MachineInfoDefaultMachineView {
+                    initialized: true,
+                    lifecycle: MachineLifecycle::Running,
+                    manager: MachineManagerState::Ready,
+                    provider: Some(MachineProvider::Krunkit),
+                    api_reachable: true,
+                },
+            },
+        };
+
+        let rendered = render_machine_info_view(&view, MachineInfoOutputFormat::Yaml)
+            .expect("machine info should render");
+        assert!(rendered.contains("version: 0.1.19"));
+        assert!(rendered.contains("current_release: v0.1.19"));
+        assert!(rendered.contains("default_machine_name: default"));
+        assert!(rendered.contains("api_reachable: true"));
+    }
+
+    #[test]
+    fn machine_info_renders_json_when_requested() {
+        let view = MachineInfoView {
+            version: "0.1.19".to_owned(),
+            host: MachineHostInfoView {
+                arch: "aarch64".to_owned(),
+                os: "macos".to_owned(),
+                current_release: "v0.1.19".to_owned(),
+                default_machine_name: DEFAULT_MACHINE_NAME.to_owned(),
+                machine_count: 0,
+                running_machine_count: 0,
+                image_cache_dir: PathBuf::from("/tmp/cache/images"),
+                guest_binary_cache_dir: PathBuf::from("/tmp/cache/guest-neovex"),
+                roots: MachineRootsView {
+                    config_root: PathBuf::from("/tmp/config"),
+                    state_root: PathBuf::from("/tmp/state"),
+                    data_root: PathBuf::from("/tmp/data"),
+                    cache_root: PathBuf::from("/tmp/cache"),
+                    runtime_root: PathBuf::from("/tmp/runtime"),
+                },
+                default_machine: MachineInfoDefaultMachineView {
+                    initialized: false,
+                    lifecycle: MachineLifecycle::Uninitialized,
+                    manager: MachineManagerState::Unconfigured,
+                    provider: None,
+                    api_reachable: false,
+                },
+            },
+        };
+
+        let rendered = render_machine_info_view(&view, MachineInfoOutputFormat::Json)
+            .expect("machine info should render");
+        assert!(rendered.contains("\"version\": \"0.1.19\""));
+        assert!(rendered.contains("\"current_release\": \"v0.1.19\""));
+        assert!(rendered.contains("\"initialized\": false"));
+    }
+
+    #[test]
+    fn machine_list_prioritizes_active_and_default_machines() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let layout = MachineRootLayout::new(
             temp_dir.path().join("config"),
@@ -5220,10 +5629,10 @@ mod tests {
             temp_dir.path().join("runtime"),
         );
 
-        for (name, cpus, memory_mib, disk_gib) in [
-            ("team-b", 6, 6144, 60),
-            ("default", 2, 2048, 20),
-            ("team-a", 4, 4096, 40),
+        for (name, cpus, memory_mib, disk_gib, lifecycle) in [
+            ("team-b", 6, 6144, 60, MachineLifecycle::Failed),
+            ("default", 2, 2048, 20, MachineLifecycle::Stopped),
+            ("team-a", 4, 4096, 40, MachineLifecycle::Running),
         ] {
             let paths = layout.paths(name);
             paths.ensure_directories().expect("paths should exist");
@@ -5255,13 +5664,23 @@ mod tests {
                 &paths.state_path,
                 &MachineStateRecord {
                     version: CURRENT_MACHINE_STATE_VERSION,
-                    lifecycle: MachineLifecycle::Stopped,
+                    lifecycle,
                     manager: MachineManagerState::Unconfigured,
                     runtime: None,
                     last_error: None,
                 },
             )
             .expect("state should write");
+            if matches!(
+                lifecycle,
+                MachineLifecycle::Starting | MachineLifecycle::Running
+            ) {
+                let current_pid = std::process::id().to_string();
+                fs::write(&paths.krunkit_pid_path, &current_pid)
+                    .expect("krunkit pidfile should write");
+                fs::write(&paths.gvproxy_pid_path, &current_pid)
+                    .expect("gvproxy pidfile should write");
+            }
         }
 
         let machines = build_machine_list_entries(&layout).expect("machine list should build");
@@ -5271,10 +5690,12 @@ mod tests {
                 .iter()
                 .map(|machine| machine.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["default", "team-a", "team-b"]
+            vec!["team-a", "default", "team-b"]
         );
-        assert_eq!(machines[0].lifecycle, MachineLifecycle::Stopped);
-        assert_eq!(machines[1].cpus, 4);
+        assert!(!machines[0].is_default);
+        assert_eq!(machines[0].lifecycle, MachineLifecycle::Running);
+        assert!(machines[1].is_default);
+        assert_eq!(machines[1].cpus, 2);
         assert_eq!(machines[2].disk_gib, 60);
     }
 
@@ -5344,6 +5765,7 @@ mod tests {
             None,
             None,
             MachineStatusOutputFormat::Json,
+            false,
             true,
         )
         .expect("quiet output should render");
@@ -5515,6 +5937,7 @@ mod tests {
             Some(&MachineStateRecord::initialized()),
             MachineStatusOutputFormat::Yaml,
             false,
+            false,
         )
         .expect("machine view should render");
         let desired = inspect_desired_guest_neovex_binary(&paths);
@@ -5591,6 +6014,7 @@ mod tests {
             Some(&config),
             Some(&MachineStateRecord::initialized()),
             MachineStatusOutputFormat::Yaml,
+            false,
             false,
         )
         .expect("machine view should render");
