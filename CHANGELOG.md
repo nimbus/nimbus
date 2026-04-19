@@ -23,61 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.18...v0.1.19
 
-## [0.1.17] - 2026-04-18
-
-### Fixed
-
-- Refresh the macOS Podman machine-os digest pin to the current live immutable `quay.io/podman/machine-os:6.0` index after the previous digest went missing on Quay by @jackspirou
-- Make the Homebrew macOS proof collector request `machine status --format yaml` so packaged-release assertions stay stable across CLI presentation changes by @jackspirou
-
-### Release
-
-- Prepare v0.1.17 by @jackspirou
-
-
-
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.16...v0.1.17
-
-## [0.1.16] - 2026-04-18
-
-### Fixed
-
-- Derive the machine output-format defaults idiomatically so the shipped machine CLI DX surface stays green under the workspace clippy gate by @jackspirou
-
-### Release
-
-- Prepare v0.1.16 by @jackspirou
-
-
-
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.15...v0.1.16
-
-## [0.1.15] - 2026-04-18
-
-### Machine
-
-- Complete the machine CLI DX surface with `machine list`/`ls`, `machine inspect`, `machine set`, `status --quiet`, and Podman-aligned `machine cp` by @jackspirou
+## [0.1.18] - 2026-04-19
 
 ### Documentation
 
-- Archive the completed machine CLI DX control plan and update the CLI, macOS, and agent guidance references to the shipped surface by @jackspirou
+- Update CHANGELOG.md for v0.1.17 by @github-actions[bot]
 
-### Release
+### Testing
 
-- Prepare v0.1.15 by @jackspirou
-
-
-
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.14...v0.1.15
-
-## [0.1.14] - 2026-04-18
-
-### Machine
-
-- Reflect guest override in non-unix stub by @jackspirou
+- Widen postgres repeated CRUD timeout by @jackspirou
 
 
 
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.17...v0.1.18
+
+## [0.1.17] - 2026-04-19
 **Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.13...v0.1.14
 
 ## [0.1.13] - 2026-04-18
