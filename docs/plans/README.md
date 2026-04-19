@@ -4,6 +4,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/codebase-modularity-and-maintainability-hotspots-plan.md`
+  - canonical execution plan for the current maintainability hotspot wave:
+    oversized regression surfaces, remaining provider benchmark packaging,
+    and active architecture-doc cleanup guided by the 1,500/2,000-line
+    thresholds
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
@@ -250,13 +255,14 @@ completed plans unless explicitly asked to review historical work.
   promote or author a new active plan before doing further cleanup work in
   that area.
 - For broad maintainability, modularity, canonical naming, or god-file
-  cleanup work, use
-  `archive/codebase-modularity-and-maintainability-follow-on-plan.md` only for
-  the completed follow-on wave's execution record and closeout justification.
-  Use `archive/codebase-modularity-and-maintainability-plan.md` only for
+  cleanup work, start with
+  `codebase-modularity-and-maintainability-hotspots-plan.md`.
+  Use `archive/codebase-modularity-and-maintainability-follow-on-plan.md` only
+  for the completed follow-on wave's execution record, closeout
+  justifications, and benchmark-packaging baseline. Use
+  `archive/codebase-modularity-and-maintainability-plan.md` only for
   historical context on the predecessor CLI, provider, and sandbox ownership
-  map. Promote a new active plan before starting another broad
-  maintainability, refactor, modularity, or canonical-naming wave.
+  map.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.
