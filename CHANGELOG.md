@@ -5,33 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.16] - 2026-04-18
-
-### Fixed
-
-- Derive the machine output-format defaults idiomatically so the shipped machine CLI DX surface stays green under the workspace clippy gate by @jackspirou
-
-### Release
-
-- Prepare v0.1.16 by @jackspirou
-
-
-
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.15...v0.1.16
-
-## [0.1.15] - 2026-04-18
-
-### Machine
-
-- Complete the machine CLI DX surface with `machine list`/`ls`, `machine inspect`, `machine set`, `status --quiet`, and Podman-aligned `machine cp` by @jackspirou
+## [0.1.15] - 2026-04-19
 
 ### Documentation
 
-- Archive the completed machine CLI DX control plan and update the CLI, macOS, and agent guidance references to the shipped surface by @jackspirou
-
-### Release
-
-- Prepare v0.1.15 by @jackspirou
+- Update CHANGELOG.md for v0.1.14 by @github-actions[bot]
 
 
 
