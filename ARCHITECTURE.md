@@ -549,6 +549,16 @@ proof on Linux.
   behavior), and `vm/readiness.rs` (published-endpoint visibility and
   readiness probing) while preserving the current plan-only mode used for
   cross-platform verification.
+- `backends/oci/` — backend-owned OCI image preparation and container launch
+  helpers. `buildah.rs` is now the public buildah composition root over
+  `buildah/cli.rs` (CLI wrapper plus mount-session lifecycle),
+  `buildah/defaults.rs` (image launch defaults, env merging, and exposed-port
+  parsing), `buildah/inspect.rs` (inspect/config payload decoding),
+  `buildah/user.rs` (rootfs user resolution for session-backed and extracted
+  rootfs flows), `buildah/render.rs` (shell and command-failure rendering),
+  and `buildah/tests.rs` (buildah regression coverage) while `builder.rs`,
+  `materializer.rs`, `network.rs`, `port_manager.rs`, and `conmon.rs`
+  preserve their existing backend-local ownership.
 
 ### Async Ownership Boundaries
 
@@ -690,14 +700,29 @@ machine lifecycle composition surface. The lifecycle ownership now lives under
 `helpers.rs` owns helper discovery, `ports.rs` owns managed SSH-port leasing,
 `ssh.rs` owns localhost SSH and SCP helpers, `readiness.rs` owns bootstrap and
 readiness waits, `guest.rs` owns guest bootstrap and binary-sync behavior, and
-`stop.rs` owns stop, cleanup, and stale-state recovery. `service/` now follows
+`stop.rs` owns stop, cleanup, and stale-state recovery. The guest machine API
+under `machine/api/` now follows the same split: `api.rs` stays the public
+composition root, `routes.rs` owns router construction plus lifecycle and query
+handlers, `capabilities.rs` owns capability and readiness probing,
+`binaries.rs` owns helper-binary discovery plus backend-path resolution,
+`listener.rs` owns direct-socket and systemd socket-activation setup,
+`state.rs` owns persisted-container-state refresh and response shaping,
+`logs.rs` owns persisted log-tail helpers, `process.rs` owns PID and process
+snapshot helpers, and `tests.rs` keeps the machine API regression coverage
+packaged beside that surface. `service/` now follows
 the same ownership model: `mod.rs` stays the service CLI composition root,
 `execution.rs` owns host-platform backend defaults, execution-surface
 resolution, and forwarded machine API validation, `lifecycle.rs` owns service
 up or down flows plus launch and stop helpers, `render.rs` owns lifecycle,
 list, inspect, and process-snapshot output shaping, `logs.rs` owns persisted
 and forwarded log reads, and `process.rs` owns PID-file plus process-table
-inspection helpers. The CLI surface still
+inspection helpers. The Compose plan loader under `service/compose/` now
+follows the same concept-owned split: `compose.rs` stays the public Compose
+composition surface, `raw.rs` owns decoded Compose document types,
+`lower.rs` owns project and service lowering into Neovex plans, `parse.rs`
+owns scalar and lifecycle parser helpers, `warnings.rs` owns warning helpers,
+`render.rs` owns rendered plan output, and `tests.rs` keeps the Compose
+regression coverage packaged beside that surface. The CLI surface still
 parses `--port`, local data-directory and control-plane overrides,
 provider-specific settings such as
 `--postgres-url`, `--convex-app-dir`, `--license-file`, and runtime limit
