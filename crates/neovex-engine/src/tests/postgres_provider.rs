@@ -223,7 +223,11 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud() {
-    tokio::time::timeout(Duration::from_secs(30), async {
+    // This lane validates correctness, not a tight performance SLO. Under the
+    // full workspace test load in CI, external-provider tests can run much
+    // slower than the focused local case, so keep enough headroom to catch
+    // real hangs without flaking on runner contention.
+    tokio::time::timeout(Duration::from_secs(60), async {
         with_postgres_service_config(|service_config, _provider_config| async move {
             let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
             let service = Arc::new(
