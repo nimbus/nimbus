@@ -34,14 +34,14 @@ Use the repo docs for architecture and behavior details:
 - `docs/README.md`
 - For generic maintainability, refactor, modularity, canonical naming, or
   god-file cleanup work, open
+  `docs/plans/codebase-modularity-and-maintainability-hotspots-plan.md`
+  after the three docs above. Open
   `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
   only when a task needs the completed follow-on maintainability wave's
-  execution detail, closeout justification, or benchmark harness checkpoint
-  chain. Open
-  `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
-  when a task needs the predecessor wave's execution detail or checkpoint
-  chain. Promote a new active plan before landing another broad maintainability
-  or refactor wave.
+  execution detail, closeout justification, or benchmark-packaging baseline.
+  Open `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
+  only when a task needs the predecessor wave's execution detail or checkpoint
+  chain.
 - For the landed krun-backed microVM and service-control architecture, go
   directly to `docs/reference/microvm-service-baseline.md` after the three
   docs above. Open the archived plans only when a task needs historical
@@ -84,13 +84,14 @@ Use the repo docs for architecture and behavior details:
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
 - For generic maintainability, refactor, modularity, canonical naming, or
   readability cleanup work, open
+  `docs/plans/codebase-modularity-and-maintainability-hotspots-plan.md`
+  immediately after those three docs. Open
   `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
   only when you need the completed follow-on maintainability wave's execution
-  record, closeout justification, or benchmark harness checkpoint chain. Open
+  record, closeout justification, or benchmark-packaging baseline. Open
   `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
   when you need the predecessor wave's historical execution record or
-  checkpoints. Promote a new active plan before landing another broad
-  maintainability, modularity, or readability cleanup wave.
+  checkpoints.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
   docs. Only load the archived plans if the task genuinely needs historical
