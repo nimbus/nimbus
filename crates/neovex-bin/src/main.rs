@@ -11,6 +11,7 @@ use neovex::{
 };
 use serde::Deserialize;
 
+mod cli_ux;
 mod machine;
 mod service;
 #[cfg(test)]
@@ -53,7 +54,10 @@ const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 #[command(
     name = "neovex",
     version,
-    about = "Reactive document database with machine and service orchestration"
+    about = "Reactive document database with machine and service orchestration",
+    help_template = cli_ux::ROOT_HELP_TEMPLATE,
+    after_help = cli_ux::ROOT_HELP_EXAMPLES,
+    subcommand_help_heading = "Available Commands"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -61,6 +65,10 @@ struct Cli {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVE_HELP_EXAMPLES
+)]
 struct ServeCommand {
     /// Optional JSON config file. CLI flags override env and file values.
     #[arg(long)]
@@ -908,6 +916,12 @@ mod tests {
         assert!(
             rendered.contains("Reactive document database with machine and service orchestration")
         );
+        assert!(rendered.contains("Usage:"));
+        assert!(rendered.contains("Available Commands:"));
+        assert!(rendered.contains("Examples:"));
+        assert!(rendered.contains("neovex serve"));
+        assert!(rendered.contains("neovex machine start"));
+        assert!(rendered.contains("neovex service up"));
         assert!(rendered.contains("serve"));
         assert!(rendered.contains("machine"));
         assert!(rendered.contains("service"));

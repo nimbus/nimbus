@@ -694,6 +694,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "comfy-table"
+version = "7.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "958c5d6ecf1f214b4c2bbbbf6ab9523a864bd136dcf71a7e8904799acfe1ad47"
+dependencies = [
+ "crossterm",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "console"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -855,6 +878,29 @@ name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
+name = "crossterm"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
+dependencies = [
+ "bitflags",
+ "crossterm_winapi",
+ "document-features",
+ "parking_lot",
+ "rustix 1.1.4",
+ "winapi",
+]
+
+[[package]]
+name = "crossterm_winapi"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acdd7c62a3665c7f6830a51635d9ac9b23ed385797f70a83bb8bafe9c572ab2b"
+dependencies = [
+ "winapi",
+]
 
 [[package]]
 name = "crunchy"
@@ -1239,6 +1285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-features"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
+dependencies = [
+ "litrs",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1255,6 +1310,12 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "encoding_rs"
@@ -2174,6 +2235,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "indicatif"
+version = "0.18.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25470f23803092da7d239834776d653104d551bc4d7eacaf31e6837854b8e9eb"
+dependencies = [
+ "console",
+ "portable-atomic",
+ "unicode-width",
+ "unit-prefix",
+ "web-time",
+]
+
+[[package]]
 name = "inventory"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2475,6 +2549,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
+name = "litrs"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2661,7 +2741,7 @@ dependencies = [
 
 [[package]]
 name = "neovex"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "neovex-core",
  "neovex-engine",
@@ -2673,12 +2753,14 @@ dependencies = [
 
 [[package]]
 name = "neovex-bin"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "axum",
  "clap",
+ "comfy-table",
  "flate2",
  "fs2",
+ "indicatif",
  "libc",
  "neovex",
  "neovex-sandbox",
@@ -2692,6 +2774,7 @@ dependencies = [
  "sha2 0.10.9",
  "shell-words",
  "signal-hook-registry",
+ "tar",
  "tempfile",
  "tokio",
  "tracing",
@@ -2701,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "rmp-serde",
  "serde",
@@ -2713,7 +2796,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-engine"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -2740,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-runtime"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "criterion",
  "deno_core",
@@ -2759,7 +2842,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-sandbox"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "flate2",
  "fs2",
@@ -2782,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-server"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2808,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-storage"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "deadpool-postgres",
  "hyper 0.14.32",
@@ -2837,7 +2920,7 @@ dependencies = [
 
 [[package]]
 name = "neovex-testing"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "axum",
  "futures",
@@ -5260,10 +5343,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
 
 [[package]]
+name = "unicode-segmentation"
+version = "1.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
 name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "unsafe-libyaml"

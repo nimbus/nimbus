@@ -223,6 +223,9 @@ jobs:
           bash -n scripts/verify-neovex-machine-guest-proof-helper.sh
           bash -n scripts/verify-neovex-machine-service-proof-helper.sh
           bash -n scripts/verify-neovex-homebrew-cask-proof-helper.sh
+          bash -n scripts/install.sh
+          bash -n scripts/verify-install.sh
+          bash -n scripts/verify-install-helper.sh
 
       - name: Verify guest proof helper
         run: bash scripts/verify-neovex-machine-guest-proof-helper.sh
@@ -232,6 +235,9 @@ jobs:
 
       - name: Verify Homebrew cask proof helper
         run: bash scripts/verify-neovex-homebrew-cask-proof-helper.sh
+
+      - name: Verify install script helper
+        run: bash scripts/verify-install-helper.sh
 
   coverage:
     name: Coverage

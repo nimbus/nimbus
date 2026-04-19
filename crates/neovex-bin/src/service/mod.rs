@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -8,14 +8,16 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use neovex::{
-    Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxServiceCatalog,
-    SandboxServiceLaunch, SandboxServiceManager, SandboxStatus, ServicePersistenceConfig, TenantId,
+    Error, PublishedEndpoint, SandboxBackend, SandboxBackendKind, SandboxHandle,
+    SandboxServiceCatalog, SandboxServiceLaunch, SandboxServiceManager, SandboxStatus,
+    ServicePersistenceConfig, TenantId,
 };
 use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 use serde::Serialize;
 
+use crate::cli_ux;
 use crate::machine::{
     ForwardedMachineApiSandboxBackend, MachineApiClient, MachineApiServiceSandboxDetails,
     ensure_default_machine_api_client_started, require_default_machine_api_client,
@@ -27,6 +29,11 @@ mod project;
 pub(crate) use project::ComposeProjectContext;
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_HELP_EXAMPLES,
+    subcommand_help_heading = "Available Commands"
+)]
 pub(crate) struct ServiceCommand {
     #[command(subcommand)]
     command: ServiceSubcommand,
@@ -51,6 +58,10 @@ enum ServiceSubcommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_CONFIG_HELP_EXAMPLES
+)]
 struct ServiceConfigCommand {
     /// Compose file to read. Defaults to ./compose.yaml.
     #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
@@ -62,6 +73,10 @@ struct ServiceConfigCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_UP_HELP_EXAMPLES
+)]
 struct ServiceUpCommand {
     /// Optional service name. When omitted, starts all declared services.
     service: Option<String>,
@@ -76,6 +91,10 @@ struct ServiceUpCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_DOWN_HELP_EXAMPLES
+)]
 struct ServiceDownCommand {
     /// Optional service name. When omitted, stops all persisted services in the tenant.
     service: Option<String>,
@@ -90,10 +109,18 @@ struct ServiceDownCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_LIST_HELP_EXAMPLES
+)]
 struct ServiceListCommand {
     /// Compose file to read. Defaults to ./compose.yaml.
     #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
     file: PathBuf,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = ServiceListOutputFormat::Table)]
+    format: ServiceListOutputFormat,
 
     /// Show all tenants under the project-scoped backend root, not just the
     /// deterministic local project tenant.
@@ -102,6 +129,10 @@ struct ServiceListCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_INSPECT_HELP_EXAMPLES
+)]
 struct ServiceInspectCommand {
     /// Service name to inspect.
     service: String,
@@ -113,9 +144,17 @@ struct ServiceInspectCommand {
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]
     tenant: Option<TenantId>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = ServiceInspectOutputFormat::Json)]
+    format: ServiceInspectOutputFormat,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_LOGS_HELP_EXAMPLES
+)]
 struct ServiceLogsCommand {
     /// Service name to read logs for.
     service: String,
@@ -134,6 +173,10 @@ struct ServiceLogsCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::SERVICE_PS_HELP_EXAMPLES
+)]
 struct ServicePsCommand {
     /// Service name to inspect process state for.
     service: String,
@@ -145,6 +188,33 @@ struct ServicePsCommand {
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]
     tenant: Option<TenantId>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = ServicePsOutputFormat::Table)]
+    format: ServicePsOutputFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum ServiceListOutputFormat {
+    Json,
+    Yaml,
+    #[default]
+    Table,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum ServiceInspectOutputFormat {
+    #[default]
+    Json,
+    Yaml,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum ServicePsOutputFormat {
+    Json,
+    Yaml,
+    #[default]
+    Table,
 }
 
 pub(crate) async fn run_service_command(
@@ -246,12 +316,12 @@ fn run_service_config(command: ServiceConfigCommand) -> Result<(), Error> {
     let rendered = compose::render_compose_project(&command.file, command.services)?;
 
     for warning in rendered.warnings {
-        writeln!(io::stderr(), "Warning: {warning}").map_err(|error| {
+        cli_ux::write_stderr_prefixed_line("Warning:", &warning).map_err(|error| {
             Error::InvalidInput(format!("failed to write warning output: {error}"))
         })?;
     }
 
-    print!("{}", rendered.stdout);
+    emit_service_stdout(&rendered.stdout)?;
     Ok(())
 }
 
@@ -263,7 +333,7 @@ async fn run_service_up(command: ServiceUpCommand, control_data_dir: &Path) -> R
         None,
     )
     .await?;
-    print!("{rendered}");
+    emit_service_stdout(&rendered)?;
     Ok(())
 }
 
@@ -278,7 +348,7 @@ async fn run_service_down(
         None,
     )
     .await?;
-    print!("{rendered}");
+    emit_service_stdout(&rendered)?;
     Ok(())
 }
 
@@ -289,7 +359,7 @@ fn run_service_list(command: ServiceListCommand, control_data_dir: &Path) -> Res
         ServiceHostPlatform::current(),
         None,
     )?;
-    print!("{rendered}");
+    emit_service_stdout(&rendered)?;
     Ok(())
 }
 
@@ -303,7 +373,7 @@ fn run_service_inspect(
         ServiceHostPlatform::current(),
         None,
     )?;
-    print!("{rendered}");
+    emit_service_stdout(&rendered)?;
     Ok(())
 }
 
@@ -323,8 +393,13 @@ fn run_service_ps(command: ServicePsCommand, control_data_dir: &Path) -> Result<
         ServiceHostPlatform::current(),
         None,
     )?;
-    print!("{rendered}");
+    emit_service_stdout(&rendered)?;
     Ok(())
+}
+
+fn emit_service_stdout(rendered: &str) -> Result<(), Error> {
+    cli_ux::write_stdout(rendered)
+        .map_err(|error| Error::Internal(format!("failed to write service output: {error}")))
 }
 
 #[cfg(test)]
@@ -333,16 +408,13 @@ async fn render_service_up(
     command: &ServiceUpCommand,
     control_data_dir: &Path,
 ) -> Result<String, Error> {
-    let outcomes = service_up_outcomes_for_platform(
+    render_service_up_for_platform(
         command,
         control_data_dir,
         ServiceHostPlatform::current(),
         None,
     )
-    .await?;
-    serde_yaml::to_string(&outcomes).map_err(|error| {
-        Error::Serialization(format!("failed to render service up results: {error}"))
-    })
+    .await
 }
 
 #[cfg(test)]
@@ -351,16 +423,13 @@ async fn render_service_down(
     command: &ServiceDownCommand,
     control_data_dir: &Path,
 ) -> Result<String, Error> {
-    let outcomes = service_down_outcomes_for_platform(
+    render_service_down_for_platform(
         command,
         control_data_dir,
         ServiceHostPlatform::current(),
         None,
     )
-    .await?;
-    serde_yaml::to_string(&outcomes).map_err(|error| {
-        Error::Serialization(format!("failed to render service down results: {error}"))
-    })
+    .await
 }
 
 fn render_state_lookup_error(operation: &str, error: neovex::SandboxError) -> Error {
@@ -388,9 +457,20 @@ fn render_service_list_for_platform(
                 state_view.list_for_tenant(&context.control_plane.local_tenant_id)
             }
             .map_err(|error| render_state_lookup_error("list persisted sandbox state", error))?;
-            serde_yaml::to_string(&summaries).map_err(|error| {
-                Error::Serialization(format!("failed to render service list: {error}"))
-            })
+            let views = summaries
+                .into_iter()
+                .map(|summary| ServiceSandboxSummaryView {
+                    sandbox_id: summary.sandbox_id,
+                    tenant_id: summary.tenant_id,
+                    service_name: summary.service_name,
+                    status: summary.status,
+                    published_endpoints: summary.published_endpoints,
+                    restart_count: summary.restart_count,
+                    last_exit_code: summary.last_exit_code,
+                    shutdown_requested: summary.shutdown_requested,
+                })
+                .collect::<Vec<_>>();
+            render_service_list_view(&views, command.format)
         }
         ServiceExecutionSurface::ForwardedContainer { client, .. } => {
             validate_forwarded_machine_api_operations(
@@ -406,9 +486,20 @@ fn render_service_list_for_platform(
                 .map_err(|error| {
                     machine_api_operation_error("list persisted sandbox state", &client, error)
                 })?;
-            serde_yaml::to_string(&summaries).map_err(|error| {
-                Error::Serialization(format!("failed to render service list: {error}"))
-            })
+            let views = summaries
+                .into_iter()
+                .map(|summary| ServiceSandboxSummaryView {
+                    sandbox_id: summary.sandbox_id,
+                    tenant_id: summary.tenant_id,
+                    service_name: summary.service_name,
+                    status: summary.status,
+                    published_endpoints: summary.published_endpoints,
+                    restart_count: summary.restart_count,
+                    last_exit_code: summary.last_exit_code,
+                    shutdown_requested: summary.shutdown_requested,
+                })
+                .collect::<Vec<_>>();
+            render_service_list_view(&views, command.format)
         }
     }
 }
@@ -419,6 +510,11 @@ async fn render_service_up_for_platform(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<String, Error> {
+    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let tenant = command
+        .tenant
+        .clone()
+        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
     let outcomes = service_up_outcomes_for_platform(
         command,
         control_data_dir,
@@ -426,9 +522,12 @@ async fn render_service_up_for_platform(
         machine_api_client,
     )
     .await?;
-    serde_yaml::to_string(&outcomes).map_err(|error| {
-        Error::Serialization(format!("failed to render service up results: {error}"))
-    })
+    Ok(render_service_lifecycle_action_summary(
+        "Service up completed",
+        &context.control_plane.project_name,
+        &tenant,
+        &outcomes,
+    ))
 }
 
 async fn render_service_down_for_platform(
@@ -437,6 +536,11 @@ async fn render_service_down_for_platform(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<String, Error> {
+    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let tenant = command
+        .tenant
+        .clone()
+        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
     let outcomes = service_down_outcomes_for_platform(
         command,
         control_data_dir,
@@ -444,9 +548,12 @@ async fn render_service_down_for_platform(
         machine_api_client,
     )
     .await?;
-    serde_yaml::to_string(&outcomes).map_err(|error| {
-        Error::Serialization(format!("failed to render service down results: {error}"))
-    })
+    Ok(render_service_lifecycle_action_summary(
+        "Service down completed",
+        &context.control_plane.project_name,
+        &tenant,
+        &outcomes,
+    ))
 }
 
 fn render_service_inspect_for_platform(
@@ -480,12 +587,7 @@ fn render_service_inspect_for_platform(
                         &command.service,
                     )
                 })?;
-            serde_yaml::to_string(&details).map_err(|error| {
-                Error::Serialization(format!(
-                    "failed to render sandbox details for service {}: {error}",
-                    command.service
-                ))
-            })
+            render_service_inspect_view(&details, command.format, &command.service)
         }
         ServiceExecutionSurface::ForwardedContainer { client, .. } => {
             validate_forwarded_machine_api_operations(
@@ -508,12 +610,7 @@ fn render_service_inspect_for_platform(
                     &command.service,
                 )
             })?;
-            serde_yaml::to_string(&details).map_err(|error| {
-                Error::Serialization(format!(
-                    "failed to render sandbox details for service {}: {error}",
-                    command.service
-                ))
-            })
+            render_service_inspect_view(&details, command.format, &command.service)
         }
     }
 }
@@ -603,8 +700,7 @@ fn render_service_ps_for_platform(
         host_platform,
         machine_api_client,
     )?;
-    serde_yaml::to_string(&snapshot)
-        .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}")))
+    render_service_process_snapshot_view(&snapshot, command.format)
 }
 
 async fn service_up_outcomes_for_platform(
@@ -788,8 +884,7 @@ fn flush_service_log_chunk(service_name: &str, chunk: &str) -> Result<(), Error>
     if chunk.is_empty() {
         return Ok(());
     }
-    print!("{chunk}");
-    io::stdout().flush().map_err(|error| {
+    cli_ux::write_stdout(chunk).map_err(|error| {
         Error::Internal(format!(
             "failed to flush service logs for {}: {error}",
             service_name
@@ -1784,7 +1879,7 @@ fn control_data_dir_from_service_config(config: &ServicePersistenceConfig) -> &P
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ServiceLifecycleAction {
     Started,
@@ -1817,6 +1912,50 @@ impl ServiceLifecycleOutcome {
             status: handle.status,
         }
     }
+}
+
+impl ServiceLifecycleAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::AlreadyRunning => "already_running",
+            Self::Stopped => "stopped",
+            Self::AlreadyStopped => "already_stopped",
+        }
+    }
+}
+
+fn render_sandbox_status(status: SandboxStatus) -> &'static str {
+    match status {
+        SandboxStatus::Starting => "starting",
+        SandboxStatus::Ready => "ready",
+        SandboxStatus::NotReady => "not_ready",
+        SandboxStatus::Stopping => "stopping",
+        SandboxStatus::Stopped => "stopped",
+        SandboxStatus::Failed => "failed",
+    }
+}
+
+fn render_service_lifecycle_action_summary(
+    summary: &str,
+    project_name: &str,
+    tenant: &TenantId,
+    outcomes: &[ServiceLifecycleOutcome],
+) -> String {
+    let header = format!("{summary} for project {project_name} (tenant {tenant})");
+    let detail_lines = outcomes
+        .iter()
+        .map(|outcome| {
+            format!(
+                "{}: {} (sandbox {}, status {})",
+                outcome.service_name,
+                outcome.action.as_str(),
+                outcome.sandbox_id,
+                render_sandbox_status(outcome.status),
+            )
+        })
+        .collect::<Vec<_>>();
+    cli_ux::format_action_block(&header, &detail_lines)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1856,6 +1995,183 @@ struct ServiceProcessRow {
     command: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ServiceSandboxSummaryView {
+    sandbox_id: neovex::SandboxId,
+    tenant_id: TenantId,
+    service_name: String,
+    status: SandboxStatus,
+    published_endpoints: Vec<PublishedEndpoint>,
+    restart_count: u32,
+    last_exit_code: Option<i32>,
+    shutdown_requested: bool,
+}
+
+fn render_service_list_view(
+    summaries: &[ServiceSandboxSummaryView],
+    format: ServiceListOutputFormat,
+) -> Result<String, Error> {
+    match format {
+        ServiceListOutputFormat::Json => serde_json::to_string_pretty(summaries).map_err(|error| {
+            Error::Serialization(format!("failed to render service list: {error}"))
+        }),
+        ServiceListOutputFormat::Yaml => serde_yaml::to_string(summaries).map_err(|error| {
+            Error::Serialization(format!("failed to render service list: {error}"))
+        }),
+        ServiceListOutputFormat::Table => Ok(render_service_list_table(summaries)),
+    }
+}
+
+fn render_service_list_table(summaries: &[ServiceSandboxSummaryView]) -> String {
+    let columns = [
+        cli_ux::TableColumn::left("SERVICE", 12),
+        cli_ux::TableColumn::left("TENANT", 16),
+        cli_ux::TableColumn::left("STATUS", 12),
+        cli_ux::TableColumn::left("SANDBOX", 14),
+        cli_ux::TableColumn::right("RESTARTS", 8),
+        cli_ux::TableColumn::right("EXIT", 4),
+        cli_ux::TableColumn::left("ENDPOINTS", 12),
+    ];
+    let rows = summaries
+        .iter()
+        .map(|summary| {
+            vec![
+                summary.service_name.clone(),
+                summary.tenant_id.to_string(),
+                render_sandbox_status(summary.status).to_owned(),
+                summary.sandbox_id.to_string(),
+                summary.restart_count.to_string(),
+                summary
+                    .last_exit_code
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_owned()),
+                render_published_endpoints(&summary.published_endpoints),
+            ]
+        })
+        .collect::<Vec<_>>();
+    cli_ux::render_table(&columns, &rows)
+}
+
+fn render_service_inspect_view<T: Serialize>(
+    details: &T,
+    format: ServiceInspectOutputFormat,
+    service_name: &str,
+) -> Result<String, Error> {
+    match format {
+        ServiceInspectOutputFormat::Json => {
+            serde_json::to_string_pretty(details).map_err(|error| {
+                Error::Serialization(format!(
+                    "failed to render sandbox details for service {}: {error}",
+                    service_name
+                ))
+            })
+        }
+        ServiceInspectOutputFormat::Yaml => serde_yaml::to_string(details).map_err(|error| {
+            Error::Serialization(format!(
+                "failed to render sandbox details for service {}: {error}",
+                service_name
+            ))
+        }),
+    }
+}
+
+fn render_service_process_snapshot_view(
+    snapshot: &ServiceProcessSnapshot,
+    format: ServicePsOutputFormat,
+) -> Result<String, Error> {
+    match format {
+        ServicePsOutputFormat::Json => serde_json::to_string_pretty(snapshot)
+            .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
+        ServicePsOutputFormat::Yaml => serde_yaml::to_string(snapshot)
+            .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
+        ServicePsOutputFormat::Table => Ok(render_service_process_snapshot_table(snapshot)),
+    }
+}
+
+fn render_service_process_snapshot_table(snapshot: &ServiceProcessSnapshot) -> String {
+    let mut detail_lines = vec![
+        format!("sandbox: {}", snapshot.sandbox_id),
+        format!("status: {}", render_sandbox_status(snapshot.status)),
+        format!(
+            "runtime pid: {}",
+            snapshot
+                .runtime_pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "-".to_owned())
+        ),
+        format!(
+            "conmon pid: {}",
+            snapshot
+                .conmon_pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "-".to_owned())
+        ),
+    ];
+    if snapshot.process_rows.is_empty() {
+        detail_lines.push("tracked processes: none".to_owned());
+        return cli_ux::format_action_block(
+            &format!(
+                "Service process snapshot for {} (tenant {})",
+                snapshot.service_name, snapshot.tenant_id
+            ),
+            &detail_lines,
+        );
+    }
+
+    let mut rendered = cli_ux::format_action_block(
+        &format!(
+            "Service process snapshot for {} (tenant {})",
+            snapshot.service_name, snapshot.tenant_id
+        ),
+        &detail_lines,
+    );
+    let columns = [
+        cli_ux::TableColumn::right("PID", 5),
+        cli_ux::TableColumn::right("PPID", 5),
+        cli_ux::TableColumn::left("COMMAND", 24),
+    ];
+    let rows = snapshot
+        .process_rows
+        .iter()
+        .map(|row| {
+            vec![
+                row.pid.to_string(),
+                row.ppid.to_string(),
+                row.command.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    rendered.push_str(&cli_ux::render_table(&columns, &rows));
+    rendered
+}
+
+fn render_published_endpoints(endpoints: &[PublishedEndpoint]) -> String {
+    if endpoints.is_empty() {
+        return "-".to_owned();
+    }
+
+    endpoints
+        .iter()
+        .map(|endpoint| {
+            format!(
+                "{}={}/{}",
+                endpoint.name,
+                endpoint.address,
+                render_published_endpoint_protocol(endpoint.protocol)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_published_endpoint_protocol(protocol: neovex::PublishedEndpointProtocol) -> &'static str {
+    match protocol {
+        neovex::PublishedEndpointProtocol::Tcp => "tcp",
+        neovex::PublishedEndpointProtocol::Http => "http",
+        neovex::PublishedEndpointProtocol::Https => "https",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1892,6 +2208,67 @@ mod tests {
     #[derive(Debug, clap::Subcommand)]
     enum RootCommand {
         Service(ServiceCommand),
+    }
+
+    #[test]
+    fn service_help_uses_shared_template_and_examples() {
+        let error = RootCli::try_parse_from(["neovex", "service", "--help"])
+            .expect_err("help should short-circuit");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("Usage:"));
+        assert!(rendered.contains("Available Commands:"));
+        assert!(rendered.contains("Examples:"));
+        assert!(rendered.contains("neovex service config"));
+        assert!(rendered.contains("neovex service up"));
+        assert!(rendered.contains("neovex service logs api --follow"));
+        assert!(rendered.contains("Validate and print the resolved service plan"));
+        assert!(rendered.contains("Start one or more declared services"));
+        assert!(rendered.contains("Show persisted sandbox state"));
+    }
+
+    #[test]
+    fn service_leaf_help_uses_shared_template_and_examples() {
+        let cases = [
+            (
+                vec!["neovex", "service", "config", "--help"],
+                "neovex service config --services",
+            ),
+            (
+                vec!["neovex", "service", "up", "--help"],
+                "neovex service up api",
+            ),
+            (
+                vec!["neovex", "service", "down", "--help"],
+                "neovex service down api",
+            ),
+            (
+                vec!["neovex", "service", "list", "--help"],
+                "neovex service list --all-tenants",
+            ),
+            (
+                vec!["neovex", "service", "inspect", "--help"],
+                "neovex service inspect api",
+            ),
+            (
+                vec!["neovex", "service", "logs", "--help"],
+                "neovex service logs api --follow",
+            ),
+            (
+                vec!["neovex", "service", "ps", "--help"],
+                "neovex service ps api",
+            ),
+        ];
+
+        for (argv, example_snippet) in cases {
+            let error = RootCli::try_parse_from(argv).expect_err("help should short-circuit");
+            assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+            let rendered = error.to_string();
+            assert!(rendered.contains("Usage:"), "{rendered}");
+            assert!(rendered.contains("Examples:"), "{rendered}");
+            assert!(rendered.contains(example_snippet), "{rendered}");
+        }
     }
 
     #[test]
@@ -1937,6 +2314,22 @@ mod tests {
             ServiceSubcommand::List(list) => {
                 assert_eq!(list.file, PathBuf::from(compose::DEFAULT_COMPOSE_FILE));
                 assert!(list.all_tenants);
+                assert_eq!(list.format, ServiceListOutputFormat::Table);
+            }
+            _ => panic!("expected list subcommand"),
+        }
+    }
+
+    #[test]
+    fn parses_service_list_format_flag() {
+        let cli = RootCli::parse_from(["neovex", "service", "list", "--format", "json"]);
+        let Some(RootCommand::Service(service)) = cli.command else {
+            panic!("service subcommand should parse");
+        };
+
+        match service.command {
+            ServiceSubcommand::List(list) => {
+                assert_eq!(list.format, ServiceListOutputFormat::Json);
             }
             _ => panic!("expected list subcommand"),
         }
@@ -1997,6 +2390,23 @@ mod tests {
                         .as_str(),
                     "svc-demo"
                 );
+                assert_eq!(inspect.format, ServiceInspectOutputFormat::Json);
+            }
+            _ => panic!("expected inspect subcommand"),
+        }
+    }
+
+    #[test]
+    fn parses_service_inspect_format_flag() {
+        let cli = RootCli::parse_from(["neovex", "service", "inspect", "db", "--format", "yaml"]);
+        let Some(RootCommand::Service(service)) = cli.command else {
+            panic!("service subcommand should parse");
+        };
+
+        match service.command {
+            ServiceSubcommand::Inspect(inspect) => {
+                assert_eq!(inspect.service, "db");
+                assert_eq!(inspect.format, ServiceInspectOutputFormat::Yaml);
             }
             _ => panic!("expected inspect subcommand"),
         }
@@ -2033,6 +2443,23 @@ mod tests {
                     ps.tenant.expect("tenant override should parse").as_str(),
                     "svc-demo"
                 );
+                assert_eq!(ps.format, ServicePsOutputFormat::Table);
+            }
+            _ => panic!("expected ps subcommand"),
+        }
+    }
+
+    #[test]
+    fn parses_service_ps_format_flag() {
+        let cli = RootCli::parse_from(["neovex", "service", "ps", "db", "--format", "json"]);
+        let Some(RootCommand::Service(service)) = cli.command else {
+            panic!("service subcommand should parse");
+        };
+
+        match service.command {
+            ServiceSubcommand::Ps(ps) => {
+                assert_eq!(ps.service, "db");
+                assert_eq!(ps.format, ServicePsOutputFormat::Json);
             }
             _ => panic!("expected ps subcommand"),
         }
@@ -2065,6 +2492,7 @@ mod tests {
         let rendered_local = render_service_list_for_platform(
             &ServiceListCommand {
                 file: compose_path.clone(),
+                format: ServiceListOutputFormat::Table,
                 all_tenants: false,
             },
             &control_data_dir,
@@ -2072,12 +2500,16 @@ mod tests {
             None,
         )
         .expect("local list should render");
+        assert!(rendered_local.contains("SERVICE"), "{rendered_local}");
+        assert!(rendered_local.contains("SANDBOX"), "{rendered_local}");
+        assert!(rendered_local.contains("db-01aaa"), "{rendered_local}");
         assert!(rendered_local.contains(context.control_plane.local_tenant_id.as_str()));
         assert!(!rendered_local.contains("tenant-other"));
 
         let rendered_all = render_service_list_for_platform(
             &ServiceListCommand {
                 file: compose_path,
+                format: ServiceListOutputFormat::Table,
                 all_tenants: true,
             },
             &control_data_dir,
@@ -2118,6 +2550,7 @@ mod tests {
                 service: "db".to_owned(),
                 file: compose_path.clone(),
                 tenant: None,
+                format: ServiceInspectOutputFormat::Json,
             },
             &control_data_dir,
             ServiceHostPlatform::Linux,
@@ -2125,6 +2558,7 @@ mod tests {
         )
         .expect("default inspect should render");
         assert!(rendered_default.contains(context.control_plane.local_tenant_id.as_str()));
+        assert!(rendered_default.contains("\"service_name\": \"db\""));
         assert!(rendered_default.contains("db-01aaa"));
         assert!(rendered_default.contains("ctr.log"));
 
@@ -2133,6 +2567,7 @@ mod tests {
                 service: "db".to_owned(),
                 file: compose_path,
                 tenant: Some(TenantId::new("tenant-other").expect("tenant should parse")),
+                format: ServiceInspectOutputFormat::Yaml,
             },
             &control_data_dir,
             ServiceHostPlatform::Linux,
@@ -2141,6 +2576,7 @@ mod tests {
         .expect("tenant override inspect should render");
         assert!(rendered_override.contains("tenant-other"));
         assert!(rendered_override.contains("db-01bbb"));
+        assert!(rendered_override.contains("service_name: db"));
     }
 
     #[test]
@@ -2285,17 +2721,18 @@ mod tests {
                 service: "db".to_owned(),
                 file: compose_path,
                 tenant: None,
+                format: ServicePsOutputFormat::Table,
             },
             &control_data_dir,
             ServiceHostPlatform::Linux,
             None,
         )
         .expect("service ps should render");
+        assert!(rendered.contains("Service process snapshot for db"));
         assert!(rendered.contains("db-01aaa"));
-        assert!(rendered.contains("runtime_pid: 2002"));
-        assert!(rendered.contains("conmon_pid: 1001"));
-        assert!(rendered.contains("runtime_pidfile:"));
-        assert!(rendered.contains("conmon_pidfile:"));
+        assert!(rendered.contains("runtime pid: 2002"));
+        assert!(rendered.contains("conmon pid: 1001"));
+        assert!(rendered.contains("tracked processes: none"));
     }
 
     #[test]
@@ -2659,8 +3096,14 @@ services:
         )
         .await
         .expect("service up should render");
-        assert!(rendered_up.contains("action: started"), "{rendered_up}");
-        assert!(rendered_up.contains("service_name: db"), "{rendered_up}");
+        assert!(
+            rendered_up.contains("Service up completed for project demo-app"),
+            "{rendered_up}"
+        );
+        assert!(
+            rendered_up.contains("db: started (sandbox db-01stub, status ready)"),
+            "{rendered_up}"
+        );
 
         let _ = shutdown_tx.send(());
         server
@@ -2704,8 +3147,14 @@ services:
         )
         .await
         .expect("service up should render for default macOS backend");
-        assert!(rendered_up.contains("action: started"), "{rendered_up}");
-        assert!(rendered_up.contains("service_name: db"), "{rendered_up}");
+        assert!(
+            rendered_up.contains("Service up completed for project demo-app"),
+            "{rendered_up}"
+        );
+        assert!(
+            rendered_up.contains("db: started (sandbox db-01stub, status ready)"),
+            "{rendered_up}"
+        );
 
         let _ = shutdown_tx.send(());
         server
@@ -2866,6 +3315,7 @@ services:
         let rendered_list = render_service_list_for_platform(
             &ServiceListCommand {
                 file: compose_path.clone(),
+                format: ServiceListOutputFormat::Table,
                 all_tenants: false,
             },
             &control_data_dir,
@@ -2877,16 +3327,15 @@ services:
             rendered_list.contains(context.control_plane.local_tenant_id.as_str()),
             "{rendered_list}"
         );
-        assert!(
-            rendered_list.contains("service_name: db"),
-            "{rendered_list}"
-        );
+        assert!(rendered_list.contains("SERVICE"), "{rendered_list}");
+        assert!(rendered_list.contains("db"), "{rendered_list}");
 
         let rendered_inspect = render_service_inspect_for_platform(
             &ServiceInspectCommand {
                 service: "db".to_owned(),
                 file: compose_path.clone(),
                 tenant: None,
+                format: ServiceInspectOutputFormat::Json,
             },
             &control_data_dir,
             ServiceHostPlatform::Macos,
@@ -2894,7 +3343,7 @@ services:
         )
         .expect("service inspect should render");
         assert!(
-            rendered_inspect.contains("service_name: db"),
+            rendered_inspect.contains("\"service_name\": \"db\""),
             "{rendered_inspect}"
         );
         assert!(rendered_inspect.contains("ctr.log"), "{rendered_inspect}");
@@ -2915,14 +3364,19 @@ services:
                 service: "db".to_owned(),
                 file: compose_path.clone(),
                 tenant: None,
+                format: ServicePsOutputFormat::Table,
             },
             &control_data_dir,
             ServiceHostPlatform::Macos,
             Some(client.clone()),
         )
         .expect("service ps should render");
-        assert!(rendered_ps.contains("runtime_pid: 2002"), "{rendered_ps}");
-        assert!(rendered_ps.contains("conmon_pid: 1001"), "{rendered_ps}");
+        assert!(rendered_ps.contains("runtime pid: 2002"), "{rendered_ps}");
+        assert!(rendered_ps.contains("conmon pid: 1001"), "{rendered_ps}");
+        assert!(
+            rendered_ps.contains("tracked processes: none"),
+            "{rendered_ps}"
+        );
 
         let rendered_down = render_service_down_for_platform(
             &ServiceDownCommand {
@@ -2936,8 +3390,14 @@ services:
         )
         .await
         .expect("service down should render");
-        assert!(rendered_down.contains("action: stopped"), "{rendered_down}");
-        assert!(rendered_down.contains("status: stopped"), "{rendered_down}");
+        assert!(
+            rendered_down.contains("Service down completed for project demo-app"),
+            "{rendered_down}"
+        );
+        assert!(
+            rendered_down.contains("db: stopped (sandbox db-01aaa, status stopped)"),
+            "{rendered_down}"
+        );
 
         let _ = shutdown_tx.send(());
         server
