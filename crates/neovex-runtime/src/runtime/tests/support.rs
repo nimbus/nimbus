@@ -26,6 +26,30 @@ pub(super) fn stress_env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+pub(super) fn stress_env_duration_ms(
+    name: &str,
+    default: std::time::Duration,
+) -> std::time::Duration {
+    let default_ms = default.as_millis().min(u64::MAX as u128) as u64;
+    std::time::Duration::from_millis(
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(default_ms),
+    )
+}
+
+pub(super) fn ci_sensitive_duration(
+    local: std::time::Duration,
+    ci: std::time::Duration,
+) -> std::time::Duration {
+    if std::env::var_os("CI").is_some() {
+        ci
+    } else {
+        local
+    }
+}
+
 #[derive(Default)]
 pub(super) struct RecordingHost {
     pub(super) calls: Mutex<Vec<HostCallRequest>>,
