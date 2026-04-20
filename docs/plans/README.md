@@ -4,11 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/codebase-modularity-and-maintainability-hotspots-plan.md`
-  - canonical execution plan for the current maintainability hotspot wave:
-    oversized regression surfaces, remaining provider benchmark packaging,
-    and active architecture-doc cleanup guided by the 1,500/2,000-line
-    thresholds
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
@@ -153,6 +148,12 @@ completed plans unless explicitly asked to review historical work.
     provider benchmark harness modularization, explicit closeout justification
     for the near-threshold embedded and libsql benchmark roots, and the final
     green verification sweep
+- `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
+  - completed hotspot maintainability cleanup plan; records the machine,
+    service, and machine-manager regression repackaging, the remaining
+    provider benchmark hotspot modularization, the architecture-doc reference
+    extraction, the explicit `ARCHITECTURE.md` near-threshold justification,
+    and the final green archive-closeout verification sweep
 - `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
   - completed storage follow-up plan; records the `LibsqlReplica` naming
     cleanup, replica freshness observability surface, Postgres/MySQL schema
@@ -255,14 +256,17 @@ completed plans unless explicitly asked to review historical work.
   promote or author a new active plan before doing further cleanup work in
   that area.
 - For broad maintainability, modularity, canonical naming, or god-file
-  cleanup work, start with
-  `codebase-modularity-and-maintainability-hotspots-plan.md`.
-  Use `archive/codebase-modularity-and-maintainability-follow-on-plan.md` only
-  for the completed follow-on wave's execution record, closeout
-  justifications, and benchmark-packaging baseline. Use
+  cleanup work, consult
+  `archive/codebase-modularity-and-maintainability-hotspots-plan.md` only for
+  the latest completed hotspot wave's execution record, closeout
+  justifications, and architecture-doc packaging baseline. Use
+  `archive/codebase-modularity-and-maintainability-follow-on-plan.md` only for
+  the completed follow-on wave's execution record, closeout justifications,
+  and benchmark-packaging baseline. Use
   `archive/codebase-modularity-and-maintainability-plan.md` only for
   historical context on the predecessor CLI, provider, and sandbox ownership
-  map.
+  map. Promote or author a new active plan before landing another broad
+  maintainability cleanup wave.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.

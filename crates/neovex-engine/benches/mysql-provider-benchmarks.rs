@@ -49,8 +49,6 @@ use support::*;
 #[path = "mysql_provider_benchmarks/workloads.rs"]
 mod workloads;
 
-use workloads::*;
-
 const STEADY_STATE_WARMUP_ROUNDS: usize = 2;
 const STEADY_STATE_MEASURE_ROUNDS: usize = 10;
 const COLD_START_WARMUP_ROUNDS: usize = 1;

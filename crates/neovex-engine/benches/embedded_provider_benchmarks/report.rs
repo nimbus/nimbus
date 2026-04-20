@@ -1,3 +1,6 @@
+use super::common::{duration_ratio, format_confidence_interval, format_duration};
+use super::config::{BenchmarkConfig, BenchmarkLane, WorkloadKind};
+use super::models::{BenchmarkReport, WorkloadMeasurement};
 use super::*;
 
 pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport) -> String {

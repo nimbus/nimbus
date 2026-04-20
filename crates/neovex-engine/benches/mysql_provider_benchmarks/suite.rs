@@ -1,3 +1,10 @@
+use super::workloads::{
+    benchmark_composite_indexed_query_latency, benchmark_crud_throughput,
+    benchmark_durable_journal_bootstrap_latency, benchmark_durable_journal_stream_latency,
+    benchmark_indexed_query_latency, benchmark_mixed_multi_tenant_load,
+    benchmark_point_read_latency, benchmark_subscription_bootstrap_catchup_latency,
+    benchmark_subscription_fanout_latency, benchmark_tenant_lifecycle_latency,
+};
 use super::*;
 
 pub(super) async fn run_suite(

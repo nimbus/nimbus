@@ -5,8 +5,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 #[cfg(test)]
-use clap::Subcommand;
-#[cfg(test)]
 use neovex::Error;
 
 #[cfg(unix)]

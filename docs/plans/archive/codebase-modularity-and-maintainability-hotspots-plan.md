@@ -185,36 +185,52 @@ These rules are mandatory for every item in this plan.
 - The previous maintainability waves succeeded. The old CLI, provider, krun,
   Compose, machine API, mutation-journal, and smoke-test hotspots were already
   split into thinner production or proof surfaces.
-- The strongest remaining active-code hotspots are now concentrated in files
-  that sit directly on or above the current review thresholds:
-  - `crates/neovex-bin/src/machine/tests.rs` is 3,323 lines
-  - `crates/neovex-bin/src/service/tests.rs` is 1,765 lines
-  - `crates/neovex-bin/src/machine/manager/tests.rs` is 1,678 lines
-  - `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` is
-    1,817 lines
-  - `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` is
-    1,987 lines
-  - `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs`
-    is 1,602 lines
-  - `crates/neovex-engine/benches/mysql_provider_benchmarks/workloads.rs` is
-    1,641 lines
-  - `ARCHITECTURE.md` is 1,997 lines
-- `crates/neovex-bin/src/machine/tests.rs` is now the clearest hard-threshold
-  violation in active Rust code. It mixes CLI parse/help coverage, record and
-  state persistence, machine OS image or upgrade behavior, output rendering,
-  transfer and SSH semantics, forwarded machine API status, and startup-failure
-  flows in one file.
-- `crates/neovex-bin/src/service/tests.rs` mixes CLI parse/help coverage,
-  config and render behavior, log or process helpers, lifecycle start or stop
-  flows, backend loading, and forwarded machine API behavior in one file.
-- `crates/neovex-bin/src/machine/manager/tests.rs` mixes provider capability
-  contracts, bootstrap identity behavior, image materialization, helper
-  resolution, readiness waits, stop or cleanup behavior, SSH and SCP command
-  behavior, port allocation, and attestation metadata in one file.
-- The provider benchmark cleanup is not finished yet. The current bench tree is
-  much better than before, but the remaining big files still mix config,
-  workload models, orchestration, fixtures, and provider-owned workload logic
-  in ways that are harder to extend than they need to be.
+- `ARCHITECTURE.md` is now 1,694 lines after the provider-topology and
+  verification-architecture reference material moved into
+  `docs/reference/provider-topologies.md` and
+  `docs/reference/verification-architecture.md`
+- `crates/neovex-bin/src/machine/tests.rs` has already been repackaged into a
+  19-line composition root over scenario-owned `machine/tests/` modules, so it
+  no longer counts as an active hotspot.
+- `crates/neovex-bin/src/service/tests.rs` has already been repackaged into a
+  39-line composition root over scenario-owned `service/tests/` modules for
+  parse/help, rendered state, logs/process helpers, lifecycle, forwarded
+  machine API behavior, and support ownership.
+- `crates/neovex-bin/src/machine/manager/tests.rs` has already been repackaged
+  into a 57-line composition root over lifecycle-owned `machine/manager/tests/`
+  modules for provider/bootstrap, launch/image, helper resolution,
+  readiness/startup, stop/cleanup, ports/state, SSH/SCP, attestation, and
+  support ownership.
+- The provider-local Postgres and MySQL workload packaging has landed.
+  `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs`
+  and `mysql_provider_benchmarks/workloads.rs` are now 27-line composition
+  roots over workload-family modules:
+  - Postgres: `crud.rs` (153), `journal.rs` (226), `reads.rs` (493),
+    `subscription.rs` (391), and `tenant.rs` (343)
+  - MySQL: `crud.rs` (153), `journal.rs` (220), `reads.rs` (493),
+    `subscription.rs` (391), and `tenant.rs` (388)
+- The provider benchmark cleanup is not finished yet. The remaining benchmark
+  hotspot files still mix config, workload models, orchestration, fixtures,
+  and provider-owned workload logic in single roots that are harder to extend
+  than they need to be.
+- The embedded provider benchmark root has also been repackaged.
+  `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` is now a
+  79-line composition root over `config.rs` (168), `models.rs` (180),
+  `suite.rs` (97), `workloads.rs` (700), `fixtures.rs` (412),
+  `scenarios.rs` (248), `support.rs` (152), and `report.rs` (208).
+- The libsql-replica benchmark root has now been repackaged as well.
+  `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` is now
+  a 90-line composition root over `config.rs` (240), `models.rs` (126),
+  `suite.rs` (50), `workloads.rs` (670), `fixtures.rs` (669),
+  `scenarios.rs` (240), `support.rs` (232), and `report.rs` (269).
+- `ARCHITECTURE.md` is no longer carrying the deepest provider-topology or
+  verification-harness detail. Those references now live in
+  `docs/reference/provider-topologies.md` and
+  `docs/reference/verification-architecture.md`. The root still sits above the
+  1,500-line review threshold, but that is now explicitly justified: it
+  intentionally remains the one canonical stable architecture root for the
+  crate map, architecture invariants, key data flows, persistence engine
+  layouts, and durable design-decision record.
 - `ARCHITECTURE.md` is now the active documentation hotspot. Its root still
   contains the stable crate map and invariants, but it also carries deeper
   provider-topology, testing, and verification-harness ownership detail that
@@ -225,33 +241,23 @@ These rules are mandatory for every item in this plan.
 
 ## Current Review Findings
 
-1. `crates/neovex-bin/src/machine/tests.rs` must be split.
-   At 3,323 lines it is far above the hard threshold, and its current shape is
-   a mixed regression surface rather than one cohesive scenario family.
+1. The selected benchmark hotspot work is now complete.
+   The Postgres/MySQL workload trees, the embedded benchmark root, and the
+   libsql-replica benchmark root are now all packaged by concept instead of
+   leaving 1,500-to-1,999-line benchmark roots in place.
 
-2. `crates/neovex-bin/src/service/tests.rs` and
-   `crates/neovex-bin/src/machine/manager/tests.rs` are both strong
-   maintainability targets.
-   They are over 1,500 lines, clearly mix distinct scenario families, and have
-   enough local helper ownership to justify module trees rather than one flat
-   file each.
-
-3. The remaining provider benchmark files now form the main benchmark hotspot
-   cluster.
-   `postgres_provider_benchmarks/workloads.rs` and
-   `mysql_provider_benchmarks/workloads.rs` are both above 1,500 lines, while
-   `embedded-provider-benchmarks.rs` and
-   `libsql-replica-provider-benchmarks.rs` still keep too much config, model,
-   and workload ownership in one root file.
-
-4. `ARCHITECTURE.md` should become thinner by extracting reference detail,
+2. `ARCHITECTURE.md` has become thinner by extracting reference detail,
    not by deleting architectural substance.
-   The stable crate map, invariants, and data flows should stay in the root;
-   detailed provider-topology and verification-architecture material can move
-   into focused docs under `docs/reference/`.
+   The stable crate map, invariants, and data flows stay in the root, while
+   detailed provider-topology and verification-architecture material now lives
+   in focused docs under `docs/reference/`.
 
-5. Several notable sub-threshold files are worth keeping in view, but they are
+3. Several notable sub-threshold files are worth keeping in view, but they are
    not the highest-signal next-wave targets.
+   The newly split Postgres/MySQL workload modules plus the embedded and
+   libsql-replica benchmark modules are all below the hard threshold and now
+   read as cohesive ownership surfaces, so they do not need further breakup in
+   this wave.
    `crates/neovex-sandbox/src/backends/container/runtime.rs`,
    `crates/neovex-sandbox/src/backends/oci/builder.rs`,
    `crates/neovex-bin/src/machine/client.rs`,
@@ -363,14 +369,14 @@ If environment restrictions block a command, do not silently skip it:
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | CMH0 | `done` | reviewed the live post-follow-on codebase, applied the current 1,500/2,000-line threshold rules, and promoted this hotspot maintainability control plane | none | docs-only review and planning pass on 2026-04-19 |
-| CMH1 | `todo` | split `crates/neovex-bin/src/machine/tests.rs` into scenario-owned machine CLI regression modules | CMH0 | first hard-threshold Rust hotspot and the clearest next slice |
-| CMH2 | `todo` | split `crates/neovex-bin/src/service/tests.rs` into scenario-owned service CLI regression modules | CMH0 | follows the same proof-surface pattern as `CMH1` with lower line-count pressure |
-| CMH3 | `todo` | split `crates/neovex-bin/src/machine/manager/tests.rs` into lifecycle-owned manager regression modules | CMH0 | should follow the CLI proof-surface cleanup so the machine-side naming pattern is settled first |
-| CMH4 | `todo` | split `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs` and `mysql_provider_benchmarks/workloads.rs` into provider-owned workload module trees | CMH0 | establishes the benchmark workload naming pattern before reopening the remaining large benchmark roots |
-| CMH5 | `todo` | split `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | should follow the Postgres/MySQL workload packaging so the benchmark module pattern is already proven |
-| CMH6 | `todo` | split `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | should follow the same benchmark pattern as `CMH5` while keeping libsql-replica coordination local |
-| CMH7 | `todo` | repackage `ARCHITECTURE.md` into a thinner stable architecture root plus focused reference docs | CMH1 through CMH6 | should describe the landed proof and benchmark ownership map rather than race ahead of it |
-| CMH8 | `todo` | update docs, run the full verification sweep, and archive this completed hotspot plan cleanly | CMH1 through CMH7 | closeout item once every selected hotspot is complete |
+| CMH1 | `done` | split `crates/neovex-bin/src/machine/tests.rs` into scenario-owned machine CLI regression modules | CMH0 | completed on 2026-04-19 with a 19-line composition root over parse/help, records/state, render, OS/image, transfer/SSH, forwarded machine API, startup-failure, and support modules |
+| CMH2 | `done` | split `crates/neovex-bin/src/service/tests.rs` into scenario-owned service CLI regression modules | CMH0 | completed on 2026-04-19 with a 39-line composition root over parse/help, rendered state, logs/process, lifecycle, forwarded machine API, and support modules |
+| CMH3 | `done` | split `crates/neovex-bin/src/machine/manager/tests.rs` into lifecycle-owned manager regression modules | CMH0 | completed on 2026-04-19 with a 57-line composition root over provider/bootstrap, launch/image, helper resolution, readiness/startup, stop/cleanup, ports/state, SSH/SCP, attestation, and support modules |
+| CMH4 | `done` | split `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs` and `mysql_provider_benchmarks/workloads.rs` into provider-owned workload module trees | CMH0 | completed on 2026-04-19 with 27-line composition roots over workload-family modules for CRUD, reads, journal, subscription, and tenant behavior |
+| CMH5 | `done` | split `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | completed on 2026-04-19 with a 79-line composition root over config, models, suite, workloads, fixtures, scenarios, support, and report modules |
+| CMH6 | `done` | split `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | completed on 2026-04-19 with a 90-line composition root over config, models, suite, workloads, fixtures, scenarios, support, and report modules |
+| CMH7 | `done` | repackage `ARCHITECTURE.md` into a thinner stable architecture root plus focused reference docs | CMH1 through CMH6 | completed on 2026-04-19 by extracting provider-topology and verification-architecture detail into `docs/reference/` while keeping the architecture root canonical and explicitly justified above 1,500 lines |
+| CMH8 | `done` | updated docs, ran the full verification sweep, and archived this completed hotspot plan cleanly | CMH1 through CMH7 | completed on 2026-04-19 with a green closeout sweep, archive-state pointer reconciliation, and explicit carry-forward guidance to promote a new active plan before another broad maintainability wave |
 
 ---
 
@@ -412,14 +418,14 @@ If environment restrictions block a command, do not silently skip it:
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | CMH0 | done | start `CMH1` by mapping the scenario families currently mixed together in `crates/neovex-bin/src/machine/tests.rs` and extracting a local `machine/tests/` module tree without changing the machine CLI contract |
-| CMH1 | todo | split the machine CLI regression surface into scenario-owned modules for parse/help, rendering, machine records and state, OS/image flows, transfer/SSH, forwarded machine API behavior, startup failures, and local test support |
-| CMH2 | todo | split the service CLI regression surface into scenario-owned modules for parse/help, rendered config and tenant resolution, logs/process helpers, lifecycle flows, forwarded machine API behavior, and local test support |
-| CMH3 | todo | split the machine manager regression surface into lifecycle-owned modules for provider contracts, bootstrap identity, image materialization, helper resolution, readiness waits, stop/cleanup, port allocation, attestation, and local test support |
-| CMH4 | todo | split the Postgres and MySQL benchmark workload files into provider-local module trees that separate workload families, fixture creation, sample execution, and local support without changing benchmark slugs or report shape |
-| CMH5 | todo | thin the embedded benchmark root by moving config parsing, benchmark models, suite orchestration, fixtures or seeds, and provider-owned workload helpers into local modules while preserving benchmark semantics |
-| CMH6 | todo | thin the libsql-replica benchmark root by moving config or environment parsing, benchmark models, suite orchestration, fixtures, and replica-specific workload helpers into local modules while preserving benchmark semantics |
-| CMH7 | todo | keep `ARCHITECTURE.md` as the stable architecture root while extracting deeper provider-topology and verification-architecture detail into focused docs under `docs/reference/` |
-| CMH8 | todo | update `AGENTS.md`, `docs/plans/README.md`, and any touched reference indexes for the landed ownership map, then run the full verification sweep and archive this plan |
+| CMH1 | done | split `crates/neovex-bin/src/machine/tests.rs` into a 19-line composition root plus `tests/parse_help.rs` (784 lines), `records_state.rs` (699), `render.rs` (752), `os_image.rs` (256), `transfer_ssh.rs` (167), `forwarded_api.rs` (337), `startup_failures.rs` (230), and `support.rs` (98), preserving machine CLI behavior while eliminating the old 3,323-line mixed proof surface |
+| CMH2 | done | split `crates/neovex-bin/src/service/tests.rs` into a 39-line composition root plus `tests/parse_help.rs` (304 lines), `render_state.rs` (139), `logs_process.rs` (187), `lifecycle.rs` (133), `forwarded_api.rs` (607), and `support.rs` (375), preserving service CLI behavior while eliminating the old 1,765-line mixed proof surface |
+| CMH3 | done | split `crates/neovex-bin/src/machine/manager/tests.rs` into a 57-line composition root plus `tests/provider_bootstrap.rs` (138 lines), `launch_image.rs` (342), `helper_resolution.rs` (136), `readiness_startup.rs` (265), `stop_cleanup.rs` (164), `ports_state.rs` (135), `ssh_scp.rs` (195), `attestation.rs` (53), and `support.rs` (215), preserving manager semantics while eliminating the old 1,678-line mixed proof surface |
+| CMH4 | done | split the Postgres and MySQL provider workload roots into 27-line composition surfaces over workload-family modules: Postgres `crud.rs` (153), `journal.rs` (226), `reads.rs` (493), `subscription.rs` (391), `tenant.rs` (343); MySQL `crud.rs` (153), `journal.rs` (220), `reads.rs` (493), `subscription.rs` (391), `tenant.rs` (388). Benchmark slugs, workload semantics, and markdown report shape remained unchanged while removing both 1,600-line mixed-owner workload files. |
+| CMH5 | done | split `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a 79-line composition root over `config.rs` (168), `models.rs` (180), `suite.rs` (97), `workloads.rs` (700), `fixtures.rs` (412), `scenarios.rs` (248), `support.rs` (152), and `report.rs` (208). The old 1,817-line mixed-owner benchmark root is gone, every new embedded benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. |
+| CMH6 | done | split `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a 90-line composition root over `config.rs` (240), `models.rs` (126), `suite.rs` (50), `workloads.rs` (670), `fixtures.rs` (669), `scenarios.rs` (240), `support.rs` (232), and `report.rs` (269). The old 1,987-line mixed-owner benchmark root is gone, every new libsql-replica benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. |
+| CMH7 | done | extracted the deepest provider-topology and verification-harness material out of `ARCHITECTURE.md` into `docs/reference/provider-topologies.md` and `docs/reference/verification-architecture.md`, updated `docs/README.md` to surface those new references, and reduced the architecture root from 1,997 lines to 1,694. The root remains above the 1,500-line review threshold, but that is now explicitly justified because it still owns the crate map, invariants, key data flows, persistence engine layouts, and durable design-decision record as the canonical stable architecture document. |
+| CMH8 | done | completed the closeout sweep, reconciled `AGENTS.md` plus `docs/plans/README.md` to treat this hotspot wave as archived historical context, and archived the control plane cleanly after recording the green verification bundle (`make check`, `make test`, `make clippy`, `npm run test --workspaces --if-present`, `npm run build --workspaces --if-present`, and `make ci`) |
 
 ---
 
@@ -674,3 +680,19 @@ If environment restrictions block a command, do not silently skip it:
 | Date | Item | Status | Notes | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-19 | CMH0 | `done` | Reviewed the live repo after the completed follow-on maintainability wave and promoted this hotspot-focused plan as the new active control plane. The review found that the strongest remaining active hotspots are now `crates/neovex-bin/src/machine/tests.rs` at 3,323 lines, `crates/neovex-bin/src/service/tests.rs` at 1,765 lines, `crates/neovex-bin/src/machine/manager/tests.rs` at 1,678 lines, the remaining provider benchmark files from 1,602 through 1,987 lines, and `ARCHITECTURE.md` at 1,997 lines. The review also confirmed that notable production files below the threshold are not yet as urgent as the selected proof, benchmark, and doc surfaces. | docs-only review; no new code verification claimed | start `CMH1` by mapping the scenario families currently mixed into `crates/neovex-bin/src/machine/tests.rs` and extracting a local `machine/tests/` module tree |
+| 2026-04-19 | CMH1 | `in_progress` | Reconciled the clean worktree and resumed the first eligible hotspot item from the live control plan. Began the machine CLI proof-surface split by mapping the scenario clusters currently mixed into `crates/neovex-bin/src/machine/tests.rs` so the replacement `machine/tests/` tree can follow real ownership boundaries instead of line-count-only chunks. | `git status --short --branch`; plan reconciliation; targeted `sed` and `rg` reads over `crates/neovex-bin/src/machine/tests.rs` and the owning machine module | extract the local `machine/tests/` module tree, wire the new support module, and then run the focused `neovex-bin` verification lanes |
+| 2026-04-19 | CMH1 | `done` | Repackaged `crates/neovex-bin/src/machine/tests.rs` into a 19-line composition root over `tests/parse_help.rs`, `records_state.rs`, `render.rs`, `os_image.rs`, `transfer_ssh.rs`, `forwarded_api.rs`, `startup_failures.rs`, and `support.rs`. The old 3,323-line mixed proof surface is gone, every new machine test file is below the hard threshold, and the split now follows the intended scenario families without changing machine CLI behavior. | `cargo fmt --all`; `cargo test -p neovex-bin machine`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH2` by mapping the scenario families currently mixed into `crates/neovex-bin/src/service/tests.rs` and extracting a local `service/tests/` module tree |
+| 2026-04-19 | CMH2 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH1`. The target is `crates/neovex-bin/src/service/tests.rs`, which still mixes CLI parse/help coverage, rendered config and tenant resolution, log and process helpers, lifecycle flows, backend loading, and forwarded machine API behavior in one file. | plan reconciliation after closing `CMH1`; upcoming targeted `sed` and `rg` reads over `crates/neovex-bin/src/service/tests.rs` and the owning service modules | extract the local `service/tests/` module tree and run the focused `neovex-bin` service verification lanes |
+| 2026-04-19 | CMH2 | `done` | Repackaged `crates/neovex-bin/src/service/tests.rs` into a 39-line composition root over `tests/parse_help.rs`, `render_state.rs`, `logs_process.rs`, `lifecycle.rs`, `forwarded_api.rs`, and `support.rs`. The old 1,765-line mixed proof surface is gone, every new service test file is below the hard threshold, and the split now follows the intended service scenario families without changing the service CLI contract. | `cargo fmt --all`; `cargo test -p neovex-bin service`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH3` by mapping the scenario families currently mixed into `crates/neovex-bin/src/machine/manager/tests.rs` and extracting a local `machine/manager/tests/` module tree |
+| 2026-04-19 | CMH3 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH2`. The target is `crates/neovex-bin/src/machine/manager/tests.rs`, which now stands as the clearest remaining proof-surface hotspot and still mixes provider capability contracts, bootstrap identity, image materialization, helper resolution, readiness or startup interruption, stop or cleanup behavior, SSH or SCP coverage, port allocation or state refresh, attestation metadata, and local support helpers in one file. | plan reconciliation after closing `CMH2`; upcoming targeted `sed` and `rg` reads over `crates/neovex-bin/src/machine/manager/tests.rs` and the owning manager modules | extract the local `machine/manager/tests/` module tree and run the focused manager-side `neovex-bin` verification lanes |
+| 2026-04-19 | CMH3 | `done` | Repackaged `crates/neovex-bin/src/machine/manager/tests.rs` into a 57-line composition root over `tests/provider_bootstrap.rs`, `launch_image.rs`, `helper_resolution.rs`, `readiness_startup.rs`, `stop_cleanup.rs`, `ports_state.rs`, `ssh_scp.rs`, `attestation.rs`, and `support.rs`. The old 1,678-line mixed proof surface is gone, every new manager test file is below the hard threshold, and the split now follows the manager’s real lifecycle seams without changing machine-manager semantics. | `cargo fmt --all`; `cargo test -p neovex-bin machine`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH4` by mapping the workload families currently mixed into the Postgres and MySQL provider benchmark files and extracting provider-local module trees |
+| 2026-04-19 | CMH4 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH3`. The target is the pair of provider workload files `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs` and `crates/neovex-engine/benches/mysql_provider_benchmarks/workloads.rs`, which still mix CRUD, point-read, indexed-query, mixed-load, fixture or seed ownership, measurement recording, and local helpers in single provider files. | plan reconciliation after closing `CMH3`; upcoming targeted `sed` and `rg` reads over the Postgres/MySQL benchmark modules | extract provider-local workload module trees and run the focused benchmark verification lanes |
+| 2026-04-19 | CMH4 | `done` | Repackaged both provider workload hotspots into 27-line composition roots over provider-local workload-family modules. Postgres now routes through `workloads/crud.rs`, `journal.rs`, `reads.rs`, `subscription.rs`, and `tenant.rs`; MySQL now mirrors the same family layout. The old 1,602-line and 1,641-line mixed-owner workload files are gone, every new workload-family file is below the hard threshold, and benchmark slugs plus markdown output shape stayed unchanged. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH5` by mapping the ownership seams currently mixed together in `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` |
+| 2026-04-19 | CMH5 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH4`. The target is `crates/neovex-engine/benches/embedded-provider-benchmarks.rs`, which still mixes CLI and config parsing, workload and lane models, report or measurement types, suite orchestration, fixtures or seed ownership, and provider-owned workload helpers in one 1,817-line benchmark root. | plan reconciliation after closing `CMH4`; upcoming targeted `sed` and `rg` reads over the embedded benchmark entrypoint and its existing sibling benchmark modules | extract a thinner embedded benchmark root plus concept-owned local modules, then run the focused benchmark verification lanes |
+| 2026-04-19 | CMH5 | `done` | Repackaged `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a 79-line composition root over `embedded_provider_benchmarks/config.rs`, `models.rs`, `suite.rs`, `workloads.rs`, `fixtures.rs`, `scenarios.rs`, `support.rs`, and `report.rs`. The old 1,817-line mixed-owner benchmark root is gone, every new embedded benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH6` by mapping the ownership seams currently mixed together in `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` |
+| 2026-04-19 | CMH6 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH5`. The target is `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs`, which still mixes CLI and config parsing, environment and admin-API setup, workload and lane models, report or measurement types, suite orchestration, fixtures or tenant resources, and replica-specific coordination in one 1,987-line benchmark root. | plan reconciliation after closing `CMH5`; upcoming targeted `sed` and `rg` reads over the libsql-replica benchmark entrypoint and its existing sibling benchmark modules | extract a thinner libsql-replica benchmark root plus concept-owned local modules, then run the focused benchmark verification lanes |
+| 2026-04-19 | CMH6 | `done` | Repackaged `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a 90-line composition root over `libsql_replica_provider_benchmarks/config.rs`, `models.rs`, `suite.rs`, `workloads.rs`, `fixtures.rs`, `scenarios.rs`, `support.rs`, and `report.rs`. The old 1,987-line mixed-owner benchmark root is gone, every new libsql-replica benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH7` by mapping the stable-vs-reference ownership seams currently mixed together in `ARCHITECTURE.md` |
+| 2026-04-19 | CMH7 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH6`. The target is `ARCHITECTURE.md`, which still mixes the canonical crate map and invariants with deeper provider-topology and verification-architecture reference detail that can move into focused docs without weakening the stable architecture root. | plan reconciliation after closing `CMH6`; upcoming targeted `sed` and `rg` reads over `ARCHITECTURE.md`, `docs/reference/`, and the plan/readme indexes that discover architecture docs | extract focused reference docs, cross-link them, and then run the focused workspace verification lanes for doc packaging |
+| 2026-04-19 | CMH7 | `done` | Repackaged `ARCHITECTURE.md` into a thinner stable architecture root and two focused reference docs: `docs/reference/provider-topologies.md` and `docs/reference/verification-architecture.md`. The architecture root dropped from 1,997 lines to 1,694 lines, `docs/README.md` now surfaces the extracted references directly, and the remaining root length is explicitly justified because it still owns the canonical crate map, invariants, key data flows, persistence engine layouts, and durable design-decision record. | `cargo fmt --all --check`; `cargo check --workspace` | start `CMH8` by reconciling plan indexes and running the full verification sweep before archiving this control plane |
+| 2026-04-19 | CMH8 | `in_progress` | Began the final closeout item immediately after closing `CMH7`. The remaining work is to reconcile doc indexes and control-plane pointers, run the full verification sweep, record any environmental limits, archive this completed hotspot plan, and leave the repo with no plan/code mismatch for the maintainability hotspot workstream. | plan reconciliation after closing `CMH7`; upcoming reads over `docs/plans/README.md`, `AGENTS.md`, and the active plan index plus the full verification command list | update doc indexes and active-plan pointers, run the closeout verification sweep, archive the completed plan, and reconcile final status fields |
+| 2026-04-19 | CMH8 | `done` | Completed the hotspot-wave closeout. Updated `AGENTS.md` and `docs/plans/README.md` so future broad maintainability work treats this hotspot wave as archived historical context, moved the plan into `docs/plans/archive/`, and confirmed that every selected active file above 1,500 lines now has an explicit justification while no selected active file remains above 2,000 lines for avoidable packaging reasons. The first sandboxed `make ci` attempt hit a read-only advisory-db lock in `/Users/jack/.cargo`, so the closeout reran `make ci` with the needed external Cargo access and finished green. | `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `make ci` | hotspot maintainability wave archived; promote a new active plan before landing another broad maintainability cleanup pass |
