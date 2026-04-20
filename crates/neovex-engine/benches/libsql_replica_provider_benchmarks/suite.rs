@@ -1,3 +1,11 @@
+use super::config::{BenchmarkConfig, BenchmarkEnvironment, WorkloadKind};
+use super::models::BenchmarkReport;
+use super::support::cleanup_registered_libsql_replica_providers;
+use super::workloads::{
+    benchmark_barrier_refresh_latency, benchmark_composite_indexed_query_latency,
+    benchmark_crud_throughput, benchmark_indexed_query_latency, benchmark_mixed_multi_tenant_load,
+    benchmark_peer_catch_up_latency, benchmark_point_read_latency,
+};
 use super::*;
 
 pub(super) async fn run_suite(

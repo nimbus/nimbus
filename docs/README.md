@@ -15,6 +15,12 @@ and where to go next.
   local persistence
 - [Current capabilities](reference/current-capabilities.md):
   snapshot of the current implemented surface
+- [Provider topology reference](reference/provider-topologies.md):
+  deeper reference for external-provider and replica-topology shapes that
+  extend the stable persistence architecture
+- [Verification architecture](reference/verification-architecture.md):
+  deeper reference for simulation seams, harness ownership, and verification
+  corpora that extend the stable testing architecture
 - [MicroVM and service-control baseline](reference/microvm-service-baseline.md):
   concise current baseline for the landed krun-backed microVM runtime,
   `ctx.services.*` integration, and `neovex service ...` control surface

@@ -1,3 +1,5 @@
+use super::config::{BenchmarkEnvironment, BenchmarkLane, WorkloadKind};
+use super::models::{BenchmarkReport, MeasuredBackend};
 use super::*;
 
 pub(super) async fn run_workload<Fut>(workload: WorkloadKind, run: Fut) -> BenchResult<()>

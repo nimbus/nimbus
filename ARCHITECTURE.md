@@ -891,174 +891,21 @@ derived from the planner. It should not degenerate into tiny CRUD or
 scan-shaped primitives that force many remote round trips.
 
 For future external providers, refine the current umbrella
-`TenantPersistence` composition root toward explicit capability families:
+`TenantPersistence` composition root toward explicit semantic capability
+families such as `TenantQueryRead`, `TenantMutationPersistence`,
+`TenantJournalPersistence`, `TenantSchedulerPersistence`,
+`TenantSnapshotPersistence`, and `TenantSchemaPersistence`.
 
-- `TenantQueryRead`
-- `TenantMutationPersistence`
-- `TenantJournalPersistence`
-- `TenantSchedulerPersistence`
-- `TenantSnapshotPersistence`
-- `TenantSchemaPersistence`
+Those capability seams should remain semantic. They must not be replaced by
+filesystem-path construction as the universal provider API, hook- or
+trigger-driven reactivity as the canonical engine contract, row-at-a-time
+remote iterator contracts that make the engine emulate a query planner, or
+chatty document CRUD verbs that turn one logical operation into many network
+round trips.
 
-Those capability seams should remain semantic. They must not be replaced by:
-
-- filesystem-path construction as the universal provider API
-- hook- or trigger-driven reactivity as the canonical engine contract
-- row-at-a-time remote iterator contracts that make the engine emulate a query
-  planner
-- chatty document CRUD verbs that turn one logical operation into many network
-  round trips
-
-External providers may still optimize aggressively below that seam by bundling
-round trips, using server-side planning, or choosing backend-native
-notification and recovery mechanisms, as long as the Neovex-owned semantics
-above the seam stay unchanged.
-
-### Postgres-first provider shape
-
-The first concrete non-local mode should be `PostgresProvider`.
-
-Its intended shape is:
-
-- one provider-owned Postgres database for the Neovex service
-- one small provider metadata schema for tenant registry and routing metadata
-- one Postgres schema per Neovex tenant
-- the same logical per-tenant tables Neovex already uses in SQLite
-- fully qualified tenant-schema SQL instead of mutable session `search_path`
-
-The journal model should remain Neovex-owned:
-
-- `commit_log` stores serialized `DurableMutationRecord` blobs
-- Postgres sequence or identity allocation owns physical sequence numbering
-- provider-owned serialization preserves per-tenant ordered append and apply
-- durable-head and applied-head stay explicit metadata, not inferred from
-  notification delivery
-
-Notifications such as `LISTEN` / `NOTIFY` may be used as wake hints, but not
-as the authoritative reactive contract. Lost notifications must recover from
-head metadata plus journal replay. The cross-tenant usage/control path remains
-local redb in this first Postgres slice.
-
-The readiness gate for this mode must measure more than local throughput. At a
-minimum, it needs steady-state, cold-start, and latency-injected RTT lanes;
-CRUD, indexed query, journal, subscription, mixed-load, and tenant-lifecycle
-workloads; and operational drills for reconnect, listener loss, restart, pool
-pressure, and tenant cleanup.
-
-### Replica-connected SQLite provider shape
-
-The concrete first replica-connected SQLite family is
-`LibsqlReplicaProvider`. It must not mean "open a SQLite file across the
-network." SQLite's own network and WAL guidance make raw network-mounted
-database files an unacceptable provider shape.
-
-The admissible future shape is a concrete client/server or embedded-replica
-provider family with:
-
-- one authoritative primary that owns writes, schema changes, scheduler
-  mutations, journal append, and head metadata
-- read replicas or embedded replicas that may serve read-only queries only
-  behind a provider-owned durable or applied sequence barrier
-- provider-owned refresh/catch-up whenever replica progress cannot be proven
-  sufficient for the requested semantic boundary; any future direct
-  primary-read fallback would still belong behind that same provider boundary
-
-If we activate this path, the best first-fit Rust connector family is
-`libsql`, not a local-only SQLite driver stretched into a replication story.
-`libsql` already exposes remote and local replica builders, synced databases,
-delegated remote writes, `read_your_writes`, and `sync_until`, which is much
-closer to the provider semantics Neovex needs. Plain `rusqlite` or
-`sqlx::Sqlite` remain good local SQLite tools, but they do not solve the
-replica-topology problem on their own.
-
-The current concrete activation is narrower than "any libsql mode." The
-`LibsqlReplicaProvider` family pairs a remote-primary `libsql` connection for
-writes and authoritative state with provider-owned per-tenant local SQLite
-cache files for read-serving only.
-
-That distinction matters:
-
-- embedded SQLite means the local tenant file is authoritative state
-- `LibsqlReplicaProvider` means the remote `libsql` primary is authoritative
-  and the local SQLite file is derivative cache state
-- replica reads remain correct only when the provider-owned durable/applied
-  sequence barrier proves that cache freshness is sufficient
-Today the safest first sync model is a Neovex-owned snapshot or catch-up
-refresher over the remote `libsql` SQL connection, producing provider-owned
-local SQLite cache files directly. The main Neovex process must not assume it
-can host `new_remote_replica(...)` directly until that runtime path is proven
-stable in the live harness. That means:
-
-- keep the public typed config on `dialect = Sqlite` plus a replica topology,
-  not on a new filesystem-shaped provider seam
-- use a provider metadata namespace plus one tenant namespace per tenant on
-  the remote primary
-- keep local replica files provider-owned under an explicit cache root rather
-  than accepting arbitrary SQLite files as the topology contract
-- keep the sync owner for those replica files explicit: the first activation
-  may refresh them via deterministic remote snapshot or catch-up work, and any
-  future `libsql` embedded-replica client still belongs behind the same
-  provider-owned boundary until the in-process runtime path is proven safe
-- keep journal append, scheduler mutation paths, bootstrap/export, and other
-  mutation-adjacent reads on the primary or behind an explicit provider-owned
-  barrier refresh / catch-up path
-- let only planner-driven read-only query lanes serve from the embedded
-  replica, and only after provider-owned sequence-barrier proof or explicit
-  `sync_until` catch-up
-
-The current implementation state follows that split explicitly: the engine now
-lazy-loads replica-backed tenants through the normal `TenantPersistence` seam,
-routes writes, scheduler mutations, and durable journal apply or recovery to
-the remote primary, and serves planner-driven reads from the provider-owned
-local SQLite cache after explicit cache refresh or poll-driven catch-up. The
-embedded cache remains derivative rather than authoritative, while the provider
-poll worker keeps loaded and unloaded tenants aligned with remote schema,
-journal, and scheduled-work state.
-
-The first slice should explicitly defer `libsql` synced/offline-write database
-shapes. Neovex does not need disconnected local writes for this activation,
-and bringing them in early would expand the roadmap into conflict resolution,
-multi-writer policy, and promotion semantics that do not belong in the first
-replica-connected SQLite pass.
-
-Failover, promotion, and replica catch-up policy belong in provider and
-topology config, not in `TenantPersistence`. Any actual implementation should
-start from a new dedicated active plan for one named provider family rather
-than from a generic "remote SQLite" promise.
-
-### MySQL provider shape
-
-The first MySQL mode should preserve the same Neovex semantics as the
-Postgres-first path while using MySQL-native physical mechanics.
-
-Its intended shape is:
-
-- one provider-owned MySQL deployment for the Neovex service
-- one small provider metadata database for tenant registry and routing
-- one tenant database per Neovex tenant, using fully qualified
-  `tenant_db.table_name` SQL
-- InnoDB MVCC transactions for consistent reads, execution-unit OCC, and
-  durable journal append behavior
-- tenant-local `AUTO_INCREMENT` commit-log sequencing plus explicit durable and
-  applied head metadata
-- generated-column-backed JSON indexing instead of assuming Postgres-style
-  expression indexes or SQLite JSON-expression indexes
-
-If we activate this path, the best first-fit Rust connector stack is
-`mysql_async` directly. It is Tokio-native, already ships with a pooled async
-connection model and explicit transaction APIs, and fits Neovex's need for
-dynamic fully qualified SQL, locking reads, and provider-owned statement
-control. `sqlx` and `diesel-async` remain valid options in the abstract, but
-they are not the best first fit for a provider that will rely on dynamic
-tenant-database SQL rather than on macro-checked literal queries or an ORM
-query builder.
-
-Queue-like scheduler claim paths may use `FOR UPDATE SKIP LOCKED`, but if a
-replicated MySQL deployment is used, that path should be treated as
-row-based-replication territory rather than relying on statement-based
-replication behavior. Recovery and catch-up should assume durable-progress
-polling or provider-owned wake hints, not a Postgres-style in-database pub/sub
-primitive.
+For the deeper provider-topology baselines and readiness gates for
+`PostgresProvider`, `LibsqlReplicaProvider`, and `MySqlProvider`, see
+[docs/reference/provider-topologies.md](docs/reference/provider-topologies.md).
 
 ---
 
@@ -1762,168 +1609,18 @@ authorizes data access. Live subscriptions capture both a principal snapshot
 and a policy revision, and a policy or principal-context change must trigger
 revalidation or teardown before more data is delivered.
 
-**Testing.** Unit tests live in each crate's `tests.rs`. Integration tests
-(HTTP + WebSocket end-to-end) live in `neovex-server/tests/reactive_loop.rs`.
-Shared fixtures live in `neovex-testing`. The `TenantStore::create_in_memory()`
-and `UsageStore::create_in_memory()` constructors enable fast storage tests
-without disk I/O. The roadmap also commits Neovex to stronger deterministic
-simulation seams for new durability-critical subsystems: clock, journal,
-checkpoint, and fault-injection boundaries should become swappable and
-seed-reproducible as journal, materializer, and OCC work lands.
+**Testing.** Unit tests live beside the owning crates, integration tests for
+HTTP and WebSocket behavior live in `neovex-server/tests/reactive_loop.rs`, and
+shared fixtures live in `neovex-testing`. The live verification architecture
+now emphasizes concept-owned regression surfaces, deterministic simulation
+seams, shared harness metadata, differential Convex checks, and dedicated
+verification-harness corpora instead of growing one flat collection of root
+test files.
 
-The highest-value regression clusters now live closer to the concepts they
-protect instead of piling up only in crate-root `tests.rs` files. Scheduler
-persistence regressions now sit beside `scheduler/`, execution-unit OCC and
-finalization regressions now sit beside `service/execution_units/`, and the
-seeded Convex demo-flow surface now splits model, support, and scenario
-ownership under `demo_flow/seeded_usage/`. `crates/neovex-engine/src/test_support.rs`
-also now carries the shared engine-only policy, schema, and blocking-fault
-fixtures so concept-owned tests do not need to reach back into the giant root
-test file for reusable setup.
-
-The remaining broad engine integration root is now a composition surface over
-`tests/subscriptions.rs`, `tests/queries.rs`, `tests/materialized_serving.rs`,
-`tests/mutation_journal.rs`, `tests/consistency.rs`, and `tests/policy.rs`,
-while `crates/neovex-engine/src/tests.rs` keeps the shared helpers and a small
-set of basic service and schema validations. New engine-wide regressions should
-prefer those concept-owned files over appending back into one flat root.
-
-The remaining storage integration root now follows the same pattern:
-`crates/neovex-storage/src/tests.rs` is a helper-and-module composition
-surface over `tests/crud_and_journal.rs`, `tests/recovery.rs`,
-`tests/store_basics.rs`, `tests/usage_store.rs`, `tests/async_faults.rs`, and
-`tests/generated_history.rs`. New storage regressions should prefer those
-concept-owned files over reopening one mixed storage root.
-
-The next test-surface cleanup layer now also moved broad generated-history and
-fault helper clusters out of the remaining mixed roots. Storage seed-oracle and
-recovery-campaign tests now live under `crates/neovex-storage/src/tests/generated_history.rs`,
-the native HTTP documents-and-commits surface now owns generated-history and
-blocking-fault helpers under `core_http/documents_and_commits/`, where
-`lifecycle.rs`, `journal.rs`, and `consistency.rs` now own the main native HTTP
-scenario families, and the top-level Convex demo-flow root now reads as a
-fixture composition surface over `manifest.rs`, `bundle.rs`, `registry.rs`,
-`helpers.rs`, `scenarios.rs`, and `seeded_usage/`.
-
-The first concrete seam layer now lives in `neovex-storage::simulation`.
-`Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test
-helpers. `TenantStore::*_with_simulation(...)` and `Service::new_with_simulation(...)`
-accept deterministic implementations, storage commit visibility exposes a
-named fault point, and engine scheduler tests can advance time without
-wall-clock sleeps. Later journal, checkpoint, and compaction work should
-extend these same seam types instead of inventing parallel harness APIs.
-That module is now a composition root over `simulation/clocks.rs`,
-`faults.rs`, `coordination.rs`, `harness.rs`, `generated.rs`, and
-`verification.rs` so clock or fault seams, scenario coordination,
-generated-history models, and verification-corpus helpers have clearer local
-ownership instead of living in one mixed implementation file.
-
-The shared `DeterministicHarness` now also lives on that same seam layer rather
-than in a higher-level test-only island. It carries explicit scenario metadata
-(`name`, `seed`), supports scripted or seeded fault schedules, and exposes
-named cancellation, disconnect, and restart markers so storage, engine, and
-server tests can share one reproducible scenario vocabulary. `ServiceFixture`
-also has a `new_with_harness(...)` helper so higher layers can consume the same
-deterministic harness without re-specifying clock and fault plumbing in every
-test.
-
-Runtime-facing harness ownership now follows the same rule. Runtime semantic
-tests no longer rely on drifting `RuntimeLimits::default()` behavior unless the
-default itself is the subject under test: `neovex-runtime::test_support` owns
-named runtime test profiles, subprocess-isolation helpers for V8-sensitive
-cooperative and warm-pool tests, and stable runtime repro case metadata. Cross-
-crate campaigns then share the same vocabulary through `neovex-testing`,
-which now owns common eventual-assertion helpers, `DeterministicTestCase`
-failure context, reusable runtime profile helpers used by server and transport
-campaigns, and the canonical shared fault-gate primitives used by engine and
-server adversarial tests.
-
-That same simulation layer now also owns the first generated-history oracle
-slice. `GeneratedTaskHistory` models logical-slot insert/update/delete
-workloads, exposes canonical filtered query and paginated-query builders, and
-ships sync plus async replay helpers so higher layers do not have to rewrite
-scenario logic per surface. The current verification pass replays the same
-seeded history across `TenantStore`, engine `Service`, native HTTP,
-shadow-materializer query evaluation, and embedded-replica reads, then checks
-final state plus query/pagination behavior against one local model. This is
-still only the first workload family, but it moves Neovex from hand-authored
-parity examples toward seed-reproducible multi-surface properties.
-
-The same module now also carries recovery-oriented restart scheduling via
-`ScriptedRestartSchedule`, `RestartBoundary`, and `RestartPoint`. Those types
-give storage and engine tests one shared way to describe restart boundaries
-such as durable-append-before-apply, scheduler claim, and scheduler completion.
-The current recovery slice uses that vocabulary for repeated journal recovery
-campaigns that verify authoritative convergence plus shadow rebuild parity
-after restarts, and for scheduler campaigns that verify claimed work is
-recovered without double-applying completed jobs across repeated service
-reloads.
-
-`neovex-testing` now complements that shared scenario vocabulary with reusable
-`BlockingFaultInjector` and `ArmedBlockingFaultInjector` primitives for
-adversarial engine and server tests. The current transport/runtime liveness
-slice uses them to pause the authoritative write path after durable append but
-before apply, drop and re-establish a WebSocket subscription under that lag,
-and then prove the reconnected subscription both catches up and resumes
-reactive pushes once the fault is released. The same verification pass also
-stamps runtime cancellation campaigns with shared scenario metadata and proves
-queued plus in-flight request drops recover into fresh exactly-once work once
-isolate pressure clears.
-
-The first external Convex semantic oracle now lives in
-`packages/convex/src/differential.mjs`. It reuses one shared messages fixture
-app, can start an official local Convex deployment automatically from a nearby
-`convex-backend` checkout, and compares Neovex against the supported Convex
-subset across mutations, queries, manual pagination, and subscriptions. The
-runner compares named semantic slices independently so one mismatch does not
-hide the rest of the corpus.
-
-Closing that external differential loop also tightened the Convex adapter
-itself. `@neovex/codegen` now treats imported server validators such as
-`paginationOptsValidator` as real parse-time bindings, Convex app schema
-manifests bootstrap Neovex table schemas when new tenants are created under a
-Convex app, and runtime `ctx.db.query(...).paginate(...)` preserves the
-official manual-pagination contract where a full non-empty terminal page still
-returns a continuation cursor until the next call proves exhaustion.
-
-Neovex now also has its first online trust-but-verify path for authoritative
-and derived state. `Service::verify_consistency_async(...)` captures one
-durable bootstrap cut, rebuilds an authoritative in-memory projection from the
-raw materialized snapshot plus journal suffix, then compares that projection
-against a shadow-materializer replay and an embedded replica built from the
-same inputs. The report fingerprints each surface canonically and records the
-first deterministic diff path per failed comparison instead of relying on
-opaque deep-equality errors. Raw bootstrap metadata is checked separately so
-applied-lag snapshots are validated as metadata invariants rather than being
-misreported as divergence. Operators can request that report through
-`GET /debug/tenants/{tenant_id}/consistency`.
-
-The harness also now has an operational seed corpus rather than only ad hoc
-scenario constructors. `neovex-storage::simulation` defines named generated-
-history seeds for explicit `pr` and `nightly` modes, and the failure context
-for those corpus runs prints a one-command repro that pins the exact named case
-through `NEOVEX_VERIFY_CASE`. CI now runs the focused PR corpus separately from
-the heavier scheduled nightly corpus, and local entrypoints live in
-`scripts/verification-harness.sh` plus the matching `make verify-harness-*`
-targets. That taxonomy now includes a first-class `runtime` surface in
-addition to `storage`, `engine`, and `server`, so runtime queue-accounting,
-cooperative-dispatch, and bundle-integrity campaigns use the same
-`pr`/`nightly`/`repro` story as the generated-history corpora instead of only
-ad hoc unit-test filters. The server harness surface now also owns a transport-
-liveness corpus in addition to the generated-history replay corpus: websocket
-disconnect cleanup, auth-change resubscribe semantics, scheduler history
-publication, and runtime fairness rejection paths all run through the same
-named `pr`/`nightly`/`repro` entrypoints instead of remaining isolated to
-ordinary unit-test names.
-
-Those harness corpus tests are now ignored by default inside the ordinary
-workspace suite and only run through the dedicated verification-harness lanes.
-That keeps the main `make test` / `cargo test --workspace` path honest about
-what it covers while preserving explicit PR and nightly adversarial campaigns.
-The harness launcher now fails if a requested corpus surface matches zero
-tests, and only the server harness surface currently narrows to
-`--test-threads=1` because that dedicated ignored corpus boots multiple
-ephemeral HTTP fixtures that still need serialized port binding.
+For the deeper verification topology — simulation seams, harness ownership,
+generated-history oracles, differential runners, consistency reports, and
+named `pr` / `nightly` / `repro` corpora — see
+[docs/reference/verification-architecture.md](docs/reference/verification-architecture.md).
 
 The first composite-index slice is also in place behind that verification
 discipline. Table schemas now treat indexes as `IndexDefinition { name, fields
