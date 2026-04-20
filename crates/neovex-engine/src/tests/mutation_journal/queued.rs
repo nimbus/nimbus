@@ -120,9 +120,13 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
         BTreeSet::from([first_id, second_id])
     );
 
-    let final_stats = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load after the queue drains");
+    let final_stats = wait_for_mutation_journal_stats(
+        &service,
+        &tenant_id,
+        "mutation journal worker to go idle after the buffered queue drains",
+        |stats| !stats.worker_running,
+    )
+    .await;
     assert_eq!(final_stats.durable_head, SequenceNumber(2));
     assert_eq!(final_stats.applied_head, SequenceNumber(2));
     assert_eq!(final_stats.apply_lag, 0);
