@@ -71,6 +71,9 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                     "repeated direct CRUD should leave no remaining documents"
                 );
 
+                tokio::time::timeout(Duration::from_secs(2), service.quiesce())
+                    .await
+                    .expect("service should quiesce before Postgres fixture cleanup");
                 drop(service);
             })
             .await;
