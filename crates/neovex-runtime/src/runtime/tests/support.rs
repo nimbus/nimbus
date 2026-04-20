@@ -1,7 +1,9 @@
+use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Map, Value};
 use tokio::sync::Notify;
+use tokio::time::Instant;
 
 use super::*;
 use crate::host::{HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest};
@@ -19,17 +21,14 @@ pub(super) fn init_test_tracing() {
     });
 }
 
-pub(super) fn stress_env_usize(name: &str, default: usize) -> usize {
+pub(super) fn usize_env_or(name: &str, default: usize) -> usize {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(default)
 }
 
-pub(super) fn stress_env_duration_ms(
-    name: &str,
-    default: std::time::Duration,
-) -> std::time::Duration {
+pub(super) fn duration_ms_env_or(name: &str, default: std::time::Duration) -> std::time::Duration {
     let default_ms = default.as_millis().min(u64::MAX as u128) as u64;
     std::time::Duration::from_millis(
         std::env::var(name)
@@ -39,7 +38,7 @@ pub(super) fn stress_env_duration_ms(
     )
 }
 
-pub(super) fn ci_sensitive_duration(
+pub(super) fn ci_or_local_duration(
     local: std::time::Duration,
     ci: std::time::Duration,
 ) -> std::time::Duration {
@@ -47,6 +46,55 @@ pub(super) fn ci_sensitive_duration(
         ci
     } else {
         local
+    }
+}
+
+pub(super) async fn wait_for_condition<F, Fut>(
+    description: &str,
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+    condition: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    wait_for_value(description, timeout, poll_interval, condition, |ready| {
+        *ready
+    })
+    .await;
+}
+
+pub(super) async fn wait_for_value<T, F, Fut, P>(
+    description: &str,
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+    mut load: F,
+    mut predicate: P,
+) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = T>,
+    P: FnMut(&T) -> bool,
+{
+    let started_at = Instant::now();
+    let mut attempts = 0_u64;
+    loop {
+        attempts += 1;
+        let value = load().await;
+        if predicate(&value) {
+            return value;
+        }
+        let elapsed = started_at.elapsed();
+        if elapsed >= timeout {
+            panic!(
+                "timed out waiting for {description} after {elapsed:?} (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts})"
+            );
+        }
+        if poll_interval.is_zero() {
+            tokio::task::yield_now().await;
+        } else {
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 }
 

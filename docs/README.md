@@ -21,6 +21,12 @@ and where to go next.
 - [Verification architecture](reference/verification-architecture.md):
   deeper reference for simulation seams, harness ownership, and verification
   corpora that extend the stable testing architecture
+- [Reliability posture](reference/reliability-posture.md):
+  stable proof-discipline reference for semantic waits, bounded budgets,
+  deterministic hardship, and helper ownership
+- [CI failure investigation](reference/ci-failure-investigation.md):
+  evidence-first playbook for reproducing, classifying, and fixing CI failures
+  without cargo-cult timeout increases
 - [MicroVM and service-control baseline](reference/microvm-service-baseline.md):
   concise current baseline for the landed krun-backed microVM runtime,
   `ctx.services.*` integration, and `neovex service ...` control surface

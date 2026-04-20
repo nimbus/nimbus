@@ -37,9 +37,9 @@ pub(super) const CONCURRENT_DISPATCH_CASE: IsolatedRuntimeTestCase = IsolatedRun
 );
 
 fn cooperative_slot_progress_timeout() -> std::time::Duration {
-    stress_env_duration_ms(
+    duration_ms_env_or(
         "NEOVEX_COOPERATIVE_SLOT_PROGRESS_TIMEOUT_MS",
-        ci_sensitive_duration(
+        ci_or_local_duration(
             std::time::Duration::from_secs(5),
             std::time::Duration::from_secs(20),
         ),
@@ -47,9 +47,9 @@ fn cooperative_slot_progress_timeout() -> std::time::Duration {
 }
 
 fn cooperative_slot_wake_timeout() -> std::time::Duration {
-    stress_env_duration_ms(
+    duration_ms_env_or(
         "NEOVEX_COOPERATIVE_SLOT_WAKE_TIMEOUT_MS",
-        ci_sensitive_duration(
+        ci_or_local_duration(
             std::time::Duration::from_secs(1),
             std::time::Duration::from_secs(5),
         ),
@@ -57,9 +57,9 @@ fn cooperative_slot_wake_timeout() -> std::time::Duration {
 }
 
 fn cooperative_concurrent_dispatch_join_timeout() -> std::time::Duration {
-    stress_env_duration_ms(
+    duration_ms_env_or(
         "NEOVEX_COOPERATIVE_CONCURRENT_DISPATCH_TIMEOUT_MS",
-        ci_sensitive_duration(
+        ci_or_local_duration(
             std::time::Duration::from_secs(30),
             std::time::Duration::from_secs(90),
         ),
@@ -220,24 +220,17 @@ export {};
     let initial_generation = activity_signal.current_generation();
     host.release();
     let wake_timeout = cooperative_slot_wake_timeout();
-    tokio::time::timeout(wake_timeout, async {
-        loop {
-            if slot.is_ready_to_resume()
-                || activity_signal.current_generation() > initial_generation
-            {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| {
-        panic!(
-            "{} after {wake_timeout:?}",
-            PARK_AND_RESUME_CASE
-                .failure_context("host completion should wake the cooperative slot")
-        )
-    });
+    let description =
+        PARK_AND_RESUME_CASE.failure_context("host completion should wake the cooperative slot");
+    wait_for_condition(
+        description.as_str(),
+        wake_timeout,
+        std::time::Duration::ZERO,
+        || async {
+            slot.is_ready_to_resume() || activity_signal.current_generation() > initial_generation
+        },
+    )
+    .await;
     assert!(slot.is_ready_to_resume());
     wait_until_slot_completed_without_parking(
         &mut slot,

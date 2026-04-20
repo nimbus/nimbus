@@ -6,6 +6,12 @@ architecture root. The root architecture doc keeps the system-level invariants;
 this doc keeps the proof surfaces, harness ownership, and corpus layout that
 make those invariants testable.
 
+For the repo-wide proof discipline around semantic waits, bounded budgets,
+deterministic hardship, and helper ownership, see
+[reliability-posture.md](reliability-posture.md). For the operational path from
+CI failure to evidence-backed fix, see
+[ci-failure-investigation.md](ci-failure-investigation.md).
+
 ## Testing Layers
 
 Unit tests live beside the owning crates. Integration tests for HTTP and
@@ -73,10 +79,17 @@ Cross-crate campaigns then share the same vocabulary through `neovex-testing`,
 which now owns:
 
 - common eventual-assertion helpers
+- CI-aware timing-budget helpers for proof surfaces that can share
+  `neovex-testing`
 - `DeterministicTestCase` failure context
 - reusable runtime profile helpers used by server and transport campaigns
 - canonical shared fault-gate primitives used by engine and server adversarial
   tests
+
+`neovex-runtime` keeps the same timing-helper contract locally inside its test
+support rather than depending on `neovex-testing`, preserving the
+zero-workspace-dependency invariant while keeping the reliability posture
+aligned across proof surfaces.
 
 That same simulation layer also owns the generated-history oracle slice.
 `GeneratedTaskHistory` models logical-slot insert/update/delete workloads,

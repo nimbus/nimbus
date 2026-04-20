@@ -57,7 +57,7 @@ export {};
             "session_id": "query:messages:get",
         }
     });
-    let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_CYCLES", 32);
+    let cycles = usize_env_or("NEOVEX_SNAPSHOT_DRIVER_CYCLES", 32);
     let watchdog = WatchdogTimer::new();
     let mut reusable_runtime =
         ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);
@@ -175,7 +175,7 @@ export {};
             "session_id": "query:messages:get",
         }
     });
-    let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_FRESH_OWNER_CYCLES", 32);
+    let cycles = usize_env_or("NEOVEX_SNAPSHOT_DRIVER_FRESH_OWNER_CYCLES", 32);
     let watchdog = WatchdogTimer::new();
     let mut reusable_runtime =
         ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);
@@ -304,7 +304,7 @@ export {};
                     "session_id": "query:messages:get",
                 }
             });
-            let cycles = stress_env_usize("NEOVEX_SNAPSHOT_DRIVER_CURRENT_THREAD_CYCLES", 32);
+            let cycles = usize_env_or("NEOVEX_SNAPSHOT_DRIVER_CURRENT_THREAD_CYCLES", 32);
             let watchdog = WatchdogTimer::new();
             let mut reusable_runtime =
                 ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);

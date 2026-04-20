@@ -1,4 +1,7 @@
-use super::support::new_faulted_service;
+use super::support::{
+    assert_future_stays_pending, expect_blocking_wait_reaches_state, expect_catch_up_future_within,
+    expect_future_within, new_faulted_service,
+};
 use super::*;
 
 #[tokio::test]
@@ -30,15 +33,14 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
         })
     };
 
-    assert!(
-        tokio::task::spawn_blocking({
+    expect_blocking_wait_reaches_state(
+        "journal worker should pause before draining the queued request",
+        {
             let pause = pause.clone();
-            move || pause.wait_until_entered(Duration::from_secs(1))
-        })
-        .await
-        .expect("pause wait should join"),
-        "journal worker should pause before draining the queued request"
-    );
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
 
     let blocked_stats = service
         .mutation_journal_stats_for_testing(&tenant_id)
@@ -75,12 +77,11 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     )
     .await;
 
-    assert!(
-        timeout(Duration::from_millis(150), &mut second_insert)
-            .await
-            .is_err(),
-        "second mutation should stay pending while the journal worker is paused"
-    );
+    assert_future_stays_pending(
+        &mut second_insert,
+        "second mutation should stay pending while the journal worker is paused",
+    )
+    .await;
 
     let buffered_stats = service
         .mutation_admission_stats_for_testing(&tenant_id)
@@ -96,16 +97,20 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
 
     pause.release();
 
-    let first_id = timeout(Duration::from_secs(1), first_insert)
-        .await
-        .expect("first mutation should resolve after the pause is released")
-        .expect("first mutation task should join successfully")
-        .expect("first mutation should succeed");
-    let second_id = timeout(Duration::from_secs(1), second_insert)
-        .await
-        .expect("second mutation should resolve after the journal drains")
-        .expect("second mutation task should join successfully")
-        .expect("second mutation should succeed");
+    let first_id = expect_future_within(
+        first_insert,
+        "first mutation should resolve after the pause is released",
+    )
+    .await
+    .expect("first mutation task should join successfully")
+    .expect("first mutation should succeed");
+    let second_id = expect_future_within(
+        second_insert,
+        "second mutation should resolve after the journal drains",
+    )
+    .await
+    .expect("second mutation task should join successfully")
+    .expect("second mutation should succeed");
 
     let visible = service
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
@@ -180,29 +185,29 @@ async fn mutation_journal_never_expires_admitted_work() {
         })
     };
 
-    assert!(
-        tokio::task::spawn_blocking({
+    expect_blocking_wait_reaches_state(
+        "journal worker should pause after admitting the mutation to the journal queue",
+        {
             let pause = pause.clone();
-            move || pause.wait_until_entered(Duration::from_secs(1))
-        })
-        .await
-        .expect("pause wait should join"),
-        "journal worker should pause after admitting the mutation to the journal queue"
-    );
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
 
-    assert!(
-        timeout(Duration::from_millis(100), &mut admitted_insert)
-            .await
-            .is_err(),
-        "admitted mutation should remain pending while the journal worker pause is armed"
-    );
+    assert_future_stays_pending(
+        &mut admitted_insert,
+        "admitted mutation should remain pending while the journal worker pause is armed",
+    )
+    .await;
     pause.release();
 
-    let document_id = timeout(Duration::from_secs(1), admitted_insert)
-        .await
-        .expect("admitted mutation should resolve after the pause is released")
-        .expect("admitted mutation task should join successfully")
-        .expect("admitted mutation should still succeed");
+    let document_id = expect_future_within(
+        admitted_insert,
+        "admitted mutation should resolve after the pause is released",
+    )
+    .await
+    .expect("admitted mutation task should join successfully")
+    .expect("admitted mutation should still succeed");
 
     let visible = service
         .query_documents_async(tenant_id.clone(), query_for("tasks"))
@@ -244,15 +249,16 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
         }
     });
 
-    timeout(Duration::from_secs(1), faults.wait_until_entered())
-        .await
-        .expect("journal worker should block after durable append");
-    assert!(
-        timeout(Duration::from_millis(100), &mut first_insert)
-            .await
-            .is_err(),
-        "first mutation should remain pending while apply is blocked"
-    );
+    expect_future_within(
+        faults.wait_until_entered(),
+        "journal worker should block after durable append",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut first_insert,
+        "first mutation should remain pending while apply is blocked",
+    )
+    .await;
 
     let mut blocked_query = tokio::spawn({
         let service = service.clone();
@@ -263,12 +269,11 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut blocked_query)
-            .await
-            .is_err(),
-        "query should remain pending while the first durable write is not yet applied"
-    );
+    assert_future_stays_pending(
+        &mut blocked_query,
+        "query should remain pending while the first durable write is not yet applied",
+    )
+    .await;
 
     let mut second_insert = tokio::spawn({
         let service = service.clone();
@@ -283,25 +288,28 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut second_insert)
-            .await
-            .is_err(),
-        "queued follow-up mutation should remain pending until the blocked apply resumes"
-    );
+    assert_future_stays_pending(
+        &mut second_insert,
+        "queued follow-up mutation should remain pending until the blocked apply resumes",
+    )
+    .await;
 
     faults.release();
 
-    let first_id = timeout(Duration::from_secs(1), first_insert)
-        .await
-        .expect("first mutation should resolve after apply resumes")
-        .expect("first mutation task should join successfully")
-        .expect("first mutation should succeed");
-    let query_results = timeout(Duration::from_secs(1), blocked_query)
-        .await
-        .expect("blocked query should resolve after apply resumes")
-        .expect("blocked query task should join successfully")
-        .expect("blocked query should succeed");
+    let first_id = expect_future_within(
+        first_insert,
+        "first mutation should resolve after apply resumes",
+    )
+    .await
+    .expect("first mutation task should join successfully")
+    .expect("first mutation should succeed");
+    let query_results = expect_future_within(
+        blocked_query,
+        "blocked query should resolve after apply resumes",
+    )
+    .await
+    .expect("blocked query task should join successfully")
+    .expect("blocked query should succeed");
     assert!(
         query_results
             .iter()
@@ -375,15 +383,16 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
         }
     });
 
-    timeout(Duration::from_secs(1), faults.wait_until_entered())
-        .await
-        .expect("journal worker should block after durable append");
-    assert!(
-        timeout(Duration::from_millis(100), &mut first_insert)
-            .await
-            .is_err(),
-        "first cancellable mutation should remain pending while apply is blocked"
-    );
+    expect_future_within(
+        faults.wait_until_entered(),
+        "journal worker should block after durable append",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut first_insert,
+        "first cancellable mutation should remain pending while apply is blocked",
+    )
+    .await;
 
     let mut blocked_query = tokio::spawn({
         let service = service.clone();
@@ -394,12 +403,11 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut blocked_query)
-            .await
-            .is_err(),
-        "query should remain pending while the first durable write is not yet applied"
-    );
+    assert_future_stays_pending(
+        &mut blocked_query,
+        "query should remain pending while the first durable write is not yet applied",
+    )
+    .await;
 
     let mut second_insert = tokio::spawn({
         let service = service.clone();
@@ -419,25 +427,28 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut second_insert)
-            .await
-            .is_err(),
-        "queued follow-up cancellable mutation should remain pending until the blocked apply resumes"
-    );
+    assert_future_stays_pending(
+        &mut second_insert,
+        "queued follow-up cancellable mutation should remain pending until the blocked apply resumes",
+    )
+    .await;
 
     faults.release();
 
-    let first_id = timeout(Duration::from_secs(1), first_insert)
-        .await
-        .expect("first cancellable mutation should resolve after apply resumes")
-        .expect("first cancellable mutation task should join successfully")
-        .expect("first cancellable mutation should succeed");
-    let query_results = timeout(Duration::from_secs(1), blocked_query)
-        .await
-        .expect("blocked query should resolve after apply resumes")
-        .expect("blocked query task should join successfully")
-        .expect("blocked query should succeed");
+    let first_id = expect_future_within(
+        first_insert,
+        "first cancellable mutation should resolve after apply resumes",
+    )
+    .await
+    .expect("first cancellable mutation task should join successfully")
+    .expect("first cancellable mutation should succeed");
+    let query_results = expect_future_within(
+        blocked_query,
+        "blocked query should resolve after apply resumes",
+    )
+    .await
+    .expect("blocked query task should join successfully")
+    .expect("blocked query should succeed");
     assert!(
         query_results
             .iter()
@@ -512,15 +523,16 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
         }
     });
 
-    timeout(Duration::from_secs(1), faults.wait_until_entered())
-        .await
-        .expect("journal worker should block after durable append");
-    assert!(
-        timeout(Duration::from_millis(100), &mut first_insert)
-            .await
-            .is_err(),
-        "first mutation should remain pending while apply is blocked"
-    );
+    expect_future_within(
+        faults.wait_until_entered(),
+        "journal worker should block after durable append",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut first_insert,
+        "first mutation should remain pending while apply is blocked",
+    )
+    .await;
 
     let mut blocked_query = tokio::spawn({
         let service = service.clone();
@@ -536,12 +548,11 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut blocked_query)
-            .await
-            .is_err(),
-        "cancellable query should remain pending while the first durable write is not yet applied"
-    );
+    assert_future_stays_pending(
+        &mut blocked_query,
+        "cancellable query should remain pending while the first durable write is not yet applied",
+    )
+    .await;
 
     let mut second_insert = tokio::spawn({
         let service = service.clone();
@@ -559,25 +570,28 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut second_insert)
-            .await
-            .is_err(),
-        "queued follow-up mutation should remain pending until the blocked apply resumes"
-    );
+    assert_future_stays_pending(
+        &mut second_insert,
+        "queued follow-up mutation should remain pending until the blocked apply resumes",
+    )
+    .await;
 
     faults.release();
 
-    let first_id = timeout(Duration::from_secs(1), first_insert)
-        .await
-        .expect("first mutation should resolve after apply resumes")
-        .expect("first mutation task should join successfully")
-        .expect("first mutation should succeed");
-    let query_results = timeout(Duration::from_secs(1), blocked_query)
-        .await
-        .expect("blocked query should resolve after apply resumes")
-        .expect("blocked query task should join successfully")
-        .expect("blocked query should succeed");
+    let first_id = expect_future_within(
+        first_insert,
+        "first mutation should resolve after apply resumes",
+    )
+    .await
+    .expect("first mutation task should join successfully")
+    .expect("first mutation should succeed");
+    let query_results = expect_future_within(
+        blocked_query,
+        "blocked query should resolve after apply resumes",
+    )
+    .await
+    .expect("blocked query task should join successfully")
+    .expect("blocked query should succeed");
     assert!(
         query_results.iter().any(
             |document| document.fields.get("title") == Some(&json!("first-query-cancellable"))
@@ -659,9 +673,11 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
         }
     });
 
-    timeout(Duration::from_secs(1), faults.wait_until_entered())
-        .await
-        .expect("journal worker should block after durable append");
+    expect_future_within(
+        faults.wait_until_entered(),
+        "journal worker should block after durable append",
+    )
+    .await;
 
     let mut second_insert = tokio::spawn({
         let service = service.clone();
@@ -679,12 +695,11 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
                 .await
         }
     });
-    assert!(
-        timeout(Duration::from_millis(100), &mut second_insert)
-            .await
-            .is_err(),
-        "queued follow-up mutation should remain pending until the blocked apply resumes"
-    );
+    assert_future_stays_pending(
+        &mut second_insert,
+        "queued follow-up mutation should remain pending until the blocked apply resumes",
+    )
+    .await;
 
     faults.release();
 
@@ -696,11 +711,13 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
     .await
     .expect("join worker should finish")
     .expect("first mutation should succeed");
-    let second_id = timeout(Duration::from_secs(3), second_insert)
-        .await
-        .expect("queued follow-up mutation should still resolve after the ephemeral runtime exits")
-        .expect("second mutation task should join successfully")
-        .expect("second mutation should succeed");
+    let second_id = expect_catch_up_future_within(
+        second_insert,
+        "queued follow-up mutation should still resolve after the ephemeral runtime exits",
+    )
+    .await
+    .expect("second mutation task should join successfully")
+    .expect("second mutation should succeed");
 
     let visible = service
         .query_documents_async(tenant_id, query_for("tasks"))
