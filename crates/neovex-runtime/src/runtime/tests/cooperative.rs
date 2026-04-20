@@ -36,7 +36,91 @@ pub(super) const CONCURRENT_DISPATCH_CASE: IsolatedRuntimeTestCase = IsolatedRun
     "runtime::tests::cooperative::cooperative_concurrent_dispatch_does_not_deadlock_subprocess",
 );
 
-const CONCURRENT_DISPATCH_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+fn cooperative_slot_progress_timeout() -> std::time::Duration {
+    stress_env_duration_ms(
+        "NEOVEX_COOPERATIVE_SLOT_PROGRESS_TIMEOUT_MS",
+        ci_sensitive_duration(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(20),
+        ),
+    )
+}
+
+fn cooperative_slot_wake_timeout() -> std::time::Duration {
+    stress_env_duration_ms(
+        "NEOVEX_COOPERATIVE_SLOT_WAKE_TIMEOUT_MS",
+        ci_sensitive_duration(
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(5),
+        ),
+    )
+}
+
+fn cooperative_concurrent_dispatch_join_timeout() -> std::time::Duration {
+    stress_env_duration_ms(
+        "NEOVEX_COOPERATIVE_CONCURRENT_DISPATCH_TIMEOUT_MS",
+        ci_sensitive_duration(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(90),
+        ),
+    )
+}
+
+async fn wait_until_slot_parked(
+    slot: &mut CooperativeLockerRuntimeSlot,
+    case: IsolatedRuntimeTestCase,
+    context: &str,
+) {
+    let timeout = cooperative_slot_progress_timeout();
+    tokio::time::timeout(timeout, async {
+        loop {
+            match slot.poll_once().await.expect("slot poll should succeed") {
+                CooperativeRuntimeSlotPoll::Runnable => tokio::task::yield_now().await,
+                CooperativeRuntimeSlotPoll::Parked => break,
+                CooperativeRuntimeSlotPoll::Completed => {
+                    panic!(
+                        "{context}; cooperative slot completed before the deferred async host work was released"
+                    );
+                }
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "{} after {timeout:?}: {context}",
+            case.failure_context("cooperative slot did not park within the bounded progress timeout")
+        )
+    });
+}
+
+async fn wait_until_slot_completed_without_parking(
+    slot: &mut CooperativeLockerRuntimeSlot,
+    case: IsolatedRuntimeTestCase,
+    context: &str,
+) {
+    let timeout = cooperative_slot_progress_timeout();
+    tokio::time::timeout(timeout, async {
+        loop {
+            match slot.poll_once().await.expect("slot poll should succeed") {
+                CooperativeRuntimeSlotPoll::Runnable => tokio::task::yield_now().await,
+                CooperativeRuntimeSlotPoll::Completed => break,
+                CooperativeRuntimeSlotPoll::Parked => {
+                    panic!("{context}; cooperative slot parked instead of completing");
+                }
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "{} after {timeout:?}: {context}",
+            case.failure_context(
+                "cooperative slot did not complete within the bounded progress timeout"
+            )
+        )
+    });
+}
 
 #[test]
 fn runtime_cooperative_locker_slot_parks_and_resumes_after_async_host_completion() {
@@ -119,22 +203,12 @@ export {};
         .expect("cooperative locker slot should start");
 
     assert!(!slot.is_ready_to_resume());
-    let mut parked = false;
-    for poll_index in 0..8 {
-        match slot.poll_once().await.expect("slot poll should succeed") {
-            CooperativeRuntimeSlotPoll::Runnable => continue,
-            CooperativeRuntimeSlotPoll::Parked => {
-                parked = true;
-                break;
-            }
-            CooperativeRuntimeSlotPoll::Completed => {
-                panic!(
-                    "deferred async host work should not complete before release (poll {poll_index})"
-                );
-            }
-        }
-    }
-    assert!(parked, "deferred async host work should eventually park");
+    wait_until_slot_parked(
+        &mut slot,
+        PARK_AND_RESUME_CASE,
+        "deferred async host work should park before release",
+    )
+    .await;
     assert_eq!(
         runtime_owner
             .policy
@@ -145,7 +219,8 @@ export {};
 
     let initial_generation = activity_signal.current_generation();
     host.release();
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    let wake_timeout = cooperative_slot_wake_timeout();
+    tokio::time::timeout(wake_timeout, async {
         loop {
             if slot.is_ready_to_resume()
                 || activity_signal.current_generation() > initial_generation
@@ -156,31 +231,20 @@ export {};
         }
     })
     .await
-    .expect("host completion should wake the cooperative slot");
+    .unwrap_or_else(|_| {
+        panic!(
+            "{} after {wake_timeout:?}",
+            PARK_AND_RESUME_CASE
+                .failure_context("host completion should wake the cooperative slot")
+        )
+    });
     assert!(slot.is_ready_to_resume());
-    let mut completed = false;
-    for poll_index in 0..8 {
-        match slot
-            .poll_once()
-            .await
-            .expect("slot poll should succeed after wake")
-        {
-            CooperativeRuntimeSlotPoll::Runnable => continue,
-            CooperativeRuntimeSlotPoll::Completed => {
-                completed = true;
-                break;
-            }
-            CooperativeRuntimeSlotPoll::Parked => {
-                panic!(
-                    "released async host work should not park again before completion (poll {poll_index})"
-                );
-            }
-        }
-    }
-    assert!(
-        completed,
-        "released async host work should complete after wake"
-    );
+    wait_until_slot_completed_without_parking(
+        &mut slot,
+        PARK_AND_RESUME_CASE,
+        "released async host work should complete after wake",
+    )
+    .await;
 
     let result = slot
         .take_result()
@@ -289,33 +353,28 @@ export {};
         .await
         .expect("cooperative locker slot should start");
 
-    let mut sequence = Vec::new();
-    for _ in 0..20 {
-        let poll = slot.poll_once().await.expect("slot poll should succeed");
-        sequence.push(poll);
-        if poll == CooperativeRuntimeSlotPoll::Completed {
-            let result = slot
-                .take_result()
-                .expect("completed slot should retain its result");
-            assert_eq!(
-                result,
-                serde_json::json!({
-                    "operation": "ctx_db_get",
-                    "payload": {
-                        "table": "messages",
-                        "id": "doc-1",
-                        "session_id": "query:messages:list",
-                    },
-                })
-            );
-            watchdog.shutdown();
-            return;
-        }
-    }
+    wait_until_slot_completed_without_parking(
+        &mut slot,
+        IMMEDIATE_ASYNC_CASE,
+        "immediate async host work should complete without parking",
+    )
+    .await;
 
-    panic!(
-        "cooperative locker slot should complete within a bounded number of polls; sequence={sequence:?}"
+    let result = slot
+        .take_result()
+        .expect("completed slot should retain its result");
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "operation": "ctx_db_get",
+            "payload": {
+                "table": "messages",
+                "id": "doc-1",
+                "session_id": "query:messages:list",
+            },
+        })
     );
+    watchdog.shutdown();
 }
 
 #[test]
@@ -406,24 +465,12 @@ export {};
             .await
             .unwrap_or_else(|e| panic!("cycle {cycle}: slot should start: {e}"));
 
-        let mut completed = false;
-        for poll_index in 0..20 {
-            match slot
-                .poll_once()
-                .await
-                .unwrap_or_else(|e| panic!("cycle {cycle} poll {poll_index}: {e}"))
-            {
-                CooperativeRuntimeSlotPoll::Runnable => continue,
-                CooperativeRuntimeSlotPoll::Completed => {
-                    completed = true;
-                    break;
-                }
-                CooperativeRuntimeSlotPoll::Parked => {
-                    panic!("cycle {cycle}: immediate async host should not park");
-                }
-            }
-        }
-        assert!(completed, "cycle {cycle}: should complete within 20 polls");
+        wait_until_slot_completed_without_parking(
+            &mut slot,
+            WARM_POOL_TWO_CYCLE_CASE,
+            &format!("cycle {cycle}: immediate async host should complete without parking"),
+        )
+        .await;
 
         let (result, returned_runtime) = slot
             .finish_with_result_and_runtime(Ok(expected.clone()))
@@ -548,7 +595,7 @@ export {};
                 let _ = tx.send(handle.join());
             });
             let join_result = rx
-                .recv_timeout(CONCURRENT_DISPATCH_JOIN_TIMEOUT)
+                .recv_timeout(cooperative_concurrent_dispatch_join_timeout())
                 .unwrap_or_else(|_| {
                     panic!(
                         "{} for {pool_kind:?} thread {i}",
