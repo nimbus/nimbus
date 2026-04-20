@@ -6,8 +6,8 @@ pub(crate) use neovex_core::{
 pub(crate) use neovex_testing::{
     BlockingFaultInjector, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
     GeneratedTaskPageExpectation, GeneratedTaskRecord, ServiceFixture, VerificationHarnessMode,
-    replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
-    wait_for_value,
+    ci_or_local_duration, replay_generated_task_history_async,
+    selected_generated_task_history_seed_corpus, wait_for_value,
 };
 pub(crate) use serde_json::json;
 pub(crate) use std::collections::BTreeSet;
@@ -55,7 +55,7 @@ mod queries;
 mod subscriptions;
 
 pub(crate) use provider_fixtures::{
-    external_provider_test_timeout, require_explicit_external_provider_fixture_envs,
+    expect_external_provider_future_within, require_explicit_external_provider_fixture_envs,
 };
 
 pub(crate) fn tasks_table() -> TableName {

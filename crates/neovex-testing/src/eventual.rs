@@ -31,15 +31,19 @@ where
     P: FnMut(&T) -> bool,
 {
     let started_at = Instant::now();
+    let mut attempts = 0_u64;
     loop {
+        attempts += 1;
         let value = load().await;
         if predicate(&value) {
             return value;
         }
-        assert!(
-            started_at.elapsed() < timeout,
-            "timed out waiting for {description}"
-        );
+        let elapsed = started_at.elapsed();
+        if elapsed >= timeout {
+            panic!(
+                "timed out waiting for {description} after {elapsed:?} (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts})"
+            );
+        }
         if poll_interval.is_zero() {
             tokio::task::yield_now().await;
         } else {

@@ -32,8 +32,14 @@ Use the repo docs for architecture and behavior details:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
-- For generic maintainability, refactor, modularity, canonical naming, or
-  god-file cleanup work, open
+- For generic maintainability, refactor, modularity, reliability hardening,
+  canonical naming, or god-file cleanup work, open
+  `docs/reference/reliability-posture.md` and
+  `docs/reference/ci-failure-investigation.md` after the three docs above.
+  Open
+  `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
+  only when a task needs the completed hardening wave's execution detail,
+  closeout verification baseline, or proof-packaging decisions. Open
   `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
   only when a task needs the latest completed hotspot wave's execution
   detail, closeout justification, or architecture-doc packaging baseline.
@@ -43,8 +49,8 @@ Use the repo docs for architecture and behavior details:
   execution detail, closeout justification, or benchmark-packaging baseline.
   Open `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
   only when a task needs the predecessor wave's execution detail or checkpoint
-  chain. Promote a new active plan before landing another broad
-  maintainability cleanup wave.
+  chain. Promote a new active plan before landing another repo-wide
+  maintainability or reliability-hardening wave.
 - For the landed krun-backed microVM and service-control architecture, go
   directly to `docs/reference/microvm-service-baseline.md` after the three
   docs above. Open the archived plans only when a task needs historical
@@ -85,8 +91,14 @@ Use the repo docs for architecture and behavior details:
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
-- For generic maintainability, refactor, modularity, canonical naming, or
-  readability cleanup work, open
+- For generic maintainability, refactor, modularity, reliability hardening,
+  canonical naming, or readability cleanup work, open
+  `docs/reference/reliability-posture.md` and
+  `docs/reference/ci-failure-investigation.md` immediately after those three
+  docs. Open
+  `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
+  only when you need the completed hardening wave's execution record,
+  closeout verification baseline, or proof-packaging decisions. Open
   `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
   only when you need the latest completed hotspot wave's execution record,
   closeout justification, or architecture-doc packaging baseline. Open
@@ -95,8 +107,8 @@ Use the repo docs for architecture and behavior details:
   record, closeout justification, or benchmark-packaging baseline. Open
   `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
   when you need the predecessor wave's historical execution record or
-  checkpoints. Promote a new active plan before landing another broad
-  maintainability cleanup wave.
+  checkpoints. Promote a new active plan before landing another repo-wide
+  maintainability or reliability-hardening wave.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
   docs. Only load the archived plans if the task genuinely needs historical

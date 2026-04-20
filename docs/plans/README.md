@@ -154,6 +154,12 @@ completed plans unless explicitly asked to review historical work.
     provider benchmark hotspot modularization, the architecture-doc reference
     extraction, the explicit `ARCHITECTURE.md` near-threshold justification,
     and the final green archive-closeout verification sweep
+- `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
+  - completed reliability and maintainability hardening wave; records the
+    canonical timing and wait helper posture, checker-style async proof
+    hardening, Postgres, engine, and storage proof repackaging, container
+    runtime test extraction, the stable reliability reference docs, and the
+    final green verification and archive closeout sweep
 - `docs/plans/archive/storage-provider-contracts-and-observability-plan.md`
   - completed storage follow-up plan; records the `LibsqlReplica` naming
     cleanup, replica freshness observability surface, Postgres/MySQL schema
@@ -250,13 +256,25 @@ completed plans unless explicitly asked to review historical work.
 - For Compose-backed service lifecycle follow-on work, start with
   `docs/reference/microvm-service-baseline.md`, then promote or author a new
   active plan if the task is larger than a small focused change.
+- For repo-wide reliability-proof posture or CI flake investigation, start
+  with `docs/reference/reliability-posture.md` and
+  `docs/reference/ci-failure-investigation.md`. Open
+  `archive/codebase-reliability-and-maintainability-hardening-plan.md` only
+  when you need the completed hardening wave's execution record, closeout
+  verification baseline, or proof-packaging decisions.
 - The execution-runtime versus sandbox-orchestration cleanup plan is complete
   and archived at `archive/runtime-sandbox-architecture-plan.md`. Use it to
   understand the landed `neovex-runtime` versus `neovex-sandbox` split, then
   promote or author a new active plan before doing further cleanup work in
   that area.
-- For broad maintainability, modularity, canonical naming, or god-file
-  cleanup work, consult
+- For broad maintainability, readability, modularity, reliability hardening,
+  canonical naming, or god-file cleanup work, start with
+  `docs/reference/reliability-posture.md` and
+  `docs/reference/ci-failure-investigation.md`, then promote or author a new
+  active plan if the task is larger than a small focused change. Use
+  `archive/codebase-reliability-and-maintainability-hardening-plan.md` only
+  for the completed hardening wave's execution record, closeout verification
+  baseline, and proof-packaging decisions. Use
   `archive/codebase-modularity-and-maintainability-hotspots-plan.md` only for
   the latest completed hotspot wave's execution record, closeout
   justifications, and architecture-doc packaging baseline. Use
@@ -265,8 +283,7 @@ completed plans unless explicitly asked to review historical work.
   and benchmark-packaging baseline. Use
   `archive/codebase-modularity-and-maintainability-plan.md` only for
   historical context on the predecessor CLI, provider, and sandbox ownership
-  map. Promote or author a new active plan before landing another broad
-  maintainability cleanup wave.
+  map.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.

@@ -1621,6 +1621,11 @@ For the deeper verification topology — simulation seams, harness ownership,
 generated-history oracles, differential runners, consistency reports, and
 named `pr` / `nightly` / `repro` corpora — see
 [docs/reference/verification-architecture.md](docs/reference/verification-architecture.md).
+For the proof-discipline guidance that sits above those mechanics — semantic
+waits, bounded budgets, deterministic hardship, and CI investigation — see
+[docs/reference/reliability-posture.md](docs/reference/reliability-posture.md)
+and
+[docs/reference/ci-failure-investigation.md](docs/reference/ci-failure-investigation.md).
 
 The first composite-index slice is also in place behind that verification
 discipline. Table schemas now treat indexes as `IndexDefinition { name, fields
