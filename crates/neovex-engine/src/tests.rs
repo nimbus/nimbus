@@ -54,7 +54,9 @@ mod provider_fixtures;
 mod queries;
 mod subscriptions;
 
-pub(crate) use provider_fixtures::require_explicit_external_provider_fixture_envs;
+pub(crate) use provider_fixtures::{
+    external_provider_test_timeout, require_explicit_external_provider_fixture_envs,
+};
 
 pub(crate) fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
