@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Duration;
 
 const REQUIRE_EXTERNAL_PROVIDER_FIXTURES_ENV: &str = "NEOVEX_REQUIRE_EXTERNAL_PROVIDER_FIXTURES";
 
@@ -20,4 +21,12 @@ pub(crate) fn require_explicit_external_provider_fixture_envs(
         "{REQUIRE_EXTERNAL_PROVIDER_FIXTURES_ENV} is set, so {provider_label} tests require explicit fixture env vars: {}",
         missing.join(", ")
     );
+}
+
+pub(crate) fn external_provider_test_timeout(local: Duration, ci: Duration) -> Duration {
+    if env::var_os("CI").is_some() {
+        ci
+    } else {
+        local
+    }
 }
