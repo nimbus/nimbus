@@ -25,7 +25,9 @@ mod payloads;
 mod read_tracking;
 mod responses;
 
-pub(in crate::adapters::convex) use bridge::ConvexHostBridge;
+pub(in crate::adapters::convex) use bridge::{
+    ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope,
+};
 #[cfg(test)]
 pub(in crate::adapters::convex) use contract::ConvexHostCallRequest;
 pub(in crate::adapters::convex) use contract::convex_host_operation_name;

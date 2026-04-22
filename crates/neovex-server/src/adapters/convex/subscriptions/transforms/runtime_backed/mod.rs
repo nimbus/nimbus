@@ -1,39 +1,18 @@
-use std::sync::{Arc, RwLock};
-
-use neovex_core::TenantId;
-use neovex_runtime::HostCallCancellation;
 use serde_json::Value;
 
-use super::super::types::{ConvexSubscriptionTransform, ConvexSubscriptionTransforms};
-use crate::adapters::convex::ConvexRegistry;
-use crate::adapters::convex::execution::ConvexSubscriptionEvent;
-use crate::service_registry::RuntimeServiceRegistry;
+use super::super::types::ConvexSubscriptionTransform;
 
 mod builtins;
 mod reeval;
 mod selection;
 
-#[allow(clippy::too_many_arguments)]
+pub(in crate::adapters::convex::subscriptions) use reeval::RuntimeTransformContext;
+
 pub(in crate::adapters::convex::subscriptions) async fn apply_subscription_transform(
-    service: &Arc<neovex_engine::Service>,
-    registry: &Arc<ConvexRegistry>,
-    runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
-    tenant_id: &TenantId,
-    transforms: &RwLock<ConvexSubscriptionTransforms>,
-    runtime_cancellation: &HostCallCancellation,
-    event: ConvexSubscriptionEvent<'_>,
+    context: RuntimeTransformContext<'_>,
     data: Vec<Value>,
 ) -> Result<Option<Value>, String> {
-    let transform = selection::resolve_subscription_transform(transforms, &event);
-    let context = reeval::RuntimeTransformContext::new(
-        service,
-        registry,
-        runtime_service_registry,
-        tenant_id,
-        transforms,
-        runtime_cancellation,
-        event,
-    );
+    let transform = selection::resolve_subscription_transform(context.transforms, &context.event);
 
     match transform {
         ConvexSubscriptionTransform::Identity

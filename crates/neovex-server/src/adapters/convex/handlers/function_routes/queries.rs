@@ -1,4 +1,5 @@
 use super::*;
+use crate::adapters::convex::execution::RuntimeInvocationContext;
 use crate::adapters::convex::normalize_principal_context;
 
 pub(crate) async fn query(
@@ -18,11 +19,15 @@ pub(crate) async fn query(
     let data = match request {
         ConvexQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
-            invoke_named_convex_function_async_cancellable(
+            let runtime_service_registry = state.runtime_service_registry();
+            let context = RuntimeInvocationContext::new(
                 &service,
                 &registry,
-                &state.runtime_service_registry(),
+                &runtime_service_registry,
                 &tenant_id,
+            );
+            invoke_named_convex_function_async_cancellable(
+                &context,
                 InvocationRequest {
                     kind: InvocationKind::Query,
                     function_name: request.name,
@@ -30,9 +35,7 @@ pub(crate) async fn query(
                     page_size: None,
                     cursor: None,
                     auth: auth.clone(),
-                    services: state
-                        .runtime_service_registry()
-                        .snapshot_for_tenant(&tenant_id),
+                    services: context.runtime_services(),
                 },
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-query")),
@@ -84,11 +87,15 @@ pub(crate) async fn paginated_query(
     let page = match request {
         ConvexPaginatedQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
-            let value = invoke_named_convex_function_async_cancellable(
+            let runtime_service_registry = state.runtime_service_registry();
+            let context = RuntimeInvocationContext::new(
                 &service,
                 &registry,
-                &state.runtime_service_registry(),
+                &runtime_service_registry,
                 &tenant_id,
+            );
+            let value = invoke_named_convex_function_async_cancellable(
+                &context,
                 InvocationRequest {
                     kind: InvocationKind::PaginatedQuery,
                     function_name: request.name,
@@ -96,9 +103,7 @@ pub(crate) async fn paginated_query(
                     page_size: Some(request.page_size),
                     cursor: request.cursor,
                     auth: auth.clone(),
-                    services: state
-                        .runtime_service_registry()
-                        .snapshot_for_tenant(&tenant_id),
+                    services: context.runtime_services(),
                 },
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-paginated-query")),

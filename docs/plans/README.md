@@ -133,6 +133,12 @@ completed plans unless explicitly asked to review historical work.
     `libsql` dependency-shape fix, the narrow `RUSTSEC-2026-0097` evidence,
     the direct `tokio-tungstenite` lift to `0.28`, and the final green
     `make deny` / `make ci` baseline
+- `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
+  - completed architecture, modularity, and maintainability control plane;
+    records the persistence-provider decomposition, service bootstrap and
+    router cleanup, Convex facade bounding, JS wrapper thinning, the AWS KMS
+    dependency-chain lift that cleared the `cargo deny` closeout blocker, and
+    the final green archive verification bundle
 - `docs/plans/archive/targeted-domain-modularity-cleanup-plan.md`
   - completed targeted-domain cleanup pass; records the final runtime test
     extraction, tenant facade split, auth module split, browser client split,
@@ -270,8 +276,12 @@ completed plans unless explicitly asked to review historical work.
 - For broad maintainability, readability, modularity, reliability hardening,
   canonical naming, or god-file cleanup work, start with
   `docs/reference/reliability-posture.md` and
-  `docs/reference/ci-failure-investigation.md`, then promote or author a new
-  active plan if the task is larger than a small focused change. Use
+  `docs/reference/ci-failure-investigation.md`. Use
+  `archive/architecture-modularity-and-maintainability-plan.md` for the most
+  recent completed repo-wide maintainability wave's execution record,
+  closeout verification bundle, and governance baseline for thin roots,
+  concept-owned naming, helper-bucket avoidance, threshold exceptions, and
+  wrapper-first JS compatibility guidance. Use
   `archive/codebase-reliability-and-maintainability-hardening-plan.md` only
   for the completed hardening wave's execution record, closeout verification
   baseline, and proof-packaging decisions. Use
@@ -283,7 +293,9 @@ completed plans unless explicitly asked to review historical work.
   and benchmark-packaging baseline. Use
   `archive/codebase-modularity-and-maintainability-plan.md` only for
   historical context on the predecessor CLI, provider, and sandbox ownership
-  map.
+  map. Promote a new active plan before landing another repo-wide
+  maintainability or reliability-hardening wave unless some other active plan
+  already owns the slice.
 - The SQLite storage migration plan is complete and archived at
   `archive/pluggable-storage-backend-plan.md`; do not resume it as live work
   unless you were explicitly asked for historical review.
@@ -298,8 +310,8 @@ completed plans unless explicitly asked to review historical work.
   `archive/postgres-storage-provider-plan.md`; use it only for historical
   review of the first non-local provider implementation.
 - The MySQL provider implementation plan is complete and archived at
-  `archive/mysql-storage-provider-plan.md`; use it only for historical review
-  of the second opt-in external provider implementation.
+  `archive/mysql-storage-provider-plan.md`; use it only for historical
+  review of the second opt-in external provider implementation.
 - The umbrella external-provider plan at
   `archive/external-sql-storage-backends-plan.md` is complete historical
   design context. For future replica-connected SQLite, MySQL, or other

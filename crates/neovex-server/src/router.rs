@@ -16,6 +16,92 @@ use crate::{http, ws};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
+enum RouterFeatures {
+    CoreOnly,
+    Convex { registry: ConvexRegistry },
+}
+
+struct RouterBuildConfig {
+    service: Arc<Service>,
+    license_state: LicenseState,
+    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    features: RouterFeatures,
+}
+
+impl RouterBuildConfig {
+    fn core(
+        service: Arc<Service>,
+        license_state: LicenseState,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    ) -> Self {
+        Self {
+            service,
+            license_state,
+            runtime_service_registry,
+            features: RouterFeatures::CoreOnly,
+        }
+    }
+
+    fn convex(
+        service: Arc<Service>,
+        registry: ConvexRegistry,
+        license_state: LicenseState,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    ) -> Self {
+        Self {
+            service,
+            license_state,
+            runtime_service_registry,
+            features: RouterFeatures::Convex { registry },
+        }
+    }
+
+    fn build(self) -> Router {
+        let (state, include_convex) = match self.features {
+            RouterFeatures::CoreOnly => (
+                Arc::new(AppState::with_license_state_and_runtime_service_registry(
+                    self.service,
+                    self.license_state,
+                    self.runtime_service_registry,
+                )),
+                false,
+            ),
+            RouterFeatures::Convex { registry } => (
+                Arc::new(
+                    AppState::with_convex_registry_and_license_state_and_runtime_service_registry(
+                        self.service,
+                        registry,
+                        self.license_state,
+                        self.runtime_service_registry,
+                    ),
+                ),
+                true,
+            ),
+        };
+
+        let router = build_core_router();
+        let router = if include_convex {
+            router.merge(build_convex_router())
+        } else {
+            router
+        };
+
+        router.layer(build_cors_layer()).with_state(state)
+    }
+}
+
+fn runtime_service_registry_from_sandbox_catalog(
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> Arc<dyn RuntimeServiceRegistry> {
+    Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog))
+}
+
+fn runtime_service_registry_from_sandbox_service_manager(
+    sandbox_service_manager: Arc<SandboxServiceManager>,
+) -> Arc<dyn RuntimeServiceRegistry> {
+    sandbox_service_manager
+}
+
 /// Builds the Neovex HTTP/WebSocket router without Convex support.
 pub fn build_router(service: Arc<Service>) -> Router {
     build_router_with_license(service, LicenseState::community())
@@ -48,14 +134,12 @@ pub fn build_router_with_license_and_sandbox_catalog(
     license_state: LicenseState,
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> Router {
-    let state = Arc::new(AppState::with_license_state_and_runtime_service_registry(
+    RouterBuildConfig::core(
         service,
         license_state,
-        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog)),
-    ));
-    build_core_router()
-        .layer(build_cors_layer())
-        .with_state(state)
+        runtime_service_registry_from_sandbox_catalog(sandbox_catalog),
+    )
+    .build()
 }
 
 /// Builds the Neovex HTTP/WebSocket router with Convex support enabled.
@@ -118,12 +202,11 @@ pub fn build_router_with_convex_and_license_and_sandbox_service_manager(
     license_state: LicenseState,
     sandbox_service_manager: Arc<SandboxServiceManager>,
 ) -> Router {
-    let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = sandbox_service_manager;
     build_router_with_convex_and_license_and_runtime_service_registry(
         service,
         convex_registry,
         license_state,
-        runtime_service_registry,
+        runtime_service_registry_from_sandbox_service_manager(sandbox_service_manager),
     )
 }
 
@@ -138,7 +221,7 @@ pub fn build_router_with_convex_and_license_and_sandbox_catalog(
         service,
         convex_registry,
         license_state,
-        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog)),
+        runtime_service_registry_from_sandbox_catalog(sandbox_catalog),
     )
 }
 
@@ -162,18 +245,13 @@ pub(crate) fn build_router_with_convex_and_license_and_runtime_service_registry(
     license_state: LicenseState,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
 ) -> Router {
-    let state = Arc::new(
-        AppState::with_convex_registry_and_license_state_and_runtime_service_registry(
-            service,
-            convex_registry,
-            license_state,
-            runtime_service_registry,
-        ),
-    );
-    build_core_router()
-        .merge(build_convex_router())
-        .layer(build_cors_layer())
-        .with_state(state)
+    RouterBuildConfig::convex(
+        service,
+        convex_registry,
+        license_state,
+        runtime_service_registry,
+    )
+    .build()
 }
 
 fn build_cors_layer() -> CorsLayer {

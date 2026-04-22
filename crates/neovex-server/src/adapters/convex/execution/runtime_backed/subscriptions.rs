@@ -16,16 +16,16 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
     cancellation: HostCallCancellation,
     server_request_id: Option<String>,
 ) -> Result<ConvexRuntimeSubscriptionSetup, Error> {
+    let context =
+        RuntimeInvocationContext::new(service, registry, runtime_service_registry, tenant_id);
     let kind = if page_size.is_some() {
         InvocationKind::PaginatedQuery
     } else {
         InvocationKind::Query
     };
+    let runtime_services = context.runtime_services();
     let (value, read_set) = invoke_named_convex_function_with_trace_async_cancellable(
-        service,
-        registry,
-        runtime_service_registry,
-        tenant_id,
+        &context,
         InvocationRequest {
             kind: kind.clone(),
             function_name: name.to_string(),
@@ -33,7 +33,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
             page_size,
             cursor: cursor.clone(),
             auth: auth.clone(),
-            services: runtime_service_registry.snapshot_for_tenant(tenant_id),
+            services: runtime_services.clone(),
         },
         cancellation,
         server_request_id,
@@ -50,7 +50,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
                     name: name.to_string(),
                     args: args.clone(),
                     auth,
-                    services: runtime_service_registry.snapshot_for_tenant(tenant_id),
+                    services: runtime_services,
                     read_set: Some(read_set),
                     last_value: Some(last_value),
                 },
@@ -71,7 +71,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
                         .expect("paginated runtime bootstrap should carry page size"),
                     cursor,
                     auth,
-                    services: runtime_service_registry.snapshot_for_tenant(tenant_id),
+                    services: runtime_services,
                     read_set: Some(read_set),
                     last_value: Some(last_value),
                 },

@@ -1,90 +1,135 @@
 import type {
+  AuthConfig as NeovexAuthConfig,
+  AuthProvider as NeovexAuthProvider,
+  Cursor as NeovexCursor,
+  DefaultFunctionArgs as NeovexDefaultFunctionArgs,
+  FilterExpressionBuilder as NeovexFilterExpressionBuilder,
+  FilterField as NeovexFilterField,
+  GenericDatabaseReader as NeovexGenericDatabaseReader,
+  GenericDatabaseWriter as NeovexGenericDatabaseWriter,
+  HttpRouteMethod as NeovexHttpRouteMethod,
+  HttpRouteSpec as NeovexHttpRouteSpec,
+  HttpRouter as NeovexHttpRouter,
+  IndexRangeBuilder as NeovexIndexRangeBuilder,
+  PaginationOptions as NeovexPaginationOptions,
+  PaginationResult as NeovexPaginationResult,
+  PaginationStatus as NeovexPaginationStatus,
+  QueryBuilder as NeovexQueryBuilder,
+  QueryOrder as NeovexQueryOrder,
+  SchemaDefinition as NeovexSchemaDefinition,
+  TableDefinition as NeovexTableDefinition,
+  UserIdentity as NeovexUserIdentity,
+  UserIdentityAttributes as NeovexUserIdentityAttributes,
+} from "neovex/server";
+import {
+  action as neovexAction,
+  defineSchema as neovexDefineSchema,
+  defineTable as neovexDefineTable,
+  httpAction as neovexHttpAction,
+  httpRouter as neovexHttpRouter,
+  internalAction as neovexInternalAction,
+  internalMutation as neovexInternalMutation,
+  internalPaginatedQuery as neovexInternalPaginatedQuery,
+  internalQuery as neovexInternalQuery,
+  mutation as neovexMutation,
+  paginatedQuery as neovexPaginatedQuery,
+  paginationOptsValidator as neovexPaginationOptsValidator,
+  paginationResultValidator as neovexPaginationResultValidator,
+  query as neovexQuery,
+} from "neovex/server";
+
+import type {
   ConvexActionReference,
   ConvexMutationReference,
   ConvexPaginatedQueryReference,
   ConvexQueryReference,
   FunctionVisibility,
-  JsonValue,
-  MutationShape,
-  QueryShape,
 } from "./internal/shared.ts";
-import {
-  makeActionReference,
-  makeMutationReference,
-  makePaginatedQueryReference,
-  makeQueryReference,
-} from "./internal/shared.ts";
-import { v, type GenericId, type Infer, type Validator } from "./values.ts";
+import type { Infer, Validator } from "./values.ts";
 
-export type DefaultFunctionArgs = Record<string, unknown>;
-
-export type AuthProvider =
-  | {
-      applicationID: string;
-      domain: string;
-    }
-  | {
-      type: "customJwt";
-      applicationID?: string;
-      issuer: string;
-      jwks: string;
-      algorithm: "RS256" | "ES256";
-    };
-
-export type AuthConfig = {
-  providers: AuthProvider[];
-};
-
-export interface UserIdentity {
-  readonly tokenIdentifier: string;
-  readonly subject: string;
-  readonly issuer: string;
-  readonly name?: string;
-  readonly givenName?: string;
-  readonly familyName?: string;
-  readonly nickname?: string;
-  readonly preferredUsername?: string;
-  readonly profileUrl?: string;
-  readonly pictureUrl?: string;
-  readonly email?: string;
-  readonly emailVerified?: boolean;
-  readonly gender?: string;
-  readonly birthday?: string;
-  readonly timezone?: string;
-  readonly language?: string;
-  readonly phoneNumber?: string;
-  readonly phoneNumberVerified?: boolean;
-  readonly address?: string;
-  readonly updatedAt?: string;
-  readonly [key: string]: JsonValue | undefined;
-}
-
-export type UserIdentityAttributes = Omit<UserIdentity, "tokenIdentifier">;
+export type DefaultFunctionArgs = NeovexDefaultFunctionArgs;
+export type AuthProvider = NeovexAuthProvider;
+export type AuthConfig = NeovexAuthConfig;
+export type UserIdentity = NeovexUserIdentity;
+export type UserIdentityAttributes = NeovexUserIdentityAttributes;
 
 export interface Auth {
   getUserIdentity(): Promise<UserIdentity | null>;
 }
 
 type ArgValidators = Record<string, Validator<unknown>>;
-type TableIndexes = readonly {
-  readonly name: string;
-  readonly fields: readonly string[];
-}[];
 
-type InferArgs<Args> = Args extends ArgValidators
+type InferDefinitionArgs<Args> = Args extends ArgValidators
   ? { [Key in keyof Args]: Infer<Args[Key]> }
   : DefaultFunctionArgs;
 
-type InferReturns<Returns> = Returns extends Validator<unknown>
+type InferDefinitionReturns<Returns> = Returns extends Validator<unknown>
   ? Infer<Returns>
   : unknown;
+
+export type QueryOrder = NeovexQueryOrder;
+export type IndexRangeBuilder = NeovexIndexRangeBuilder;
+export type FilterField = NeovexFilterField;
+export type FilterExpressionBuilder = NeovexFilterExpressionBuilder;
+export type QueryBuilder = NeovexQueryBuilder;
+export type GenericDatabaseReader = NeovexGenericDatabaseReader;
+export type GenericDatabaseWriter = NeovexGenericDatabaseWriter;
+export type Cursor = NeovexCursor;
+export type PaginationStatus = NeovexPaginationStatus;
+export type PaginationOptions = NeovexPaginationOptions;
+export type PaginationResult<Item> = NeovexPaginationResult<Item>;
+
+export type Scheduler = {
+  runAfter<Args extends DefaultFunctionArgs>(
+    delayMs: number,
+    functionRef: ConvexMutationReference<Args, unknown>,
+    args?: Args,
+  ): Promise<string>;
+  runAt<Args extends DefaultFunctionArgs>(
+    timestampMs: number,
+    functionRef: ConvexMutationReference<Args, unknown>,
+    args?: Args,
+  ): Promise<string>;
+  cancel(jobId: string): Promise<void>;
+};
+
+export type GenericQueryCtx = {
+  readonly db: GenericDatabaseReader;
+  readonly auth: Auth;
+};
+export type QueryCtx = GenericQueryCtx;
+
+export type GenericMutationCtx = {
+  readonly db: GenericDatabaseWriter;
+  readonly scheduler: Scheduler;
+  readonly auth: Auth;
+};
+export type MutationCtx = GenericMutationCtx;
+
+export type GenericActionCtx = {
+  readonly scheduler: Scheduler;
+  readonly auth: Auth;
+  runQuery<Args extends DefaultFunctionArgs, Returns>(
+    functionRef: ConvexQueryReference<Args, Returns>,
+    args?: Args,
+  ): Promise<Returns>;
+  runMutation<Args extends DefaultFunctionArgs, Returns>(
+    functionRef: ConvexMutationReference<Args, Returns>,
+    args?: Args,
+  ): Promise<Returns>;
+  runAction<Args extends DefaultFunctionArgs, Returns>(
+    functionRef: ConvexActionReference<Args, Returns>,
+    args?: Args,
+  ): Promise<Returns>;
+};
+export type ActionCtx = GenericActionCtx;
 
 type QueryDefinition<Args extends ArgValidators | undefined, Returns> = {
   args?: Args;
   returns?: Returns;
   handler: (
     ctx: GenericQueryCtx,
-    args: InferArgs<Args>,
+    args: InferDefinitionArgs<Args>,
   ) => unknown | Promise<unknown>;
 };
 
@@ -93,7 +138,7 @@ type PaginatedQueryDefinition<Args extends ArgValidators | undefined, Returns> =
   returns?: Returns;
   handler: (
     ctx: GenericQueryCtx,
-    args: InferArgs<Args>,
+    args: InferDefinitionArgs<Args>,
   ) => unknown | Promise<unknown>;
 };
 
@@ -102,7 +147,7 @@ type MutationDefinition<Args extends ArgValidators | undefined, Returns> = {
   returns?: Returns;
   handler: (
     ctx: GenericMutationCtx,
-    args: InferArgs<Args>,
+    args: InferDefinitionArgs<Args>,
   ) => unknown | Promise<unknown>;
 };
 
@@ -111,7 +156,7 @@ type ActionDefinition<Args extends ArgValidators | undefined, Returns> = {
   returns?: Returns;
   handler: (
     ctx: GenericActionCtx,
-    args: InferArgs<Args>,
+    args: InferDefinitionArgs<Args>,
   ) => unknown | Promise<unknown>;
 };
 
@@ -162,204 +207,48 @@ export type PublicHttpAction = {
   readonly handler: HttpActionHandler;
 };
 
-export type HttpRouteMethod =
-  | "GET"
-  | "POST"
-  | "PUT"
-  | "PATCH"
-  | "DELETE"
-  | "OPTIONS"
-  | "HEAD";
+export type HttpRouteMethod = NeovexHttpRouteMethod;
 
-export type HttpRouteSpec = {
-  readonly path?: string;
-  readonly pathPrefix?: string;
-  readonly method: HttpRouteMethod;
+export type HttpRouteSpec = Omit<NeovexHttpRouteSpec, "handler"> & {
   readonly handler: PublicHttpAction;
 };
 
-export type HttpRouter = {
-  readonly routes: readonly HttpRouteSpec[];
+export type HttpRouter = Omit<NeovexHttpRouter, "route"> & {
   route(spec: HttpRouteSpec): HttpRouter;
 };
 
-export type TableDefinition<Fields extends ArgValidators> = {
-  readonly kind: "table";
-  readonly fields: Fields;
-  readonly indexes: TableIndexes;
-  index(
-    name: string,
-    fields: readonly [keyof Fields & string, ...(keyof Fields & string)[]],
-  ): TableDefinition<Fields>;
-};
+export type TableDefinition<Fields extends ArgValidators> = NeovexTableDefinition<Fields>;
+export type SchemaDefinition<Tables extends Record<string, TableDefinition<any>>> =
+  NeovexSchemaDefinition<Tables>;
 
-export type SchemaDefinition<Tables extends Record<string, TableDefinition<any>>> = {
-  readonly tables: Tables;
-};
-
-export type Cursor = string;
-
-export type PaginationStatus = "SplitRecommended" | "SplitRequired" | null;
-
-export type PaginationOptions = {
-  numItems: number;
-  cursor: Cursor | null;
-  endCursor?: Cursor | null;
-  maximumRowsRead?: number;
-  maximumBytesRead?: number;
-  id?: number;
-};
-
-export type PaginationResult<Item> = {
-  page: Item[];
-  isDone: boolean;
-  continueCursor: Cursor;
-  splitCursor?: Cursor | null;
-  pageStatus?: PaginationStatus;
-};
-
-export const paginationOptsValidator: Validator<PaginationOptions> = v.object({
-  numItems: v.number(),
-  cursor: v.union(v.string(), v.null()),
-  endCursor: v.optional(v.union(v.string(), v.null())),
-  id: v.optional(v.number()),
-  maximumRowsRead: v.optional(v.number()),
-  maximumBytesRead: v.optional(v.number()),
-});
+export const paginationOptsValidator =
+  neovexPaginationOptsValidator as Validator<PaginationOptions>;
 
 export function paginationResultValidator<Item>(
   itemValidator: Validator<Item>,
 ): Validator<PaginationResult<Item>> {
-  return v.object({
-    page: v.array(itemValidator),
-    continueCursor: v.string(),
-    isDone: v.boolean(),
-    splitCursor: v.optional(v.union(v.string(), v.null())),
-    pageStatus: v.optional(
-      v.union(
-        v.literal("SplitRecommended"),
-        v.literal("SplitRequired"),
-        v.null(),
-      ),
-    ),
-  }) as Validator<PaginationResult<Item>>;
+  return neovexPaginationResultValidator(
+    itemValidator,
+  ) as Validator<PaginationResult<Item>>;
 }
 
 export type FunctionReference<Args extends DefaultFunctionArgs, Returns> =
-  | ConvexQueryReference<Args, Returns>
+  ConvexQueryReference<Args, Returns>
   | ConvexMutationReference<Args, Returns>
   | ConvexActionReference<Args, Returns>
   | ConvexPaginatedQueryReference<Args, Returns>;
-
-export type QueryOrder = "asc" | "desc";
-
-export type IndexRangeBuilder = {
-  eq(field: string, value: unknown): IndexRangeBuilder;
-  neq(field: string, value: unknown): IndexRangeBuilder;
-  gt(field: string, value: unknown): IndexRangeBuilder;
-  gte(field: string, value: unknown): IndexRangeBuilder;
-  lt(field: string, value: unknown): IndexRangeBuilder;
-  lte(field: string, value: unknown): IndexRangeBuilder;
-};
-
-export type FilterField = {
-  readonly field: string;
-};
-
-export type FilterExpressionBuilder = {
-  field(name: string): FilterField;
-  eq(field: string | FilterField, value: unknown): FilterExpressionBuilder;
-  neq(field: string | FilterField, value: unknown): FilterExpressionBuilder;
-  gt(field: string | FilterField, value: unknown): FilterExpressionBuilder;
-  gte(field: string | FilterField, value: unknown): FilterExpressionBuilder;
-  lt(field: string | FilterField, value: unknown): FilterExpressionBuilder;
-  lte(field: string | FilterField, value: unknown): FilterExpressionBuilder;
-};
-
-export type QueryBuilder = {
-  withIndex(
-    indexName: string,
-    builder?: (query: IndexRangeBuilder) => IndexRangeBuilder,
-  ): QueryBuilder;
-  filter(
-    builder: (query: FilterExpressionBuilder) => FilterExpressionBuilder,
-  ): QueryBuilder;
-  order(direction: QueryOrder): QueryBuilder;
-  collect(): Promise<unknown[]>;
-  take(limit: number): Promise<unknown[]>;
-  paginate(options: PaginationOptions): Promise<PaginationResult<unknown>>;
-  first(): Promise<unknown | null>;
-  unique(): Promise<unknown | null>;
-};
-
-export type GenericDatabaseReader = {
-  query(tableName: string): QueryBuilder;
-  get<TableName extends string>(
-    id: GenericId<TableName>,
-  ): Promise<unknown | null>;
-};
-
-export type GenericDatabaseWriter = GenericDatabaseReader & {
-  insert(tableName: string, value: Record<string, unknown>): Promise<string>;
-  patch<TableName extends string>(
-    id: GenericId<TableName>,
-    value: Record<string, unknown>,
-  ): Promise<GenericId<TableName>>;
-  delete<TableName extends string>(id: GenericId<TableName>): Promise<void>;
-};
-
-export type Scheduler = {
-  runAfter<Args extends DefaultFunctionArgs>(
-    delayMs: number,
-    functionRef: ConvexMutationReference<Args, unknown>,
-    args?: Args,
-  ): Promise<string>;
-  runAt<Args extends DefaultFunctionArgs>(
-    timestampMs: number,
-    functionRef: ConvexMutationReference<Args, unknown>,
-    args?: Args,
-  ): Promise<string>;
-  cancel(jobId: string): Promise<void>;
-};
-
-export type GenericQueryCtx = {
-  readonly db: GenericDatabaseReader;
-  readonly auth: Auth;
-};
-export type QueryCtx = GenericQueryCtx;
-
-export type GenericMutationCtx = {
-  readonly db: GenericDatabaseWriter;
-  readonly scheduler: Scheduler;
-  readonly auth: Auth;
-};
-export type MutationCtx = GenericMutationCtx;
-
-export type GenericActionCtx = {
-  readonly scheduler: Scheduler;
-  readonly auth: Auth;
-  runQuery<Args extends DefaultFunctionArgs, Returns>(
-    functionRef: ConvexQueryReference<Args, Returns>,
-    args?: Args,
-  ): Promise<Returns>;
-  runMutation<Args extends DefaultFunctionArgs, Returns>(
-    functionRef: ConvexMutationReference<Args, Returns>,
-    args?: Args,
-  ): Promise<Returns>;
-  runAction<Args extends DefaultFunctionArgs, Returns>(
-    functionRef: ConvexActionReference<Args, Returns>,
-    args?: Args,
-  ): Promise<Returns>;
-};
-export type ActionCtx = GenericActionCtx;
 
 export function query<
   Args extends ArgValidators | undefined = undefined,
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: QueryDefinition<Args, Returns>,
-): RegisteredQuery<"public", InferArgs<Args>, InferReturns<Returns>> {
-  return registerQuery("public", definition);
+): RegisteredQuery<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
+  return neovexQuery(definition as unknown as Parameters<typeof neovexQuery>[0]) as RegisteredQuery<
+    "public",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function internalQuery<
@@ -367,8 +256,14 @@ export function internalQuery<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: QueryDefinition<Args, Returns>,
-): RegisteredQuery<"internal", InferArgs<Args>, InferReturns<Returns>> {
-  return registerQuery("internal", definition);
+): RegisteredQuery<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
+  return neovexInternalQuery(
+    definition as unknown as Parameters<typeof neovexInternalQuery>[0],
+  ) as RegisteredQuery<
+    "internal",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function paginatedQuery<
@@ -376,8 +271,18 @@ export function paginatedQuery<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: PaginatedQueryDefinition<Args, Returns>,
-): RegisteredPaginatedQuery<"public", InferArgs<Args>, InferReturns<Returns>> {
-  return registerPaginatedQuery("public", definition);
+): RegisteredPaginatedQuery<
+  "public",
+  InferDefinitionArgs<Args>,
+  InferDefinitionReturns<Returns>
+> {
+  return neovexPaginatedQuery(
+    definition as unknown as Parameters<typeof neovexPaginatedQuery>[0],
+  ) as RegisteredPaginatedQuery<
+    "public",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function internalPaginatedQuery<
@@ -385,8 +290,18 @@ export function internalPaginatedQuery<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: PaginatedQueryDefinition<Args, Returns>,
-): RegisteredPaginatedQuery<"internal", InferArgs<Args>, InferReturns<Returns>> {
-  return registerPaginatedQuery("internal", definition);
+): RegisteredPaginatedQuery<
+  "internal",
+  InferDefinitionArgs<Args>,
+  InferDefinitionReturns<Returns>
+> {
+  return neovexInternalPaginatedQuery(
+    definition as unknown as Parameters<typeof neovexInternalPaginatedQuery>[0],
+  ) as RegisteredPaginatedQuery<
+    "internal",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function mutation<
@@ -394,8 +309,14 @@ export function mutation<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: MutationDefinition<Args, Returns>,
-): RegisteredMutation<"public", InferArgs<Args>, InferReturns<Returns>> {
-  return registerMutation("public", definition);
+): RegisteredMutation<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
+  return neovexMutation(
+    definition as unknown as Parameters<typeof neovexMutation>[0],
+  ) as RegisteredMutation<
+    "public",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function internalMutation<
@@ -403,8 +324,14 @@ export function internalMutation<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: MutationDefinition<Args, Returns>,
-): RegisteredMutation<"internal", InferArgs<Args>, InferReturns<Returns>> {
-  return registerMutation("internal", definition);
+): RegisteredMutation<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
+  return neovexInternalMutation(
+    definition as unknown as Parameters<typeof neovexInternalMutation>[0],
+  ) as RegisteredMutation<
+    "internal",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function action<
@@ -412,8 +339,12 @@ export function action<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: ActionDefinition<Args, Returns>,
-): RegisteredAction<"public", InferArgs<Args>, InferReturns<Returns>> {
-  return registerAction("public", definition);
+): RegisteredAction<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
+  return neovexAction(definition as unknown as Parameters<typeof neovexAction>[0]) as RegisteredAction<
+    "public",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function internalAction<
@@ -421,8 +352,14 @@ export function internalAction<
   Returns extends Validator<unknown> | undefined = undefined,
 >(
   definition: ActionDefinition<Args, Returns>,
-): RegisteredAction<"internal", InferArgs<Args>, InferReturns<Returns>> {
-  return registerAction("internal", definition);
+): RegisteredAction<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
+  return neovexInternalAction(
+    definition as unknown as Parameters<typeof neovexInternalAction>[0],
+  ) as RegisteredAction<
+    "internal",
+    InferDefinitionArgs<Args>,
+    InferDefinitionReturns<Returns>
+  >;
 }
 
 export function httpAction(
@@ -432,108 +369,23 @@ export function httpAction(
         handler: HttpActionHandler;
       },
 ): PublicHttpAction {
-  const handler =
-    typeof definition === "function" ? definition : definition.handler;
-  return {
-    kind: "http_action",
-    visibility: "public",
-    handler,
-  };
+  return neovexHttpAction(
+    definition as Parameters<typeof neovexHttpAction>[0],
+  ) as PublicHttpAction;
 }
 
 export function httpRouter(): HttpRouter {
-  const routes: HttpRouteSpec[] = [];
-  const router: HttpRouter = {
-    routes,
-    route(spec) {
-      routes.push(spec);
-      return router;
-    },
-  };
-  return router;
+  return neovexHttpRouter() as HttpRouter;
 }
 
 export function defineTable<Fields extends ArgValidators>(
   fields: Fields,
 ): TableDefinition<Fields> {
-  const indexes: Array<{ name: string; fields: readonly string[] }> = [];
-  const table: TableDefinition<Fields> = {
-    kind: "table",
-    fields,
-    indexes,
-    index(name, indexFields) {
-      indexes.push({
-        name,
-        fields: [...indexFields],
-      });
-      return table;
-    },
-  };
-  return table;
+  return neovexDefineTable(fields) as TableDefinition<Fields>;
 }
 
 export function defineSchema<Tables extends Record<string, TableDefinition<any>>>(
   tables: Tables,
 ): SchemaDefinition<Tables> {
-  return { tables };
-}
-
-function registerQuery<
-  Visibility extends FunctionVisibility,
-  Args extends ArgValidators | undefined,
-  Returns extends Validator<unknown> | undefined,
->(
-  visibility: Visibility,
-  definition: QueryDefinition<Args, Returns>,
-): RegisteredQuery<Visibility, InferArgs<Args>, InferReturns<Returns>> {
-  return {
-    ...makeQueryReference("", visibility),
-    visibility,
-    handler: definition.handler,
-  } as RegisteredQuery<Visibility, InferArgs<Args>, InferReturns<Returns>>;
-}
-
-function registerPaginatedQuery<
-  Visibility extends FunctionVisibility,
-  Args extends ArgValidators | undefined,
-  Returns extends Validator<unknown> | undefined,
->(
-  visibility: Visibility,
-  definition: PaginatedQueryDefinition<Args, Returns>,
-): RegisteredPaginatedQuery<Visibility, InferArgs<Args>, InferReturns<Returns>> {
-  return {
-    ...makePaginatedQueryReference("", visibility),
-    visibility,
-    handler: definition.handler,
-  } as RegisteredPaginatedQuery<Visibility, InferArgs<Args>, InferReturns<Returns>>;
-}
-
-function registerMutation<
-  Visibility extends FunctionVisibility,
-  Args extends ArgValidators | undefined,
-  Returns extends Validator<unknown> | undefined,
->(
-  visibility: Visibility,
-  definition: MutationDefinition<Args, Returns>,
-): RegisteredMutation<Visibility, InferArgs<Args>, InferReturns<Returns>> {
-  return {
-    ...makeMutationReference("", visibility),
-    visibility,
-    handler: definition.handler,
-  } as RegisteredMutation<Visibility, InferArgs<Args>, InferReturns<Returns>>;
-}
-
-function registerAction<
-  Visibility extends FunctionVisibility,
-  Args extends ArgValidators | undefined,
-  Returns extends Validator<unknown> | undefined,
->(
-  visibility: Visibility,
-  definition: ActionDefinition<Args, Returns>,
-): RegisteredAction<Visibility, InferArgs<Args>, InferReturns<Returns>> {
-  return {
-    ...makeActionReference("", visibility),
-    visibility,
-    handler: definition.handler,
-  } as RegisteredAction<Visibility, InferArgs<Args>, InferReturns<Returns>>;
+  return neovexDefineSchema(tables) as SchemaDefinition<Tables>;
 }

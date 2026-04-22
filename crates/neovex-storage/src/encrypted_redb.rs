@@ -272,12 +272,12 @@ impl EncryptedFileBackend {
         let mut page_data = [0u8; LOGICAL_PAGE_SIZE];
         page_data.copy_from_slice(ciphertext);
 
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from_slice(nonce_bytes);
         let aad = build_aad(page_index);
 
         let decrypt_started = Instant::now();
         self.cipher
-            .decrypt_in_place_detached(nonce, &aad, &mut page_data, Tag::from_slice(&tag_bytes))
+            .decrypt_in_place_detached(nonce, &aad, &mut page_data, Tag::from_slice(tag_bytes))
             .map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,

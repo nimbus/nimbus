@@ -5,6 +5,14 @@ impl ConvexRegistry {
         self.runtime_bundle.as_ref()
     }
 
+    pub(in crate::adapters::convex) fn required_runtime_bundle(
+        &self,
+    ) -> Result<RuntimeBundle, Error> {
+        self.runtime_bundle()
+            .cloned()
+            .ok_or_else(|| Error::Internal("convex runtime bundle not loaded".to_string()))
+    }
+
     pub(in crate::adapters::convex) async fn verify_authorization_header(
         &self,
         headers: &HeaderMap,

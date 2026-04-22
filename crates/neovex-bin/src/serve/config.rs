@@ -226,6 +226,348 @@ struct ResolvedPersistenceInputs {
     encryption_aws_endpoint_url: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedEncryptionInputs {
+    key_provider: Option<CliKeyProvider>,
+    master_key_file: Option<PathBuf>,
+    key_dir: Option<PathBuf>,
+    aws_kms_key_id: Option<String>,
+    aws_region: Option<String>,
+    aws_endpoint_url: Option<String>,
+}
+
+impl ResolvedEncryptionInputs {
+    fn from_inputs(inputs: &ResolvedPersistenceInputs) -> Self {
+        Self {
+            key_provider: inputs.encryption_key_provider,
+            master_key_file: inputs.encryption_master_key_file.clone(),
+            key_dir: inputs.encryption_key_dir.clone(),
+            aws_kms_key_id: inputs.encryption_aws_kms_key_id.clone(),
+            aws_region: inputs.encryption_aws_region.clone(),
+            aws_endpoint_url: inputs.encryption_aws_endpoint_url.clone(),
+        }
+    }
+
+    fn into_local_encryption_config(self) -> neovex::Result<LocalEncryptionConfig> {
+        let Some(key_provider) = self.key_provider else {
+            self.reject_orphaned_options()?;
+            return Ok(LocalEncryptionConfig::Disabled);
+        };
+
+        let key_provider_config = match key_provider {
+            CliKeyProvider::MasterKeyFile => {
+                self.reject_key_dir_options()?;
+                self.reject_aws_kms_options()?;
+                let path = self.master_key_file.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--encryption-master-key-file, NEOVEX_ENCRYPTION_MASTER_KEY_FILE, or persistence.encryption_master_key_file is required when encryption key provider is master-key-file"
+                            .to_string(),
+                    )
+                })?;
+                LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig { path })
+            }
+            CliKeyProvider::KeyDir => {
+                self.reject_master_key_file_options()?;
+                self.reject_aws_kms_options()?;
+                let path = self.key_dir.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--encryption-key-dir, NEOVEX_ENCRYPTION_KEY_DIR, or persistence.encryption_key_dir is required when encryption key provider is key-dir"
+                            .to_string(),
+                    )
+                })?;
+                LocalKeyProviderConfig::KeyDirectory(KeyDirectoryConfig { path })
+            }
+            CliKeyProvider::AwsKms => {
+                self.reject_master_key_file_options()?;
+                self.reject_key_dir_options()?;
+                let key_id = self.aws_kms_key_id.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--encryption-aws-kms-key-id, NEOVEX_ENCRYPTION_AWS_KMS_KEY_ID, or persistence.encryption_aws_kms_key_id is required when encryption key provider is aws-kms"
+                            .to_string(),
+                    )
+                })?;
+                LocalKeyProviderConfig::AwsKms(AwsKmsConfig {
+                    key_id,
+                    region: self.aws_region,
+                    endpoint_url: self.aws_endpoint_url,
+                })
+            }
+        };
+
+        Ok(LocalEncryptionConfig::Enabled(key_provider_config))
+    }
+
+    fn reject_orphaned_options(&self) -> neovex::Result<()> {
+        if self.master_key_file.is_some()
+            || self.key_dir.is_some()
+            || self.aws_kms_key_id.is_some()
+            || self.aws_region.is_some()
+            || self.aws_endpoint_url.is_some()
+        {
+            return Err(Error::InvalidInput(
+                "encryption options require --encryption-key-provider (or NEOVEX_ENCRYPTION_KEY_PROVIDER or persistence.encryption_key_provider)"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_master_key_file_options(&self) -> neovex::Result<()> {
+        if self.master_key_file.is_some() {
+            return Err(Error::InvalidInput(
+                "--encryption-master-key-file only applies when --encryption-key-provider=master-key-file"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_key_dir_options(&self) -> neovex::Result<()> {
+        if self.key_dir.is_some() {
+            return Err(Error::InvalidInput(
+                "--encryption-key-dir only applies when --encryption-key-provider=key-dir"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_aws_kms_options(&self) -> neovex::Result<()> {
+        if self.aws_kms_key_id.is_some()
+            || self.aws_region.is_some()
+            || self.aws_endpoint_url.is_some()
+        {
+            return Err(Error::InvalidInput(
+                "AWS KMS encryption options only apply when --encryption-key-provider=aws-kms"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+enum ResolvedTenantProviderConfig {
+    Embedded {
+        data_dir: PathBuf,
+        control_data_dir: PathBuf,
+        provider_kind: EmbeddedProviderKind,
+    },
+    LibsqlReplica {
+        control_data_dir: PathBuf,
+        libsql_url: String,
+        libsql_auth_token: Option<String>,
+        libsql_admin_url: String,
+        libsql_admin_auth_header: Option<String>,
+        libsql_metadata_namespace: Option<String>,
+        libsql_tenant_namespace_prefix: Option<String>,
+        libsql_replica_cache_dir: PathBuf,
+    },
+    Postgres {
+        control_data_dir: PathBuf,
+        postgres_url: String,
+        postgres_metadata_schema: Option<String>,
+        postgres_tenant_schema_prefix: Option<String>,
+        postgres_min_connections: Option<usize>,
+        postgres_max_connections: Option<usize>,
+    },
+    MySql {
+        control_data_dir: PathBuf,
+        mysql_url: String,
+        mysql_metadata_database: Option<String>,
+        mysql_tenant_database_prefix: Option<String>,
+        mysql_min_connections: Option<usize>,
+        mysql_max_connections: Option<usize>,
+    },
+}
+
+impl ResolvedTenantProviderConfig {
+    fn from_inputs(inputs: ResolvedPersistenceInputs) -> neovex::Result<Self> {
+        match inputs.tenant_provider {
+            CliTenantProvider::Sqlite => {
+                inputs.reject_external_provider_overrides()?;
+                Ok(Self::Embedded {
+                    data_dir: inputs.data_dir,
+                    control_data_dir: inputs.control_data_dir,
+                    provider_kind: EmbeddedProviderKind::Sqlite,
+                })
+            }
+            CliTenantProvider::Redb => {
+                inputs.reject_external_provider_overrides()?;
+                Ok(Self::Embedded {
+                    data_dir: inputs.data_dir,
+                    control_data_dir: inputs.control_data_dir,
+                    provider_kind: EmbeddedProviderKind::Redb,
+                })
+            }
+            CliTenantProvider::LibsqlReplica => {
+                inputs.reject_postgres_overrides()?;
+                inputs.reject_mysql_overrides()?;
+                let libsql_url = inputs.libsql_url.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--libsql-url, NEOVEX_LIBSQL_URL, or persistence.libsql_url is required when the tenant provider is libsql-replica"
+                            .to_string(),
+                    )
+                })?;
+                let libsql_replica_cache_dir = inputs.libsql_replica_cache_dir.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--libsql-replica-cache-dir, NEOVEX_LIBSQL_REPLICA_CACHE_DIR, or persistence.libsql_replica_cache_dir is required when the tenant provider is libsql-replica"
+                            .to_string(),
+                    )
+                })?;
+                let libsql_admin_url = inputs.libsql_admin_url.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--libsql-admin-url, NEOVEX_LIBSQL_ADMIN_URL, or persistence.libsql_admin_url is required when the tenant provider is libsql-replica"
+                            .to_string(),
+                    )
+                })?;
+                Ok(Self::LibsqlReplica {
+                    control_data_dir: inputs.control_data_dir,
+                    libsql_url,
+                    libsql_auth_token: inputs.libsql_auth_token,
+                    libsql_admin_url,
+                    libsql_admin_auth_header: inputs.libsql_admin_auth_header,
+                    libsql_metadata_namespace: inputs.libsql_metadata_namespace,
+                    libsql_tenant_namespace_prefix: inputs.libsql_tenant_namespace_prefix,
+                    libsql_replica_cache_dir,
+                })
+            }
+            CliTenantProvider::Postgres => {
+                inputs.reject_mysql_overrides()?;
+                inputs.reject_libsql_replica_overrides()?;
+                let postgres_url = inputs.postgres_url.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--postgres-url, NEOVEX_POSTGRES_URL, or persistence.postgres_url is required when the tenant provider is postgres"
+                            .to_string(),
+                    )
+                })?;
+                Ok(Self::Postgres {
+                    control_data_dir: inputs.control_data_dir,
+                    postgres_url,
+                    postgres_metadata_schema: inputs.postgres_metadata_schema,
+                    postgres_tenant_schema_prefix: inputs.postgres_tenant_schema_prefix,
+                    postgres_min_connections: inputs.postgres_min_connections,
+                    postgres_max_connections: inputs.postgres_max_connections,
+                })
+            }
+            CliTenantProvider::Mysql => {
+                inputs.reject_postgres_overrides()?;
+                inputs.reject_libsql_replica_overrides()?;
+                let mysql_url = inputs.mysql_url.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--mysql-url, NEOVEX_MYSQL_URL, or persistence.mysql_url is required when the tenant provider is mysql"
+                            .to_string(),
+                    )
+                })?;
+                Ok(Self::MySql {
+                    control_data_dir: inputs.control_data_dir,
+                    mysql_url,
+                    mysql_metadata_database: inputs.mysql_metadata_database,
+                    mysql_tenant_database_prefix: inputs.mysql_tenant_database_prefix,
+                    mysql_min_connections: inputs.mysql_min_connections,
+                    mysql_max_connections: inputs.mysql_max_connections,
+                })
+            }
+        }
+    }
+
+    fn into_service_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
+        match self {
+            Self::Embedded {
+                data_dir,
+                control_data_dir,
+                provider_kind,
+            } => Ok(ServicePersistenceConfig {
+                tenant_provider: neovex::TenantProviderConfig::embedded(data_dir, provider_kind),
+                control_plane: neovex::ControlPlaneConfig::embedded_redb(control_data_dir),
+                local_encryption: LocalEncryptionConfig::Disabled,
+            }),
+            Self::LibsqlReplica {
+                control_data_dir,
+                libsql_url,
+                libsql_auth_token,
+                libsql_admin_url,
+                libsql_admin_auth_header,
+                libsql_metadata_namespace,
+                libsql_tenant_namespace_prefix,
+                libsql_replica_cache_dir,
+            } => {
+                let mut config = ServicePersistenceConfig::libsql_replica(
+                    control_data_dir,
+                    libsql_url,
+                    libsql_auth_token,
+                    libsql_admin_url,
+                    libsql_admin_auth_header,
+                    libsql_replica_cache_dir,
+                );
+                if let neovex::TenantRoutingConfig::NamespacePerTenant {
+                    metadata_namespace,
+                    tenant_namespace_prefix,
+                    ..
+                } = &mut config.tenant_provider.routing
+                {
+                    if let Some(value) = libsql_metadata_namespace {
+                        *metadata_namespace = value;
+                    }
+                    if let Some(value) = libsql_tenant_namespace_prefix {
+                        *tenant_namespace_prefix = value;
+                    }
+                }
+                Ok(config)
+            }
+            Self::Postgres {
+                control_data_dir,
+                postgres_url,
+                postgres_metadata_schema,
+                postgres_tenant_schema_prefix,
+                postgres_min_connections,
+                postgres_max_connections,
+            } => {
+                let mut config = ServicePersistenceConfig::postgres(control_data_dir, postgres_url);
+                if let neovex::TenantRoutingConfig::SchemaPerTenant {
+                    metadata_schema,
+                    tenant_schema_prefix,
+                } = &mut config.tenant_provider.routing
+                {
+                    if let Some(value) = postgres_metadata_schema {
+                        *metadata_schema = value;
+                    }
+                    if let Some(value) = postgres_tenant_schema_prefix {
+                        *tenant_schema_prefix = value;
+                    }
+                }
+                config.tenant_provider.pool.min_connections = postgres_min_connections;
+                config.tenant_provider.pool.max_connections = postgres_max_connections;
+                Ok(config)
+            }
+            Self::MySql {
+                control_data_dir,
+                mysql_url,
+                mysql_metadata_database,
+                mysql_tenant_database_prefix,
+                mysql_min_connections,
+                mysql_max_connections,
+            } => {
+                let mut config = ServicePersistenceConfig::mysql(control_data_dir, mysql_url);
+                if let neovex::TenantRoutingConfig::DatabasePerTenant {
+                    metadata_database,
+                    tenant_database_prefix,
+                } = &mut config.tenant_provider.routing
+                {
+                    if let Some(value) = mysql_metadata_database {
+                        *metadata_database = value;
+                    }
+                    if let Some(value) = mysql_tenant_database_prefix {
+                        *tenant_database_prefix = value;
+                    }
+                }
+                config.tenant_provider.pool.min_connections = mysql_min_connections;
+                config.tenant_provider.pool.max_connections = mysql_max_connections;
+                Ok(config)
+            }
+        }
+    }
+}
+
 impl ResolvedPersistenceInputs {
     fn from_sources(
         command: &ServeCommand,
@@ -368,14 +710,10 @@ impl ResolvedPersistenceInputs {
     }
 
     fn into_service_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
-        let encryption_config = self.resolve_encryption_config()?;
-        let base_config = match self.tenant_provider {
-            CliTenantProvider::Sqlite => self.into_embedded_config(EmbeddedProviderKind::Sqlite)?,
-            CliTenantProvider::Redb => self.into_embedded_config(EmbeddedProviderKind::Redb)?,
-            CliTenantProvider::LibsqlReplica => self.into_libsql_replica_config()?,
-            CliTenantProvider::Postgres => self.into_postgres_config()?,
-            CliTenantProvider::Mysql => self.into_mysql_config()?,
-        };
+        let encryption_config =
+            ResolvedEncryptionInputs::from_inputs(&self).into_local_encryption_config()?;
+        let base_config =
+            ResolvedTenantProviderConfig::from_inputs(self)?.into_service_persistence_config()?;
         let config = base_config.with_local_encryption(encryption_config);
 
         // Validate the encryption config against the provider
@@ -383,219 +721,6 @@ impl ResolvedPersistenceInputs {
             Error::InvalidInput(format!("encryption configuration error: {error}"))
         })?;
 
-        Ok(config)
-    }
-
-    fn resolve_encryption_config(&self) -> neovex::Result<LocalEncryptionConfig> {
-        let Some(key_provider) = self.encryption_key_provider else {
-            // No key provider specified means encryption is disabled.
-            // Validate that no encryption-specific options were provided.
-            self.reject_orphaned_encryption_options()?;
-            return Ok(LocalEncryptionConfig::Disabled);
-        };
-
-        let key_provider_config = match key_provider {
-            CliKeyProvider::MasterKeyFile => {
-                let path = self.encryption_master_key_file.clone().ok_or_else(|| {
-                    Error::InvalidInput(
-                        "--encryption-master-key-file, NEOVEX_ENCRYPTION_MASTER_KEY_FILE, or persistence.encryption_master_key_file is required when encryption key provider is master-key-file"
-                            .to_string(),
-                    )
-                })?;
-                self.reject_key_dir_options()?;
-                self.reject_aws_kms_options()?;
-                LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig { path })
-            }
-            CliKeyProvider::KeyDir => {
-                let path = self.encryption_key_dir.clone().ok_or_else(|| {
-                    Error::InvalidInput(
-                        "--encryption-key-dir, NEOVEX_ENCRYPTION_KEY_DIR, or persistence.encryption_key_dir is required when encryption key provider is key-dir"
-                            .to_string(),
-                    )
-                })?;
-                self.reject_master_key_file_options()?;
-                self.reject_aws_kms_options()?;
-                LocalKeyProviderConfig::KeyDirectory(KeyDirectoryConfig { path })
-            }
-            CliKeyProvider::AwsKms => {
-                let key_id = self.encryption_aws_kms_key_id.clone().ok_or_else(|| {
-                    Error::InvalidInput(
-                        "--encryption-aws-kms-key-id, NEOVEX_ENCRYPTION_AWS_KMS_KEY_ID, or persistence.encryption_aws_kms_key_id is required when encryption key provider is aws-kms"
-                            .to_string(),
-                    )
-                })?;
-                self.reject_master_key_file_options()?;
-                self.reject_key_dir_options()?;
-                LocalKeyProviderConfig::AwsKms(AwsKmsConfig {
-                    key_id,
-                    region: self.encryption_aws_region.clone(),
-                    endpoint_url: self.encryption_aws_endpoint_url.clone(),
-                })
-            }
-        };
-
-        Ok(LocalEncryptionConfig::Enabled(key_provider_config))
-    }
-
-    fn reject_orphaned_encryption_options(&self) -> neovex::Result<()> {
-        if self.encryption_master_key_file.is_some()
-            || self.encryption_key_dir.is_some()
-            || self.encryption_aws_kms_key_id.is_some()
-            || self.encryption_aws_region.is_some()
-            || self.encryption_aws_endpoint_url.is_some()
-        {
-            return Err(Error::InvalidInput(
-                "encryption options require --encryption-key-provider (or NEOVEX_ENCRYPTION_KEY_PROVIDER or persistence.encryption_key_provider)"
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn reject_master_key_file_options(&self) -> neovex::Result<()> {
-        if self.encryption_master_key_file.is_some() {
-            return Err(Error::InvalidInput(
-                "--encryption-master-key-file only applies when --encryption-key-provider=master-key-file"
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn reject_key_dir_options(&self) -> neovex::Result<()> {
-        if self.encryption_key_dir.is_some() {
-            return Err(Error::InvalidInput(
-                "--encryption-key-dir only applies when --encryption-key-provider=key-dir"
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn reject_aws_kms_options(&self) -> neovex::Result<()> {
-        if self.encryption_aws_kms_key_id.is_some()
-            || self.encryption_aws_region.is_some()
-            || self.encryption_aws_endpoint_url.is_some()
-        {
-            return Err(Error::InvalidInput(
-                "AWS KMS encryption options only apply when --encryption-key-provider=aws-kms"
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn into_embedded_config(
-        self,
-        provider_kind: EmbeddedProviderKind,
-    ) -> neovex::Result<ServicePersistenceConfig> {
-        self.reject_external_provider_overrides()?;
-        Ok(ServicePersistenceConfig {
-            tenant_provider: neovex::TenantProviderConfig::embedded(self.data_dir, provider_kind),
-            control_plane: neovex::ControlPlaneConfig::embedded_redb(self.control_data_dir),
-            local_encryption: LocalEncryptionConfig::Disabled,
-        })
-    }
-
-    fn into_libsql_replica_config(self) -> neovex::Result<ServicePersistenceConfig> {
-        self.reject_postgres_overrides()?;
-        self.reject_mysql_overrides()?;
-        let libsql_url = self.libsql_url.ok_or_else(|| {
-            Error::InvalidInput(
-                "--libsql-url, NEOVEX_LIBSQL_URL, or persistence.libsql_url is required when the tenant provider is libsql-replica"
-                    .to_string(),
-            )
-        })?;
-        let libsql_replica_cache_dir = self.libsql_replica_cache_dir.ok_or_else(|| {
-            Error::InvalidInput(
-                "--libsql-replica-cache-dir, NEOVEX_LIBSQL_REPLICA_CACHE_DIR, or persistence.libsql_replica_cache_dir is required when the tenant provider is libsql-replica"
-                    .to_string(),
-            )
-        })?;
-        let libsql_admin_url = self.libsql_admin_url.ok_or_else(|| {
-            Error::InvalidInput(
-                "--libsql-admin-url, NEOVEX_LIBSQL_ADMIN_URL, or persistence.libsql_admin_url is required when the tenant provider is libsql-replica"
-                    .to_string(),
-            )
-        })?;
-
-        let mut config = ServicePersistenceConfig::libsql_replica(
-            self.control_data_dir,
-            libsql_url,
-            self.libsql_auth_token,
-            libsql_admin_url,
-            self.libsql_admin_auth_header,
-            libsql_replica_cache_dir,
-        );
-        if let neovex::TenantRoutingConfig::NamespacePerTenant {
-            metadata_namespace,
-            tenant_namespace_prefix,
-            ..
-        } = &mut config.tenant_provider.routing
-        {
-            if let Some(value) = self.libsql_metadata_namespace {
-                *metadata_namespace = value;
-            }
-            if let Some(value) = self.libsql_tenant_namespace_prefix {
-                *tenant_namespace_prefix = value;
-            }
-        }
-        Ok(config)
-    }
-
-    fn into_postgres_config(self) -> neovex::Result<ServicePersistenceConfig> {
-        self.reject_mysql_overrides()?;
-        self.reject_libsql_replica_overrides()?;
-        let postgres_url = self.postgres_url.ok_or_else(|| {
-            Error::InvalidInput(
-                "--postgres-url, NEOVEX_POSTGRES_URL, or persistence.postgres_url is required when the tenant provider is postgres"
-                    .to_string(),
-            )
-        })?;
-
-        let mut config = ServicePersistenceConfig::postgres(self.control_data_dir, postgres_url);
-        if let neovex::TenantRoutingConfig::SchemaPerTenant {
-            metadata_schema,
-            tenant_schema_prefix,
-        } = &mut config.tenant_provider.routing
-        {
-            if let Some(value) = self.postgres_metadata_schema {
-                *metadata_schema = value;
-            }
-            if let Some(value) = self.postgres_tenant_schema_prefix {
-                *tenant_schema_prefix = value;
-            }
-        }
-        config.tenant_provider.pool.min_connections = self.postgres_min_connections;
-        config.tenant_provider.pool.max_connections = self.postgres_max_connections;
-        Ok(config)
-    }
-
-    fn into_mysql_config(self) -> neovex::Result<ServicePersistenceConfig> {
-        self.reject_postgres_overrides()?;
-        self.reject_libsql_replica_overrides()?;
-        let mysql_url = self.mysql_url.ok_or_else(|| {
-            Error::InvalidInput(
-                "--mysql-url, NEOVEX_MYSQL_URL, or persistence.mysql_url is required when the tenant provider is mysql"
-                    .to_string(),
-            )
-        })?;
-
-        let mut config = ServicePersistenceConfig::mysql(self.control_data_dir, mysql_url);
-        if let neovex::TenantRoutingConfig::DatabasePerTenant {
-            metadata_database,
-            tenant_database_prefix,
-        } = &mut config.tenant_provider.routing
-        {
-            if let Some(value) = self.mysql_metadata_database {
-                *metadata_database = value;
-            }
-            if let Some(value) = self.mysql_tenant_database_prefix {
-                *tenant_database_prefix = value;
-            }
-        }
-        config.tenant_provider.pool.min_connections = self.mysql_min_connections;
-        config.tenant_provider.pool.max_connections = self.mysql_max_connections;
         Ok(config)
     }
 
