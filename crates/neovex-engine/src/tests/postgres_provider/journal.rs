@@ -1,6 +1,7 @@
 use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
     with_postgres_service_config(|service_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-mutations").expect("tenant id should build");
@@ -120,6 +121,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state() {
     with_shared_postgres_service_configs(
         |service_config_a, service_config_b, _provider_config| async move {
@@ -217,6 +219,7 @@ async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() {
     with_postgres_service_config(|service_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-notify-reconnect").expect("tenant id should build");

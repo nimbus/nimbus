@@ -1,6 +1,7 @@
 use super::support::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud() {
     // This lane validates correctness, not a tight performance SLO. Under the
     // full workspace test load in CI, external-provider tests can run much
@@ -83,6 +84,7 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_transient_pool_backend_termination_recovers_subsequent_mixed_ops() {
     with_postgres_service_config(|service_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-pool-recover").expect("tenant id should build");
