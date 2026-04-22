@@ -26,6 +26,9 @@ unused = "deny"
 all = "deny"
 
 [workspace.dependencies]
+aes-gcm-siv = "0.11"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-kms = "1"
 arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
@@ -34,8 +37,11 @@ comfy-table = "7"
 deadpool-postgres = "0.14"
 deno_core = { version = "0.395", features = ["unsafe_use_unprotected_platform"] }
 deno_error = "0.7"
+crc32fast = "1"
 futures = "0.3"
 fs2 = "0.4"
+hex = "0.4"
+hkdf = "0.12"
 indicatif = "0.18"
 hyper = "0.14.32"
 http = "1"
@@ -44,12 +50,14 @@ libsql = { version = "0.9.30", default-features = false, features = ["remote"] }
 libc = "0.2"
 mysql_async = "0.36"
 native-tls = { version = "0.2", features = ["vendored"] }
+parking_lot = "0.12"
+rand = "0.8"
 redb = "2"
 reqwest = { version = "0.12", features = ["blocking", "json", "native-tls-vendored"] }
 ring = "0.17"
 rmp = "0.8"
 rmp-serde = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 serial_test = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -74,6 +82,7 @@ time = "0.3"
 twox-hash = "2"
 ulid = { version = "1", features = ["serde"] }
 v8 = "147.0.0"
+zeroize = { version = "1", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

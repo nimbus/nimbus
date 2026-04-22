@@ -87,6 +87,21 @@ jobs:
             "https://github.com/agentstation/neovex/releases/download/${RELEASE_TAG}/${archive}"
           tar -xzf "dist/input/${archive}" -C dist/input/neovex
 
+      - name: Prove packaged Neovex binary can exercise SQLCipher
+        run: |
+          mkdir -p "dist/sqlcipher-package-proof/${{ matrix.arch }}"
+          bash scripts/verify-sqlcipher-proof.sh \
+            --output-dir "dist/sqlcipher-package-proof/${{ matrix.arch }}" \
+            packaged-binary dist/input/neovex/neovex
+
+      - name: Upload SQLCipher package proof bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcipher-package-proof-${{ matrix.arch }}
+          path: dist/sqlcipher-package-proof/${{ matrix.arch }}
+          if-no-files-found: ignore
+
       - name: Download neovex-crun release binary
         env:
           RELEASE_TAG: ${{ steps.contract.outputs.neovex_crun_release_tag }}

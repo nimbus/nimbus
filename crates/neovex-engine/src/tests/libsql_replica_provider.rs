@@ -18,8 +18,8 @@ use testcontainers_modules::testcontainers::{
 
 use super::*;
 use crate::{
-    ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, PersistenceDialect,
-    PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
+    ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, LocalEncryptionConfig,
+    PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
     TenantRoutingConfig,
 };
 
@@ -487,6 +487,7 @@ where
         metadata_namespace: metadata_namespace.clone(),
         tenant_namespace_prefix: tenant_namespace_prefix.clone(),
         replica_cache_dir: replica_cache_dir_a.path().to_path_buf(),
+        encryption_provider: None,
     };
 
     let service_config_a = ServicePersistenceConfig {
@@ -507,6 +508,7 @@ where
             },
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
+        local_encryption: LocalEncryptionConfig::Disabled,
     };
     let service_config_b = ServicePersistenceConfig {
         tenant_provider: TenantProviderConfig {
@@ -518,6 +520,7 @@ where
             ..service_config_a.tenant_provider.clone()
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
+        local_encryption: LocalEncryptionConfig::Disabled,
     };
 
     test(service_config_a, service_config_b, provider_config.clone()).await;

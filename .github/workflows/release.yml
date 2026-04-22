@@ -80,6 +80,23 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p neovex-bin
 
+      - name: Prove SQLCipher release lane
+        shell: bash
+        run: |
+          mkdir -p dist
+          bash scripts/verify-sqlcipher-proof.sh \
+            --output-dir "dist/sqlcipher-proof-aarch64-unknown-linux-gnu" \
+            cargo-lanes
+
+      - name: Upload SQLCipher proof bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sqlcipher-proof-aarch64-unknown-linux-gnu
+          path: dist/sqlcipher-proof-aarch64-unknown-linux-gnu
+          compression-level: 0
+          if-no-files-found: ignore
+
       - name: Package archive
         run: |
           tar czf neovex_linux_arm64.tar.gz \
@@ -156,6 +173,23 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release -p neovex-bin
+
+      - name: Prove SQLCipher release lane
+        shell: bash
+        run: |
+          mkdir -p dist
+          bash scripts/verify-sqlcipher-proof.sh \
+            --output-dir "dist/sqlcipher-proof-${{ matrix.target }}" \
+            cargo-lanes
+
+      - name: Upload SQLCipher proof bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sqlcipher-proof-${{ matrix.target }}
+          path: dist/sqlcipher-proof-${{ matrix.target }}
+          compression-level: 0
+          if-no-files-found: ignore
 
       - name: Bundle macOS machine helper
         if: matrix.os == 'darwin'

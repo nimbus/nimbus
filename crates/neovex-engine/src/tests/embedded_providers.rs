@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ControlPlaneConfig, TenantProviderConfig};
+use crate::{ControlPlaneConfig, LocalEncryptionConfig, TenantProviderConfig};
 
 #[test]
 fn redb_provider_constructor_preserves_existing_tenant_filename() {
@@ -153,6 +153,7 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
             EmbeddedProviderKind::Sqlite,
         ),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir.path()),
+        local_encryption: LocalEncryptionConfig::Disabled,
     };
     let service = Arc::new(
         Service::new_with_persistence_config(config.clone())
@@ -172,17 +173,17 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
             .exists(),
         "tenant data should remain in the configured sqlite tenant directory"
     );
+
+    service
+        .record_monthly_active_user("alice")
+        .expect("usage write should succeed");
     assert!(
         control_dir
             .path()
             .join(EmbeddedProviderKind::Redb.control_database_filename())
             .exists(),
-        "the explicit control-plane provider should own the redb control database in the control directory"
+        "the control-plane database should be created in the configured control directory once usage state is touched"
     );
-
-    service
-        .record_monthly_active_user("alice")
-        .expect("usage write should succeed");
     assert_eq!(
         service
             .current_monthly_active_users()

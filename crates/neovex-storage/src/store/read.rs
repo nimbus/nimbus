@@ -3,6 +3,7 @@ use neovex_core::{
     Timestamp,
 };
 use redb::{ReadableTable, TableError};
+use std::time::{Duration, Instant};
 
 use super::journal::decode_u64;
 use super::scan::ScanPushdown;
@@ -99,13 +100,25 @@ impl TenantStore {
 
 impl TenantReadSnapshot {
     pub fn load_schema(&self) -> Result<Schema> {
+        let total_started = Instant::now();
+        let open_table_started = Instant::now();
         let table_handle = match self.read_txn.open_table(SCHEMAS) {
             Ok(table_handle) => table_handle,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Schema::default()),
+            Err(TableError::TableDoesNotExist(_)) => {
+                maybe_emit_redb_read_profile(format_args!(
+                    "redb-read-profile op=load-schema open_table={:?} iterate={:?} tables=0 total={:?}",
+                    open_table_started.elapsed(),
+                    Duration::ZERO,
+                    total_started.elapsed(),
+                ));
+                return Ok(Schema::default());
+            }
             Err(error) => return Err(map_redb_error(error)),
         };
+        let open_table_elapsed = open_table_started.elapsed();
 
         let mut schema = Schema::default();
+        let iterate_started = Instant::now();
         for item in table_handle.iter().map_err(map_redb_error)? {
             let (_, value) = item.map_err(map_redb_error)?;
             let table_schema: TableSchema = rmp_serde::from_slice(value.value())
@@ -114,6 +127,14 @@ impl TenantReadSnapshot {
                 .tables
                 .insert(table_schema.table.clone(), table_schema);
         }
+        let iterate_elapsed = iterate_started.elapsed();
+        maybe_emit_redb_read_profile(format_args!(
+            "redb-read-profile op=load-schema open_table={:?} iterate={:?} tables={} total={:?}",
+            open_table_elapsed,
+            iterate_elapsed,
+            schema.tables.len(),
+            total_started.elapsed(),
+        ));
 
         Ok(schema)
     }
@@ -289,9 +310,30 @@ impl TenantReadSnapshot {
     }
 
     pub fn journal_progress(&self) -> Result<JournalProgress> {
+        let total_started = Instant::now();
+        let durable_head_started = Instant::now();
+        let durable_head = self.latest_sequence()?;
+        let durable_head_elapsed = durable_head_started.elapsed();
+        let applied_head_started = Instant::now();
+        let applied_head = self.applied_sequence()?;
+        let applied_head_elapsed = applied_head_started.elapsed();
+        maybe_emit_redb_read_profile(format_args!(
+            "redb-read-profile op=journal-progress durable_head={:?} applied_head={:?} total={:?}",
+            durable_head_elapsed,
+            applied_head_elapsed,
+            total_started.elapsed(),
+        ));
         Ok(JournalProgress {
-            durable_head: self.latest_sequence()?,
-            applied_head: self.applied_sequence()?,
+            durable_head,
+            applied_head,
         })
     }
+}
+
+fn maybe_emit_redb_read_profile(args: std::fmt::Arguments<'_>) {
+    if std::env::var_os("NEOVEX_REDB_JOURNAL_PROFILE").is_none() {
+        return;
+    }
+
+    eprintln!("{args}");
 }

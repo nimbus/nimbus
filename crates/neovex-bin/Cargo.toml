@@ -15,14 +15,16 @@ name = "neovex"
 path = "src/main.rs"
 
 [dependencies]
+aes-gcm-siv.workspace = true
 axum.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
 fs2.workspace = true
 indicatif.workspace = true
 libc.workspace = true
-neovex = { path = "../neovex" }
+neovex = { path = "../neovex", features = ["aws-kms"] }
 neovex-sandbox = { path = "../neovex-sandbox" }
+rand.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true

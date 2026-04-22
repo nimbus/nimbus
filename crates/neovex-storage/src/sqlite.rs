@@ -25,6 +25,7 @@ use crate::store::{
 
 mod backend;
 mod config;
+pub mod encryption;
 mod journal;
 mod read;
 mod scheduler;
@@ -113,8 +114,14 @@ pub fn sqlite_init_sql() -> &'static str {
 /// own snapshot and transaction behavior, `scheduler.rs` and `journal.rs`
 /// own lifecycle-specific orchestration, and `schema.rs` or `backend.rs`
 /// own low-level schema, index, and SQLite utility helpers.
+///
+/// When `dek` is `Some`, all connections use SQLCipher encryption with the
+/// provided 32-byte data encryption key. The DEK is applied via `PRAGMA key`
+/// before any other operations, and temporary storage is hardened to prevent
+/// plaintext temp file spills.
 pub struct SqliteTenantStore {
     path: PathBuf,
+    dek: Option<[u8; 32]>,
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     max_read_connections: usize,

@@ -1,5 +1,6 @@
 use neovex_core::{Document, DurableMutationRecord, Error, Result, Schema, SequenceNumber};
 use redb::{ReadableTable, TableError};
+use std::time::Instant;
 
 use crate::keys::document_key;
 
@@ -190,49 +191,131 @@ impl TenantStore {
 
 impl TenantReadSnapshot {
     pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
+        let total_started = Instant::now();
+        let progress_started = Instant::now();
         let progress = self.journal_progress()?;
+        let progress_elapsed = progress_started.elapsed();
+        let schema_started = Instant::now();
+        let schema = self.load_schema()?;
+        let schema_elapsed = schema_started.elapsed();
+        let documents_started = Instant::now();
+        let documents = self.documents()?;
+        let documents_elapsed = documents_started.elapsed();
+        let scheduled_started = Instant::now();
+        let scheduled_execution_ids = self.scheduled_execution_ids()?;
+        let scheduled_elapsed = scheduled_started.elapsed();
+        maybe_emit_redb_journal_profile(format_args!(
+            "redb-journal-profile op=export-snapshot progress={:?} schema={:?} documents={:?} scheduled_execution_ids={:?} document_count={} scheduled_execution_count={} total={:?}",
+            progress_elapsed,
+            schema_elapsed,
+            documents_elapsed,
+            scheduled_elapsed,
+            documents.len(),
+            scheduled_execution_ids.len(),
+            total_started.elapsed(),
+        ));
         Ok(MaterializedJournalSnapshot {
             version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
             applied_sequence: progress.applied_head,
             durable_head: progress.durable_head,
-            schema: self.load_schema()?,
-            documents: self.documents()?,
-            scheduled_execution_ids: self.scheduled_execution_ids()?,
+            schema,
+            documents,
+            scheduled_execution_ids,
         })
     }
 
     pub fn documents(&self) -> Result<Vec<Document>> {
+        let total_started = Instant::now();
+        let open_table_started = Instant::now();
         let table_handle = match self.read_txn.open_table(DOCUMENTS) {
             Ok(table_handle) => table_handle,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(TableError::TableDoesNotExist(_)) => {
+                maybe_emit_redb_journal_profile(format_args!(
+                    "redb-journal-profile op=documents open_table={:?} iterate={:?} documents=0 total={:?}",
+                    open_table_started.elapsed(),
+                    std::time::Duration::ZERO,
+                    total_started.elapsed(),
+                ));
+                return Ok(Vec::new());
+            }
             Err(error) => return Err(map_redb_error(error)),
         };
+        let open_table_elapsed = open_table_started.elapsed();
 
         let mut documents = Vec::new();
-        for item in table_handle.iter().map_err(map_redb_error)? {
+        let iterate_started = Instant::now();
+        let mut next_item_elapsed = std::time::Duration::ZERO;
+        let mut decode_elapsed = std::time::Duration::ZERO;
+        let mut iter = table_handle.iter().map_err(map_redb_error)?;
+        loop {
+            let next_item_started = Instant::now();
+            let Some(item) = iter.next() else {
+                break;
+            };
+            next_item_elapsed += next_item_started.elapsed();
             let (_, value) = item.map_err(map_redb_error)?;
+            let decode_started = Instant::now();
             documents.push(
                 Document::from_msgpack(value.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?,
             );
+            decode_elapsed += decode_started.elapsed();
         }
+        let iterate_elapsed = iterate_started.elapsed();
+        maybe_emit_redb_journal_profile(format_args!(
+            "redb-journal-profile op=documents open_table={:?} iterate={:?} next_item={:?} decode={:?} documents={} total={:?}",
+            open_table_elapsed,
+            iterate_elapsed,
+            next_item_elapsed,
+            decode_elapsed,
+            documents.len(),
+            total_started.elapsed(),
+        ));
 
         Ok(documents)
     }
 
     pub fn scheduled_execution_ids(&self) -> Result<Vec<String>> {
+        let total_started = Instant::now();
+        let open_table_started = Instant::now();
         let table_handle = match self.read_txn.open_table(SCHEDULED_JOB_EXECUTIONS) {
             Ok(table_handle) => table_handle,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(TableError::TableDoesNotExist(_)) => {
+                maybe_emit_redb_journal_profile(format_args!(
+                    "redb-journal-profile op=scheduled-executions open_table={:?} iterate={:?} scheduled_execution_ids=0 total={:?}",
+                    open_table_started.elapsed(),
+                    std::time::Duration::ZERO,
+                    total_started.elapsed(),
+                ));
+                return Ok(Vec::new());
+            }
             Err(error) => return Err(map_redb_error(error)),
         };
+        let open_table_elapsed = open_table_started.elapsed();
 
         let mut execution_ids = Vec::new();
+        let iterate_started = Instant::now();
         for item in table_handle.iter().map_err(map_redb_error)? {
             let (key, _) = item.map_err(map_redb_error)?;
             execution_ids.push(key.value().to_string());
         }
+        let iterate_elapsed = iterate_started.elapsed();
         execution_ids.sort_unstable();
+        maybe_emit_redb_journal_profile(format_args!(
+            "redb-journal-profile op=scheduled-executions open_table={:?} iterate={:?} scheduled_execution_ids={} total={:?}",
+            open_table_elapsed,
+            iterate_elapsed,
+            execution_ids.len(),
+            total_started.elapsed(),
+        ));
         Ok(execution_ids)
     }
+}
+
+fn maybe_emit_redb_journal_profile(args: std::fmt::Arguments<'_>) {
+    if std::env::var_os("NEOVEX_REDB_JOURNAL_PROFILE").is_none() {
+        return;
+    }
+
+    eprintln!("{args}");
 }

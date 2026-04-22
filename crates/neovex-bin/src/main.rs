@@ -1,12 +1,14 @@
 use clap::{Parser, Subcommand};
 
 mod cli_ux;
+mod encryption;
 mod machine;
 mod serve;
 mod service;
 #[cfg(test)]
 mod test_support;
 
+use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::serve::{
     ServeCommand, run_serve_command, service_persistence_config_from_serve_command,
@@ -32,6 +34,9 @@ enum Command {
     Serve(Box<ServeCommand>),
     Machine(MachineCommand),
     Service(ServiceCommand),
+    /// Encryption admin commands.
+    #[command(subcommand)]
+    Encryption(EncryptionCommand),
 }
 
 #[tokio::main]
@@ -47,6 +52,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let service_config =
                 service_persistence_config_from_serve_command(&ServeCommand::default())?;
             run_service_command(command, &service_config).await?;
+        }
+        Command::Encryption(command) => {
+            let service_config =
+                service_persistence_config_from_serve_command(&ServeCommand::default())?;
+            run_encryption_command(command, &service_config).await?;
         }
     }
     Ok(())

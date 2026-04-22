@@ -89,3 +89,19 @@ pub(crate) async fn tenant_consistency_report(
 pub(crate) async fn demos_redirect() -> Redirect {
     Redirect::permanent("/demos/")
 }
+
+/// Returns the service encryption status for diagnostics.
+pub(crate) async fn encryption_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<neovex_engine::EncryptionStatus> {
+    let status = state
+        .service
+        .encryption_status()
+        .cloned()
+        .unwrap_or_else(|| neovex_engine::EncryptionStatus {
+            enabled: false,
+            encrypted_families: Vec::new(),
+            descriptor: neovex_engine::EncryptionConfigDescriptor::Disabled,
+        });
+    Json(status)
+}

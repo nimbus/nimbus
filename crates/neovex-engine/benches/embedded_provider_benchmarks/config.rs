@@ -5,12 +5,14 @@ use super::*;
 pub(super) struct BenchmarkConfig {
     pub(super) markdown_output: Option<PathBuf>,
     pub(super) workload_filter: Option<WorkloadKind>,
+    pub(super) encryption_mode: EncryptionMode,
 }
 
 impl BenchmarkConfig {
     pub(super) fn from_args() -> BenchResult<Self> {
         let mut markdown_output = None;
         let mut workload_filter = None;
+        let mut encryption_mode = EncryptionMode::Disabled;
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -26,9 +28,19 @@ impl BenchmarkConfig {
                     };
                     workload_filter = Some(WorkloadKind::parse(workload.as_str())?);
                 }
+                "--local-encryption" => {
+                    let Some(mode) = args.next() else {
+                        return Err("expected a value after --local-encryption".into());
+                    };
+                    encryption_mode = EncryptionMode::parse(mode.as_str())?;
+                }
                 "--help" | "-h" => {
                     print_usage();
                     std::process::exit(0);
+                }
+                "--bench" => {
+                    // Cargo forwards this marker to benchmark binaries even when
+                    // `harness = false`; ignore it so repo-owned flags keep working.
                 }
                 _ => {
                     return Err(format!("unknown argument: {arg}").into());
@@ -38,14 +50,61 @@ impl BenchmarkConfig {
         Ok(Self {
             markdown_output,
             workload_filter,
+            encryption_mode,
         })
     }
 }
 
 fn print_usage() {
     println!(
-        "Usage: cargo bench -p neovex-engine --bench embedded-provider-benchmarks -- [--markdown <path>] [--workload <slug>]"
+        "Usage: cargo bench -p neovex-engine --bench embedded-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--local-encryption <disabled|temp-master-key-file>]"
     );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum EncryptionMode {
+    #[default]
+    Disabled,
+    TempMasterKeyFile,
+}
+
+impl EncryptionMode {
+    pub(super) fn parse(value: &str) -> BenchResult<Self> {
+        match value {
+            "disabled" => Ok(Self::Disabled),
+            "temp-master-key-file" => Ok(Self::TempMasterKeyFile),
+            _ => Err(format!("unknown local encryption mode: {value}").into()),
+        }
+    }
+
+    pub(super) fn cli_value(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::TempMasterKeyFile => "temp-master-key-file",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "plaintext local files",
+            Self::TempMasterKeyFile => "manifest-backed local encryption",
+        }
+    }
+
+    pub(super) fn notes(self) -> &'static str {
+        match self {
+            Self::Disabled => {
+                "uses the current plaintext local-file path with no manifest or DEK unwrap work"
+            }
+            Self::TempMasterKeyFile => {
+                "enables the real startup path with a benchmark-only master key file so every local database still uses a manifest-backed random DEK"
+            }
+        }
+    }
+
+    pub(super) fn is_enabled(self) -> bool {
+        matches!(self, Self::TempMasterKeyFile)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

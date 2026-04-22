@@ -9,13 +9,24 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+aws-kms = ["dep:aws-config", "dep:aws-sdk-kms"]
+
 [dependencies]
+aes-gcm-siv.workspace = true
+aws-config = { workspace = true, optional = true }
+aws-sdk-kms = { workspace = true, optional = true }
+crc32fast.workspace = true
 deadpool-postgres.workspace = true
+hex.workspace = true
+hkdf.workspace = true
 hyper.workspace = true
 libsql.workspace = true
 mysql_async.workspace = true
 native-tls.workspace = true
 neovex-core = { path = "../neovex-core" }
+parking_lot.workspace = true
+rand.workspace = true
 redb.workspace = true
 reqwest.workspace = true
 rmp.workspace = true
@@ -30,11 +41,16 @@ tokio-native-tls.workspace = true
 tokio-postgres.workspace = true
 tower-service.workspace = true
 tracing.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 serial_test.workspace = true
 tempfile.workspace = true
 testcontainers-modules = { workspace = true, features = ["blocking", "mysql", "postgres"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [[bench]]
 name = "read-format-evaluation"

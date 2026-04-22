@@ -14,9 +14,9 @@ use neovex_core::{
     Query, SequenceNumber, TableName, TableSchema, TenantId,
 };
 use neovex_engine::{
-    ControlPlaneConfig, EmbeddedProviderKind, PersistenceDialect, PersistenceTopology, PoolConfig,
-    ProviderCredentials, Service, ServicePersistenceConfig, SubscriptionRegistration,
-    SubscriptionUpdate, TenantProviderConfig, TenantRoutingConfig,
+    ControlPlaneConfig, EmbeddedProviderKind, LocalEncryptionConfig, PersistenceDialect,
+    PersistenceTopology, PoolConfig, ProviderCredentials, Service, ServicePersistenceConfig,
+    SubscriptionRegistration, SubscriptionUpdate, TenantProviderConfig, TenantRoutingConfig,
 };
 use neovex_storage::{MySqlProvider, MySqlProviderConfig};
 use serde_json::json;

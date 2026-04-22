@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
-use neovex::{EmbeddedProviderKind, Error, ServicePersistenceConfig};
+use neovex::{
+    AwsKmsConfig, EmbeddedProviderKind, Error, KeyDirectoryConfig, LocalEncryptionConfig,
+    LocalKeyProviderConfig, MasterKeyFileConfig, ServicePersistenceConfig,
+};
 use serde::Deserialize;
 
 use super::ServeCommand;
@@ -29,6 +32,14 @@ const MYSQL_TENANT_DATABASE_PREFIX_ENV: &str = "NEOVEX_MYSQL_TENANT_DATABASE_PRE
 const MYSQL_MIN_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MIN_CONNECTIONS";
 const MYSQL_MAX_CONNECTIONS_ENV: &str = "NEOVEX_MYSQL_MAX_CONNECTIONS";
 
+// Encryption config environment variables
+const ENCRYPTION_KEY_PROVIDER_ENV: &str = "NEOVEX_ENCRYPTION_KEY_PROVIDER";
+const ENCRYPTION_MASTER_KEY_FILE_ENV: &str = "NEOVEX_ENCRYPTION_MASTER_KEY_FILE";
+const ENCRYPTION_KEY_DIR_ENV: &str = "NEOVEX_ENCRYPTION_KEY_DIR";
+const ENCRYPTION_AWS_KMS_KEY_ID_ENV: &str = "NEOVEX_ENCRYPTION_AWS_KMS_KEY_ID";
+const ENCRYPTION_AWS_REGION_ENV: &str = "NEOVEX_ENCRYPTION_AWS_REGION";
+const ENCRYPTION_AWS_ENDPOINT_URL_ENV: &str = "NEOVEX_ENCRYPTION_AWS_ENDPOINT_URL";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CliTenantProvider {
@@ -49,6 +60,31 @@ impl CliTenantProvider {
             "mysql" => Ok(Self::Mysql),
             other => Err(Error::InvalidInput(format!(
                 "unsupported tenant provider '{other}'; expected sqlite, libsql-replica, redb, postgres, or mysql"
+            ))),
+        }
+    }
+}
+
+/// CLI key provider selection for local encryption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum CliKeyProvider {
+    /// Single master key file wraps per-subject DEKs.
+    MasterKeyFile,
+    /// Per-subject or per-role key files in a directory.
+    KeyDir,
+    /// AWS KMS envelope encryption for enterprise-managed keys.
+    AwsKms,
+}
+
+impl CliKeyProvider {
+    fn parse_name(value: &str) -> neovex::Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "master-key-file" | "master_key_file" => Ok(Self::MasterKeyFile),
+            "key-dir" | "key_dir" => Ok(Self::KeyDir),
+            "aws-kms" | "aws_kms" => Ok(Self::AwsKms),
+            other => Err(Error::InvalidInput(format!(
+                "unsupported encryption key provider '{other}'; expected master-key-file, key-dir, or aws-kms"
             ))),
         }
     }
@@ -83,6 +119,13 @@ pub(crate) struct PersistenceFileConfig {
     pub(crate) mysql_tenant_database_prefix: Option<String>,
     pub(crate) mysql_min_connections: Option<usize>,
     pub(crate) mysql_max_connections: Option<usize>,
+    // Encryption config
+    pub(crate) encryption_key_provider: Option<CliKeyProvider>,
+    pub(crate) encryption_master_key_file: Option<PathBuf>,
+    pub(crate) encryption_key_dir: Option<PathBuf>,
+    pub(crate) encryption_aws_kms_key_id: Option<String>,
+    pub(crate) encryption_aws_region: Option<String>,
+    pub(crate) encryption_aws_endpoint_url: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -107,6 +150,13 @@ pub(crate) struct PersistenceEnv {
     pub(crate) mysql_tenant_database_prefix: Option<String>,
     pub(crate) mysql_min_connections: Option<usize>,
     pub(crate) mysql_max_connections: Option<usize>,
+    // Encryption config
+    pub(crate) encryption_key_provider: Option<CliKeyProvider>,
+    pub(crate) encryption_master_key_file: Option<PathBuf>,
+    pub(crate) encryption_key_dir: Option<PathBuf>,
+    pub(crate) encryption_aws_kms_key_id: Option<String>,
+    pub(crate) encryption_aws_region: Option<String>,
+    pub(crate) encryption_aws_endpoint_url: Option<String>,
 }
 
 impl PersistenceEnv {
@@ -133,6 +183,14 @@ impl PersistenceEnv {
             mysql_tenant_database_prefix: std::env::var(MYSQL_TENANT_DATABASE_PREFIX_ENV).ok(),
             mysql_min_connections: optional_env_usize(MYSQL_MIN_CONNECTIONS_ENV)?,
             mysql_max_connections: optional_env_usize(MYSQL_MAX_CONNECTIONS_ENV)?,
+            // Encryption config
+            encryption_key_provider: optional_env_key_provider(ENCRYPTION_KEY_PROVIDER_ENV)?,
+            encryption_master_key_file: std::env::var_os(ENCRYPTION_MASTER_KEY_FILE_ENV)
+                .map(PathBuf::from),
+            encryption_key_dir: std::env::var_os(ENCRYPTION_KEY_DIR_ENV).map(PathBuf::from),
+            encryption_aws_kms_key_id: std::env::var(ENCRYPTION_AWS_KMS_KEY_ID_ENV).ok(),
+            encryption_aws_region: std::env::var(ENCRYPTION_AWS_REGION_ENV).ok(),
+            encryption_aws_endpoint_url: std::env::var(ENCRYPTION_AWS_ENDPOINT_URL_ENV).ok(),
         })
     }
 }
@@ -159,6 +217,13 @@ struct ResolvedPersistenceInputs {
     mysql_tenant_database_prefix: Option<String>,
     mysql_min_connections: Option<usize>,
     mysql_max_connections: Option<usize>,
+    // Encryption config
+    encryption_key_provider: Option<CliKeyProvider>,
+    encryption_master_key_file: Option<PathBuf>,
+    encryption_key_dir: Option<PathBuf>,
+    encryption_aws_kms_key_id: Option<String>,
+    encryption_aws_region: Option<String>,
+    encryption_aws_endpoint_url: Option<String>,
 }
 
 impl ResolvedPersistenceInputs {
@@ -269,17 +334,155 @@ impl ResolvedPersistenceInputs {
                 .mysql_max_connections
                 .or(env.mysql_max_connections)
                 .or(file.mysql_max_connections),
+            // Encryption config
+            encryption_key_provider: command
+                .encryption_key_provider
+                .or(env.encryption_key_provider)
+                .or(file.encryption_key_provider),
+            encryption_master_key_file: command
+                .encryption_master_key_file
+                .clone()
+                .or_else(|| env.encryption_master_key_file.clone())
+                .or_else(|| file.encryption_master_key_file.clone()),
+            encryption_key_dir: command
+                .encryption_key_dir
+                .clone()
+                .or_else(|| env.encryption_key_dir.clone())
+                .or_else(|| file.encryption_key_dir.clone()),
+            encryption_aws_kms_key_id: command
+                .encryption_aws_kms_key_id
+                .clone()
+                .or_else(|| env.encryption_aws_kms_key_id.clone())
+                .or_else(|| file.encryption_aws_kms_key_id.clone()),
+            encryption_aws_region: command
+                .encryption_aws_region
+                .clone()
+                .or_else(|| env.encryption_aws_region.clone())
+                .or_else(|| file.encryption_aws_region.clone()),
+            encryption_aws_endpoint_url: command
+                .encryption_aws_endpoint_url
+                .clone()
+                .or_else(|| env.encryption_aws_endpoint_url.clone())
+                .or_else(|| file.encryption_aws_endpoint_url.clone()),
         }
     }
 
     fn into_service_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
-        match self.tenant_provider {
-            CliTenantProvider::Sqlite => self.into_embedded_config(EmbeddedProviderKind::Sqlite),
-            CliTenantProvider::Redb => self.into_embedded_config(EmbeddedProviderKind::Redb),
-            CliTenantProvider::LibsqlReplica => self.into_libsql_replica_config(),
-            CliTenantProvider::Postgres => self.into_postgres_config(),
-            CliTenantProvider::Mysql => self.into_mysql_config(),
+        let encryption_config = self.resolve_encryption_config()?;
+        let base_config = match self.tenant_provider {
+            CliTenantProvider::Sqlite => self.into_embedded_config(EmbeddedProviderKind::Sqlite)?,
+            CliTenantProvider::Redb => self.into_embedded_config(EmbeddedProviderKind::Redb)?,
+            CliTenantProvider::LibsqlReplica => self.into_libsql_replica_config()?,
+            CliTenantProvider::Postgres => self.into_postgres_config()?,
+            CliTenantProvider::Mysql => self.into_mysql_config()?,
+        };
+        let config = base_config.with_local_encryption(encryption_config);
+
+        // Validate the encryption config against the provider
+        config.validate_encryption().map_err(|error| {
+            Error::InvalidInput(format!("encryption configuration error: {error}"))
+        })?;
+
+        Ok(config)
+    }
+
+    fn resolve_encryption_config(&self) -> neovex::Result<LocalEncryptionConfig> {
+        let Some(key_provider) = self.encryption_key_provider else {
+            // No key provider specified means encryption is disabled.
+            // Validate that no encryption-specific options were provided.
+            self.reject_orphaned_encryption_options()?;
+            return Ok(LocalEncryptionConfig::Disabled);
+        };
+
+        let key_provider_config = match key_provider {
+            CliKeyProvider::MasterKeyFile => {
+                let path = self.encryption_master_key_file.clone().ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--encryption-master-key-file, NEOVEX_ENCRYPTION_MASTER_KEY_FILE, or persistence.encryption_master_key_file is required when encryption key provider is master-key-file"
+                            .to_string(),
+                    )
+                })?;
+                self.reject_key_dir_options()?;
+                self.reject_aws_kms_options()?;
+                LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig { path })
+            }
+            CliKeyProvider::KeyDir => {
+                let path = self.encryption_key_dir.clone().ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--encryption-key-dir, NEOVEX_ENCRYPTION_KEY_DIR, or persistence.encryption_key_dir is required when encryption key provider is key-dir"
+                            .to_string(),
+                    )
+                })?;
+                self.reject_master_key_file_options()?;
+                self.reject_aws_kms_options()?;
+                LocalKeyProviderConfig::KeyDirectory(KeyDirectoryConfig { path })
+            }
+            CliKeyProvider::AwsKms => {
+                let key_id = self.encryption_aws_kms_key_id.clone().ok_or_else(|| {
+                    Error::InvalidInput(
+                        "--encryption-aws-kms-key-id, NEOVEX_ENCRYPTION_AWS_KMS_KEY_ID, or persistence.encryption_aws_kms_key_id is required when encryption key provider is aws-kms"
+                            .to_string(),
+                    )
+                })?;
+                self.reject_master_key_file_options()?;
+                self.reject_key_dir_options()?;
+                LocalKeyProviderConfig::AwsKms(AwsKmsConfig {
+                    key_id,
+                    region: self.encryption_aws_region.clone(),
+                    endpoint_url: self.encryption_aws_endpoint_url.clone(),
+                })
+            }
+        };
+
+        Ok(LocalEncryptionConfig::Enabled(key_provider_config))
+    }
+
+    fn reject_orphaned_encryption_options(&self) -> neovex::Result<()> {
+        if self.encryption_master_key_file.is_some()
+            || self.encryption_key_dir.is_some()
+            || self.encryption_aws_kms_key_id.is_some()
+            || self.encryption_aws_region.is_some()
+            || self.encryption_aws_endpoint_url.is_some()
+        {
+            return Err(Error::InvalidInput(
+                "encryption options require --encryption-key-provider (or NEOVEX_ENCRYPTION_KEY_PROVIDER or persistence.encryption_key_provider)"
+                    .to_string(),
+            ));
         }
+        Ok(())
+    }
+
+    fn reject_master_key_file_options(&self) -> neovex::Result<()> {
+        if self.encryption_master_key_file.is_some() {
+            return Err(Error::InvalidInput(
+                "--encryption-master-key-file only applies when --encryption-key-provider=master-key-file"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_key_dir_options(&self) -> neovex::Result<()> {
+        if self.encryption_key_dir.is_some() {
+            return Err(Error::InvalidInput(
+                "--encryption-key-dir only applies when --encryption-key-provider=key-dir"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_aws_kms_options(&self) -> neovex::Result<()> {
+        if self.encryption_aws_kms_key_id.is_some()
+            || self.encryption_aws_region.is_some()
+            || self.encryption_aws_endpoint_url.is_some()
+        {
+            return Err(Error::InvalidInput(
+                "AWS KMS encryption options only apply when --encryption-key-provider=aws-kms"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn into_embedded_config(
@@ -290,6 +493,7 @@ impl ResolvedPersistenceInputs {
         Ok(ServicePersistenceConfig {
             tenant_provider: neovex::TenantProviderConfig::embedded(self.data_dir, provider_kind),
             control_plane: neovex::ControlPlaneConfig::embedded_redb(self.control_data_dir),
+            local_encryption: LocalEncryptionConfig::Disabled,
         })
     }
 
@@ -513,6 +717,13 @@ fn optional_env_tenant_provider(key: &str) -> neovex::Result<Option<CliTenantPro
     std::env::var(key)
         .ok()
         .map(|value| CliTenantProvider::parse_name(&value))
+        .transpose()
+}
+
+fn optional_env_key_provider(key: &str) -> neovex::Result<Option<CliKeyProvider>> {
+    std::env::var(key)
+        .ok()
+        .map(|value| CliKeyProvider::parse_name(&value))
         .transpose()
 }
 

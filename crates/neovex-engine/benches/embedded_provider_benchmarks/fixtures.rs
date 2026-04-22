@@ -2,7 +2,9 @@ use super::common::{
     benchmark_tenant_id, composite_schema, filter, single_field_schema, tasks_table,
 };
 use super::scenarios::{register_subscription_receivers, seed_subscription_fixture};
-use super::support::{BenchDir, TenantState, quiesce_service, tenant_store_path};
+use super::support::{
+    BenchDir, TenantState, open_embedded_service, quiesce_service, tenant_store_path,
+};
 use super::*;
 
 #[derive(Clone)]
@@ -277,7 +279,7 @@ pub(super) async fn create_mixed_load_fixture(
 ) -> BenchResult<MixedLoadFixture> {
     let bench_dir = Arc::new(BenchDir::new(label, backend)?);
     let data_dir = bench_dir.path().to_path_buf();
-    let service = Arc::new(Service::new_with_embedded_provider(&data_dir, backend)?);
+    let service = open_embedded_service(&data_dir, backend).await?;
     let mut tenant_states = Vec::with_capacity(MIXED_LOAD_TENANTS);
     for tenant_index in 0..MIXED_LOAD_TENANTS {
         let tenant_id = TenantId::new(format!("tenant-{tenant_index}"))?;
@@ -324,7 +326,7 @@ async fn create_tenant_service(
 ) -> BenchResult<(Arc<BenchDir>, PathBuf, Arc<Service>, TenantId)> {
     let bench_dir = Arc::new(BenchDir::new(label, backend)?);
     let data_dir = bench_dir.path().to_path_buf();
-    let service = Arc::new(Service::new_with_embedded_provider(&data_dir, backend)?);
+    let service = open_embedded_service(&data_dir, backend).await?;
     let tenant_id = benchmark_tenant_id(tenant_label)?;
     service.create_tenant_async(tenant_id.clone()).await?;
     Ok((bench_dir, data_dir, service, tenant_id))

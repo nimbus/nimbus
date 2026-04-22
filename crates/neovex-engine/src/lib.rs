@@ -23,12 +23,18 @@ pub use neovex_storage::{
     ShadowMaterializerConfig, ShadowMaterializerManifest,
 };
 pub use persistence_config::{
-    ControlPlaneConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,
-    ServicePersistenceConfig, TenantProviderConfig, TenantRoutingConfig,
+    AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionValidationError,
+    KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig, LocalKeyProviderConfig,
+    LocalPersistenceFamily, MasterKeyFileConfig, PersistenceDialect, PersistenceTopology,
+    PoolConfig, ProviderCredentials, ServicePersistenceConfig, TenantProviderConfig,
+    TenantRoutingConfig,
 };
 pub use replica::EmbeddedReplica;
 pub use scheduler::run_scheduler;
-pub use service::{MutationExecutionUnit, Service, SubscriptionBootstrapCancellation};
+pub use service::{
+    EncryptionStatus, InitializedKeyProvider, MutationExecutionUnit, Service,
+    SubscriptionBootstrapCancellation,
+};
 pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,
     SubscriptionUpdate,

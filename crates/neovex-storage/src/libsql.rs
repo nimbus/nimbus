@@ -32,6 +32,9 @@ use tracing::{debug, warn};
 
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::encryption::{
+    LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
+};
 use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
 use crate::simulation::{Clock, FaultInjector, NoopFaultInjector, SystemClock};
 use crate::sqlite::{
@@ -428,7 +431,7 @@ impl LibsqlReplicaFreshnessMetrics {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct LibsqlReplicaProviderConfig {
     pub primary_url: String,
     pub auth_token: Option<String>,
@@ -437,6 +440,11 @@ pub struct LibsqlReplicaProviderConfig {
     pub metadata_namespace: String,
     pub tenant_namespace_prefix: String,
     pub replica_cache_dir: PathBuf,
+    /// Optional manifest-backed key provider for local replica cache files.
+    ///
+    /// When set, local SQLite replica caches are encrypted with SQLCipher using
+    /// a per-cache DEK resolved from the sidecar manifest contract.
+    pub encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
 }
 
 impl LibsqlReplicaProviderConfig {
@@ -453,7 +461,40 @@ impl LibsqlReplicaProviderConfig {
             metadata_namespace: "neovex_provider".to_string(),
             tenant_namespace_prefix: "tenant_".to_string(),
             replica_cache_dir: replica_cache_dir.into(),
+            encryption_provider: None,
         }
+    }
+
+    /// Sets the manifest-backed encryption provider for local replica cache files.
+    ///
+    /// When set, local SQLite replica caches are encrypted with SQLCipher.
+    pub fn with_encryption_provider(mut self, provider: Arc<dyn LocalKeyProvider>) -> Self {
+        self.encryption_provider = Some(provider);
+        self
+    }
+}
+
+impl std::fmt::Debug for LibsqlReplicaProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibsqlReplicaProviderConfig")
+            .field("primary_url", &self.primary_url)
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("admin_api_url", &self.admin_api_url)
+            .field(
+                "admin_auth_header",
+                &self.admin_auth_header.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("metadata_namespace", &self.metadata_namespace)
+            .field("tenant_namespace_prefix", &self.tenant_namespace_prefix)
+            .field("replica_cache_dir", &self.replica_cache_dir)
+            .field(
+                "encryption_provider",
+                &self.encryption_provider.as_ref().map(|_| "configured"),
+            )
+            .finish()
     }
 }
 
@@ -472,6 +513,7 @@ pub struct LibsqlReplicaProvider {
     metadata_namespace: String,
     tenant_namespace_prefix: String,
     replica_cache_dir: PathBuf,
+    encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
@@ -737,18 +779,41 @@ impl LibsqlReplicaTenantStore {
         let clock = self.provider.clock.clone();
         let fault_injector = self.provider.fault_injector.clone();
         let read_parallelism = self.provider.tenant_read_parallelism;
+        let provider = self.provider.encryption_provider.clone();
+        let tenant_id = self.tenant_id.clone();
         let next_store = {
+            let dek = if let Some(provider) = provider {
+                Some(resolve_database_encryption_key(
+                    path_for_materialize.as_path(),
+                    provider.as_ref(),
+                    &LocalKeySubject::libsql_cache(tenant_id, LIBSQL_REPLICA_FILENAME),
+                    ManifestCipher::SqlCipher,
+                )?)
+            } else {
+                None
+            };
             materialize_snapshot_to_replica_cache(
                 replica_dir.as_path(),
                 path_for_materialize.as_path(),
                 snapshot,
+                dek.as_ref(),
             )?;
-            SqliteTenantStore::open_with_simulation_and_max_read_connections(
-                path_for_open,
-                clock,
-                fault_injector,
-                read_parallelism,
-            )?
+            if let Some(key) = dek {
+                SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections(
+                    path_for_open,
+                    &key,
+                    clock,
+                    fault_injector,
+                    read_parallelism,
+                )?
+            } else {
+                SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                    path_for_open,
+                    clock,
+                    fault_injector,
+                    read_parallelism,
+                )?
+            }
         };
         let next_store = Arc::new(next_store);
         let next_handle = ReplicaCacheHandle {

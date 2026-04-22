@@ -15,7 +15,8 @@ use super::scenarios::{
 };
 use super::support::{
     BenchDir, build_backend_pair_async, capture_sqlite_query_plan, clone_seeded_data_dir,
-    measure_backend_pair_async, quiesce_service,
+    emit_cold_open_breakdown, measure_backend_pair_async, open_embedded_service, quiesce_service,
+    tenant_store_path, warm_sqlite_index_id_only,
 };
 use super::*;
 
@@ -56,9 +57,18 @@ pub(super) async fn benchmark_crud_throughput() -> BenchResult<WorkloadOutcome> 
             let data_dir = bench_dir.path().to_path_buf();
             let tenant_id = super::common::benchmark_tenant_id("crud")?;
             let started = Instant::now();
-            let service = Arc::new(Service::new_with_embedded_provider(&data_dir, backend)?);
+            let service = open_embedded_service(&data_dir, backend).await?;
+            let service_bootstrap = started.elapsed();
+            let first_operation_started = Instant::now();
             service.create_tenant_async(tenant_id.clone()).await?;
             exercise_crud_sample(&service, &tenant_id).await?;
+            let first_operation = first_operation_started.elapsed();
+            emit_cold_open_breakdown(
+                WorkloadKind::CrudThroughput,
+                backend,
+                service_bootstrap,
+                first_operation,
+            );
             let elapsed = started.elapsed();
             quiesce_service(&service, "CRUD cold-start sample teardown").await?;
             drop(bench_dir);
@@ -131,11 +141,17 @@ pub(super) async fn benchmark_point_read_latency() -> BenchResult<WorkloadOutcom
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "point-read-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = Arc::new(Service::new_with_embedded_provider(
-                    sample_dir.path(),
-                    backend,
-                )?);
+                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let service_bootstrap = started.elapsed();
+                let first_operation_started = Instant::now();
                 exercise_point_read_sample(&reopened, &seed.tenant_id, &seed.ids).await?;
+                let first_operation = first_operation_started.elapsed();
+                emit_cold_open_breakdown(
+                    WorkloadKind::PointReadLatency,
+                    backend,
+                    service_bootstrap,
+                    first_operation,
+                );
                 let elapsed = started.elapsed();
                 quiesce_service(&reopened, "point-read cold-start reopened teardown").await?;
                 drop(sample_dir);
@@ -174,6 +190,7 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
         statement: sqlite_statement.clone(),
         detail_rows: capture_sqlite_query_plan(
             &steady_fixtures.sqlite.tenant_path,
+            &steady_fixtures.sqlite.tenant_id,
             sqlite_statement.as_str(),
             params![tasks_table().as_str(), "open"],
         )?,
@@ -226,10 +243,18 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "indexed-query-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = Arc::new(Service::new_with_embedded_provider(
-                    sample_dir.path(),
+                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let tenant_path = tenant_store_path(sample_dir.path(), backend, &seed.tenant_id);
+                maybe_warmup_sqlite_indexed_query(
+                    &reopened,
+                    &tenant_path,
+                    &seed.tenant_id,
+                    &seed.query,
                     backend,
-                )?);
+                )
+                .await?;
+                let service_bootstrap = started.elapsed();
+                let first_operation_started = Instant::now();
                 exercise_query_sample(
                     &reopened,
                     &seed.tenant_id,
@@ -237,6 +262,13 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
                     INDEXED_QUERY_BATCH_SIZE,
                 )
                 .await?;
+                let first_operation = first_operation_started.elapsed();
+                emit_cold_open_breakdown(
+                    WorkloadKind::IndexedQueryLatency,
+                    backend,
+                    service_bootstrap,
+                    first_operation,
+                );
                 let elapsed = started.elapsed();
                 quiesce_service(&reopened, "indexed-query cold-start reopened teardown").await?;
                 drop(sample_dir);
@@ -264,6 +296,86 @@ pub(super) async fn benchmark_indexed_query_latency() -> BenchResult<WorkloadOut
     Ok(outcome)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SqliteIndexedQueryWarmupMode {
+    LimitOne,
+    Full,
+    RawIdOnly,
+}
+
+impl SqliteIndexedQueryWarmupMode {
+    fn parse_env() -> Option<Self> {
+        match std::env::var("NEOVEX_SQLITE_INDEX_QUERY_WARMUP")
+            .ok()?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "limit1" => Some(Self::LimitOne),
+            "full" => Some(Self::Full),
+            "raw-id-only" | "raw-id" => Some(Self::RawIdOnly),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::LimitOne => "limit1",
+            Self::Full => "full",
+            Self::RawIdOnly => "raw-id-only",
+        }
+    }
+}
+
+async fn maybe_warmup_sqlite_indexed_query(
+    service: &Arc<Service>,
+    tenant_path: &Path,
+    tenant_id: &TenantId,
+    query: &Query,
+    backend: EmbeddedProviderKind,
+) -> BenchResult<()> {
+    let Some(mode) = SqliteIndexedQueryWarmupMode::parse_env() else {
+        return Ok(());
+    };
+    if backend != EmbeddedProviderKind::Sqlite {
+        return Ok(());
+    }
+
+    match mode {
+        SqliteIndexedQueryWarmupMode::LimitOne | SqliteIndexedQueryWarmupMode::Full => {
+            let mut warmup_query = query.clone();
+            if matches!(mode, SqliteIndexedQueryWarmupMode::LimitOne) {
+                warmup_query.limit = Some(1);
+            }
+
+            let started = Instant::now();
+            let documents = service
+                .query_documents_async(tenant_id.clone(), warmup_query)
+                .await?;
+            black_box(documents);
+            eprintln!(
+                "sqlite-query-warmup-profile tenant={} mode={} total={:?}",
+                tenant_id,
+                mode.label(),
+                started.elapsed(),
+            );
+            Ok(())
+        }
+        SqliteIndexedQueryWarmupMode::RawIdOnly => {
+            let status = indexed_query_status_filter(query)?;
+            warm_sqlite_index_id_only(tenant_path, tenant_id, status)
+        }
+    }
+}
+
+fn indexed_query_status_filter(query: &Query) -> BenchResult<&str> {
+    query
+        .filters
+        .iter()
+        .find(|filter| filter.field == "status" && filter.op == FilterOp::Eq)
+        .and_then(|filter| filter.value.as_str())
+        .ok_or_else(|| "indexed query benchmark warmup expects status == <string> filter".into())
+}
+
 pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<WorkloadOutcome> {
     let steady_fixtures = build_backend_pair_async(|backend| async move {
         create_composite_query_fixture("composite-query-steady", "composite-query", backend).await
@@ -283,6 +395,7 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
         statement: sqlite_statement.clone(),
         detail_rows: capture_sqlite_query_plan(
             &steady_fixtures.sqlite.tenant_path,
+            &steady_fixtures.sqlite.tenant_id,
             sqlite_statement.as_str(),
             params![tasks_table().as_str(), "alpha", "open", 500_i64, 2_500_i64],
         )?,
@@ -335,10 +448,9 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "composite-query-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = Arc::new(Service::new_with_embedded_provider(
-                    sample_dir.path(),
-                    backend,
-                )?);
+                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let service_bootstrap = started.elapsed();
+                let first_operation_started = Instant::now();
                 exercise_query_sample(
                     &reopened,
                     &seed.tenant_id,
@@ -346,6 +458,13 @@ pub(super) async fn benchmark_composite_indexed_query_latency() -> BenchResult<W
                     INDEXED_QUERY_BATCH_SIZE,
                 )
                 .await?;
+                let first_operation = first_operation_started.elapsed();
+                emit_cold_open_breakdown(
+                    WorkloadKind::CompositeIndexedQueryLatency,
+                    backend,
+                    service_bootstrap,
+                    first_operation,
+                );
                 let elapsed = started.elapsed();
                 quiesce_service(
                     &reopened,
@@ -423,11 +542,17 @@ pub(super) async fn benchmark_durable_journal_stream_latency() -> BenchResult<Wo
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "journal-stream-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = Arc::new(Service::new_with_embedded_provider(
-                    sample_dir.path(),
-                    backend,
-                )?);
+                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let service_bootstrap = started.elapsed();
+                let first_operation_started = Instant::now();
                 exercise_journal_stream_sample(&reopened, &seed.tenant_id).await?;
+                let first_operation = first_operation_started.elapsed();
+                emit_cold_open_breakdown(
+                    WorkloadKind::DurableJournalStreamLatency,
+                    backend,
+                    service_bootstrap,
+                    first_operation,
+                );
                 let elapsed = started.elapsed();
                 quiesce_service(&reopened, "journal-stream cold-start reopened teardown").await?;
                 drop(sample_dir);
@@ -503,11 +628,17 @@ pub(super) async fn benchmark_durable_journal_bootstrap_latency() -> BenchResult
                     backend,
                 )?;
                 let started = Instant::now();
-                let reopened = Arc::new(Service::new_with_embedded_provider(
-                    sample_dir.path(),
-                    backend,
-                )?);
+                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let service_bootstrap = started.elapsed();
+                let first_operation_started = Instant::now();
                 exercise_journal_bootstrap_sample(&reopened, &seed.tenant_id).await?;
+                let first_operation = first_operation_started.elapsed();
+                emit_cold_open_breakdown(
+                    WorkloadKind::DurableJournalBootstrapLatency,
+                    backend,
+                    service_bootstrap,
+                    first_operation,
+                );
                 let elapsed = started.elapsed();
                 quiesce_service(&reopened, "journal-bootstrap cold-start reopened teardown")
                     .await?;
@@ -590,12 +721,21 @@ pub(super) async fn benchmark_subscription_fanout_latency() -> BenchResult<Workl
             let data_dir = bench_dir.path().to_path_buf();
             let tenant_id = super::common::benchmark_tenant_id("subscription-fanout")?;
             let started = Instant::now();
-            let service = Arc::new(Service::new_with_embedded_provider(&data_dir, backend)?);
+            let service = open_embedded_service(&data_dir, backend).await?;
+            let service_bootstrap = started.elapsed();
+            let first_operation_started = Instant::now();
             service.create_tenant_async(tenant_id.clone()).await?;
             seed_subscription_fixture(&service, &tenant_id).await?;
             let (registrations, mut receivers) =
                 register_subscription_receivers(&service, &tenant_id).await?;
             exercise_subscription_fanout_sample(&service, &tenant_id, &mut receivers).await?;
+            let first_operation = first_operation_started.elapsed();
+            emit_cold_open_breakdown(
+                WorkloadKind::SubscriptionFanoutLatency,
+                backend,
+                service_bootstrap,
+                first_operation,
+            );
             let elapsed = started.elapsed();
             drop(registrations);
             quiesce_service(&service, "subscription cold-start teardown").await?;
@@ -668,11 +808,17 @@ pub(super) async fn benchmark_mixed_multi_tenant_load() -> BenchResult<WorkloadO
                 let sample_dir =
                     clone_seeded_data_dir(&seed.data_dir, "mixed-load-cold-sample", backend)?;
                 let started = Instant::now();
-                let reopened = Arc::new(Service::new_with_embedded_provider(
-                    sample_dir.path(),
-                    backend,
-                )?);
+                let reopened = open_embedded_service(sample_dir.path(), backend).await?;
+                let service_bootstrap = started.elapsed();
+                let first_operation_started = Instant::now();
                 exercise_mixed_load_sample(&reopened, &seed.tenant_states).await?;
+                let first_operation = first_operation_started.elapsed();
+                emit_cold_open_breakdown(
+                    WorkloadKind::MixedMultiTenantLoad,
+                    backend,
+                    service_bootstrap,
+                    first_operation,
+                );
                 let elapsed = started.elapsed();
                 quiesce_service(&reopened, "mixed-load cold-start reopened teardown").await?;
                 drop(sample_dir);

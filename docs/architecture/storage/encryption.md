@@ -105,7 +105,7 @@ flowchart LR
         MAN --> SQ["Embedded SQLite tenants<br/>SQLCipher"]
         MAN --> RT["Embedded redb tenants<br/>AES-256-GCM-SIV per page"]
         MAN --> CP["Control-plane redb<br/>AES-256-GCM-SIV per page"]
-        MAN --> LC["libsql local replica cache<br/>provider-native encryption"]
+        MAN --> LC["libsql local replica cache<br/>shared SQLCipher seam"]
     end
 
     Start --> EXT["Postgres / MySQL / remote libsql primary"]
@@ -174,7 +174,7 @@ shape unless a provider offers a materially better control-plane story.
 | `disabled` | Preserve current plaintext behavior | Default-off posture |
 | `master-key-file` | One local master key wraps per-subject DEKs | Sane self-hosted opt-in default |
 | `key-dir` | Explicit per-subject keying workflow | Advanced operator control |
-| `aws-kms` | Managed envelope encryption via KMS APIs | Enterprise audit and access-control path |
+| `aws-kms` | Managed envelope encryption via KMS APIs | Enterprise audit and access-control path using the same manifest-backed per-subject DEK contract as the local providers |
 
 `master-key-file` is the recommended opt-in default because it is simple,
 works across every Neovex-owned local store, and still preserves independent
@@ -187,16 +187,16 @@ per-subject DEKs.
 | Concern | Applies to | Architecture choice | Rationale |
 | --- | --- | --- | --- |
 | Local DEK envelope for `master-key-file` and `key-dir` | All Neovex-owned local databases and encrypted artifacts | **AES-256-GCM-SIV** with manifest metadata as AAD | Consistent local envelope, misuse-resistant AEAD, stays in the AES family |
-| Managed DEK envelope for `aws-kms` | All Neovex-owned local databases and encrypted artifacts when KMS is selected | **AWS KMS envelope encryption** with stable metadata in `EncryptionContext` | Best enterprise governance and audit story |
+| Managed DEK envelope for `aws-kms` | All Neovex-owned local databases and encrypted artifacts when KMS is selected | **AWS KMS envelope encryption** with stable metadata in `EncryptionContext` | Enterprise governance path with KMS-managed wrapping, IAM control, and CloudTrail visibility while preserving the shared manifest contract |
 | redb page encryption | Embedded redb tenant databases and retained redb control plane | **AES-256-GCM-SIV** per page | Neovex owns the custom page layer, so misuse resistance matters |
 | Embedded SQLite page encryption | Default embedded SQLite tenant provider | **SQLCipher profile**: AES-256-CBC per page plus HMAC-SHA512 integrity, using raw 256-bit DEKs | Mature SQLite-native pager encryption with WAL and rekey support |
-| libsql local cache encryption | Local libsql replica cache files only | **Provider-native libsql encryption**, currently `Cipher::Aes256Cbc` | Use the provider-supported cache mode instead of layering a second pager |
+| libsql local cache encryption | Local libsql replica cache files only | **SQLCipher via the shared local-SQLite seam** | The cache materializes as a local SQLite file and is reopened through the same `SqliteTenantStore` seam as embedded SQLite |
 | Persisted artifact encryption | Current Neovex-owned on-disk migration/rebuild/cutover artifacts, plus any future persisted snapshot/bootstrap/recovery export files from encrypted local stores | **Encrypted by default** with per-artifact DEKs and the same envelope family | Prevents backup, rebuild, and recovery flows from silently recreating plaintext state |
 | External tenant stores | Postgres, MySQL, remote libsql primary | **External-provider-managed** | Neovex does not own those underlying data files |
 
-Important trust rule: the libsql local-cache profile is currently weaker and
-less feature-complete than the redb and SQLCipher paths. The architecture
-expects diagnostics and product docs to say that plainly.
+Important trust rule: the libsql local-cache profile protects only the local
+derivative cache. It does not say anything about the remote libsql primary, and
+diagnostics must keep that boundary explicit.
 
 ---
 
@@ -227,8 +227,9 @@ The storage engines do not expose the same integration seam:
   is appropriate
 - **SQLite** is best served by a mature SQLite encryption implementation, not
   a new Neovex pager project
-- **libsql** already exposes a provider-native local-cache encryption mode,
-  and the cache is derivative rather than authoritative
+- **libsql replica cache** is still a local SQLite file that Neovex
+  materializes and reopens through `SqliteTenantStore`, so the shared
+  local-SQLite seam is the most coherent place to apply encryption
 
 That is why the architecture mixes:
 
@@ -267,13 +268,13 @@ flowchart TD
     C --> D["Load or create sidecar manifest"]
     D --> E{"Key provider"}
     E --> E1["master-key-file / key-dir<br/>unwrap wrapped DEK"]
-    E --> E2["AWS KMS<br/>Decrypt or GenerateDataKey"]
+    E --> E2["AWS KMS<br/>GenerateDataKey / Decrypt / ReEncrypt"]
     E1 --> F["Plaintext DEK in memory only"]
     E2 --> F
     F --> G{"Storage family"}
     G --> G1["redb<br/>open encrypted backend"]
     G --> G2["SQLite<br/>pass raw key to SQLCipher"]
-    G --> G3["libsql cache<br/>construct EncryptionConfig"]
+    G --> G3["libsql cache<br/>use shared SQLCipher seam"]
 
     H["KEK rotation"] --> I["Rewrap manifest only<br/>no page rewrite"]
     J["DEK rotation"] --> K{"Storage family"}

@@ -37,7 +37,10 @@ and where to go next.
 - [HTTP and WebSocket API](reference/http-api.md):
   native and optional Convex route catalog
 - [CLI reference](reference/cli.md):
-  server flags plus the current service and machine command surface
+  server flags plus the current service, machine, and encryption command surface
+- [Encryption at rest reference](reference/encryption.md):
+  operator guide for local encryption setup, key providers, migration, and
+  recovery workflows
 - [krun VMM host validation](reference/krun-vmm-host-validation.md):
   Linux-side build, install, and evidence capture runbook for historical
   patched-crun VMM validation and regression reruns

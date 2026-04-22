@@ -1,5 +1,6 @@
 use std::future::{Future, pending};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use neovex_core::{Document, Page, PaginatedQuery, PrincipalContext, Query, Result, TenantId};
@@ -18,7 +19,7 @@ use super::prepared::{
     query_documents_for_read_surface_prepared_cancellable,
 };
 use crate::service::Service;
-use crate::tenant::QueryPlanMetricOperation;
+use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation};
 
 impl Service {
     /// Evaluates a query for a tenant.
@@ -104,16 +105,37 @@ impl Service {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let cancel_wait = cancel_wait.shared();
+        let total_started = Instant::now();
+        let tenant_load_started = Instant::now();
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let tenant_load_elapsed = tenant_load_started.elapsed();
         let required_sequence = runtime.durable_head();
+        let visibility_started = Instant::now();
         runtime
             .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait.clone())
             .await?;
+        let visibility_elapsed = visibility_started.elapsed();
         let _operation = runtime.enter_operation(&tenant_id)?;
         let schema = runtime.schema();
-        match prepare_query_execution(schema.get_table(&query.table), &query, &principal)? {
-            None => Ok(Vec::new()),
+        let prepare_started = Instant::now();
+        let prepared = prepare_query_execution(schema.get_table(&query.table), &query, &principal)?;
+        let prepare_elapsed = prepare_started.elapsed();
+        match prepared {
+            None => {
+                maybe_emit_query_profile(
+                    &tenant_id,
+                    "none",
+                    tenant_load_elapsed,
+                    visibility_elapsed,
+                    prepare_elapsed,
+                    Duration::ZERO,
+                    Duration::ZERO,
+                    total_started.elapsed(),
+                );
+                Ok(Vec::new())
+            }
             Some(prepared) if matches!(prepared.plan, QueryPlan::FullScan) => {
+                let execute_started = Instant::now();
                 let (plan_kind, documents) = evaluate_with_materialized_surface_async_prepared(
                     runtime.clone(),
                     &query,
@@ -124,11 +146,25 @@ impl Service {
                     check_cancel,
                 )
                 .await?;
+                let execute_elapsed = execute_started.elapsed();
+                let cache_started = Instant::now();
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
+                let cache_elapsed = cache_started.elapsed();
+                maybe_emit_query_profile(
+                    &tenant_id,
+                    query_plan_metric_kind_label(plan_kind),
+                    tenant_load_elapsed,
+                    visibility_elapsed,
+                    prepare_elapsed,
+                    execute_elapsed,
+                    cache_elapsed,
+                    total_started.elapsed(),
+                );
                 Ok(documents)
             }
             Some(prepared) => {
+                let execute_started = Instant::now();
                 let (plan_kind, documents) = evaluate_with_index_async_prepared(
                     runtime.clone(),
                     prepared,
@@ -137,8 +173,21 @@ impl Service {
                     check_cancel,
                 )
                 .await?;
+                let execute_elapsed = execute_started.elapsed();
+                let cache_started = Instant::now();
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
+                let cache_elapsed = cache_started.elapsed();
+                maybe_emit_query_profile(
+                    &tenant_id,
+                    query_plan_metric_kind_label(plan_kind),
+                    tenant_load_elapsed,
+                    visibility_elapsed,
+                    prepare_elapsed,
+                    execute_elapsed,
+                    cache_elapsed,
+                    total_started.elapsed(),
+                );
                 Ok(documents)
             }
         }
@@ -388,5 +437,33 @@ impl Service {
                 Ok(page)
             }
         }
+    }
+}
+
+fn maybe_emit_query_profile(
+    tenant_id: &TenantId,
+    plan: &str,
+    tenant_load: Duration,
+    wait_visibility: Duration,
+    prepare: Duration,
+    execute: Duration,
+    cache: Duration,
+    total: Duration,
+) {
+    if std::env::var_os("NEOVEX_QUERY_PROFILE").is_none() {
+        return;
+    }
+
+    eprintln!(
+        "query-profile tenant={} plan={} tenant_load={:?} wait_visibility={:?} prepare={:?} execute={:?} cache={:?} total={:?}",
+        tenant_id, plan, tenant_load, wait_visibility, prepare, execute, cache, total,
+    );
+}
+
+fn query_plan_metric_kind_label(kind: QueryPlanMetricKind) -> &'static str {
+    match kind {
+        QueryPlanMetricKind::FullScan => "full_scan",
+        QueryPlanMetricKind::SingleFieldIndex => "single_field_index",
+        QueryPlanMetricKind::CompositeIndex => "composite_index",
     }
 }

@@ -1,4 +1,7 @@
 use super::*;
+use crate::encryption::{
+    KeyManifest, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
+};
 
 impl LibsqlReplicaProvider {
     pub async fn connect(config: LibsqlReplicaProviderConfig) -> Result<Self> {
@@ -48,6 +51,7 @@ impl LibsqlReplicaProvider {
             metadata_namespace: config.metadata_namespace,
             tenant_namespace_prefix: config.tenant_namespace_prefix,
             replica_cache_dir: config.replica_cache_dir,
+            encryption_provider: config.encryption_provider,
             runtime_handle,
             clock,
             fault_injector,
@@ -70,10 +74,19 @@ impl LibsqlReplicaProvider {
         &self.replica_cache_dir
     }
 
+    /// Returns whether local replica cache files are encrypted.
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption_provider.is_some()
+    }
+
     pub fn replica_path_for_tenant(&self, tenant_id: &TenantId) -> PathBuf {
         self.replica_cache_dir
             .join(tenant_id.as_str())
             .join(LIBSQL_REPLICA_FILENAME)
+    }
+
+    fn replica_cache_subject(&self, tenant_id: &TenantId) -> LocalKeySubject {
+        LocalKeySubject::libsql_cache(tenant_id.clone(), LIBSQL_REPLICA_FILENAME)
     }
 
     pub fn read_storage_for_store(
@@ -230,6 +243,13 @@ impl LibsqlReplicaProvider {
         if replica_dir.exists() {
             std::fs::remove_dir_all(&replica_dir).map_err(storage_io_error)?;
         }
+        if self.encryption_provider.is_some() {
+            let manifest_path =
+                KeyManifest::manifest_path(&self.replica_path_for_tenant(tenant_id));
+            if manifest_path.exists() {
+                let _ = std::fs::remove_file(manifest_path);
+            }
+        }
         Ok(())
     }
 
@@ -246,12 +266,25 @@ impl LibsqlReplicaProvider {
         let replica_path = self.replica_path_for_tenant(&registration.tenant_id);
         let path_for_publish = replica_path.clone();
         let replica_dir = self.replica_dir_for_tenant(&registration.tenant_id);
+        let subject = self.replica_cache_subject(&registration.tenant_id);
+        let provider = self.encryption_provider.clone();
         self.runtime_handle
             .spawn_blocking(move || {
+                let encryption_dek = if let Some(provider) = provider {
+                    Some(resolve_database_encryption_key(
+                        path_for_publish.as_path(),
+                        provider.as_ref(),
+                        &subject,
+                        ManifestCipher::SqlCipher,
+                    )?)
+                } else {
+                    None
+                };
                 materialize_snapshot_to_replica_cache(
                     replica_dir.as_path(),
                     path_for_publish.as_path(),
                     snapshot,
+                    encryption_dek.as_ref(),
                 )
             })
             .await
@@ -294,15 +327,33 @@ impl LibsqlReplicaProvider {
         let fault_injector = self.fault_injector.clone();
         let path_for_open = replica_path.clone();
         let read_parallelism = self.tenant_read_parallelism;
+        let provider = self.encryption_provider.clone();
+        let subject = self.replica_cache_subject(&registration.tenant_id);
         let local_store = self
             .runtime_handle
             .spawn_blocking(move || {
-                SqliteTenantStore::open_with_simulation_and_max_read_connections(
-                    path_for_open,
-                    clock,
-                    fault_injector,
-                    read_parallelism,
-                )
+                if let Some(provider) = provider {
+                    let key = resolve_database_encryption_key(
+                        &path_for_open,
+                        provider.as_ref(),
+                        &subject,
+                        ManifestCipher::SqlCipher,
+                    )?;
+                    SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections(
+                        path_for_open,
+                        &key,
+                        clock,
+                        fault_injector,
+                        read_parallelism,
+                    )
+                } else {
+                    SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                        path_for_open,
+                        clock,
+                        fault_injector,
+                        read_parallelism,
+                    )
+                }
             })
             .await
             .map_err(map_join_error)??;

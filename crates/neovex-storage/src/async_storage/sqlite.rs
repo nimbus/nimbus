@@ -7,6 +7,9 @@ use neovex_core::{Error, Result, TenantId};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
+use crate::encryption::{
+    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
+};
 use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
 use crate::{Clock, FaultInjector, TenantWriteCommit};
 
@@ -25,6 +28,7 @@ pub struct OpenedEmbeddedSqliteTenant {
 #[derive(Clone)]
 pub struct EmbeddedSqliteProvider {
     data_dir: PathBuf,
+    encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     storage_handle: TokioRuntimeHandle,
@@ -44,15 +48,51 @@ impl EmbeddedSqliteProvider {
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
+        Self::new_internal(data_dir, None, clock, fault_injector, storage_handle)
+    }
+
+    /// Creates a new embedded SQLite provider with encryption enabled.
+    ///
+    /// When encrypted, tenant databases resolve a per-path DEK from the
+    /// configured manifest-backed key provider.
+    pub fn new_encrypted(
+        data_dir: impl Into<PathBuf>,
+        provider: Arc<dyn LocalKeyProvider>,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+    ) -> Result<Self> {
+        Self::new_internal(
+            data_dir,
+            Some(provider),
+            clock,
+            fault_injector,
+            storage_handle,
+        )
+    }
+
+    fn new_internal(
+        data_dir: impl Into<PathBuf>,
+        encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+    ) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir).map_err(|error| Error::Internal(error.to_string()))?;
         Ok(Self {
             data_dir,
+            encryption_provider,
             clock,
             fault_injector,
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
         })
+    }
+
+    /// Returns whether this provider uses encryption for tenant databases.
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption_provider.is_some()
     }
 
     pub fn read_storage_for_store(
@@ -76,7 +116,7 @@ impl EmbeddedSqliteProvider {
                 "tenant already exists: {tenant_id}"
             )));
         }
-        self.open_tenant_at_path(path).await
+        self.open_tenant_at_path(tenant_id.clone(), path).await
     }
 
     pub async fn open_existing_tenant(
@@ -90,13 +130,21 @@ impl EmbeddedSqliteProvider {
         {
             return Ok(None);
         }
-        Ok(Some(self.open_tenant_at_path(path).await?))
+        Ok(Some(
+            self.open_tenant_at_path(tenant_id.clone(), path).await?,
+        ))
     }
 
     pub async fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
-        tokio::fs::remove_file(self.tenant_path(tenant_id))
+        let path = self.tenant_path(tenant_id);
+        tokio::fs::remove_file(&path)
             .await
-            .map_err(|error| Error::Internal(error.to_string()))
+            .map_err(|error| Error::Internal(error.to_string()))?;
+        if self.encryption_provider.is_some() {
+            let manifest_path = KeyManifest::manifest_path(&path);
+            let _ = tokio::fs::remove_file(manifest_path).await;
+        }
+        Ok(())
     }
 
     pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
@@ -137,19 +185,45 @@ impl EmbeddedSqliteProvider {
         ))
     }
 
-    async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedEmbeddedSqliteTenant> {
+    async fn open_tenant_at_path(
+        &self,
+        tenant_id: TenantId,
+        path: PathBuf,
+    ) -> Result<OpenedEmbeddedSqliteTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
         let read_parallelism = self.tenant_read_parallelism;
+        let provider = self.encryption_provider.clone();
         let store = self
             .storage_handle
             .spawn_blocking(move || {
-                SqliteTenantStore::open_with_simulation_and_max_read_connections(
-                    path,
-                    clock,
-                    fault_injector,
-                    read_parallelism,
-                )
+                if let Some(provider) = provider {
+                    let logical_name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "tenant.sqlite3".to_string());
+                    let subject = LocalKeySubject::sqlite_tenant(tenant_id, logical_name);
+                    let dek = resolve_database_encryption_key(
+                        &path,
+                        provider.as_ref(),
+                        &subject,
+                        ManifestCipher::SqlCipher,
+                    )?;
+                    SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections(
+                        path,
+                        &dek,
+                        clock,
+                        fault_injector,
+                        read_parallelism,
+                    )
+                } else {
+                    SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                        path,
+                        clock,
+                        fault_injector,
+                        read_parallelism,
+                    )
+                }
             })
             .await
             .map_err(map_join_error)??;

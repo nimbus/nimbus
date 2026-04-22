@@ -4,7 +4,8 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(super) struct BenchmarkConfig {
     pub(super) markdown_output: Option<PathBuf>,
-    pub(super) workload_filter: Option<WorkloadKind>,
+    pub(super) workload_filters: Vec<WorkloadKind>,
+    pub(super) local_cache_encryption: LocalCacheEncryptionMode,
     pub(super) primary_url: String,
     pub(super) auth_token: Option<String>,
     pub(super) admin_api_url: String,
@@ -14,7 +15,8 @@ pub(super) struct BenchmarkConfig {
 impl BenchmarkConfig {
     pub(super) fn from_args() -> BenchResult<Self> {
         let mut markdown_output = None;
-        let mut workload_filter = None;
+        let mut workload_filters = Vec::new();
+        let mut local_cache_encryption = LocalCacheEncryptionMode::Disabled;
         let mut primary_url = env::var(LIBSQL_URL_ENV).ok();
         let mut auth_token = env::var(LIBSQL_AUTH_TOKEN_ENV).ok();
         let mut admin_api_url = env::var(LIBSQL_ADMIN_URL_ENV).ok();
@@ -32,7 +34,16 @@ impl BenchmarkConfig {
                     let Some(workload) = args.next() else {
                         return Err("expected a workload after --workload".into());
                     };
-                    workload_filter = Some(WorkloadKind::parse(workload.as_str())?);
+                    let workload = WorkloadKind::parse(workload.as_str())?;
+                    if !workload_filters.contains(&workload) {
+                        workload_filters.push(workload);
+                    }
+                }
+                "--local-cache-encryption" => {
+                    let Some(mode) = args.next() else {
+                        return Err("expected a value after --local-cache-encryption".into());
+                    };
+                    local_cache_encryption = LocalCacheEncryptionMode::parse(mode.as_str())?;
                 }
                 "--libsql-url" => {
                     let Some(url) = args.next() else {
@@ -62,6 +73,10 @@ impl BenchmarkConfig {
                     print_usage();
                     std::process::exit(0);
                 }
+                "--bench" => {
+                    // Cargo forwards this marker to benchmark binaries even when
+                    // `harness = false`; ignore it so repo-owned flags keep working.
+                }
                 _ => return Err(format!("unknown argument: {arg}").into()),
             }
         }
@@ -81,7 +96,8 @@ impl BenchmarkConfig {
 
         Ok(Self {
             markdown_output,
-            workload_filter,
+            workload_filters,
+            local_cache_encryption,
             primary_url,
             auth_token,
             admin_api_url,
@@ -92,8 +108,54 @@ impl BenchmarkConfig {
 
 fn print_usage() {
     println!(
-        "Usage: cargo bench -p neovex-engine --bench libsql-replica-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--libsql-url <url>] [--libsql-auth-token <token>] [--libsql-admin-url <url>] [--libsql-admin-auth-header <header>]"
+        "Usage: cargo bench -p neovex-engine --bench libsql-replica-provider-benchmarks -- [--markdown <path>] [--workload <slug>] [--local-cache-encryption <disabled|temp-master-key-file>] [--libsql-url <url>] [--libsql-auth-token <token>] [--libsql-admin-url <url>] [--libsql-admin-auth-header <header>]"
     );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum LocalCacheEncryptionMode {
+    #[default]
+    Disabled,
+    TempMasterKeyFile,
+}
+
+impl LocalCacheEncryptionMode {
+    pub(super) fn parse(value: &str) -> BenchResult<Self> {
+        match value {
+            "disabled" => Ok(Self::Disabled),
+            "temp-master-key-file" => Ok(Self::TempMasterKeyFile),
+            _ => Err(format!("unknown local cache encryption mode: {value}").into()),
+        }
+    }
+
+    pub(super) fn cli_value(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::TempMasterKeyFile => "temp-master-key-file",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "plaintext local cache",
+            Self::TempMasterKeyFile => "manifest-backed encrypted local cache",
+        }
+    }
+
+    pub(super) fn notes(self) -> &'static str {
+        match self {
+            Self::Disabled => {
+                "uses the current plaintext cache path for the local replica copy and control-plane files"
+            }
+            Self::TempMasterKeyFile => {
+                "enables the real service startup path with a benchmark-only master key file so control-plane redb and replica cache SQLite files both reopen through manifest-backed DEKs"
+            }
+        }
+    }
+
+    pub(super) fn is_enabled(self) -> bool {
+        matches!(self, Self::TempMasterKeyFile)
+    }
 }
 
 pub(super) struct BenchmarkEnvironment {
@@ -148,6 +210,18 @@ impl WorkloadKind {
             Self::MixedMultiTenantLoad => "concurrent multi-tenant mixed read/write load",
             Self::BarrierRefreshLatency => "same-service barrier refresh latency",
             Self::PeerCatchUpLatency => "peer catch-up / delegated-write visibility latency",
+        }
+    }
+
+    pub(super) fn cli_value(self) -> &'static str {
+        match self {
+            Self::CrudThroughput => "crud",
+            Self::PointReadLatency => "point-read",
+            Self::IndexedQueryLatency => "indexed-query",
+            Self::CompositeIndexedQueryLatency => "composite-indexed-query",
+            Self::MixedMultiTenantLoad => "mixed-load",
+            Self::BarrierRefreshLatency => "barrier-refresh",
+            Self::PeerCatchUpLatency => "peer-catch-up",
         }
     }
 

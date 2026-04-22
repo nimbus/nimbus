@@ -1,3 +1,4 @@
+use super::encryption::{apply_encryption_key, harden_temp_storage, verify_encryption_key};
 use super::*;
 
 impl SqliteTenantStore {
@@ -36,12 +37,81 @@ impl SqliteTenantStore {
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
     ) -> Result<Self> {
+        Self::open_internal(path, None, clock, fault_injector, max_read_connections)
+    }
+
+    /// Opens or creates an encrypted SQLite tenant store.
+    ///
+    /// The DEK must be a 32-byte key obtained from the key provider system.
+    /// All connections will use SQLCipher encryption with this key.
+    pub fn open_encrypted(path: impl AsRef<Path>, dek: &[u8; 32]) -> Result<Self> {
+        Self::open_encrypted_with_max_read_connections(
+            path,
+            dek,
+            default_sqlite_read_connection_limit(),
+        )
+    }
+
+    pub(crate) fn open_encrypted_with_max_read_connections(
+        path: impl AsRef<Path>,
+        dek: &[u8; 32],
+        max_read_connections: usize,
+    ) -> Result<Self> {
+        Self::open_encrypted_with_simulation_and_max_read_connections(
+            path,
+            dek,
+            Arc::new(SystemClock),
+            Arc::new(NoopFaultInjector),
+            max_read_connections,
+        )
+    }
+
+    /// Opens or creates an encrypted SQLite tenant store with simulation support.
+    pub fn open_encrypted_with_simulation(
+        path: impl AsRef<Path>,
+        dek: &[u8; 32],
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        Self::open_encrypted_with_simulation_and_max_read_connections(
+            path,
+            dek,
+            clock,
+            fault_injector,
+            default_sqlite_read_connection_limit(),
+        )
+    }
+
+    pub(crate) fn open_encrypted_with_simulation_and_max_read_connections(
+        path: impl AsRef<Path>,
+        dek: &[u8; 32],
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        max_read_connections: usize,
+    ) -> Result<Self> {
+        Self::open_internal(
+            path,
+            Some(*dek),
+            clock,
+            fault_injector,
+            max_read_connections,
+        )
+    }
+
+    fn open_internal(
+        path: impl AsRef<Path>,
+        dek: Option<[u8; 32]>,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        max_read_connections: usize,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| Error::Internal(error.to_string()))?;
         }
         let store = Self {
             path,
+            dek,
             clock,
             fault_injector,
             max_read_connections: max_read_connections.max(1),
@@ -49,11 +119,30 @@ impl SqliteTenantStore {
             read_connections: Arc::new(Mutex::new(Vec::new())),
             schema_cache: Arc::new(RwLock::new(Schema::default())),
         };
+        let pooled_open_started = std::time::Instant::now();
         let conn = store.open_pooled_read_connection()?;
+        let pooled_open_elapsed = pooled_open_started.elapsed();
+        let schema_load_started = std::time::Instant::now();
         let schema = load_schema_from_conn(&conn)?;
+        let schema_load_elapsed = schema_load_started.elapsed();
         store.replace_cached_schema(schema)?;
+        if sqlite_open_profile_enabled(&store.path) {
+            eprintln!(
+                "sqlite-open-profile path={} encrypted={} pooled_open={:?} schema_load={:?} total={:?}",
+                store.path.display(),
+                store.dek.is_some(),
+                pooled_open_elapsed,
+                schema_load_elapsed,
+                pooled_open_elapsed + schema_load_elapsed,
+            );
+        }
         store.lock_read_connections()?.push(conn);
         Ok(store)
+    }
+
+    /// Returns whether this store uses encryption.
+    pub fn is_encrypted(&self) -> bool {
+        self.dek.is_some()
     }
 
     pub fn max_read_connections(&self) -> usize {
@@ -129,8 +218,42 @@ impl SqliteTenantStore {
     }
 
     pub(super) fn open_connection(&self) -> Result<Connection> {
+        let total_started = std::time::Instant::now();
+        let open_started = std::time::Instant::now();
         let conn = Connection::open(&self.path).map_err(map_sqlite_error)?;
+        let open_elapsed = open_started.elapsed();
+        let mut apply_key_elapsed = Duration::ZERO;
+        let mut harden_elapsed = Duration::ZERO;
+        let mut verify_elapsed = Duration::ZERO;
+        if let Some(dek) = &self.dek {
+            // For encrypted databases, the key must be set before any other operations
+            let apply_key_started = std::time::Instant::now();
+            apply_encryption_key(&conn, dek)?;
+            apply_key_elapsed = apply_key_started.elapsed();
+            let harden_started = std::time::Instant::now();
+            harden_temp_storage(&conn)?;
+            harden_elapsed = harden_started.elapsed();
+            // Verify the key is valid before proceeding
+            let verify_started = std::time::Instant::now();
+            verify_encryption_key(&conn)?;
+            verify_elapsed = verify_started.elapsed();
+        }
+        let initialize_started = std::time::Instant::now();
         initialize_connection(&conn)?;
+        let initialize_elapsed = initialize_started.elapsed();
+        if sqlite_open_profile_enabled(&self.path) {
+            eprintln!(
+                "sqlite-connection-profile path={} encrypted={} connection_open={:?} apply_key={:?} temp_hardening={:?} verify_key={:?} initialize={:?} total={:?}",
+                self.path.display(),
+                self.dek.is_some(),
+                open_elapsed,
+                apply_key_elapsed,
+                harden_elapsed,
+                verify_elapsed,
+                initialize_elapsed,
+                total_started.elapsed(),
+            );
+        }
         Ok(conn)
     }
 
@@ -231,4 +354,16 @@ pub(super) fn initialize_connection(conn: &Connection) -> Result<()> {
     conn.execute_batch(SQLITE_INIT_SQL)
         .map_err(map_sqlite_error)?;
     Ok(())
+}
+
+fn sqlite_open_profile_enabled(path: &Path) -> bool {
+    std::env::var_os("NEOVEX_SQLITE_OPEN_PROFILE").is_some() && profile_scope_allows_path(path)
+}
+
+fn profile_scope_allows_path(path: &Path) -> bool {
+    if std::env::var_os("NEOVEX_PROFILE_ONLY_COLD_SAMPLES").is_none() {
+        return true;
+    }
+
+    path.to_string_lossy().contains("cold-sample")
 }

@@ -131,6 +131,41 @@ If `--license-file` is not provided, Neovex next checks
 `NEOVEX_LICENSE_FILE`, then `./.neovex/license.json`, and otherwise falls back
 to the built-in community license.
 
+## Encryption Flags
+
+Local encryption for `neovex serve` is controlled with
+`--encryption-key-provider`:
+
+- `master-key-file`
+  single 32-byte key file that wraps per-subject DEKs
+- `key-dir`
+  directory of per-subject wrapping keys
+- `aws-kms`
+  enterprise-managed wrapping provider using AWS KMS over the shared
+  manifest-backed DEK envelope
+
+Provider-specific flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--encryption-master-key-file` | path to the 32-byte master key file |
+| `--encryption-key-dir` | path to the key directory containing per-subject wrapping keys |
+| `--encryption-aws-kms-key-id` | AWS KMS key ID or alias (e.g., `alias/neovex`) |
+| `--encryption-aws-region` | AWS region for KMS |
+| `--encryption-aws-endpoint-url` | optional KMS endpoint URL (for LocalStack) |
+
+Environment variables: `NEOVEX_ENCRYPTION_KEY_PROVIDER`,
+`NEOVEX_ENCRYPTION_MASTER_KEY_FILE`, `NEOVEX_ENCRYPTION_KEY_DIR`,
+`NEOVEX_ENCRYPTION_AWS_KMS_KEY_ID`, `NEOVEX_ENCRYPTION_AWS_REGION`,
+`NEOVEX_ENCRYPTION_AWS_ENDPOINT_URL`.
+
+`neovex encryption ...` admin commands read the current provider and
+persistence settings from environment variables and config-file resolution.
+`rotate-kek` additionally accepts replacement-provider flags on the
+subcommand itself.
+
+See [Encryption at rest reference](encryption.md) for operational guidance.
+
 ## Persistence Flags
 
 The tenant persistence mode is selected with `--tenant-provider`:
@@ -401,8 +436,81 @@ Current scope:
   same localhost SSH safety options as `machine ssh`, and `--quiet` to suppress
   the success message when scripts want silence
 
+## Encryption Commands
+
+The encryption admin surface provides migration, rotation, and status operations:
+
+| Command | Meaning |
+| --- | --- |
+| `neovex encryption status` | print the current encryption status |
+| `neovex encryption migrate` | migrate a plaintext database to encrypted |
+| `neovex encryption export` | export an encrypted database to plaintext for recovery |
+| `neovex encryption rotate-kek` | rotate the wrapping key (rewraps metadata only) |
+| `neovex encryption rotate-dek` | rotate the data encryption key (rewrites pages) |
+
+Common flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--source` | source database path |
+| `--target` | target database path |
+| `--provider` | storage provider (`sqlite`, `redb`, `libsql-cache`) |
+| `--tenant-id` | tenant id for tenant-owned databases or caches |
+| `--path` | protected database path for `rotate-kek` and `rotate-dek` |
+| `--new-key-provider` | replacement provider for `rotate-kek` (`master-key-file`, `key-dir`, `aws-kms`) |
+| `--new-master-key-file` | replacement KEK for `rotate-kek` |
+| `--new-key-dir` | replacement key directory for `rotate-kek` |
+| `--new-aws-kms-key-id` | replacement AWS KMS key id or alias for `rotate-kek` |
+| `--new-aws-region` | replacement AWS region for `rotate-kek` when targeting `aws-kms` |
+| `--new-aws-endpoint-url` | replacement AWS endpoint override for `rotate-kek` |
+| `--all` | rotate every manifest in a directory during `rotate-kek` |
+| `--skip-validation` | skip SQLite migration validation |
+| `--retire-source` | remove predecessor plaintext artifacts after successful migrate |
+| `--skip-backup` | skip DEK-rotation backups |
+
+Example workflows:
+
+```bash
+# Migrate plaintext SQLite to encrypted
+NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/master.key \
+neovex encryption migrate \
+  --source ./data/tenant.sqlite3 \
+  --target ./data/tenant-encrypted.sqlite3 \
+  --provider sqlite \
+  --tenant-id tenant-a
+
+# Export encrypted database for recovery
+NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/master.key \
+neovex encryption export \
+  --source ./data/tenant-encrypted.sqlite3 \
+  --target ./data/tenant-recovery.sqlite3 \
+  --provider sqlite \
+  --tenant-id tenant-a
+
+# Rotate the KEK for one manifest-backed SQLite database
+NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/old.key \
+neovex encryption rotate-kek \
+  --path ./data/tenant.sqlite3 \
+  --new-master-key-file /secure/new.key
+
+# Rotate the KEK onto AWS KMS without rewriting database pages
+NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/old.key \
+neovex encryption rotate-kek \
+  --path ./data/tenant.sqlite3 \
+  --new-key-provider aws-kms \
+  --new-aws-kms-key-id alias/neovex-production \
+  --new-aws-region us-east-1
+```
+
+See [Encryption at rest reference](encryption.md) for full operational guidance.
+
 Related references:
 
+- [Encryption at rest reference](encryption.md)
 - [MicroVM and service-control baseline](microvm-service-baseline.md)
 - [HTTP and WebSocket API](http-api.md)
 - [Convex compatibility](../convex/compatibility.md)
