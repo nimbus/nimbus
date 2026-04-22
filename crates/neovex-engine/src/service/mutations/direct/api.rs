@@ -1,6 +1,6 @@
 use std::{future, sync::Arc};
 
-use neovex_core::{DocumentId, Error, Mutation, PrincipalContext, Result, TableName, TenantId};
+use neovex_core::{DocumentId, Mutation, PrincipalContext, Result, TableName, TenantId};
 
 use crate::Service;
 
@@ -8,6 +8,11 @@ use super::types::{
     MutationExecutionMode, expect_immediate_document_id, expect_immediate_result,
     expect_immediate_unit, expect_scheduled_applied,
 };
+
+struct ImmediateMutationMessages {
+    scheduled: &'static str,
+    value: &'static str,
+}
 
 impl Service {
     /// Inserts a document and fan-outs any resulting subscription updates.
@@ -33,12 +38,12 @@ impl Service {
         fields: serde_json::Map<String, serde_json::Value>,
         principal: &PrincipalContext,
     ) -> Result<DocumentId> {
-        self.apply_mutation_with_principal(
+        self.execute_immediate_document_mutation(
             tenant_id,
             Mutation::Insert { table, fields },
             principal,
-        )?
-        .ok_or_else(|| Error::Internal("insert should return a document id".to_string()))
+            "insert should return a document id",
+        )
     }
 
     /// Inserts a document asynchronously and fan-outs any resulting subscription updates.
@@ -109,19 +114,18 @@ impl Service {
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let document_id = expect_immediate_result(
-            self.apply_mutation_with_mode_async_cancellable(
-                tenant_id,
-                MutationExecutionMode::Immediate,
-                Mutation::Insert { table, fields },
-                principal,
-                cancel_wait,
-                check_cancel,
-            )
-            .await?,
-            "immediate async insert should not produce a scheduled mutation result",
-        );
-        expect_immediate_document_id(document_id, "insert should return a document id")
+        self.execute_immediate_document_mutation_async(
+            tenant_id,
+            Mutation::Insert { table, fields },
+            principal,
+            cancel_wait,
+            check_cancel,
+            ImmediateMutationMessages {
+                scheduled: "immediate async insert should not produce a scheduled mutation result",
+                value: "insert should return a document id",
+            },
+        )
+        .await
     }
 
     /// Updates a document and fan-outs any resulting subscription updates.
@@ -150,7 +154,7 @@ impl Service {
         patch: serde_json::Map<String, serde_json::Value>,
         principal: &PrincipalContext,
     ) -> Result<DocumentId> {
-        self.apply_mutation_with_principal(
+        self.execute_immediate_document_mutation(
             tenant_id,
             Mutation::Update {
                 table,
@@ -158,8 +162,8 @@ impl Service {
                 patch,
             },
             principal,
-        )?
-        .ok_or_else(|| Error::Internal("update should return a document id".to_string()))
+            "update should return a document id",
+        )
     }
 
     /// Updates a document asynchronously and fan-outs any resulting subscription updates.
@@ -242,23 +246,22 @@ impl Service {
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let document_id = expect_immediate_result(
-            self.apply_mutation_with_mode_async_cancellable(
-                tenant_id,
-                MutationExecutionMode::Immediate,
-                Mutation::Update {
-                    table,
-                    id: document_id,
-                    patch,
-                },
-                principal,
-                cancel_wait,
-                check_cancel,
-            )
-            .await?,
-            "immediate async update should not produce a scheduled mutation result",
-        );
-        expect_immediate_document_id(document_id, "update should return a document id")
+        self.execute_immediate_document_mutation_async(
+            tenant_id,
+            Mutation::Update {
+                table,
+                id: document_id,
+                patch,
+            },
+            principal,
+            cancel_wait,
+            check_cancel,
+            ImmediateMutationMessages {
+                scheduled: "immediate async update should not produce a scheduled mutation result",
+                value: "update should return a document id",
+            },
+        )
+        .await
     }
 
     /// Deletes a document and fan-outs any resulting subscription updates.
@@ -285,15 +288,15 @@ impl Service {
         document_id: DocumentId,
         principal: &PrincipalContext,
     ) -> Result<()> {
-        let _ = self.apply_mutation_with_principal(
+        self.execute_immediate_unit_mutation(
             tenant_id,
             Mutation::Delete {
                 table,
                 id: document_id,
             },
             principal,
-        )?;
-        Ok(())
+            "delete should not return a document id",
+        )
     }
 
     /// Deletes a document asynchronously and fan-outs any resulting subscription updates.
@@ -368,22 +371,21 @@ impl Service {
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let document_id = expect_immediate_result(
-            self.apply_mutation_with_mode_async_cancellable(
-                tenant_id,
-                MutationExecutionMode::Immediate,
-                Mutation::Delete {
-                    table,
-                    id: document_id,
-                },
-                principal,
-                cancel_wait,
-                check_cancel,
-            )
-            .await?,
-            "immediate async delete should not produce a scheduled mutation result",
-        );
-        expect_immediate_unit(document_id, "delete should not return a document id")
+        self.execute_immediate_unit_mutation_async(
+            tenant_id,
+            Mutation::Delete {
+                table,
+                id: document_id,
+            },
+            principal,
+            cancel_wait,
+            check_cancel,
+            ImmediateMutationMessages {
+                scheduled: "immediate async delete should not produce a scheduled mutation result",
+                value: "delete should not return a document id",
+            },
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -434,6 +436,112 @@ impl Service {
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        self.execute_scheduled_mutation_async_inner(
+            tenant_id,
+            execution_id,
+            mutation,
+            cancel_wait,
+            check_cancel,
+            "scheduled async mutation execution should not return an immediate result",
+        )
+        .await
+    }
+
+    fn execute_immediate_document_mutation(
+        &self,
+        tenant_id: &TenantId,
+        mutation: Mutation,
+        principal: &PrincipalContext,
+        missing_message: &'static str,
+    ) -> Result<DocumentId> {
+        expect_immediate_document_id(
+            self.apply_mutation_with_principal(tenant_id, mutation, principal)?,
+            missing_message,
+        )
+    }
+
+    fn execute_immediate_unit_mutation(
+        &self,
+        tenant_id: &TenantId,
+        mutation: Mutation,
+        principal: &PrincipalContext,
+        unexpected_message: &'static str,
+    ) -> Result<()> {
+        expect_immediate_unit(
+            self.apply_mutation_with_principal(tenant_id, mutation, principal)?,
+            unexpected_message,
+        )
+    }
+
+    async fn execute_immediate_document_mutation_async<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        mutation: Mutation,
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+        messages: ImmediateMutationMessages,
+    ) -> Result<DocumentId>
+    where
+        Fut: future::Future<Output = ()> + Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let document_id = expect_immediate_result(
+            self.apply_mutation_with_mode_async_cancellable(
+                tenant_id,
+                MutationExecutionMode::Immediate,
+                mutation,
+                principal,
+                cancel_wait,
+                check_cancel,
+            )
+            .await?,
+            messages.scheduled,
+        );
+        expect_immediate_document_id(document_id, messages.value)
+    }
+
+    async fn execute_immediate_unit_mutation_async<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        mutation: Mutation,
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+        messages: ImmediateMutationMessages,
+    ) -> Result<()>
+    where
+        Fut: future::Future<Output = ()> + Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let document_id = expect_immediate_result(
+            self.apply_mutation_with_mode_async_cancellable(
+                tenant_id,
+                MutationExecutionMode::Immediate,
+                mutation,
+                principal,
+                cancel_wait,
+                check_cancel,
+            )
+            .await?,
+            messages.scheduled,
+        );
+        expect_immediate_unit(document_id, messages.value)
+    }
+
+    async fn execute_scheduled_mutation_async_inner<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        execution_id: String,
+        mutation: Mutation,
+        cancel_wait: Fut,
+        check_cancel: Check,
+        immediate_message: &'static str,
+    ) -> Result<bool>
+    where
+        Fut: future::Future<Output = ()> + Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         Ok(expect_scheduled_applied(
             self.apply_mutation_with_mode_async_cancellable(
                 tenant_id,
@@ -444,7 +552,7 @@ impl Service {
                 check_cancel,
             )
             .await?,
-            "scheduled async mutation execution should not return an immediate result",
+            immediate_message,
         ))
     }
 }

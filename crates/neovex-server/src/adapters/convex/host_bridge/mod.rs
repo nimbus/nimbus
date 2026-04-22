@@ -30,7 +30,9 @@ pub(in crate::adapters::convex) use bridge::{
 };
 #[cfg(test)]
 pub(in crate::adapters::convex) use contract::ConvexHostCallRequest;
-pub(in crate::adapters::convex) use contract::convex_host_operation_name;
+pub(in crate::adapters::convex) use contract::{
+    ConvexHostCallFamily, ConvexHostCallOperation, convex_host_operation_name,
+};
 pub(in crate::adapters::convex) use pagination::synthesize_runtime_paginate_cursor;
 pub(in crate::adapters::convex) use payloads::*;
 pub(in crate::adapters::convex) use responses::*;

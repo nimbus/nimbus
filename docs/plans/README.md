@@ -139,6 +139,13 @@ completed plans unless explicitly asked to review historical work.
     router cleanup, Convex facade bounding, JS wrapper thinning, the AWS KMS
     dependency-chain lift that cleared the `cargo deny` closeout blocker, and
     the final green archive verification bundle
+- `docs/plans/archive/codebase-architecture-and-maintainability-plan.md`
+  - completed codebase architecture and maintainability control plane;
+    records persistence/provider capability normalization, engine
+    sync/async/cancellable flow convergence, the typed server build pipeline,
+    Convex host-call family ownership, service-command ownership cleanup,
+    architecture-doc repackaging, and the final green closeout verification
+    sweep
 - `docs/plans/archive/targeted-domain-modularity-cleanup-plan.md`
   - completed targeted-domain cleanup pass; records the final runtime test
     extraction, tenant facade split, auth module split, browser client split,
@@ -227,6 +234,14 @@ completed plans unless explicitly asked to review historical work.
 ## How To Use This Folder
 
 - Start with the plan that owns your workstream.
+- For broad maintainability, refactor, modularity, readability, canonical
+  naming, idiomatic-Rust, or god-file cleanup work, start with
+  `docs/reference/reliability-posture.md` and
+  `docs/reference/ci-failure-investigation.md`, use
+  `docs/plans/archive/codebase-architecture-and-maintainability-plan.md` for
+  the latest completed governance baseline when historical execution detail is
+  needed, and promote a new active plan before landing another repo-wide
+  cleanup wave unless another active plan already owns the slice.
 - For the landed krun-backed microVM and service-control architecture, start
   with `docs/reference/microvm-service-baseline.md` rather than opening the
   archived plans first.

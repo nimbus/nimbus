@@ -4,6 +4,7 @@ use neovex_core::{Result, TenantId};
 use neovex_storage::TenantWriteOutcome;
 
 use crate::persistence::{TenantPersistence, TenantPersistenceWriteOps};
+use crate::service::tenants::with_tenant_runtime_operation;
 use crate::{Service, tenant::TenantRuntime};
 
 pub(super) fn with_scheduler_runtime<T, F>(
@@ -15,8 +16,7 @@ where
     F: FnOnce(Arc<TenantRuntime>) -> Result<T>,
 {
     let runtime = service.get_existing_tenant(tenant_id)?;
-    let _operation = runtime.enter_operation(tenant_id)?;
-    task(runtime)
+    with_tenant_runtime_operation(runtime, tenant_id, task)
 }
 
 pub(super) async fn read_scheduler_store<T, F>(
@@ -46,8 +46,9 @@ where
     runtime
         .read_storage
         .execute(move |store| {
-            let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
-            task(store)
+            with_tenant_runtime_operation(runtime_for_task, &tenant_id_for_task, |_runtime| {
+                task(store)
+            })
         })
         .await
 }
@@ -79,8 +80,9 @@ where
     runtime
         .read_storage
         .execute_write(move |transaction| {
-            let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
-            task(transaction)
+            with_tenant_runtime_operation(runtime_for_task, &tenant_id_for_task, |_runtime| {
+                task(transaction)
+            })
         })
         .await
         .map(|commit| commit.value)
@@ -122,8 +124,9 @@ where
     runtime
         .read_storage
         .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
-            let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
-            task(transaction)
+            with_tenant_runtime_operation(runtime_for_task, &tenant_id_for_task, |_runtime| {
+                task(transaction)
+            })
         })
         .await
 }

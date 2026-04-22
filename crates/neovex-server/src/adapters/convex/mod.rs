@@ -12,10 +12,12 @@ use neovex_core::{
     PaginatedQuery, Query, ScheduleRequest, Schema, TableName, TenantId, Timestamp,
 };
 use neovex_engine::SubscriptionUpdate;
+#[cfg(test)]
+use neovex_runtime::HostCallOperation;
 use neovex_runtime::{
-    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest,
-    InvocationAuth, InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle,
-    RuntimeExecutor, RuntimePolicy,
+    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
+    InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle, RuntimeExecutor,
+    RuntimePolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

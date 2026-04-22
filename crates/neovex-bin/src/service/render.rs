@@ -1,12 +1,24 @@
-use neovex::{Error, PublishedEndpoint, SandboxStatus};
+use neovex::{Error, PublishedEndpoint, SandboxStatus, TenantId};
 use serde::Serialize;
 
 use crate::cli_ux;
 
 use super::{
     ServiceInspectOutputFormat, ServiceLifecycleOutcome, ServiceListOutputFormat,
-    ServiceProcessSnapshot, ServicePsOutputFormat, ServiceSandboxSummaryView,
+    ServiceProcessSnapshot, ServicePsOutputFormat,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct ServiceSandboxSummaryView {
+    pub(super) sandbox_id: neovex::SandboxId,
+    pub(super) tenant_id: TenantId,
+    pub(super) service_name: String,
+    pub(super) status: SandboxStatus,
+    pub(super) published_endpoints: Vec<PublishedEndpoint>,
+    pub(super) restart_count: u32,
+    pub(super) last_exit_code: Option<i32>,
+    pub(super) shutdown_requested: bool,
+}
 
 pub(super) fn render_sandbox_status(status: SandboxStatus) -> &'static str {
     match status {

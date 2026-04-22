@@ -18,6 +18,9 @@ and where to go next.
 - [Provider topology reference](reference/provider-topologies.md):
   deeper reference for external-provider and replica-topology shapes that
   extend the stable persistence architecture
+- [Persistence engine baseline](reference/persistence-engine-baseline.md):
+  deeper reference for backend layouts, durable-journal ownership, serving
+  snapshot direction, and the current control-plane usage-store split
 - [Verification architecture](reference/verification-architecture.md):
   deeper reference for simulation seams, harness ownership, and verification
   corpora that extend the stable testing architecture

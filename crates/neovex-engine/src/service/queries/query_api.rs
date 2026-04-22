@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::FutureExt;
-use neovex_core::{Document, Page, PaginatedQuery, PrincipalContext, Query, Result, TenantId};
+use neovex_core::{
+    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TenantId,
+};
 
 use super::materialized::{
     evaluate_with_materialized_surface_async_prepared,
@@ -19,7 +21,14 @@ use super::prepared::{
     query_documents_for_read_surface_prepared_cancellable,
 };
 use crate::service::Service;
-use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation};
+use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation, TenantRuntime};
+
+struct LoadedQueryRuntime {
+    runtime: Arc<TenantRuntime>,
+    required_sequence: SequenceNumber,
+    tenant_load: Duration,
+    wait_visibility: Duration,
+}
 
 impl Service {
     /// Evaluates a query for a tenant.
@@ -106,15 +115,12 @@ impl Service {
     {
         let cancel_wait = cancel_wait.shared();
         let total_started = Instant::now();
-        let tenant_load_started = Instant::now();
-        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
-        let tenant_load_elapsed = tenant_load_started.elapsed();
-        let required_sequence = runtime.durable_head();
-        let visibility_started = Instant::now();
-        runtime
-            .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait.clone())
-            .await?;
-        let visibility_elapsed = visibility_started.elapsed();
+        let LoadedQueryRuntime {
+            runtime,
+            required_sequence,
+            tenant_load,
+            wait_visibility,
+        } = load_query_runtime_async(self, &tenant_id, cancel_wait.clone()).await?;
         let _operation = runtime.enter_operation(&tenant_id)?;
         let schema = runtime.schema();
         let prepare_started = Instant::now();
@@ -125,8 +131,8 @@ impl Service {
                 maybe_emit_query_profile(QueryProfileSample {
                     tenant_id: &tenant_id,
                     plan: "none",
-                    tenant_load: tenant_load_elapsed,
-                    wait_visibility: visibility_elapsed,
+                    tenant_load,
+                    wait_visibility,
                     prepare: prepare_elapsed,
                     execute: Duration::ZERO,
                     cache: Duration::ZERO,
@@ -154,8 +160,8 @@ impl Service {
                 maybe_emit_query_profile(QueryProfileSample {
                     tenant_id: &tenant_id,
                     plan: query_plan_metric_kind_label(plan_kind),
-                    tenant_load: tenant_load_elapsed,
-                    wait_visibility: visibility_elapsed,
+                    tenant_load,
+                    wait_visibility,
                     prepare: prepare_elapsed,
                     execute: execute_elapsed,
                     cache: cache_elapsed,
@@ -181,8 +187,8 @@ impl Service {
                 maybe_emit_query_profile(QueryProfileSample {
                     tenant_id: &tenant_id,
                     plan: query_plan_metric_kind_label(plan_kind),
-                    tenant_load: tenant_load_elapsed,
-                    wait_visibility: visibility_elapsed,
+                    tenant_load,
+                    wait_visibility,
                     prepare: prepare_elapsed,
                     execute: execute_elapsed,
                     cache: cache_elapsed,
@@ -216,8 +222,11 @@ impl Service {
         principal: &PrincipalContext,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime);
+        let LoadedQueryRuntime {
+            runtime,
+            required_sequence,
+            ..
+        } = load_query_runtime(self, tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let schema = runtime.schema();
         match prepare_query_execution(schema.get_table(&query.table), query, principal)? {
@@ -337,20 +346,16 @@ impl Service {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let cancel_wait = cancel_wait.shared();
-        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
-        let required_sequence = runtime.durable_head();
-        runtime
-            .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait.clone())
-            .await?;
+        let LoadedQueryRuntime {
+            runtime,
+            required_sequence,
+            ..
+        } = load_query_runtime_async(self, &tenant_id, cancel_wait.clone()).await?;
         let _operation = runtime.enter_operation(&tenant_id)?;
         let schema = runtime.schema();
         match prepare_paginated_execution(schema.get_table(&query.query.table), &query, &principal)?
         {
-            None => Ok(Page {
-                data: Vec::new(),
-                next_cursor: None,
-                has_more: false,
-            }),
+            None => Ok(empty_page()),
             Some(prepared) if matches!(prepared.plan, QueryPlan::FullScan) => {
                 let (plan_kind, page) = paginate_with_materialized_surface_async_prepared(
                     runtime.clone(),
@@ -403,16 +408,15 @@ impl Service {
         principal: &PrincipalContext,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Page> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime);
+        let LoadedQueryRuntime {
+            runtime,
+            required_sequence,
+            ..
+        } = load_query_runtime(self, tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let schema = runtime.schema();
         match prepare_paginated_execution(schema.get_table(&query.query.table), query, principal)? {
-            None => Ok(Page {
-                data: Vec::new(),
-                next_cursor: None,
-                has_more: false,
-            }),
+            None => Ok(empty_page()),
             Some(prepared) if matches!(prepared.plan, QueryPlan::FullScan) => {
                 let (plan_kind, page) = paginate_with_materialized_surface_cancellable_prepared(
                     &runtime,
@@ -474,5 +478,49 @@ fn query_plan_metric_kind_label(kind: QueryPlanMetricKind) -> &'static str {
         QueryPlanMetricKind::FullScan => "full_scan",
         QueryPlanMetricKind::SingleFieldIndex => "single_field_index",
         QueryPlanMetricKind::CompositeIndex => "composite_index",
+    }
+}
+
+fn load_query_runtime(service: &Service, tenant_id: &TenantId) -> Result<LoadedQueryRuntime> {
+    let runtime = service.get_existing_tenant(tenant_id)?;
+    let visibility_started = Instant::now();
+    let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime);
+    Ok(LoadedQueryRuntime {
+        runtime,
+        required_sequence,
+        tenant_load: Duration::ZERO,
+        wait_visibility: visibility_started.elapsed(),
+    })
+}
+
+async fn load_query_runtime_async<Fut>(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    cancel_wait: Fut,
+) -> Result<LoadedQueryRuntime>
+where
+    Fut: Future<Output = ()> + Clone + Send,
+{
+    let tenant_load_started = Instant::now();
+    let runtime = service.get_existing_tenant_async(tenant_id).await?;
+    let tenant_load = tenant_load_started.elapsed();
+    let required_sequence = runtime.durable_head();
+    let visibility_started = Instant::now();
+    runtime
+        .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait)
+        .await?;
+    Ok(LoadedQueryRuntime {
+        runtime,
+        required_sequence,
+        tenant_load,
+        wait_visibility: visibility_started.elapsed(),
+    })
+}
+
+fn empty_page() -> Page {
+    Page {
+        data: Vec::new(),
+        next_cursor: None,
+        has_more: false,
     }
 }

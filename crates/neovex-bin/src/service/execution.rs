@@ -13,10 +13,37 @@ use crate::machine::{
     require_default_machine_api_client,
 };
 
-use super::{
-    ComposeProjectContext, ServiceExecutionSurface, ServiceHostPlatform, ServiceLifecycleTarget,
-    compose,
-};
+use super::{ComposeProjectContext, ServiceLifecycleTarget, compose};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ServiceHostPlatform {
+    Macos,
+    Linux,
+    Other,
+}
+
+impl ServiceHostPlatform {
+    pub(super) fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(target_os = "linux") {
+            Self::Linux
+        } else {
+            Self::Other
+        }
+    }
+}
+
+pub(super) enum ServiceExecutionSurface {
+    Krun {
+        state_view: KrunSandboxStateView,
+        backend: Arc<dyn SandboxBackend>,
+    },
+    ForwardedContainer {
+        client: MachineApiClient,
+        backend: Arc<dyn SandboxBackend>,
+    },
+}
 
 pub(super) fn load_host_backed_sandbox_service_manager_for_platform(
     file: &Path,

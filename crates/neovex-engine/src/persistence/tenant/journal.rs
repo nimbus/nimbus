@@ -14,25 +14,13 @@ impl TenantPersistence {
         &self,
         records: &[DurableMutationRecord],
     ) -> Result<()> {
-        match self {
-            Self::Redb(store) => store.append_durable_records_batch(records),
-            Self::Sqlite(store) => store.append_durable_records_batch(records),
-            Self::LibsqlReplica(store) => store.append_durable_records_batch(records),
-            Self::Postgres(store) => store.append_durable_records_batch(records),
-            Self::MySql(store) => store.append_durable_records_batch(records),
-        }
+        match_tenant_persistence!(self, |store| store.append_durable_records_batch(records))
     }
 
     pub(crate) fn apply_durable_records_batch(
         &self,
         records: &[DurableMutationRecord],
     ) -> Result<()> {
-        match self {
-            Self::Redb(store) => store.apply_durable_records_batch(records),
-            Self::Sqlite(store) => store.apply_durable_records_batch(records),
-            Self::LibsqlReplica(store) => store.apply_durable_records_batch(records),
-            Self::Postgres(store) => store.apply_durable_records_batch(records),
-            Self::MySql(store) => store.apply_durable_records_batch(records),
-        }
+        match_tenant_persistence!(self, |store| store.apply_durable_records_batch(records))
     }
 }

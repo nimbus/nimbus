@@ -3,6 +3,7 @@
 //! This crate re-exports the stable, high-level surface so callers do not
 //! need to depend on multiple internal workspace crates directly.
 
+// Core data model and query surface.
 pub use neovex_core::{
     CommitEntry, CreateCronRequest, CronJob, CronSchedule, Cursor, Document, DocumentId, Error,
     FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, JobId, Mutation, OrderBy,
@@ -10,6 +11,7 @@ pub use neovex_core::{
     ScheduledJobOutcome, ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema,
     TenantId, Timestamp, WriteOp, WriteOpType,
 };
+// Engine coordination and persistence configuration.
 pub use neovex_engine::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionStatus,
     EncryptionValidationError, InitializedKeyProvider, KeyDirectoryConfig, KeyProviderDescriptor,
@@ -18,18 +20,21 @@ pub use neovex_engine::{
     ProviderCredentials, Service, ServicePersistenceConfig, SubscriptionUpdate,
     TenantProviderConfig, TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
 };
+// Runtime execution contract and limits.
 pub use neovex_runtime::{
     HostBridge, HostBridgeFuture, HostCallRequest, InvocationKind, InvocationRequest,
     NeovexRuntime, NeovexRuntimeError, RuntimeBackendKind, RuntimeBundle, RuntimeExecutionModel,
     RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, VerifiedUserIdentity,
     VerifiedUserIdentityKind,
 };
+// Sandbox orchestration surface.
 pub use neovex_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
     SandboxBuildLaunchSpec, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
     SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxPortBinding,
     SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
 };
+// Server integration and transport construction helpers.
 pub use neovex_server::{
     ConvexRegistry, DEFAULT_LICENSE_PATH, EmptySandboxCatalog, EmptySandboxServiceCatalog,
     LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
@@ -47,6 +52,7 @@ pub use neovex_server::{
 };
 #[cfg(feature = "aws-kms")]
 pub use neovex_storage::AwsKmsKeyProvider;
+// Storage and encryption helpers.
 pub use neovex_storage::EmbeddedProviderKind;
 pub use neovex_storage::TenantStore;
 pub use neovex_storage::{

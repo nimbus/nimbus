@@ -1,17 +1,83 @@
 use std::path::Path;
 
 use neovex::{Error, SandboxBackend, SandboxHandle, SandboxServiceLaunch, SandboxStatus, TenantId};
+use neovex_sandbox::backends::krun::KrunSandboxStateView;
+use serde::Serialize;
 
 use crate::machine::MachineApiClient;
 
 use super::{
-    ServiceDownCommand, ServiceLifecycleAction, ServiceLifecycleOutcome, ServiceLifecycleTarget,
-    ServiceUpCommand, load_compose_project_context,
+    ServiceDownCommand, ServiceUpCommand, load_compose_project_context,
     load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
     requested_service_names, resolve_remote_service_down_targets, resolve_service_down_targets,
     resolve_service_execution_surface, validate_forwarded_machine_api_backend,
     validate_forwarded_machine_api_operations,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ServiceLifecycleAction {
+    Started,
+    AlreadyRunning,
+    Stopped,
+    AlreadyStopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct ServiceLifecycleOutcome {
+    pub(super) action: ServiceLifecycleAction,
+    pub(super) tenant_id: TenantId,
+    pub(super) service_name: String,
+    pub(super) sandbox_id: neovex::SandboxId,
+    pub(super) status: SandboxStatus,
+}
+
+impl ServiceLifecycleOutcome {
+    pub(super) fn from_handle(
+        action: ServiceLifecycleAction,
+        tenant_id: &TenantId,
+        service_name: &str,
+        handle: SandboxHandle,
+    ) -> Self {
+        Self {
+            action,
+            tenant_id: tenant_id.clone(),
+            service_name: service_name.to_owned(),
+            sandbox_id: handle.id,
+            status: handle.status,
+        }
+    }
+}
+
+impl ServiceLifecycleAction {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::AlreadyRunning => "already_running",
+            Self::Stopped => "stopped",
+            Self::AlreadyStopped => "already_stopped",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ServiceLifecycleTarget {
+    pub(super) sandbox_id: neovex::SandboxId,
+    pub(super) service_name: String,
+    pub(super) status: SandboxStatus,
+}
+
+impl ServiceLifecycleTarget {
+    pub(super) fn from_details(
+        details: neovex_sandbox::backends::krun::KrunSandboxDetails,
+    ) -> Self {
+        Self {
+            sandbox_id: details.summary.sandbox_id,
+            service_name: details.summary.service_name,
+            status: details.summary.status,
+        }
+    }
+}
 
 pub(super) async fn service_up_outcomes_for_platform(
     command: &ServiceUpCommand,
@@ -279,7 +345,7 @@ pub(super) async fn stop_service_target(
 }
 
 async fn resolve_live_service_handle(
-    state_view: &super::KrunSandboxStateView,
+    state_view: &KrunSandboxStateView,
     backend: &dyn SandboxBackend,
     tenant: &TenantId,
     service_name: &str,

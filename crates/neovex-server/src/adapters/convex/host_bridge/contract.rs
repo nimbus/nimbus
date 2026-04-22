@@ -58,7 +58,46 @@ pub(in crate::adapters::convex) enum ConvexHostCallOperation {
     CtxRuntimeEnterNestedCall,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(in crate::adapters::convex) enum ConvexHostCallFamily {
+    Function,
+    QueryBuilder,
+    QueryRead,
+    Document,
+    Scheduler,
+}
+
 impl ConvexHostCallOperation {
+    pub(in crate::adapters::convex) const fn family(self) -> ConvexHostCallFamily {
+        match self {
+            Self::HttpRoute
+            | Self::CtxQuery
+            | Self::CtxPaginatedQuery
+            | Self::CtxMutation
+            | Self::CtxAction
+            | Self::CtxRunQuery
+            | Self::CtxRunMutation
+            | Self::CtxRunAction
+            | Self::CtxServiceLookup
+            | Self::CtxRuntimeEnterNestedCall => ConvexHostCallFamily::Function,
+            Self::CtxDbQueryStart
+            | Self::CtxDbQueryWithIndex
+            | Self::CtxDbQueryFilter
+            | Self::CtxDbQueryOrder => ConvexHostCallFamily::QueryBuilder,
+            Self::CtxDbQueryCollect
+            | Self::CtxDbQueryTake
+            | Self::CtxDbQueryPaginate
+            | Self::CtxDbQueryFirst
+            | Self::CtxDbQueryUnique => ConvexHostCallFamily::QueryRead,
+            Self::CtxDbGet | Self::CtxDbInsert | Self::CtxDbPatch | Self::CtxDbDelete => {
+                ConvexHostCallFamily::Document
+            }
+            Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
+                ConvexHostCallFamily::Scheduler
+            }
+        }
+    }
+
     pub(in crate::adapters::convex) const fn as_str(self) -> &'static str {
         match self {
             Self::HttpRoute => "convex.http_route",

@@ -5,6 +5,7 @@ use neovex_core::{
     TenantId,
 };
 
+use crate::service::tenants::with_tenant_runtime_operation;
 use crate::{Service, tenant::TenantRuntime};
 
 use super::super::enforce_mutation_authorization;
@@ -18,29 +19,28 @@ impl Service {
         mutation: Mutation,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let _operation = runtime.enter_operation(tenant_id)?;
-        let schema = runtime.schema();
-
-        match mutation {
-            Mutation::Insert { table, fields } => {
-                self.apply_insert_like(runtime.clone(), &schema, mode, table, fields, principal)
+        with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |runtime| {
+            let schema = runtime.schema();
+            match mutation {
+                Mutation::Insert { table, fields } => {
+                    self.apply_insert_like(runtime.clone(), &schema, mode, table, fields, principal)
+                }
+                Mutation::Update { table, id, patch } => self.apply_update_like(
+                    runtime.clone(),
+                    &schema,
+                    mode,
+                    UpdateMutationRequest {
+                        table,
+                        id,
+                        patch,
+                        principal,
+                    },
+                ),
+                Mutation::Delete { table, id } => {
+                    self.apply_delete_like(runtime.clone(), &schema, mode, table, id, principal)
+                }
             }
-            Mutation::Update { table, id, patch } => self.apply_update_like(
-                runtime.clone(),
-                &schema,
-                mode,
-                UpdateMutationRequest {
-                    table,
-                    id,
-                    patch,
-                    principal,
-                },
-            ),
-            Mutation::Delete { table, id } => {
-                self.apply_delete_like(runtime.clone(), &schema, mode, table, id, principal)
-            }
-        }
+        })
     }
 
     pub(super) fn apply_mutation_with_principal(

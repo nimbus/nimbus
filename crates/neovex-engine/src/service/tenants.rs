@@ -9,6 +9,18 @@ use crate::tenant::TenantRuntime;
 
 use super::Service;
 
+pub(in crate::service) fn with_tenant_runtime_operation<T, F>(
+    runtime: Arc<TenantRuntime>,
+    tenant_id: &TenantId,
+    task: F,
+) -> Result<T>
+where
+    F: FnOnce(Arc<TenantRuntime>) -> Result<T>,
+{
+    let _operation = runtime.enter_operation(tenant_id)?;
+    task(runtime)
+}
+
 impl Service {
     /// Creates a tenant explicitly.
     pub fn create_tenant(&self, tenant_id: TenantId) -> Result<()> {
@@ -136,16 +148,16 @@ impl Service {
 
     /// Verifies that a tenant exists.
     pub fn ensure_tenant_exists(&self, tenant_id: &TenantId) -> Result<()> {
-        let runtime = self.get_existing_tenant(tenant_id)?;
-        let _operation = runtime.enter_operation(tenant_id)?;
-        Ok(())
+        with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |_| Ok(()))
     }
 
     /// Verifies that a tenant exists asynchronously.
     pub async fn ensure_tenant_exists_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
-        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
-        let _operation = runtime.enter_operation(&tenant_id)?;
-        Ok(())
+        with_tenant_runtime_operation(
+            self.get_existing_tenant_async(&tenant_id).await?,
+            &tenant_id,
+            |_| Ok(()),
+        )
     }
 
     pub(super) fn get_existing_tenant(&self, tenant_id: &TenantId) -> Result<Arc<TenantRuntime>> {
