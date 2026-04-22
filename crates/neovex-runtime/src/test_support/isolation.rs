@@ -13,8 +13,48 @@ pub(crate) fn acquire_runtime_suite_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+pub(crate) struct RuntimeSuiteSubprocessLockGuard {
+    #[cfg(unix)]
+    file: std::fs::File,
+}
+
+fn acquire_runtime_suite_subprocess_lock() -> RuntimeSuiteSubprocessLockGuard {
+    #[cfg(unix)]
+    {
+        const LOCK_EX: i32 = 2;
+
+        unsafe extern "C" {
+            fn flock(fd: i32, operation: i32) -> i32;
+        }
+
+        // The isolated runtime tests spawn nested test binaries. Keep those
+        // subprocess runs serialized across the host so coverage and other
+        // multi-binary lanes do not overlap locker-sensitive V8 state.
+        let path = std::env::temp_dir().join("neovex-runtime-subprocess-suite.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("runtime subprocess suite lockfile should open");
+        let status = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
+        assert_eq!(
+            status, 0,
+            "runtime subprocess suite lock should acquire successfully"
+        );
+        RuntimeSuiteSubprocessLockGuard { file }
+    }
+
+    #[cfg(not(unix))]
+    {
+        RuntimeSuiteSubprocessLockGuard {}
+    }
+}
+
 pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeTestCase) {
     let _guard = acquire_runtime_suite_lock();
+    let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
     let status = std::process::Command::new(
         std::env::current_exe().expect("current test binary path should resolve"),
     )
@@ -26,7 +66,7 @@ pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeT
     .expect("isolated runtime test subprocess should launch");
     assert!(
         status.success(),
-        "{}",
+        "{} (exit status: {status})",
         case.failure_context("isolated runtime test subprocess should succeed")
     );
 }
@@ -81,6 +121,19 @@ pub(crate) fn acquire_snapshot_reset_test_lock() -> SnapshotResetTestLockGuard {
 
 #[cfg(unix)]
 impl Drop for SnapshotResetTestLockGuard {
+    fn drop(&mut self) {
+        const LOCK_UN: i32 = 8;
+
+        unsafe extern "C" {
+            fn flock(fd: i32, operation: i32) -> i32;
+        }
+
+        let _ = unsafe { flock(self.file.as_raw_fd(), LOCK_UN) };
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RuntimeSuiteSubprocessLockGuard {
     fn drop(&mut self) {
         const LOCK_UN: i32 = 8;
 
