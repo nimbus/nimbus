@@ -261,7 +261,7 @@ jobs:
     steps:
       - name: Create machine-os dispatch token
         id: release_app_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
