@@ -12,8 +12,7 @@ use crate::adapters::convex::host_bridge::{
 };
 use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet, normalize_principal_context};
 use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
-    invoke_runtime_bundle_on_worker_with_host_state,
+    RuntimeBundleInvocationOptions, invoke_runtime_bundle_on_worker_with_host_state,
 };
 use crate::service_registry::RuntimeServiceRegistry;
 
@@ -81,12 +80,11 @@ impl<'a> RuntimeInvocationContext<'a> {
             bridge.clone(),
             bundle,
             request,
-            RuntimeBundleInvocationOptions {
-                tenant_id: self.tenant_id,
-                server_request_id: server_request_id.as_deref(),
-                cancellation: Some(cancellation),
-                concurrency_mode: RuntimeConcurrencyMode::EnforcePolicyLimit,
-            },
+            RuntimeBundleInvocationOptions::enforcing_policy_limit(
+                self.tenant_id,
+                server_request_id.as_deref(),
+                Some(cancellation),
+            ),
             |bridge| bridge.snapshot_read_set(),
         )
         .await

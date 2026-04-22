@@ -23,6 +23,7 @@ pub use license::{
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
     LicenseStatus, LicenseUsageSnapshot,
 };
+use router::RouterBuildConfig;
 pub use router::{
     build_router, build_router_with_convex, build_router_with_convex_and_license,
     build_router_with_convex_and_license_and_sandbox_catalog,
@@ -37,12 +38,19 @@ pub use sandbox::{
 };
 pub use service_manager::SandboxServiceManager;
 
+async fn serve_with_router_config(
+    listener: tokio::net::TcpListener,
+    config: RouterBuildConfig,
+) -> std::io::Result<()> {
+    axum::serve(listener, config.build()).await
+}
+
 /// Runs the Neovex HTTP/WebSocket server on an existing listener.
 pub async fn serve(
     listener: tokio::net::TcpListener,
     service: Arc<Service>,
 ) -> std::io::Result<()> {
-    axum::serve(listener, build_router(service)).await
+    serve_with_router_config(listener, RouterBuildConfig::core(service)).await
 }
 
 /// Runs the Neovex HTTP/WebSocket server on an existing listener with an explicit license state.
@@ -51,7 +59,11 @@ pub async fn serve_with_license(
     service: Arc<Service>,
     license_state: LicenseState,
 ) -> std::io::Result<()> {
-    axum::serve(listener, build_router_with_license(service, license_state)).await
+    serve_with_router_config(
+        listener,
+        RouterBuildConfig::core(service).with_license(license_state),
+    )
+    .await
 }
 
 /// Runs the Neovex HTTP/WebSocket server on an existing listener with an
@@ -62,9 +74,11 @@ pub async fn serve_with_license_and_sandbox_catalog(
     license_state: LicenseState,
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> std::io::Result<()> {
-    axum::serve(
+    serve_with_router_config(
         listener,
-        build_router_with_license_and_sandbox_catalog(service, license_state, sandbox_catalog),
+        RouterBuildConfig::core(service)
+            .with_license(license_state)
+            .with_sandbox_catalog(sandbox_catalog),
     )
     .await
 }
@@ -75,11 +89,9 @@ pub async fn serve_with_convex(
     service: Arc<Service>,
     convex_registry: ConvexRegistry,
 ) -> std::io::Result<()> {
-    serve_with_convex_and_license(
+    serve_with_router_config(
         listener,
-        service,
-        convex_registry,
-        LicenseState::community(),
+        RouterBuildConfig::core(service).with_convex(convex_registry),
     )
     .await
 }
@@ -91,9 +103,11 @@ pub async fn serve_with_convex_and_license(
     convex_registry: ConvexRegistry,
     license_state: LicenseState,
 ) -> std::io::Result<()> {
-    axum::serve(
+    serve_with_router_config(
         listener,
-        build_router_with_convex_and_license(service, convex_registry, license_state),
+        RouterBuildConfig::core(service)
+            .with_convex(convex_registry)
+            .with_license(license_state),
     )
     .await
 }
@@ -108,14 +122,12 @@ pub async fn serve_with_convex_and_license_and_sandbox_service_manager(
     license_state: LicenseState,
     sandbox_service_manager: Arc<SandboxServiceManager>,
 ) -> std::io::Result<()> {
-    axum::serve(
+    serve_with_router_config(
         listener,
-        build_router_with_convex_and_license_and_sandbox_service_manager(
-            service,
-            convex_registry,
-            license_state,
-            sandbox_service_manager,
-        ),
+        RouterBuildConfig::core(service)
+            .with_convex(convex_registry)
+            .with_license(license_state)
+            .with_sandbox_service_manager(sandbox_service_manager),
     )
     .await
 }

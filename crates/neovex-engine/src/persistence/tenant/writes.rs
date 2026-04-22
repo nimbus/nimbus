@@ -6,23 +6,13 @@ impl TenantPersistence {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
-        match self {
-            Self::Redb(store) => store.apply_execution_unit_batch(writes, schedule_ops),
-            Self::Sqlite(store) => store.apply_execution_unit_batch(writes, schedule_ops),
-            Self::LibsqlReplica(store) => store.apply_execution_unit_batch(writes, schedule_ops),
-            Self::Postgres(store) => store.apply_execution_unit_batch(writes, schedule_ops),
-            Self::MySql(store) => store.apply_execution_unit_batch(writes, schedule_ops),
-        }
+        match_tenant_persistence!(self, |store| {
+            store.apply_execution_unit_batch(writes, schedule_ops)
+        })
     }
 
     pub(crate) fn insert(&self, document: &Document) -> Result<CommitEntry> {
-        match self {
-            Self::Redb(store) => store.insert(document),
-            Self::Sqlite(store) => store.insert(document),
-            Self::LibsqlReplica(store) => store.insert(document),
-            Self::Postgres(store) => store.insert(document),
-            Self::MySql(store) => store.insert(document),
-        }
+        match_tenant_persistence!(self, |store| store.insert(document))
     }
 
     pub(crate) fn insert_with_indexes(
@@ -30,13 +20,7 @@ impl TenantPersistence {
         document: &Document,
         indexes: &[neovex_core::IndexDefinition],
     ) -> Result<CommitEntry> {
-        match self {
-            Self::Redb(store) => store.insert_with_indexes(document, indexes),
-            Self::Sqlite(store) => store.insert_with_indexes(document, indexes),
-            Self::LibsqlReplica(store) => store.insert_with_indexes(document, indexes),
-            Self::Postgres(store) => store.insert_with_indexes(document, indexes),
-            Self::MySql(store) => store.insert_with_indexes(document, indexes),
-        }
+        match_tenant_persistence!(self, |store| store.insert_with_indexes(document, indexes))
     }
 
     pub(crate) fn insert_once(
@@ -44,13 +28,7 @@ impl TenantPersistence {
         document: &Document,
         execution_id: Option<&str>,
     ) -> Result<Option<CommitEntry>> {
-        match self {
-            Self::Redb(store) => store.insert_once(document, execution_id),
-            Self::Sqlite(store) => store.insert_once(document, execution_id),
-            Self::LibsqlReplica(store) => store.insert_once(document, execution_id),
-            Self::Postgres(store) => store.insert_once(document, execution_id),
-            Self::MySql(store) => store.insert_once(document, execution_id),
-        }
+        match_tenant_persistence!(self, |store| store.insert_once(document, execution_id))
     }
 
     pub(crate) fn insert_with_indexes_once(
@@ -59,17 +37,9 @@ impl TenantPersistence {
         indexes: &[neovex_core::IndexDefinition],
         execution_id: Option<&str>,
     ) -> Result<Option<CommitEntry>> {
-        match self {
-            Self::Redb(store) => store.insert_with_indexes_once(document, indexes, execution_id),
-            Self::Sqlite(store) => store.insert_with_indexes_once(document, indexes, execution_id),
-            Self::LibsqlReplica(store) => {
-                store.insert_with_indexes_once(document, indexes, execution_id)
-            }
-            Self::Postgres(store) => {
-                store.insert_with_indexes_once(document, indexes, execution_id)
-            }
-            Self::MySql(store) => store.insert_with_indexes_once(document, indexes, execution_id),
-        }
+        match_tenant_persistence!(self, |store| {
+            store.insert_with_indexes_once(document, indexes, execution_id)
+        })
     }
 
     pub(crate) fn update_validated<F>(
@@ -82,13 +52,9 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => store.update_validated(table, id, patch, validate),
-            Self::Sqlite(store) => store.update_validated(table, id, patch, validate),
-            Self::LibsqlReplica(store) => store.update_validated(table, id, patch, validate),
-            Self::Postgres(store) => store.update_validated(table, id, patch, validate),
-            Self::MySql(store) => store.update_validated(table, id, patch, validate),
-        }
+        match_tenant_persistence!(self, |store| {
+            store.update_validated(table, id, patch, validate)
+        })
     }
 
     pub(crate) fn update_validated_once<F>(
@@ -102,23 +68,9 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => {
-                store.update_validated_once(table, id, patch, execution_id, validate)
-            }
-            Self::Sqlite(store) => {
-                store.update_validated_once(table, id, patch, execution_id, validate)
-            }
-            Self::LibsqlReplica(store) => {
-                store.update_validated_once(table, id, patch, execution_id, validate)
-            }
-            Self::Postgres(store) => {
-                store.update_validated_once(table, id, patch, execution_id, validate)
-            }
-            Self::MySql(store) => {
-                store.update_validated_once(table, id, patch, execution_id, validate)
-            }
-        }
+        match_tenant_persistence!(self, |store| {
+            store.update_validated_once(table, id, patch, execution_id, validate)
+        })
     }
 
     pub(crate) fn update_with_indexes_validated<F>(
@@ -132,23 +84,9 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => {
-                store.update_with_indexes_validated(table, id, patch, indexes, validate)
-            }
-            Self::Sqlite(store) => {
-                store.update_with_indexes_validated(table, id, patch, indexes, validate)
-            }
-            Self::LibsqlReplica(store) => {
-                store.update_with_indexes_validated(table, id, patch, indexes, validate)
-            }
-            Self::Postgres(store) => {
-                store.update_with_indexes_validated(table, id, patch, indexes, validate)
-            }
-            Self::MySql(store) => {
-                store.update_with_indexes_validated(table, id, patch, indexes, validate)
-            }
-        }
+        match_tenant_persistence!(self, |store| {
+            store.update_with_indexes_validated(table, id, patch, indexes, validate)
+        })
     }
 
     pub(crate) fn update_with_indexes_validated_once<F>(
@@ -163,48 +101,16 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => store.update_with_indexes_validated_once(
+        match_tenant_persistence!(self, |store| {
+            store.update_with_indexes_validated_once(
                 table,
                 id,
                 patch,
                 indexes,
                 execution_id,
                 validate,
-            ),
-            Self::Sqlite(store) => store.update_with_indexes_validated_once(
-                table,
-                id,
-                patch,
-                indexes,
-                execution_id,
-                validate,
-            ),
-            Self::LibsqlReplica(store) => store.update_with_indexes_validated_once(
-                table,
-                id,
-                patch,
-                indexes,
-                execution_id,
-                validate,
-            ),
-            Self::Postgres(store) => store.update_with_indexes_validated_once(
-                table,
-                id,
-                patch,
-                indexes,
-                execution_id,
-                validate,
-            ),
-            Self::MySql(store) => store.update_with_indexes_validated_once(
-                table,
-                id,
-                patch,
-                indexes,
-                execution_id,
-                validate,
-            ),
-        }
+            )
+        })
     }
 
     pub(crate) fn delete_validated_returning_document<F>(
@@ -216,15 +122,9 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => store.delete_validated_returning_document(table, id, validate),
-            Self::Sqlite(store) => store.delete_validated_returning_document(table, id, validate),
-            Self::LibsqlReplica(store) => {
-                store.delete_validated_returning_document(table, id, validate)
-            }
-            Self::Postgres(store) => store.delete_validated_returning_document(table, id, validate),
-            Self::MySql(store) => store.delete_validated_returning_document(table, id, validate),
-        }
+        match_tenant_persistence!(self, |store| {
+            store.delete_validated_returning_document(table, id, validate)
+        })
     }
 
     pub(crate) fn delete_validated_once<F>(
@@ -237,15 +137,9 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => store.delete_validated_once(table, id, execution_id, validate),
-            Self::Sqlite(store) => store.delete_validated_once(table, id, execution_id, validate),
-            Self::LibsqlReplica(store) => {
-                store.delete_validated_once(table, id, execution_id, validate)
-            }
-            Self::Postgres(store) => store.delete_validated_once(table, id, execution_id, validate),
-            Self::MySql(store) => store.delete_validated_once(table, id, execution_id, validate),
-        }
+        match_tenant_persistence!(self, |store| {
+            store.delete_validated_once(table, id, execution_id, validate)
+        })
     }
 
     pub(crate) fn delete_with_indexes_validated_returning_document<F>(
@@ -258,23 +152,9 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => {
-                store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
-            }
-            Self::Sqlite(store) => {
-                store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
-            }
-            Self::LibsqlReplica(store) => {
-                store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
-            }
-            Self::Postgres(store) => {
-                store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
-            }
-            Self::MySql(store) => {
-                store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
-            }
-        }
+        match_tenant_persistence!(self, |store| {
+            store.delete_with_indexes_validated_returning_document(table, id, indexes, validate)
+        })
     }
 
     pub(crate) fn delete_with_indexes_validated_once<F>(
@@ -288,22 +168,8 @@ impl TenantPersistence {
     where
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
-        match self {
-            Self::Redb(store) => {
-                store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
-            }
-            Self::Sqlite(store) => {
-                store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
-            }
-            Self::LibsqlReplica(store) => {
-                store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
-            }
-            Self::Postgres(store) => {
-                store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
-            }
-            Self::MySql(store) => {
-                store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
-            }
-        }
+        match_tenant_persistence!(self, |store| {
+            store.delete_with_indexes_validated_once(table, id, indexes, execution_id, validate)
+        })
     }
 }

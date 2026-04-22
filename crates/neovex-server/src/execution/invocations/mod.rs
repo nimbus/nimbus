@@ -23,6 +23,34 @@ pub(crate) struct RuntimeBundleInvocationOptions<'a> {
     pub(crate) concurrency_mode: RuntimeConcurrencyMode,
 }
 
+impl<'a> RuntimeBundleInvocationOptions<'a> {
+    pub(crate) fn enforcing_policy_limit(
+        tenant_id: &'a TenantId,
+        server_request_id: Option<&'a str>,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            server_request_id,
+            cancellation,
+            concurrency_mode: RuntimeConcurrencyMode::EnforcePolicyLimit,
+        }
+    }
+
+    pub(crate) fn bypassing_policy_limit(
+        tenant_id: &'a TenantId,
+        server_request_id: Option<&'a str>,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            server_request_id,
+            cancellation,
+            concurrency_mode: RuntimeConcurrencyMode::BypassPolicyLimit,
+        }
+    }
+}
+
 pub(crate) fn next_runtime_server_request_id(prefix: &str) -> String {
     static NEXT_RUNTIME_SERVER_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
     format!(

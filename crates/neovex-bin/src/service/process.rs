@@ -1,19 +1,40 @@
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use neovex::Error;
+use neovex::{Error, SandboxStatus, TenantId};
 use neovex_sandbox::backends::krun::KrunSandboxStateView;
+use serde::Serialize;
 
 use crate::machine::MachineApiClient;
 
 use super::{
-    ServiceHostPlatform, ServiceProcessRow, ServiceProcessSnapshot, ServicePsCommand,
-    load_compose_project_context, lookup_current_remote_service_details,
-    machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
+    ServiceHostPlatform, ServicePsCommand, load_compose_project_context,
+    lookup_current_remote_service_details, machine_api_operation_error,
+    missing_persisted_service_error, render_state_lookup_error,
     require_krun_backend_for_service_operation, resolve_service_execution_surface,
     validate_forwarded_machine_api_operations,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct ServiceProcessSnapshot {
+    pub(super) sandbox_id: neovex::SandboxId,
+    pub(super) tenant_id: TenantId,
+    pub(super) service_name: String,
+    pub(super) status: SandboxStatus,
+    pub(super) runtime_pidfile: PathBuf,
+    pub(super) conmon_pidfile: PathBuf,
+    pub(super) runtime_pid: Option<u32>,
+    pub(super) conmon_pid: Option<u32>,
+    pub(super) process_rows: Vec<ServiceProcessRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct ServiceProcessRow {
+    pub(super) pid: u32,
+    pub(super) ppid: u32,
+    pub(super) command: String,
+}
 
 pub(super) fn resolve_service_process_snapshot(
     command: &ServicePsCommand,

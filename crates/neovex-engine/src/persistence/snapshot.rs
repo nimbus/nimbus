@@ -16,35 +16,11 @@ pub(crate) enum TenantPersistenceSnapshot {
 
 impl TenantPersistenceSnapshot {
     pub(crate) fn applied_sequence(&self) -> Result<SequenceNumber> {
-        match self {
-            Self::Redb(snapshot) => snapshot.applied_sequence(),
-            Self::Sqlite(snapshot) => snapshot
-                .lock()
-                .expect("sqlite read snapshot lock should not be poisoned")
-                .applied_sequence(),
-            Self::LibsqlReplica(snapshot) => snapshot
-                .lock()
-                .expect("sqlite read snapshot lock should not be poisoned")
-                .applied_sequence(),
-            Self::Postgres(snapshot) => snapshot.applied_sequence(),
-            Self::MySql(snapshot) => snapshot.applied_sequence(),
-        }
+        match_tenant_persistence_snapshot!(self, |snapshot| snapshot.applied_sequence())
     }
 
     pub(crate) fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
-        match self {
-            Self::Redb(snapshot) => snapshot.get(table, id),
-            Self::Sqlite(snapshot) => snapshot
-                .lock()
-                .expect("sqlite read snapshot lock should not be poisoned")
-                .get(table, id),
-            Self::LibsqlReplica(snapshot) => snapshot
-                .lock()
-                .expect("sqlite read snapshot lock should not be poisoned")
-                .get(table, id),
-            Self::Postgres(snapshot) => snapshot.get(table, id),
-            Self::MySql(snapshot) => snapshot.get(table, id),
-        }
+        match_tenant_persistence_snapshot!(self, |snapshot| snapshot.get(table, id))
     }
 
     pub(crate) fn scan_table_matching_cancellable<F>(
@@ -56,40 +32,13 @@ impl TenantPersistenceSnapshot {
     where
         F: FnMut(&Document) -> Result<bool>,
     {
-        match self {
-            Self::Redb(snapshot) => {
-                snapshot.scan_table_matching_cancellable(table, check_cancel, include_document)
-            }
-            Self::Sqlite(snapshot) => snapshot
-                .lock()
-                .expect("sqlite read snapshot lock should not be poisoned")
-                .scan_table_matching_with_filters_cancellable(
-                    table,
-                    &[],
-                    check_cancel,
-                    include_document,
-                ),
-            Self::LibsqlReplica(snapshot) => snapshot
-                .lock()
-                .expect("sqlite read snapshot lock should not be poisoned")
-                .scan_table_matching_with_filters_cancellable(
-                    table,
-                    &[],
-                    check_cancel,
-                    include_document,
-                ),
-            Self::Postgres(snapshot) => snapshot.scan_table_matching_with_filters_cancellable(
+        match_tenant_persistence_snapshot!(self, |snapshot| {
+            snapshot.scan_table_matching_with_filters_cancellable(
                 table,
                 &[],
                 check_cancel,
                 include_document,
-            ),
-            Self::MySql(snapshot) => snapshot.scan_table_matching_with_filters_cancellable(
-                table,
-                &[],
-                check_cancel,
-                include_document,
-            ),
-        }
+            )
+        })
     }
 }

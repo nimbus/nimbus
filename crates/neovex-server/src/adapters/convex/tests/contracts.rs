@@ -40,3 +40,27 @@ fn convex_host_request_rejects_unknown_operation_names_during_deserialization() 
     .expect_err("unknown runtime host operations should fail to deserialize");
     assert!(error.to_string().contains("unknown variant"));
 }
+
+#[test]
+fn convex_host_operations_classify_into_concept_owned_families() {
+    assert_eq!(
+        ConvexHostCallOperation::from(HostCallOperation::CtxQuery).family(),
+        ConvexHostCallFamily::Function
+    );
+    assert_eq!(
+        ConvexHostCallOperation::from(HostCallOperation::CtxDbQueryStart).family(),
+        ConvexHostCallFamily::QueryBuilder
+    );
+    assert_eq!(
+        ConvexHostCallOperation::from(HostCallOperation::CtxDbQueryTake).family(),
+        ConvexHostCallFamily::QueryRead
+    );
+    assert_eq!(
+        ConvexHostCallOperation::from(HostCallOperation::CtxDbInsert).family(),
+        ConvexHostCallFamily::Document
+    );
+    assert_eq!(
+        ConvexHostCallOperation::from(HostCallOperation::CtxSchedulerRunAfter).family(),
+        ConvexHostCallFamily::Scheduler
+    );
+}

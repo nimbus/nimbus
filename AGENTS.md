@@ -37,8 +37,14 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` after the three docs above.
   Open
+  `docs/plans/archive/codebase-architecture-and-maintainability-plan.md`
+  only when a task needs the latest completed repo-wide architecture and
+  maintainability wave's execution detail, closeout verification bundle, or
+  governance baseline for provider capability cleanup, sync/async/cancellable
+  flow convergence, typed server build pipelines, host-call family ownership,
+  service command ownership, and architecture-doc packaging. Open
   `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
-  when a task needs the latest completed repo-wide maintainability wave's
+  only when a task needs the latest completed repo-wide maintainability wave's
   execution detail, closeout verification bundle, or governance baseline for
   thin roots, concept-owned naming, helper-bucket avoidance, threshold
   exceptions, and wrapper-first JS compatibility guidance. Open
@@ -102,8 +108,14 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` immediately after those three
   docs. Open
+  `docs/plans/archive/codebase-architecture-and-maintainability-plan.md`
+  only when you need the latest completed repo-wide architecture and
+  maintainability wave's execution record, closeout verification bundle, or
+  governance baseline for provider capability cleanup, sync/async/cancellable
+  flow convergence, typed server build pipelines, host-call family ownership,
+  service command ownership, and architecture-doc packaging. Open
   `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
-  when you need the latest completed repo-wide maintainability wave's
+  only when you need the latest completed repo-wide maintainability wave's
   execution record, closeout verification bundle, or governance baseline for
   thin roots, concept-owned naming, helper-bucket avoidance, threshold
   exceptions, and wrapper-first JS compatibility guidance. Open
@@ -224,7 +236,9 @@ These are architecture invariants — do not violate them:
 
 ### Mutation path
 
-Every mutation — HTTP, WebSocket, scheduler, or V8 runtime — flows through `Service::apply_mutation`. There is no separate code path. Do not create one.
+Every mutation — HTTP, WebSocket, scheduler, or V8 runtime — flows through the
+engine-owned mutation path (`apply_mutation_with_mode*` plus the queued journal
+path). There is no separate code path. Do not create one.
 
 ### Storage atomicity
 

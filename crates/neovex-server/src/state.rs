@@ -13,6 +13,13 @@ use crate::adapters::convex::ConvexRegistry;
 use crate::license::LicenseState;
 use crate::service_registry::RuntimeServiceRegistry;
 
+pub(crate) struct AppStateConfig {
+    pub(crate) service: Arc<Service>,
+    pub(crate) convex_registry: Option<ConvexRegistry>,
+    pub(crate) license_state: LicenseState,
+    pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+}
+
 /// Shared application state.
 pub(crate) struct AppState {
     pub(crate) service: Arc<Service>,
@@ -22,28 +29,16 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    pub(crate) fn with_license_state_and_runtime_service_registry(
-        service: Arc<Service>,
-        license_state: LicenseState,
-        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    ) -> Self {
-        Self {
+    pub(crate) fn from_config(config: AppStateConfig) -> Self {
+        let AppStateConfig {
             service,
-            convex_registry: None,
-            license_state: Arc::new(license_state),
+            convex_registry,
+            license_state,
             runtime_service_registry,
-        }
-    }
-
-    pub(crate) fn with_convex_registry_and_license_state_and_runtime_service_registry(
-        service: Arc<Service>,
-        convex_registry: ConvexRegistry,
-        license_state: LicenseState,
-        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    ) -> Self {
+        } = config;
         Self {
             service,
-            convex_registry: Some(Arc::new(convex_registry)),
+            convex_registry: convex_registry.map(Arc::new),
             license_state: Arc::new(license_state),
             runtime_service_registry,
         }

@@ -10,8 +10,7 @@ use crate::adapters::convex::host_bridge::{
 };
 use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet, normalize_principal_context};
 use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, RuntimeConcurrencyMode,
-    invoke_runtime_bundle_blocking_with_host_state,
+    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
 use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
 
@@ -79,12 +78,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
         bridge.clone(),
         bundle,
         request,
-        RuntimeBundleInvocationOptions {
-            tenant_id,
-            server_request_id: None,
-            cancellation: Some(cancellation),
-            concurrency_mode: RuntimeConcurrencyMode::EnforcePolicyLimit,
-        },
+        RuntimeBundleInvocationOptions::enforcing_policy_limit(tenant_id, None, Some(cancellation)),
         |bridge| bridge.snapshot_read_set(),
     )
     .map_err(runtime_error_to_core)?;

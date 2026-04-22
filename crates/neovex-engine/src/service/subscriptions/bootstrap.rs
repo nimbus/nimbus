@@ -7,6 +7,7 @@ use neovex_core::{
     policy_revision_id,
 };
 
+use crate::persistence::TenantPersistenceSnapshot;
 use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation, TenantRuntime};
 
 use super::super::queries::{
@@ -64,8 +65,7 @@ pub(super) fn evaluate_subscription_bootstrap_cancellable_for_principal(
     } else {
         let schema = runtime.schema();
         let snapshot = runtime.store.read_snapshot()?;
-        let covered_sequence = snapshot.applied_sequence()?;
-        let (plan_kind, documents) = query_documents_for_snapshot_and_principal_cancellable(
+        let (plan_kind, result) = evaluate_subscription_bootstrap_with_snapshot_for_principal(
             &snapshot,
             query,
             schema.get_table(&query.table),
@@ -73,10 +73,7 @@ pub(super) fn evaluate_subscription_bootstrap_cancellable_for_principal(
             check_cancel,
         )?;
         runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
-        SubscriptionBootstrapResult {
-            documents,
-            covered_sequence,
-        }
+        result
     };
     Ok((result.documents, result.covered_sequence))
 }
@@ -161,22 +158,13 @@ where
                 },
                 move |store, check_cancel| {
                     let snapshot = store.read_snapshot()?;
-                    let covered_sequence = snapshot.applied_sequence()?;
-                    let (plan_kind, documents) =
-                        query_documents_for_snapshot_and_principal_cancellable(
-                            &snapshot,
-                            &query_for_task,
-                            table_schema.as_ref(),
-                            &principal_for_task,
-                            check_cancel,
-                        )?;
-                    Ok((
-                        plan_kind,
-                        SubscriptionBootstrapResult {
-                            documents,
-                            covered_sequence,
-                        },
-                    ))
+                    evaluate_subscription_bootstrap_with_snapshot_for_principal(
+                        &snapshot,
+                        &query_for_task,
+                        table_schema.as_ref(),
+                        &principal_for_task,
+                        check_cancel,
+                    )
                 },
             )
             .await?;
@@ -251,4 +239,28 @@ where
         )?,
         covered_sequence: snapshot.covered_sequence(),
     }))
+}
+
+fn evaluate_subscription_bootstrap_with_snapshot_for_principal(
+    snapshot: &TenantPersistenceSnapshot,
+    query: &Query,
+    table_schema: Option<&TableSchema>,
+    principal: &PrincipalContext,
+    check_cancel: &mut dyn FnMut() -> Result<()>,
+) -> Result<(QueryPlanMetricKind, SubscriptionBootstrapResult)> {
+    let covered_sequence = snapshot.applied_sequence()?;
+    let (plan_kind, documents) = query_documents_for_snapshot_and_principal_cancellable(
+        snapshot,
+        query,
+        table_schema,
+        principal,
+        check_cancel,
+    )?;
+    Ok((
+        plan_kind,
+        SubscriptionBootstrapResult {
+            documents,
+            covered_sequence,
+        },
+    ))
 }

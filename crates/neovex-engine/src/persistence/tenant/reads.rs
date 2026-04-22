@@ -28,13 +28,7 @@ impl TenantPersistence {
     }
 
     pub(crate) fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
-        match self {
-            Self::Redb(store) => store.get(table, id),
-            Self::Sqlite(store) => store.get(table, id),
-            Self::LibsqlReplica(store) => store.get(table, id),
-            Self::Postgres(store) => store.get(table, id),
-            Self::MySql(store) => store.get(table, id),
-        }
+        match_tenant_persistence!(self, |store| store.get(table, id))
     }
 
     pub(crate) fn libsql_replica_freshness_stats(&self) -> Option<LibsqlReplicaFreshnessStats> {
@@ -53,22 +47,8 @@ impl TenantPersistence {
     where
         F: FnMut(&Document) -> Result<bool>,
     {
-        match self {
-            Self::Redb(store) => {
-                store.scan_table_matching_cancellable(table, check_cancel, include_document)
-            }
-            Self::Sqlite(store) => {
-                store.scan_table_matching_cancellable(table, check_cancel, include_document)
-            }
-            Self::LibsqlReplica(store) => {
-                store.scan_table_matching_cancellable(table, check_cancel, include_document)
-            }
-            Self::Postgres(store) => {
-                store.scan_table_matching_cancellable(table, check_cancel, include_document)
-            }
-            Self::MySql(store) => {
-                store.scan_table_matching_cancellable(table, check_cancel, include_document)
-            }
-        }
+        match_tenant_persistence!(self, |store| {
+            store.scan_table_matching_cancellable(table, check_cancel, include_document)
+        })
     }
 }

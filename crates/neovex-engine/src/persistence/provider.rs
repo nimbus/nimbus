@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use neovex_core::{Error, Result, TenantId};
+use neovex_core::{Result, TenantId};
 use neovex_storage::{
     EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
     LibsqlReplicaProvider, MySqlProvider, OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant,
@@ -23,172 +23,200 @@ pub(crate) struct OpenedTenantPersistence {
     pub executor: TenantPersistenceExecutor,
 }
 
+trait OpenedTenantProvider {
+    type OpenedTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant>;
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>>;
+}
+
 impl PersistenceProvider {
     pub(crate) async fn list_tenants(&self) -> Result<Vec<TenantId>> {
-        match self {
-            Self::Redb(engine) => engine.list_tenants().await,
-            Self::Sqlite(engine) => engine.list_tenants().await,
-            Self::LibsqlReplica(engine) => engine.list_tenants().await,
-            Self::Postgres(engine) => engine.list_tenants().await,
-            Self::MySql(engine) => engine.list_tenants().await,
-        }
+        match_persistence_provider!(self, |provider| provider.list_tenants().await)
     }
 
     pub(crate) async fn create_tenant(
         &self,
         tenant_id: &TenantId,
     ) -> Result<OpenedTenantPersistence> {
-        match self {
-            Self::Redb(engine) => map_opened_redb_tenant(engine.create_tenant(tenant_id).await),
-            Self::Sqlite(engine) => map_opened_sqlite_tenant(engine.create_tenant(tenant_id).await),
-            Self::LibsqlReplica(engine) => {
-                map_opened_libsql_replica_tenant(engine.create_opened_tenant(tenant_id).await)
-            }
-            Self::Postgres(engine) => {
-                map_opened_postgres_tenant(engine.create_opened_tenant(tenant_id).await)
-            }
-            Self::MySql(engine) => {
-                map_opened_mysql_tenant(engine.create_opened_tenant(tenant_id).await)
-            }
-        }
+        match_persistence_provider!(self, |provider| {
+            create_opened_tenant(provider.as_ref(), tenant_id).await
+        })
     }
 
     pub(crate) async fn open_existing_tenant(
         &self,
         tenant_id: &TenantId,
     ) -> Result<Option<OpenedTenantPersistence>> {
-        match self {
-            Self::Redb(engine) => engine
-                .open_existing_tenant(tenant_id)
-                .await
-                .map(|opened| opened.map(map_opened_redb_tenant_sync)),
-            Self::Sqlite(engine) => engine
-                .open_existing_tenant(tenant_id)
-                .await
-                .map(|opened| opened.map(map_opened_sqlite_tenant_sync)),
-            Self::LibsqlReplica(engine) => engine
-                .open_existing_opened_tenant(tenant_id)
-                .await
-                .map(|opened| opened.map(map_opened_libsql_replica_tenant_sync)),
-            Self::Postgres(engine) => engine
-                .open_existing_opened_tenant(tenant_id)
-                .await
-                .map(|opened| opened.map(map_opened_postgres_tenant_sync)),
-            Self::MySql(engine) => engine
-                .open_existing_opened_tenant(tenant_id)
-                .await
-                .map(|opened| opened.map(map_opened_mysql_tenant_sync)),
-        }
+        match_persistence_provider!(self, |provider| {
+            open_existing_opened_tenant(provider.as_ref(), tenant_id).await
+        })
     }
 
     pub(crate) async fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
-        match self {
-            Self::Redb(engine) => engine.delete_tenant(tenant_id).await,
-            Self::Sqlite(engine) => engine.delete_tenant(tenant_id).await,
-            Self::LibsqlReplica(engine) => engine.delete_tenant(tenant_id).await,
-            Self::Postgres(engine) => engine.delete_tenant(tenant_id).await,
-            Self::MySql(engine) => engine.delete_tenant(tenant_id).await,
-        }
+        match_persistence_provider!(self, |provider| provider.delete_tenant(tenant_id).await)
     }
 
     pub(crate) async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
-        match self {
-            Self::Redb(engine) => engine.tenant_exists(tenant_id).await,
-            Self::Sqlite(engine) => engine.tenant_exists(tenant_id).await,
-            Self::LibsqlReplica(engine) => engine.tenant_exists(tenant_id).await,
-            Self::Postgres(engine) => engine.tenant_exists(tenant_id).await,
-            Self::MySql(engine) => engine.tenant_exists(tenant_id).await,
-        }
+        match_persistence_provider!(self, |provider| provider.tenant_exists(tenant_id).await)
     }
 
     pub(crate) fn read_storage_for_store(
         &self,
         store: TenantPersistence,
     ) -> Result<TenantPersistenceExecutor> {
-        match (self, store) {
-            (Self::Redb(engine), TenantPersistence::Redb(store)) => Ok(
-                TenantPersistenceExecutor::Redb(engine.read_storage_for_store(store)),
-            ),
-            (Self::Sqlite(engine), TenantPersistence::Sqlite(store)) => Ok(
-                TenantPersistenceExecutor::Sqlite(engine.read_storage_for_store(store)),
-            ),
-            (Self::LibsqlReplica(engine), TenantPersistence::LibsqlReplica(store)) => Ok(
-                TenantPersistenceExecutor::LibsqlReplica(engine.read_storage_for_store(store)),
-            ),
-            (Self::Postgres(engine), TenantPersistence::Postgres(store)) => Ok(
-                TenantPersistenceExecutor::Postgres(engine.read_storage_for_store(store)),
-            ),
-            (Self::MySql(engine), TenantPersistence::MySql(store)) => Ok(
-                TenantPersistenceExecutor::MySql(engine.read_storage_for_store(store)),
-            ),
-            _ => Err(Error::Internal(
-                "persistence provider and tenant persistence mismatch".to_string(),
-            )),
+        store.read_storage_for_provider(self)
+    }
+}
+
+async fn create_opened_tenant<P>(
+    provider: &P,
+    tenant_id: &TenantId,
+) -> Result<OpenedTenantPersistence>
+where
+    P: OpenedTenantProvider + ?Sized,
+    OpenedTenantPersistence: From<P::OpenedTenant>,
+{
+    provider
+        .create_opened_tenant(tenant_id)
+        .await
+        .map(Into::into)
+}
+
+async fn open_existing_opened_tenant<P>(
+    provider: &P,
+    tenant_id: &TenantId,
+) -> Result<Option<OpenedTenantPersistence>>
+where
+    P: OpenedTenantProvider + ?Sized,
+    OpenedTenantPersistence: From<P::OpenedTenant>,
+{
+    provider
+        .open_existing_opened_tenant(tenant_id)
+        .await
+        .map(|opened| opened.map(Into::into))
+}
+
+impl OpenedTenantProvider for EmbeddedRedbProvider {
+    type OpenedTenant = OpenedEmbeddedRedbTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
+        self.create_tenant(tenant_id).await
+    }
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>> {
+        self.open_existing_tenant(tenant_id).await
+    }
+}
+
+impl OpenedTenantProvider for EmbeddedSqliteProvider {
+    type OpenedTenant = OpenedEmbeddedSqliteTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
+        self.create_tenant(tenant_id).await
+    }
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>> {
+        self.open_existing_tenant(tenant_id).await
+    }
+}
+
+impl OpenedTenantProvider for LibsqlReplicaProvider {
+    type OpenedTenant = OpenedLibsqlReplicaTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
+        LibsqlReplicaProvider::create_opened_tenant(self, tenant_id).await
+    }
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>> {
+        LibsqlReplicaProvider::open_existing_opened_tenant(self, tenant_id).await
+    }
+}
+
+impl OpenedTenantProvider for PostgresProvider {
+    type OpenedTenant = OpenedPostgresTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
+        PostgresProvider::create_opened_tenant(self, tenant_id).await
+    }
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>> {
+        PostgresProvider::open_existing_opened_tenant(self, tenant_id).await
+    }
+}
+
+impl OpenedTenantProvider for MySqlProvider {
+    type OpenedTenant = OpenedMySqlTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
+        MySqlProvider::create_opened_tenant(self, tenant_id).await
+    }
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>> {
+        MySqlProvider::open_existing_opened_tenant(self, tenant_id).await
+    }
+}
+
+impl From<OpenedEmbeddedRedbTenant> for OpenedTenantPersistence {
+    fn from(opened: OpenedEmbeddedRedbTenant) -> Self {
+        Self {
+            persistence: TenantPersistence::Redb(opened.store),
+            executor: TenantPersistenceExecutor::Redb(opened.read_storage),
         }
     }
 }
 
-fn map_opened_redb_tenant(
-    result: Result<OpenedEmbeddedRedbTenant>,
-) -> Result<OpenedTenantPersistence> {
-    result.map(map_opened_redb_tenant_sync)
-}
-
-fn map_opened_redb_tenant_sync(opened: OpenedEmbeddedRedbTenant) -> OpenedTenantPersistence {
-    OpenedTenantPersistence {
-        persistence: TenantPersistence::Redb(opened.store),
-        executor: TenantPersistenceExecutor::Redb(opened.read_storage),
+impl From<OpenedEmbeddedSqliteTenant> for OpenedTenantPersistence {
+    fn from(opened: OpenedEmbeddedSqliteTenant) -> Self {
+        Self {
+            persistence: TenantPersistence::Sqlite(opened.store),
+            executor: TenantPersistenceExecutor::Sqlite(opened.read_storage),
+        }
     }
 }
 
-fn map_opened_sqlite_tenant(
-    result: Result<OpenedEmbeddedSqliteTenant>,
-) -> Result<OpenedTenantPersistence> {
-    result.map(map_opened_sqlite_tenant_sync)
-}
-
-fn map_opened_sqlite_tenant_sync(opened: OpenedEmbeddedSqliteTenant) -> OpenedTenantPersistence {
-    OpenedTenantPersistence {
-        persistence: TenantPersistence::Sqlite(opened.store),
-        executor: TenantPersistenceExecutor::Sqlite(opened.read_storage),
+impl From<OpenedLibsqlReplicaTenant> for OpenedTenantPersistence {
+    fn from(opened: OpenedLibsqlReplicaTenant) -> Self {
+        Self {
+            persistence: TenantPersistence::LibsqlReplica(opened.store),
+            executor: TenantPersistenceExecutor::LibsqlReplica(opened.read_storage),
+        }
     }
 }
 
-fn map_opened_libsql_replica_tenant(
-    result: Result<OpenedLibsqlReplicaTenant>,
-) -> Result<OpenedTenantPersistence> {
-    result.map(map_opened_libsql_replica_tenant_sync)
-}
-
-fn map_opened_libsql_replica_tenant_sync(
-    opened: OpenedLibsqlReplicaTenant,
-) -> OpenedTenantPersistence {
-    OpenedTenantPersistence {
-        persistence: TenantPersistence::LibsqlReplica(opened.store),
-        executor: TenantPersistenceExecutor::LibsqlReplica(opened.read_storage),
+impl From<OpenedPostgresTenant> for OpenedTenantPersistence {
+    fn from(opened: OpenedPostgresTenant) -> Self {
+        Self {
+            persistence: TenantPersistence::Postgres(opened.store),
+            executor: TenantPersistenceExecutor::Postgres(opened.read_storage),
+        }
     }
 }
 
-fn map_opened_postgres_tenant(
-    result: Result<OpenedPostgresTenant>,
-) -> Result<OpenedTenantPersistence> {
-    result.map(map_opened_postgres_tenant_sync)
-}
-
-fn map_opened_postgres_tenant_sync(opened: OpenedPostgresTenant) -> OpenedTenantPersistence {
-    OpenedTenantPersistence {
-        persistence: TenantPersistence::Postgres(opened.store),
-        executor: TenantPersistenceExecutor::Postgres(opened.read_storage),
-    }
-}
-
-fn map_opened_mysql_tenant(result: Result<OpenedMySqlTenant>) -> Result<OpenedTenantPersistence> {
-    result.map(map_opened_mysql_tenant_sync)
-}
-
-fn map_opened_mysql_tenant_sync(opened: OpenedMySqlTenant) -> OpenedTenantPersistence {
-    OpenedTenantPersistence {
-        persistence: TenantPersistence::MySql(opened.store),
-        executor: TenantPersistenceExecutor::MySql(opened.read_storage),
+impl From<OpenedMySqlTenant> for OpenedTenantPersistence {
+    fn from(opened: OpenedMySqlTenant) -> Self {
+        Self {
+            persistence: TenantPersistence::MySql(opened.store),
+            executor: TenantPersistenceExecutor::MySql(opened.read_storage),
+        }
     }
 }
