@@ -1,6 +1,7 @@
 use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_paths() {
     with_postgres_service_config(|service_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-tenant").expect("tenant id should build");
@@ -80,6 +81,7 @@ async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_pa
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops() {
     with_postgres_service_config(|service_config, _provider_config| async move {
         let service = Arc::new(
@@ -186,6 +188,7 @@ async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_tenant_delete_recreate_cleans_schema_and_runtime_state() {
     with_postgres_service_config(|service_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-tenant-delete").expect("tenant id should build");

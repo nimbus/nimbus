@@ -1,6 +1,7 @@
 use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
     with_shared_postgres_service_configs(
         |service_config_a, service_config_b, _provider_config| async move {
@@ -92,6 +93,7 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
     with_postgres_service_config(|service_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-restart-scheduler").expect("tenant id should build");
