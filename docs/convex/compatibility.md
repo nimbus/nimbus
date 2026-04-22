@@ -23,8 +23,28 @@ first-party native JS surface under `packages/neovex`; native apps may use a
 - `packages/codegen` emits `.neovex/convex/functions.json`,
   `.neovex/convex/bundle.mjs`, and `.neovex/convex/bundle.sha256`
 - the runtime verifies the bundle hash before every invocation
-- starting Neovex with `--convex-app-dir` enables the Convex HTTP, WebSocket,
+- starting Neovex with `--app-dir` enables the Convex HTTP, WebSocket,
   scheduler, and runtime diagnostics routes
+
+## Codegen And Migration Taste
+
+For Convex-style projects, the shipped codegen entrypoints are now:
+
+- `neovex codegen --app ./my-app`
+- `npx convex codegen --app ./my-app`
+- `npx neovex-codegen --app ./my-app`
+
+All three invoke the same `@neovex/codegen` pipeline and produce the same
+`_generated/*` plus `.neovex/convex/` outputs.
+
+Generated files should still be checked into version control. That keeps
+frontend typechecking and CI stable even when a developer has not run the CLI
+yet.
+
+`neovex serve --app-dir ./my-app` now runs one codegen preflight pass before
+startup unless `--skip-codegen` is set, but this is intentionally not a
+replacement for Convex's watched `dev` loop. After the server starts, Neovex
+does not watch source files or regenerate artifacts on later edits.
 
 ## Supported Areas
 

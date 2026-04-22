@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod cli_ux;
+mod codegen;
 mod encryption;
 mod machine;
 mod serve;
@@ -8,6 +9,7 @@ mod service;
 #[cfg(test)]
 mod test_support;
 
+use crate::codegen::{CodegenCommand, run_codegen_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::serve::{
@@ -32,6 +34,8 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Serve(Box<ServeCommand>),
+    /// Generate app artifacts from neovex/ or convex/ source code.
+    Codegen(CodegenCommand),
     Machine(MachineCommand),
     Service(ServiceCommand),
     /// Encryption admin commands.
@@ -45,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Serve(command) => run_serve_command(*command).await?,
+        Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
         }

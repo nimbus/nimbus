@@ -30,11 +30,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
     dark mode, a11y, optional Electron shell (Phase 2); depends on the three
     prerequisite plans above
-- `docs/plans/codegen-cli-plan.md`
-  - canonical execution plan for adding `neovex codegen` to the Rust CLI,
-    renaming `--convex-app-dir` to `--app-dir`, auto-codegen on serve, and
-    clear missing-artifact errors; successor to the completed source-root plan
-
 ## Stable implementation baselines
 
 - `docs/reference/microvm-service-baseline.md`
@@ -118,6 +113,10 @@ completed plans unless explicitly asked to review historical work.
   - completed Postgres-first tenant persistence provider plan; records the
     first non-local provider implementation, benchmark gate, operational
     drills, and the decision to keep Postgres as an opt-in external mode
+- `docs/plans/archive/codegen-cli-plan.md`
+  - completed first-party CLI/codegen integration plan; records the `neovex
+    codegen` command, the `--app-dir` serve contract, one-shot preflight
+    codegen, and the manifest-loading UX closeout
 - `docs/plans/archive/mysql-storage-provider-plan.md`
   - completed MySQL tenant persistence provider plan; records the
     `mysql_async`-based provider implementation, benchmark/RTT gate, reconnect
@@ -282,6 +281,15 @@ completed plans unless explicitly asked to review historical work.
   `archive/convex-demos-compatibility-plan.md`; use it for historical review
   of the landed compatibility baseline, then promote a new active plan before
   resuming further Convex compat work.
+- For Convex or Neovex CLI/codegen workflow work (`packages/codegen/`,
+  `packages/convex/`, `demos/convex/`, or the `neovex serve --app-dir`
+  contract), start with `docs/reference/convex-ai-guidelines.md`,
+  `docs/reference/cli.md`, and `docs/convex/compatibility.md`. Use
+  `archive/codegen-cli-plan.md` only for the completed CLI/codegen rollout's
+  execution record or exact verification bundle, and use the archived
+  `archive/neovex-source-root-plan.md` only for historical source-root
+  context. Promote a new active plan before landing another CLI/codegen
+  workflow wave.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - For Compose-backed service lifecycle follow-on work, start with
   `docs/reference/microvm-service-baseline.md`, then promote or author a new

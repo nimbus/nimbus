@@ -14,7 +14,7 @@ Reviewed against:
   runtime-backed function execution, `ConvexHostBridge`, `ctx.db.*` host ops
 - `crates/neovex-server/src/router.rs` — existing REST routes
   (`/api/tenants/{tenant_id}/documents/{table}`, etc.)
-- `crates/neovex-bin/src/main.rs` — `--convex-app-dir` flag, CLI subcommands
+- `crates/neovex-bin/src/main.rs` — `--app-dir` flag, CLI subcommands
 - `crates/neovex-bin/src/machine/mod.rs` — `MachineManager` state tracking
 - `crates/neovex-bin/src/service/mod.rs` — `ServiceManager` state tracking
 - `crates/neovex-engine/src/service/` — `Service`, tenant runtime, subscription

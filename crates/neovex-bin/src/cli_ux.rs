@@ -36,14 +36,23 @@ Usage:\n  {usage}\n\n\
 pub(crate) const ROOT_HELP_EXAMPLES: &str = "\
 Examples:
   neovex serve
+  neovex codegen --app ./demos/convex/html
   neovex machine start
   neovex service up";
 
 pub(crate) const SERVE_HELP_EXAMPLES: &str = "\
 Examples:
   neovex serve
+  neovex serve --app-dir ./demos/convex/html
+  neovex serve --app-dir ./demos/convex/html --skip-codegen
   neovex serve --compose-file ./compose.yaml
   neovex serve --tenant-provider postgres --postgres-url postgres://localhost/neovex";
+
+pub(crate) const CODEGEN_HELP_EXAMPLES: &str = "\
+Examples:
+  neovex codegen
+  neovex codegen --app ./demos/convex/html
+  neovex codegen --app ./demos/convex/node";
 
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:

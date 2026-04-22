@@ -3,7 +3,7 @@
 This document lists the public server routes exposed by Neovex today.
 
 Native routes are always available. Convex routes are available only when the
-server starts with `--convex-app-dir`.
+server starts with `--app-dir`.
 
 ## Core Service Routes
 
@@ -73,7 +73,7 @@ Notes:
 ## Optional Convex Routes
 
 These routes are present only when the server is started with
-`--convex-app-dir`.
+`--app-dir`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

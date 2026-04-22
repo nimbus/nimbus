@@ -237,11 +237,12 @@ async function startNeovexFixtureServer(appDir) {
       "-p",
       "neovex-bin",
       "--",
+      "serve",
       "--port",
       String(port),
       "--data-dir",
       dataDir,
-      "--convex-app-dir",
+      "--app-dir",
       appDir,
     ],
     {

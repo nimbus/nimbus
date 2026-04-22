@@ -756,7 +756,7 @@ owns scalar and lifecycle parser helpers, `warnings.rs` owns warning helpers,
 regression coverage packaged beside that surface. The CLI surface still
 parses `--port`, local data-directory and control-plane overrides,
 provider-specific settings such as
-`--postgres-url`, `--convex-app-dir`, `--license-file`, and runtime limit
+`--postgres-url`, `--app-dir`, `--skip-codegen`, `--license-file`, and runtime limit
 flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
 `--runtime-timeout-secs`, `--runtime-max-instances`,
 `--runtime-worker-threads`, `--runtime-max-nested-calls`).
