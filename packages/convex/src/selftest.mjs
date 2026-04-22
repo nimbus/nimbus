@@ -83,9 +83,43 @@ export const list = defineQuery("messages:list", () => ({
     generatedApi,
     /makeQueryReference<\{\}, unknown\[]>\("messages:list", "public"\)/,
   );
+  assert.match(generatedApi, /from "convex\/browser"/);
   assert.match(generatedServer, /ActionCtx/);
   assert.match(generatedServer, /MutationCtx/);
   assert.match(generatedServer, /QueryCtx/);
+  assert.match(generatedServer, /from "convex\/server"/);
+
+  const neovexAppDir = await fs.mkdtemp(path.join(os.tmpdir(), "convex_cli_codegen_"));
+  await fs.mkdir(path.join(neovexAppDir, "neovex"), { recursive: true });
+  await fs.writeFile(
+    path.join(neovexAppDir, "neovex", "messages.ts"),
+    `
+import { defineQuery } from "convex/browser";
+
+export const list = defineQuery("messages:list", () => ({
+  table: "messages",
+  filters: [],
+  order: null,
+  limit: 5,
+}));
+`,
+    "utf8",
+  );
+
+  const neovexResult = spawnSync(process.execPath, [cliPath, "codegen", "--app", neovexAppDir], {
+    encoding: "utf8",
+  });
+  assert.equal(neovexResult.status, 0, neovexResult.stderr || neovexResult.stdout);
+
+  const neovexGeneratedApi = await fs.readFile(
+    path.join(neovexAppDir, "neovex", "_generated", "api.ts"),
+    "utf8",
+  );
+  assert.match(
+    neovexGeneratedApi,
+    /makeQueryReference<\{\}, unknown\[]>\("messages:list", "public"\)/,
+  );
+  assert.match(neovexGeneratedApi, /from "neovex\/browser"/);
 }
 
 async function typecheckConvexSurface() {

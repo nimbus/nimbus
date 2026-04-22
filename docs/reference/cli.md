@@ -124,7 +124,7 @@ Current command taxonomy:
 | --- | --- | --- |
 | `--port` | `8080` | port to listen on |
 | `--data-dir` | `./data` | data directory for tenant databases |
-| `--convex-app-dir` | unset | optional app directory containing a generated `.neovex/convex/functions.json` manifest |
+| `--convex-app-dir` | unset | optional app directory whose user source root may be `neovex/` or `convex/`; codegen still writes the runtime manifests consumed by `serve` under `.neovex/convex/` |
 | `--license-file` | unset | optional explicit path to a Neovex license file |
 
 If `--license-file` is not provided, Neovex next checks
@@ -228,7 +228,7 @@ startup, it:
 - loads the service with the configured data directory
 - loads tenants with scheduled work
 - starts the scheduler loop
-- optionally loads the Convex registry from `--convex-app-dir`
+- optionally loads the Convex-compatible registry from `--convex-app-dir`
 - optionally loads declared sandbox-backed services from `--compose-file`
 - loads license state from the explicit path, environment, default path, or
   built-in community defaults
@@ -237,9 +237,12 @@ When `--compose-file` is present, Neovex validates the Compose file through the
 same adapter used by `neovex service config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
 manager. With `--convex-app-dir`, `ctx.services.*` can activate those declared
-services on first use. The explicit `neovex service up/down/...` commands share
-that same Compose lowering, deterministic project identity, and project-scoped
-backend root instead of inventing a second lifecycle control plane.
+services on first use. The app directory may use `neovex/` as the native user
+source root or `convex/` as the compatibility root; in both cases the runtime
+registry still loads the generated manifests from `.neovex/convex/`. The
+explicit `neovex service up/down/...` commands share that same Compose
+lowering, deterministic project identity, and project-scoped backend root
+instead of inventing a second lifecycle control plane.
 
 On macOS, if that Compose project resolves to the forwarded guest container
 backend and the default machine is initialized but stopped, `neovex serve`

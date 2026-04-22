@@ -1,3 +1,9 @@
+<!-- convex-ai-start -->
+This project implements a [Convex](https://convex.dev)-compatible backend server.
+
+When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/reference/convex-ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+<!-- convex-ai-end -->
+
 # Neovex
 
 The role of this file is to capture common mistakes and recurring confusion points for agents working in this repo.

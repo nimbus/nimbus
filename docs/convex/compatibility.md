@@ -7,10 +7,19 @@ artifacts from `packages/codegen`.
 This surface is intentionally partial and evolving. It is designed to support a
 useful subset cleanly rather than claim blanket Convex parity.
 
+This document covers the Convex-compatible authoring mode. Neovex also ships a
+first-party native JS surface under `packages/neovex`; native apps may use a
+`neovex/` source root, while upstream-style compatibility apps continue to use
+`convex/`.
+
 ## What Exists Today
 
 - `packages/convex` provides the in-repo `convex/browser`, `convex/react`,
   `convex/server`, and `convex/values` surfaces
+- `packages/codegen` accepts `convex/` as the compatibility source root and
+  `neovex/` as the native source root
+- generated `_generated/*` files land under the selected source root and import
+  from the matching package namespace (`convex/*` or `neovex/*`)
 - `packages/codegen` emits `.neovex/convex/functions.json`,
   `.neovex/convex/bundle.mjs`, and `.neovex/convex/bundle.sha256`
 - the runtime verifies the bundle hash before every invocation
@@ -39,6 +48,9 @@ useful subset cleanly rather than claim blanket Convex parity.
 
 - support is still partial; the compatibility surface should be treated as a
   supported subset, not full Convex parity
+- `convex/` remains the compatibility-oriented user source root, while
+  `neovex/` is the first-party native root; both still converge on the same
+  internal runtime artifacts under `.neovex/convex/`
 - compiled `patch`, `delete`, and `get` flows currently require ids declared
   with `v.id("table")` so codegen can preserve the Convex call shape while
   lowering into Neovex plans

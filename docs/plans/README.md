@@ -30,6 +30,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
     dark mode, a11y, optional Electron shell (Phase 2); depends on the three
     prerequisite plans above
+- `docs/plans/codegen-cli-plan.md`
+  - canonical execution plan for adding `neovex codegen` to the Rust CLI,
+    renaming `--convex-app-dir` to `--app-dir`, auto-codegen on serve, and
+    clear missing-artifact errors; successor to the completed source-root plan
 
 ## Stable implementation baselines
 
@@ -206,6 +210,11 @@ completed plans unless explicitly asked to review historical work.
   - completed Convex compatibility and demo baseline; records the landed
     browser/client ergonomics, repo-owned demo variants, served browser bundle,
     and external `convex-demos` overlay workflow
+- `docs/plans/archive/neovex-source-root-plan.md`
+  - completed native `neovex/` source-root rollout; records resolver-owned
+    dual-root selection, namespace-aware `_generated/*` emission, CLI feedback
+    when both roots exist, and the final docs/test alignment while preserving
+    `.neovex/convex/`
 - `docs/plans/archive/macos-machine-support-plan.md`
   - completed macOS developer-machine closeout plan; records the MAC1-MAC7
     execution history, real-host proof bundles, and the final Podman-aligned
