@@ -222,16 +222,19 @@ metering.
   tenant-open flows into `postgres/provider.rs`, the async storage bridge plus
   blocking-write executor into `postgres/storage.rs`, the public read facade
   plus snapshot ownership into `postgres/read.rs`, and the public write facade
-  plus transaction ownership into `postgres/write.rs`. The root now only keeps
-  the shared store types, runtime bridge helper, and backend utility wiring.
+  plus transaction ownership into `postgres/write.rs`. `postgres/backend.rs`
+  now owns the shared SQL, codec, session, and durable-journal helpers that
+  the concept-owned modules reuse, while the root only keeps the shared store
+  types, runtime bridge helper, and module wiring.
 - `mysql.rs` — MySQL provider composition root. The CM7 split has moved
   provider connect or tenant-open flows into `mysql/provider.rs`, the async
   storage bridge plus blocking-write executor into `mysql/storage.rs`, the
   public read facade plus snapshot ownership into `mysql/read.rs`, and the
-  public write facade plus transaction ownership into `mysql/write.rs`. The
-  root now keeps the provider config, shared store types, runtime bridge
-  helper, and backend SQL or codec utilities that the concept-owned modules
-  share.
+  public write facade plus transaction ownership into `mysql/write.rs`.
+  `mysql/backend.rs` now owns the shared SQL, identifier, codec, and
+  durable-journal helpers that the concept-owned modules reuse, while the root
+  keeps the provider config, shared store types, runtime bridge helper, and
+  module wiring.
 - `libsql.rs` — libsql replica-provider composition root. The completed CM7
   split moved provider connect/open, namespace lifecycle, tenant snapshot
   materialization, metadata-namespace ownership, and opened-tenant accessors
@@ -240,8 +243,10 @@ metering.
   `libsql/read.rs`; the public write facade plus transaction ownership into
   `libsql/write.rs`; the remote namespace, snapshot, and admin helpers into
   `libsql/remote.rs`; and the custom transport connector into
-  `libsql/transport.rs`. The root now keeps the replica-cache freshness state
-  machine, shared store types, and low-level libsql codec/error helpers.
+  `libsql/transport.rs`. `libsql/freshness.rs` now owns the replica-cache
+  freshness state machine and metrics, and `libsql/backend.rs` owns the shared
+  libsql codec, bootstrap, and error-mapping helpers. The root keeps the
+  shared store types, provider config, transport surface, and module wiring.
 - `store.rs` — `TenantStore` wrapping a redb `Database`: the storage
   composition root. It now keeps the shared table definitions and public store
   types while routing the remaining storage concerns through the
@@ -293,15 +298,22 @@ metering.
   boundary, the embedded provider selector, the still-local redb usage/control
   storage handle, simulation seams, scheduler wakeups, and a process-wide
   background Tokio runtime handle used for long-lived engine workers.
-  Lazy-loads tenants from disk on first access.
+  `service/bootstrap.rs` now owns typed-persistence bootstrap, control-plane
+  provider construction, and provider-specific service startup so `Service`
+  stays focused on coordination and runtime access once boot completes.
+- `persistence_config.rs` — Typed service-persistence configuration plus local
+  encryption policy. It now also owns the private bootstrap-plan normalization
+  that turns provider selection, routing, pool settings, and control-plane
+  paths into one canonical service-start input.
 - `persistence.rs` — Provider-facade composition root. `provider.rs` owns the
   tenant-provider registry plus opened-tenant mapping, `control.rs` owns the
-  redb-backed control-plane usage facade, `tenant.rs` owns the tenant-store
-  facade plus direct durable read/write helpers, `executor.rs` owns async
-  read/write execution, `snapshot.rs` owns the snapshot read facade,
-  `query.rs` owns `QueryReadStore` delegation for stores and snapshots, and
-  `write_ops.rs` owns the write-transaction capability trait shared by the
-  scheduler and async journal paths.
+  redb-backed control-plane usage facade, `tenant.rs` is now a thin
+  composition root over `tenant/reads.rs`, `tenant/writes.rs`,
+  `tenant/journal.rs`, `tenant/scheduler.rs`, and `tenant/schema.rs`,
+  `executor.rs` owns async read or write execution, `snapshot.rs` owns the
+  snapshot read facade, `query.rs` owns `QueryReadStore` delegation for stores
+  and snapshots, and `write_ops.rs` owns the write-transaction capability
+  trait shared by the scheduler and async journal paths.
 - `service/mutations.rs` — Composition root for the write path. Public
   `apply_mutation` behavior still flows through the same single durable contract
   while the implementation is split across
@@ -634,7 +646,13 @@ worker-local beneath that seam.
 
 **`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
-- `lib.rs` — `build_router` defines the Neovex-native routes. `build_router_with_convex` adds the Convex adapter routes and demos. Variants with `_and_license` accept a `LicenseState`, and the new `_and_sandbox_catalog` variants expose the first explicit server-facing sandbox seam. `serve` starts the axum listener.
+- `lib.rs` — Public server facade. Re-exports the router builders and serve
+  helpers; `serve` starts the axum listener.
+- `router.rs` — Neovex-native and Convex route composition. The public
+  `build_router*` overloads are now thin wrappers over one internal
+  `RouterBuildConfig` path that normalizes `LicenseState`, optional Convex
+  support, and runtime-service-registry wiring before building the axum
+  router.
 - `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
 - `ws.rs` / `ws/socket.rs` — Neovex-native WebSocket upgrade and session
   composition. `ws/socket/transport.rs` owns socket reader, writer, and
@@ -654,6 +672,9 @@ worker-local beneath that seam.
   now parses serialized host `operation` strings once into a typed internal
   `ConvexHostOperation` dispatcher so sync, cancellable, and async entrypoints
   share one operation registry without changing the external runtime contract.
+  `bridge.rs` now separates durable bridge scope from per-call invocation
+  metadata through `ConvexHostBridgeScope` and `ConvexHostBridgeInvocation`,
+  which keeps host-bridge construction narrow across runtime-backed call sites.
   The direct ctx-op surface now keeps
   `function_ops/ctx_ops/direct/execution.rs` as the canonical home for direct
   execution-context dispatch and execution-unit short-circuiting, while
@@ -673,7 +694,14 @@ worker-local beneath that seam.
   queries. It registers the underlying engine subscriptions, rewrites their
   events onto the public subscription id, and now keeps those bridge tasks
   attached to the active subscription lifecycle instead of detaching them.
-- `convex/execution/`, `convex/http_actions/`, `convex/subscriptions/`, and `convex/handlers/` — Shared Convex support execution, HTTP route dispatch, and live subscription plumbing.
+- `convex/execution/`, `convex/http_actions/`, `convex/subscriptions/`, and
+  `convex/handlers/` — Shared Convex support execution, HTTP route dispatch,
+  and live subscription plumbing. The runtime-backed execution path now
+  centralizes service, registry, tenant, and runtime-service coordination in
+  `execution/runtime_backed/invoke/context.rs`, and subscription transform
+  reevaluation reuses a sibling `RuntimeTransformContext` so runtime-backed
+  route handlers and subscription plumbing share one canonical invocation
+  bundle per concern.
 - `convex/host_bridge/read_tracking/` — Runtime read-set tracking used by runtime-backed Convex support subscriptions for narrower-than-table-level invalidation.
 - `protocol.rs` — Request/response DTOs. `ClientMessage` (Subscribe/Unsubscribe) and `ServerMessage` (SubscriptionResult/Error).
 - `sandbox.rs` — `SandboxCatalog` and `EmptySandboxCatalog`: server-owned
@@ -688,8 +716,11 @@ worker-local beneath that seam.
 provider selection, precedence merging into typed
 `ServicePersistenceConfig`, runtime-limit defaults, and the server boot path
 that loads tenants with scheduled work, spawns the scheduler, optionally loads
-the Convex registry and sandbox-backed services, starts the server, and handles
-graceful shutdown. `machine/` now follows the same pattern: `mod.rs` is the
+the Convex registry and sandbox-backed services, starts the server, and
+handles graceful shutdown. `serve/config.rs` now resolves file, env, and CLI
+inputs into separate provider-selection and encryption-selection helpers
+before emitting the typed service-persistence config that the engine bootstrap
+pipeline consumes. `machine/` now follows the same pattern: `mod.rs` is the
 machine CLI composition root, `command.rs` owns clap models, `record.rs` owns
 machine roots and persisted record types, `files.rs` owns JSON and lock helper
 semantics, `render.rs` owns status/list/info/inspect output shaping, and
@@ -730,9 +761,24 @@ flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
 `--runtime-timeout-secs`, `--runtime-max-instances`,
 `--runtime-worker-threads`, `--runtime-max-nested-calls`).
 
-**`packages/codegen`** — Node.js code generation tool. Reads Convex source files (`convex/*.ts`) and a `convex/schema.ts`, emits `.neovex/convex/functions.json` (named-function manifest), `.neovex/convex/bundle.mjs` (runtime ESM entrypoint), `.neovex/convex/bundle.sha256` (integrity hash), and generated `convex/_generated/` TypeScript (api, server, dataModel, scheduled_functions).
+**`packages/codegen`** — Node.js code generation tool. Reads Convex source
+files (`convex/*.ts`) and a `convex/schema.ts`, emits
+`.neovex/convex/functions.json` (named-function manifest),
+`.neovex/convex/bundle.mjs` (runtime ESM entrypoint),
+`.neovex/convex/bundle.sha256` (integrity hash), and generated
+`convex/_generated/` TypeScript (api, server, dataModel, scheduled_functions).
+The generated files still target `convex/*` imports for compatibility, but
+those surfaces now delegate more of their implementation through canonical
+`packages/neovex` modules where behavior is shared.
 
-**`packages/convex`** — In-repo Convex compatibility package. Provides `convex/browser` (`ConvexHttpClient`), `convex/react` (`ConvexReactClient`, hooks), `convex/server` (handler wrappers), and `convex/values` (validators). These talk the Neovex Convex-shaped WebSocket/HTTP protocol.
+**`packages/convex`** — In-repo Convex compatibility package. Provides
+`convex/browser` (`ConvexHttpClient`, named-string and `anyApi` helpers),
+`convex/react` (`ConvexReactClient`, provider and hook aliases), `convex/server`
+(thin typed wrappers over `neovex/server`), and `convex/values` (validators).
+These still speak the Neovex Convex-shaped WebSocket/HTTP protocol, but the
+package now prefers wrapper, alias, and re-export seams over copy-forward
+duplication whenever behavior matches the canonical `packages/neovex`
+implementations.
 
 **`neovex-testing`** — Shared test fixtures (`HttpApiFixture`) for
 integration tests. `http_api_fixture/` is now a route-family composition root:

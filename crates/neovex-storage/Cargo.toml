@@ -20,7 +20,7 @@ crc32fast.workspace = true
 deadpool-postgres.workspace = true
 hex.workspace = true
 hkdf.workspace = true
-hyper.workspace = true
+hyper = { workspace = true, features = ["client", "server", "http1", "runtime"] }
 libsql.workspace = true
 mysql_async.workspace = true
 native-tls.workspace = true

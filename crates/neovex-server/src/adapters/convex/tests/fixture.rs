@@ -11,16 +11,21 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         .expect("tenant should be created");
     let registry = Arc::new(ConvexRegistry::empty());
     let bridge = ConvexHostBridge::new(
-        service.clone(),
-        registry,
-        tenant_id.clone(),
-        None,
-        Default::default(),
-        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
-            crate::EmptySandboxCatalog,
-        ))),
-        neovex_core::PrincipalContext::anonymous(),
-        None,
+        ConvexHostBridgeScope::new(
+            service.clone(),
+            registry,
+            tenant_id.clone(),
+            Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+                crate::EmptySandboxCatalog,
+            ))),
+        ),
+        ConvexHostBridgeInvocation::new(
+            None,
+            Default::default(),
+            neovex_core::PrincipalContext::anonymous(),
+            None,
+            InvocationKind::Query,
+        ),
     );
     (tempdir, service, tenant_id, bridge)
 }

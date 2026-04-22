@@ -191,18 +191,18 @@ impl Service {
             .get(tenant_id)
             .cloned()
         {
-            maybe_emit_tenant_load_profile(
+            maybe_emit_tenant_load_profile(TenantLoadProfileSample {
                 tenant_id,
-                true,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                total_started.elapsed(),
-            );
+                cache_hit: true,
+                open_existing: Duration::ZERO,
+                runtime_init: Duration::ZERO,
+                runtime_schema_load: Duration::ZERO,
+                runtime_journal_progress: Duration::ZERO,
+                runtime_profile_total: Duration::ZERO,
+                recover_durable: Duration::ZERO,
+                catch_up: Duration::ZERO,
+                total: total_started.elapsed(),
+            });
             return Ok(runtime);
         }
 
@@ -214,18 +214,18 @@ impl Service {
             .get(tenant_id)
             .cloned()
         {
-            maybe_emit_tenant_load_profile(
+            maybe_emit_tenant_load_profile(TenantLoadProfileSample {
                 tenant_id,
-                true,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::ZERO,
-                total_started.elapsed(),
-            );
+                cache_hit: true,
+                open_existing: Duration::ZERO,
+                runtime_init: Duration::ZERO,
+                runtime_schema_load: Duration::ZERO,
+                runtime_journal_progress: Duration::ZERO,
+                runtime_profile_total: Duration::ZERO,
+                recover_durable: Duration::ZERO,
+                catch_up: Duration::ZERO,
+                total: total_started.elapsed(),
+            });
             return Ok(runtime);
         }
 
@@ -280,18 +280,18 @@ impl Service {
             .write()
             .expect("tenant registry lock should not be poisoned")
             .insert(tenant_id.clone(), runtime.clone());
-        maybe_emit_tenant_load_profile(
+        maybe_emit_tenant_load_profile(TenantLoadProfileSample {
             tenant_id,
-            false,
-            open_elapsed,
-            runtime_init_elapsed,
-            runtime_profile.schema_load,
-            runtime_profile.journal_progress,
-            runtime_profile.total,
-            recover_elapsed,
-            catch_up_elapsed,
-            total_started.elapsed(),
-        );
+            cache_hit: false,
+            open_existing: open_elapsed,
+            runtime_init: runtime_init_elapsed,
+            runtime_schema_load: runtime_profile.schema_load,
+            runtime_journal_progress: runtime_profile.journal_progress,
+            runtime_profile_total: runtime_profile.total,
+            recover_durable: recover_elapsed,
+            catch_up: catch_up_elapsed,
+            total: total_started.elapsed(),
+        });
         Ok(runtime)
     }
 
@@ -307,8 +307,8 @@ impl Service {
     }
 }
 
-fn maybe_emit_tenant_load_profile(
-    tenant_id: &TenantId,
+struct TenantLoadProfileSample<'a> {
+    tenant_id: &'a TenantId,
     cache_hit: bool,
     open_existing: Duration,
     runtime_init: Duration,
@@ -318,25 +318,27 @@ fn maybe_emit_tenant_load_profile(
     recover_durable: Duration,
     catch_up: Duration,
     total: Duration,
-) {
+}
+
+fn maybe_emit_tenant_load_profile(sample: TenantLoadProfileSample<'_>) {
     if std::env::var_os("NEOVEX_TENANT_LOAD_PROFILE").is_none() {
         return;
     }
-    if std::env::var_os("NEOVEX_PROFILE_ONLY_COLD_SAMPLES").is_some() && cache_hit {
+    if std::env::var_os("NEOVEX_PROFILE_ONLY_COLD_SAMPLES").is_some() && sample.cache_hit {
         return;
     }
 
     eprintln!(
         "tenant-load-profile tenant={} cache_hit={} open_existing={:?} runtime_init={:?} runtime_schema_load={:?} runtime_journal_progress={:?} runtime_profile_total={:?} recover_durable={:?} catch_up={:?} total={:?}",
-        tenant_id,
-        cache_hit,
-        open_existing,
-        runtime_init,
-        runtime_schema_load,
-        runtime_journal_progress,
-        runtime_profile_total,
-        recover_durable,
-        catch_up,
-        total,
+        sample.tenant_id,
+        sample.cache_hit,
+        sample.open_existing,
+        sample.runtime_init,
+        sample.runtime_schema_load,
+        sample.runtime_journal_progress,
+        sample.runtime_profile_total,
+        sample.recover_durable,
+        sample.catch_up,
+        sample.total,
     );
 }

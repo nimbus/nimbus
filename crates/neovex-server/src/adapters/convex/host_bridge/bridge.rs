@@ -3,6 +3,57 @@ use crate::execution::host_state::RuntimeHostState;
 use crate::service_registry::RuntimeServiceRegistry;
 
 #[derive(Clone)]
+pub(in crate::adapters::convex) struct ConvexHostBridgeScope {
+    service: Arc<neovex_engine::Service>,
+    registry: Arc<ConvexRegistry>,
+    tenant_id: TenantId,
+    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+}
+
+impl ConvexHostBridgeScope {
+    pub(in crate::adapters::convex) fn new(
+        service: Arc<neovex_engine::Service>,
+        registry: Arc<ConvexRegistry>,
+        tenant_id: TenantId,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    ) -> Self {
+        Self {
+            service,
+            registry,
+            tenant_id,
+            runtime_service_registry,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::adapters::convex) struct ConvexHostBridgeInvocation {
+    auth: Option<InvocationAuth>,
+    services: neovex_runtime::InvocationServices,
+    principal: neovex_core::PrincipalContext,
+    server_request_id: Option<String>,
+    invocation_kind: InvocationKind,
+}
+
+impl ConvexHostBridgeInvocation {
+    pub(in crate::adapters::convex) fn new(
+        auth: Option<InvocationAuth>,
+        services: neovex_runtime::InvocationServices,
+        principal: neovex_core::PrincipalContext,
+        server_request_id: Option<String>,
+        invocation_kind: InvocationKind,
+    ) -> Self {
+        Self {
+            auth,
+            services,
+            principal,
+            server_request_id,
+            invocation_kind,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub(in crate::adapters::convex) struct ConvexHostBridge {
     pub(in crate::adapters::convex) service: Arc<neovex_engine::Service>,
     pub(in crate::adapters::convex) registry: Arc<ConvexRegistry>,
@@ -19,62 +70,42 @@ pub(in crate::adapters::convex) struct ConvexHostBridge {
 
 impl ConvexHostBridge {
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::adapters::convex) fn new(
-        service: Arc<neovex_engine::Service>,
-        registry: Arc<ConvexRegistry>,
-        tenant_id: TenantId,
-        auth: Option<InvocationAuth>,
-        services: neovex_runtime::InvocationServices,
-        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-        principal: neovex_core::PrincipalContext,
-        server_request_id: Option<String>,
+        scope: ConvexHostBridgeScope,
+        invocation: ConvexHostBridgeInvocation,
     ) -> Self {
-        Self::new_with_invocation_kind(
-            service,
-            registry,
-            tenant_id,
-            auth,
-            services,
-            runtime_service_registry,
-            principal,
-            server_request_id,
-            InvocationKind::Query,
-        )
-        .expect("default convex host bridge should build")
+        Self::build(scope, invocation).expect("default convex host bridge should build")
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::adapters::convex) fn new_with_invocation_kind(
-        service: Arc<neovex_engine::Service>,
-        registry: Arc<ConvexRegistry>,
-        tenant_id: TenantId,
-        auth: Option<InvocationAuth>,
-        services: neovex_runtime::InvocationServices,
-        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-        principal: neovex_core::PrincipalContext,
-        server_request_id: Option<String>,
-        invocation_kind: InvocationKind,
+    pub(in crate::adapters::convex) fn build(
+        scope: ConvexHostBridgeScope,
+        invocation: ConvexHostBridgeInvocation,
     ) -> Result<Self, Error> {
-        let max_nested_runtime_invocations = registry
+        let max_nested_runtime_invocations = scope
+            .registry
             .runtime_policy()
             .limits()
             .max_nested_runtime_invocations;
-        let execution_unit = matches!(invocation_kind, InvocationKind::Mutation)
-            .then(|| service.begin_mutation_execution_unit(tenant_id.clone(), principal.clone()))
+        let execution_unit = matches!(invocation.invocation_kind, InvocationKind::Mutation)
+            .then(|| {
+                scope.service.begin_mutation_execution_unit(
+                    scope.tenant_id.clone(),
+                    invocation.principal.clone(),
+                )
+            })
             .transpose()?;
         Ok(Self {
-            service,
-            registry,
-            tenant_id,
-            auth,
-            services,
-            runtime_service_registry,
-            principal,
+            service: scope.service,
+            registry: scope.registry,
+            tenant_id: scope.tenant_id,
+            auth: invocation.auth,
+            services: invocation.services,
+            runtime_service_registry: scope.runtime_service_registry,
+            principal: invocation.principal,
             execution_unit,
             state: Arc::new(RuntimeHostState::new(
                 "convex-runtime-session",
-                server_request_id,
+                invocation.server_request_id,
                 max_nested_runtime_invocations,
             )),
             query_builders: Arc::new(Mutex::new(ConvexRuntimeQueryBuilders::default())),

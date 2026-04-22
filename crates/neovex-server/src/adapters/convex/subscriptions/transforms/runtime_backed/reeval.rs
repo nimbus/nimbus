@@ -10,24 +10,25 @@ use super::super::super::types::{ConvexSubscriptionTransform, ConvexSubscription
 use super::super::state::update_runtime_transform_read_set;
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::convex::execution::{
-    ConvexSubscriptionEvent, invoke_named_convex_function_with_trace_async_cancellable,
+    ConvexSubscriptionEvent, RuntimeInvocationContext,
+    invoke_named_convex_function_with_trace_async_cancellable,
 };
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
 use crate::execution::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
 use crate::service_registry::RuntimeServiceRegistry;
 
-pub(super) struct RuntimeTransformContext<'a> {
-    service: &'a Arc<neovex_engine::Service>,
-    registry: &'a Arc<ConvexRegistry>,
-    runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-    tenant_id: &'a TenantId,
-    transforms: &'a RwLock<ConvexSubscriptionTransforms>,
-    runtime_cancellation: &'a HostCallCancellation,
-    event: ConvexSubscriptionEvent<'a>,
+pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
+    pub(super) service: &'a Arc<neovex_engine::Service>,
+    pub(super) registry: &'a Arc<ConvexRegistry>,
+    pub(super) runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
+    pub(super) tenant_id: &'a TenantId,
+    pub(super) transforms: &'a RwLock<ConvexSubscriptionTransforms>,
+    pub(super) runtime_cancellation: &'a HostCallCancellation,
+    pub(super) event: ConvexSubscriptionEvent<'a>,
 }
 
 impl<'a> RuntimeTransformContext<'a> {
-    pub(super) fn new(
+    pub(in crate::adapters::convex::subscriptions) fn new(
         service: &'a Arc<neovex_engine::Service>,
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
@@ -45,6 +46,15 @@ impl<'a> RuntimeTransformContext<'a> {
             runtime_cancellation,
             event,
         }
+    }
+
+    fn runtime_invocation_context(&self) -> RuntimeInvocationContext<'_> {
+        RuntimeInvocationContext::new(
+            self.service,
+            self.registry,
+            self.runtime_service_registry,
+            self.tenant_id,
+        )
     }
 }
 
@@ -77,10 +87,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
     }
 
     let result = match invoke_named_convex_function_with_trace_async_cancellable(
-        context.service,
-        context.registry,
-        context.runtime_service_registry,
-        context.tenant_id,
+        &context.runtime_invocation_context(),
         InvocationRequest {
             kind: InvocationKind::Query,
             function_name: transform.name.clone(),
@@ -131,10 +138,7 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
     }
 
     let result = match invoke_named_convex_function_with_trace_async_cancellable(
-        context.service,
-        context.registry,
-        context.runtime_service_registry,
-        context.tenant_id,
+        &context.runtime_invocation_context(),
         InvocationRequest {
             kind: InvocationKind::PaginatedQuery,
             function_name: transform.name.clone(),

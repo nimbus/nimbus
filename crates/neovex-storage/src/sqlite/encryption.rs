@@ -57,7 +57,6 @@ pub(super) fn verify_encryption_key(conn: &Connection) -> Result<()> {
                 map_sqlite_error(error)
             }
         })?
-        .map(|()| ())
         .unwrap_or(());
     Ok(())
 }

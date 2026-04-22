@@ -37,6 +37,11 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` after the three docs above.
   Open
+  `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
+  when a task needs the latest completed repo-wide maintainability wave's
+  execution detail, closeout verification bundle, or governance baseline for
+  thin roots, concept-owned naming, helper-bucket avoidance, threshold
+  exceptions, and wrapper-first JS compatibility guidance. Open
   `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
   only when a task needs the completed hardening wave's execution detail,
   closeout verification baseline, or proof-packaging decisions. Open
@@ -50,7 +55,8 @@ Use the repo docs for architecture and behavior details:
   Open `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
   only when a task needs the predecessor wave's execution detail or checkpoint
   chain. Promote a new active plan before landing another repo-wide
-  maintainability or reliability-hardening wave.
+  maintainability or reliability-hardening wave unless another active plan
+  already owns the slice.
 - For the landed krun-backed microVM and service-control architecture, go
   directly to `docs/reference/microvm-service-baseline.md` after the three
   docs above. Open the archived plans only when a task needs historical
@@ -96,6 +102,11 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` immediately after those three
   docs. Open
+  `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
+  when you need the latest completed repo-wide maintainability wave's
+  execution record, closeout verification bundle, or governance baseline for
+  thin roots, concept-owned naming, helper-bucket avoidance, threshold
+  exceptions, and wrapper-first JS compatibility guidance. Open
   `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
   only when you need the completed hardening wave's execution record,
   closeout verification baseline, or proof-packaging decisions. Open
@@ -108,7 +119,8 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
   when you need the predecessor wave's historical execution record or
   checkpoints. Promote a new active plan before landing another repo-wide
-  maintainability or reliability-hardening wave.
+  maintainability or reliability-hardening wave unless another active plan
+  already owns the slice.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
   docs. Only load the archived plans if the task genuinely needs historical
@@ -184,6 +196,23 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 - Keep integration tests in `tests/` and support helpers beside the owning
   crate unless they are shared widely enough to justify `neovex-testing`.
 
+### Modularity thresholds
+
+- Files under 1,500 lines are usually acceptable when they keep one coherent
+  ownership story.
+- Files from 1,500 through 1,999 lines need an explicit justification in the
+  owning active plan if they remain unsplit.
+- Files at 2,000 lines or above must be decomposed or documented as a strong
+  ownership-based exception.
+- Do not split files or lines mechanically. Group like concepts together,
+  keep composition roots thin, and prefer clearer boundaries over smaller raw
+  numbers.
+- Once a file becomes a composition root, keep new logic in concept-owned
+  children instead of rebuilding inline switchboards there.
+- Prefer concept-owned names such as `bootstrap.rs`, `provider.rs`, `read.rs`,
+  `write.rs`, or `state.rs` over `helpers.rs`, `common.rs`, `misc.rs`, or
+  `utils.rs` unless ownership is truly shared and obvious.
+
 ## Common Repo Gotchas
 
 ### Crate dependency rules
@@ -214,6 +243,9 @@ A table without a schema accepts any document. Setting a schema adds constraints
 ### JavaScript package naming
 
 `packages/neovex` is the JS SDK. `crates/neovex` is the Rust facade. When discussing "neovex" clarify which.
+- `packages/neovex` is the canonical JS implementation. Keep `packages/convex`
+  as a compatibility wrapper via thin adapters, aliases, or re-exports when
+  behavior matches instead of copy-forwarding parallel logic.
 
 ## Verification Commands
 

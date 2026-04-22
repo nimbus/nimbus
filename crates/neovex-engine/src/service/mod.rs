@@ -1,4 +1,5 @@
 mod background_executor;
+mod bootstrap;
 mod diagnostics;
 mod encryption;
 mod execution_units;
@@ -21,19 +22,14 @@ use std::sync::atomic::AtomicBool;
 
 use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
-    Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
-    EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    LocalKeyProvider, MySqlProvider, MySqlProviderConfig, NoopFaultInjector, PostgresProvider,
-    PostgresProviderConfig, SqliteTenantStore, SystemClock, TenantStore,
+    Clock, EmbeddedProviderKind, FaultInjector, LibsqlReplicaProvider, MySqlProvider,
+    NoopFaultInjector, PostgresProvider, SqliteTenantStore, SystemClock, TenantStore,
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinHandle;
 
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
-use crate::persistence_config::{
-    ControlPlaneConfig, PersistenceDialect, PersistenceTopology, ProviderCredentials,
-    ServicePersistenceConfig, TenantRoutingConfig,
-};
+use crate::persistence_config::ServicePersistenceConfig;
 use crate::tenant::TenantRuntime;
 use background_executor::BackgroundExecutor;
 
@@ -62,6 +58,18 @@ pub struct Service {
     scheduler_wakeup: Notify,
     provider_hint_worker_started: AtomicBool,
     provider_hint_listener_ready: AtomicBool,
+    engine_executor: BackgroundExecutor,
+    storage_executor: BackgroundExecutor,
+    encryption_status: Option<encryption::EncryptionStatus>,
+}
+
+pub(super) struct ServiceBootstrapParts {
+    data_dir: PathBuf,
+    embedded_provider_kind: Option<EmbeddedProviderKind>,
+    persistence_provider: PersistenceProvider,
+    control_plane_provider: ControlPlaneProvider,
+    clock: Arc<dyn Clock>,
+    storage_fault_injector: Arc<dyn FaultInjector>,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
@@ -128,11 +136,10 @@ impl Service {
         embedded_provider_kind: EmbeddedProviderKind,
     ) -> Result<Self> {
         let data_dir = data_dir.into();
-        Self::new_with_simulation_and_embedded_config(
+        bootstrap::build_embedded_service(
             data_dir.clone(),
             data_dir,
-            None, // No encryption for direct embedded provider usage
-            None, // No control plane encryption for direct embedded provider usage
+            None,
             clock,
             storage_fault_injector,
             embedded_provider_kind,
@@ -146,410 +153,26 @@ impl Service {
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        // Initialize the configured local key provider if encryption is enabled.
-        // This performs fail-fast validation for unsupported configurations.
-        let key_provider = encryption::initialize_encryption(&config)?;
-
-        // Capture encryption status from config for later assignment
-        let encryption_status = encryption::EncryptionStatus::from_config(&config);
-
-        let mut service = match (
-            &config.tenant_provider.dialect,
-            &config.tenant_provider.topology,
-            &config.tenant_provider.routing,
-            &config.control_plane,
-        ) {
-            (
-                PersistenceDialect::Redb,
-                PersistenceTopology::EmbeddedStandalone,
-                TenantRoutingConfig::DirectoryPerTenant { data_dir },
-                ControlPlaneConfig::EmbeddedRedb {
-                    data_dir: control_data_dir,
-                },
-            ) => Self::new_with_simulation_and_embedded_config(
-                data_dir.clone(),
-                control_data_dir.clone(),
-                key_provider.as_ref().map(InitializedKeyProvider::provider),
-                key_provider.as_ref().map(InitializedKeyProvider::provider),
-                clock,
-                storage_fault_injector,
-                EmbeddedProviderKind::Redb,
-            ),
-            (
-                PersistenceDialect::Sqlite,
-                PersistenceTopology::EmbeddedStandalone,
-                TenantRoutingConfig::DirectoryPerTenant { data_dir },
-                ControlPlaneConfig::EmbeddedRedb {
-                    data_dir: control_data_dir,
-                },
-            ) => Self::new_with_simulation_and_embedded_config(
-                data_dir.clone(),
-                control_data_dir.clone(),
-                key_provider.as_ref().map(InitializedKeyProvider::provider),
-                key_provider.as_ref().map(InitializedKeyProvider::provider),
-                clock,
-                storage_fault_injector,
-                EmbeddedProviderKind::Sqlite,
-            ),
-            (
-                PersistenceDialect::Postgres,
-                PersistenceTopology::ExternalPrimary,
-                TenantRoutingConfig::SchemaPerTenant {
-                    metadata_schema,
-                    tenant_schema_prefix,
-                },
-                ControlPlaneConfig::EmbeddedRedb {
-                    data_dir: control_data_dir,
-                },
-            ) => {
-                let ProviderCredentials::ConnectionString(connection_string) =
-                    &config.tenant_provider.credentials
-                else {
-                    return Err(Error::InvalidInput(
-                        "Postgres tenant persistence requires a connection string".to_string(),
-                    ));
-                };
-                Self::new_with_simulation_and_postgres_config(
-                    control_data_dir.clone(),
-                    key_provider.as_ref().map(InitializedKeyProvider::provider),
-                    PostgresProviderConfig {
-                        connection_string: connection_string.clone(),
-                        metadata_schema: metadata_schema.clone(),
-                        tenant_schema_prefix: tenant_schema_prefix.clone(),
-                        min_connections: config.tenant_provider.pool.min_connections,
-                        max_connections: config.tenant_provider.pool.max_connections,
-                    },
-                    clock,
-                    storage_fault_injector,
-                )
-                .await
-            }
-            (
-                PersistenceDialect::Sqlite,
-                PersistenceTopology::ExternalPrimaryWithReplicas,
-                TenantRoutingConfig::NamespacePerTenant {
-                    metadata_namespace,
-                    tenant_namespace_prefix,
-                    replica_cache_dir,
-                },
-                ControlPlaneConfig::EmbeddedRedb {
-                    data_dir: control_data_dir,
-                },
-            ) => {
-                let ProviderCredentials::LibsqlReplica {
-                    primary_url,
-                    auth_token,
-                    admin_api_url,
-                    admin_auth_header,
-                } = &config.tenant_provider.credentials
-                else {
-                    return Err(Error::InvalidInput(
-                        "Replica-connected SQLite tenant persistence requires a primary URL, optional primary auth token, and admin API configuration".to_string(),
-                    ));
-                };
-                Self::new_with_simulation_and_libsql_replica_config(
-                    control_data_dir.clone(),
-                    key_provider.as_ref().map(InitializedKeyProvider::provider),
-                    LibsqlReplicaProviderConfig {
-                        primary_url: primary_url.clone(),
-                        auth_token: auth_token.clone(),
-                        admin_api_url: admin_api_url.clone(),
-                        admin_auth_header: admin_auth_header.clone(),
-                        metadata_namespace: metadata_namespace.clone(),
-                        tenant_namespace_prefix: tenant_namespace_prefix.clone(),
-                        replica_cache_dir: replica_cache_dir.clone(),
-                        encryption_provider: key_provider
-                            .as_ref()
-                            .map(InitializedKeyProvider::provider),
-                    },
-                    clock,
-                    storage_fault_injector,
-                )
-                .await
-            }
-            (
-                PersistenceDialect::MySql,
-                PersistenceTopology::ExternalPrimary,
-                TenantRoutingConfig::DatabasePerTenant {
-                    metadata_database,
-                    tenant_database_prefix,
-                },
-                ControlPlaneConfig::EmbeddedRedb {
-                    data_dir: control_data_dir,
-                },
-            ) => {
-                let ProviderCredentials::ConnectionString(connection_string) =
-                    &config.tenant_provider.credentials
-                else {
-                    return Err(Error::InvalidInput(
-                        "MySQL tenant persistence requires a connection string".to_string(),
-                    ));
-                };
-                Self::new_with_simulation_and_mysql_config(
-                    control_data_dir.clone(),
-                    key_provider.as_ref().map(InitializedKeyProvider::provider),
-                    MySqlProviderConfig {
-                        connection_string: connection_string.clone(),
-                        metadata_database: metadata_database.clone(),
-                        tenant_database_prefix: tenant_database_prefix.clone(),
-                        min_connections: config.tenant_provider.pool.min_connections,
-                        max_connections: config.tenant_provider.pool.max_connections,
-                    },
-                    clock,
-                    storage_fault_injector,
-                )
-                .await
-            }
-            _ => Err(Error::InvalidInput(
-                "unsupported persistence config combination".to_string(),
-            )),
-        }?;
-
-        // Set the encryption status from the config
-        service.encryption_status = Some(encryption_status);
-        Ok(service)
+        bootstrap::build_from_persistence_config(config, clock, storage_fault_injector).await
     }
 
-    fn new_with_simulation_and_embedded_config(
-        tenant_data_dir: PathBuf,
-        control_data_dir: PathBuf,
-        encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-        control_plane_provider: Option<Arc<dyn LocalKeyProvider>>,
-        clock: Arc<dyn Clock>,
-        storage_fault_injector: Arc<dyn FaultInjector>,
-        embedded_provider_kind: EmbeddedProviderKind,
-    ) -> Result<Self> {
-        std::fs::create_dir_all(&tenant_data_dir)
-            .map_err(|error| Error::Internal(error.to_string()))?;
-        if control_data_dir != tenant_data_dir {
-            std::fs::create_dir_all(&control_data_dir)
-                .map_err(|error| Error::Internal(error.to_string()))?;
+    fn from_bootstrap_parts(parts: ServiceBootstrapParts) -> Self {
+        Self {
+            data_dir: parts.data_dir,
+            tenants: RwLock::new(HashMap::new()),
+            tenant_load_gate: AsyncMutex::new(()),
+            embedded_provider_kind: parts.embedded_provider_kind,
+            persistence_provider: parts.persistence_provider,
+            control_plane_provider: parts.control_plane_provider,
+            clock: parts.clock,
+            storage_fault_injector: parts.storage_fault_injector,
+            scheduler_wakeup: Notify::new(),
+            provider_hint_worker_started: AtomicBool::new(false),
+            provider_hint_listener_ready: AtomicBool::new(false),
+            engine_executor: parts.engine_executor,
+            storage_executor: parts.storage_executor,
+            encryption_status: parts.encryption_status,
         }
-        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
-        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
-            if let Some(provider) = control_plane_provider {
-                EmbeddedRedbControlPlaneProvider::new_encrypted(
-                    control_data_dir,
-                    provider,
-                    storage_executor.handle(),
-                )?
-            } else {
-                EmbeddedRedbControlPlaneProvider::new(control_data_dir, storage_executor.handle())?
-            },
-        ));
-        let persistence_provider = match embedded_provider_kind {
-            EmbeddedProviderKind::Redb => {
-                let provider = if let Some(provider) = encryption_provider {
-                    EmbeddedRedbProvider::new_encrypted(
-                        tenant_data_dir.clone(),
-                        provider,
-                        clock.clone(),
-                        storage_fault_injector.clone(),
-                        storage_executor.handle(),
-                    )?
-                } else {
-                    EmbeddedRedbProvider::new(
-                        tenant_data_dir.clone(),
-                        clock.clone(),
-                        storage_fault_injector.clone(),
-                        storage_executor.handle(),
-                    )?
-                };
-                PersistenceProvider::Redb(Arc::new(provider))
-            }
-            EmbeddedProviderKind::Sqlite => {
-                let provider = if let Some(provider) = encryption_provider {
-                    EmbeddedSqliteProvider::new_encrypted(
-                        tenant_data_dir.clone(),
-                        provider,
-                        clock.clone(),
-                        storage_fault_injector.clone(),
-                        storage_executor.handle(),
-                    )?
-                } else {
-                    EmbeddedSqliteProvider::new(
-                        tenant_data_dir.clone(),
-                        clock.clone(),
-                        storage_fault_injector.clone(),
-                        storage_executor.handle(),
-                    )?
-                };
-                PersistenceProvider::Sqlite(Arc::new(provider))
-            }
-        };
-        Ok(Self {
-            data_dir: tenant_data_dir,
-            tenants: RwLock::new(HashMap::new()),
-            tenant_load_gate: AsyncMutex::new(()),
-            embedded_provider_kind: Some(embedded_provider_kind),
-            persistence_provider,
-            control_plane_provider,
-            clock,
-            storage_fault_injector,
-            scheduler_wakeup: Notify::new(),
-            provider_hint_worker_started: AtomicBool::new(false),
-            provider_hint_listener_ready: AtomicBool::new(false),
-            engine_executor,
-            storage_executor,
-            encryption_status: None, // Set by config-based callers
-        })
-    }
-
-    async fn new_with_simulation_and_postgres_config(
-        control_data_dir: PathBuf,
-        control_plane_encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-        provider_config: PostgresProviderConfig,
-        clock: Arc<dyn Clock>,
-        storage_fault_injector: Arc<dyn FaultInjector>,
-    ) -> Result<Self> {
-        std::fs::create_dir_all(&control_data_dir)
-            .map_err(|error| Error::Internal(error.to_string()))?;
-        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
-        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
-            if let Some(provider) = control_plane_encryption_provider {
-                EmbeddedRedbControlPlaneProvider::new_encrypted(
-                    control_data_dir.clone(),
-                    provider,
-                    storage_executor.handle(),
-                )?
-            } else {
-                EmbeddedRedbControlPlaneProvider::new(
-                    control_data_dir.clone(),
-                    storage_executor.handle(),
-                )?
-            },
-        ));
-        let postgres_provider = Arc::new(
-            PostgresProvider::connect_with_simulation(
-                provider_config,
-                storage_executor.handle(),
-                clock.clone(),
-                storage_fault_injector.clone(),
-            )
-            .await?,
-        );
-        Ok(Self {
-            data_dir: control_data_dir,
-            tenants: RwLock::new(HashMap::new()),
-            tenant_load_gate: AsyncMutex::new(()),
-            embedded_provider_kind: None,
-            persistence_provider: PersistenceProvider::Postgres(postgres_provider),
-            control_plane_provider,
-            clock,
-            storage_fault_injector,
-            scheduler_wakeup: Notify::new(),
-            provider_hint_worker_started: AtomicBool::new(false),
-            provider_hint_listener_ready: AtomicBool::new(false),
-            engine_executor,
-            storage_executor,
-            encryption_status: None, // Set by config-based callers
-        })
-    }
-
-    async fn new_with_simulation_and_libsql_replica_config(
-        control_data_dir: PathBuf,
-        control_plane_encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-        provider_config: LibsqlReplicaProviderConfig,
-        clock: Arc<dyn Clock>,
-        storage_fault_injector: Arc<dyn FaultInjector>,
-    ) -> Result<Self> {
-        std::fs::create_dir_all(&control_data_dir)
-            .map_err(|error| Error::Internal(error.to_string()))?;
-        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
-        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
-            if let Some(provider) = control_plane_encryption_provider {
-                EmbeddedRedbControlPlaneProvider::new_encrypted(
-                    control_data_dir.clone(),
-                    provider,
-                    storage_executor.handle(),
-                )?
-            } else {
-                EmbeddedRedbControlPlaneProvider::new(
-                    control_data_dir.clone(),
-                    storage_executor.handle(),
-                )?
-            },
-        ));
-        let libsql_replica_provider = Arc::new(
-            LibsqlReplicaProvider::connect_with_simulation(
-                provider_config,
-                storage_executor.handle(),
-                clock.clone(),
-                storage_fault_injector.clone(),
-            )
-            .await?,
-        );
-        Ok(Self {
-            data_dir: control_data_dir,
-            tenants: RwLock::new(HashMap::new()),
-            tenant_load_gate: AsyncMutex::new(()),
-            embedded_provider_kind: None,
-            persistence_provider: PersistenceProvider::LibsqlReplica(libsql_replica_provider),
-            control_plane_provider,
-            clock,
-            storage_fault_injector,
-            scheduler_wakeup: Notify::new(),
-            provider_hint_worker_started: AtomicBool::new(false),
-            provider_hint_listener_ready: AtomicBool::new(false),
-            engine_executor,
-            storage_executor,
-            encryption_status: None, // Set by config-based callers
-        })
-    }
-
-    async fn new_with_simulation_and_mysql_config(
-        control_data_dir: PathBuf,
-        control_plane_encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-        provider_config: MySqlProviderConfig,
-        clock: Arc<dyn Clock>,
-        storage_fault_injector: Arc<dyn FaultInjector>,
-    ) -> Result<Self> {
-        std::fs::create_dir_all(&control_data_dir)
-            .map_err(|error| Error::Internal(error.to_string()))?;
-        let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
-        let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
-            if let Some(provider) = control_plane_encryption_provider {
-                EmbeddedRedbControlPlaneProvider::new_encrypted(
-                    control_data_dir.clone(),
-                    provider,
-                    storage_executor.handle(),
-                )?
-            } else {
-                EmbeddedRedbControlPlaneProvider::new(
-                    control_data_dir.clone(),
-                    storage_executor.handle(),
-                )?
-            },
-        ));
-        let mysql_provider = Arc::new(
-            MySqlProvider::connect_with_simulation(
-                provider_config,
-                storage_executor.handle(),
-                clock.clone(),
-                storage_fault_injector.clone(),
-            )
-            .await?,
-        );
-        Ok(Self {
-            data_dir: control_data_dir,
-            tenants: RwLock::new(HashMap::new()),
-            tenant_load_gate: AsyncMutex::new(()),
-            embedded_provider_kind: None,
-            persistence_provider: PersistenceProvider::MySql(mysql_provider),
-            control_plane_provider,
-            clock,
-            storage_fault_injector,
-            scheduler_wakeup: Notify::new(),
-            provider_hint_worker_started: AtomicBool::new(false),
-            provider_hint_listener_ready: AtomicBool::new(false),
-            engine_executor,
-            storage_executor,
-            encryption_status: None, // Set by config-based callers
-        })
     }
 
     /// Returns the service's encryption status, if configured.

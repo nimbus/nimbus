@@ -112,18 +112,22 @@ fn mutation_bridge(
     tenant_id: TenantId,
     principal: neovex_core::PrincipalContext,
 ) -> ConvexHostBridge {
-    ConvexHostBridge::new_with_invocation_kind(
-        service,
-        registry,
-        tenant_id,
-        None,
-        Default::default(),
-        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
-            crate::EmptySandboxCatalog,
-        ))),
-        principal,
-        None,
-        InvocationKind::Mutation,
+    ConvexHostBridge::build(
+        ConvexHostBridgeScope::new(
+            service,
+            registry,
+            tenant_id,
+            Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+                crate::EmptySandboxCatalog,
+            ))),
+        ),
+        ConvexHostBridgeInvocation::new(
+            None,
+            Default::default(),
+            principal,
+            None,
+            InvocationKind::Mutation,
+        ),
     )
     .expect("mutation bridge should build")
 }
@@ -271,16 +275,21 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             .collect(),
     );
     let bridge = ConvexHostBridge::new(
-        service.clone(),
-        Arc::new(ConvexRegistry::empty()),
-        tenant_id.clone(),
-        Some(auth.clone()),
-        Default::default(),
-        Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
-            crate::EmptySandboxCatalog,
-        ))),
-        normalize_principal_context(Some(&auth)),
-        None,
+        ConvexHostBridgeScope::new(
+            service.clone(),
+            Arc::new(ConvexRegistry::empty()),
+            tenant_id.clone(),
+            Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+                crate::EmptySandboxCatalog,
+            ))),
+        ),
+        ConvexHostBridgeInvocation::new(
+            Some(auth.clone()),
+            Default::default(),
+            normalize_principal_context(Some(&auth)),
+            None,
+            InvocationKind::Query,
+        ),
     );
 
     let query_result = bridge

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use neovex_core::Error;
 use neovex_storage::EmbeddedProviderKind;
 use serde::Serialize;
 
@@ -207,6 +208,59 @@ impl LocalPersistenceFamily {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServiceBootstrapPlan {
+    pub(crate) service_data_dir: PathBuf,
+    pub(crate) control_plane: ControlPlaneBootstrapPlan,
+    pub(crate) tenant_provider: TenantProviderBootstrapPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ControlPlaneBootstrapPlan {
+    EmbeddedRedb { data_dir: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TenantProviderBootstrapPlan {
+    Embedded(EmbeddedTenantBootstrapPlan),
+    Postgres(PostgresTenantBootstrapPlan),
+    LibsqlReplica(LibsqlReplicaTenantBootstrapPlan),
+    MySql(MySqlTenantBootstrapPlan),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EmbeddedTenantBootstrapPlan {
+    pub(crate) provider_kind: EmbeddedProviderKind,
+    pub(crate) data_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PostgresTenantBootstrapPlan {
+    pub(crate) connection_string: String,
+    pub(crate) metadata_schema: String,
+    pub(crate) tenant_schema_prefix: String,
+    pub(crate) pool: PoolConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LibsqlReplicaTenantBootstrapPlan {
+    pub(crate) primary_url: String,
+    pub(crate) auth_token: Option<String>,
+    pub(crate) admin_api_url: String,
+    pub(crate) admin_auth_header: Option<String>,
+    pub(crate) metadata_namespace: String,
+    pub(crate) tenant_namespace_prefix: String,
+    pub(crate) replica_cache_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MySqlTenantBootstrapPlan {
+    pub(crate) connection_string: String,
+    pub(crate) metadata_database: String,
+    pub(crate) tenant_database_prefix: String,
+    pub(crate) pool: PoolConfig,
+}
+
 impl ServicePersistenceConfig {
     pub fn embedded_default(data_dir: impl Into<PathBuf>) -> Self {
         Self::embedded(data_dir, EmbeddedProviderKind::default())
@@ -274,6 +328,162 @@ impl ServicePersistenceConfig {
     pub fn with_local_encryption(mut self, config: LocalEncryptionConfig) -> Self {
         self.local_encryption = config;
         self
+    }
+
+    pub(crate) fn bootstrap_plan(&self) -> neovex_core::Result<ServiceBootstrapPlan> {
+        match (
+            &self.tenant_provider.dialect,
+            &self.tenant_provider.topology,
+            &self.tenant_provider.routing,
+            &self.control_plane,
+        ) {
+            (
+                PersistenceDialect::Redb,
+                PersistenceTopology::EmbeddedStandalone,
+                TenantRoutingConfig::DirectoryPerTenant { data_dir },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => Ok(ServiceBootstrapPlan {
+                service_data_dir: data_dir.clone(),
+                control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
+                    data_dir: control_data_dir.clone(),
+                },
+                tenant_provider: TenantProviderBootstrapPlan::Embedded(
+                    EmbeddedTenantBootstrapPlan {
+                        provider_kind: EmbeddedProviderKind::Redb,
+                        data_dir: data_dir.clone(),
+                    },
+                ),
+            }),
+            (
+                PersistenceDialect::Sqlite,
+                PersistenceTopology::EmbeddedStandalone,
+                TenantRoutingConfig::DirectoryPerTenant { data_dir },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => Ok(ServiceBootstrapPlan {
+                service_data_dir: data_dir.clone(),
+                control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
+                    data_dir: control_data_dir.clone(),
+                },
+                tenant_provider: TenantProviderBootstrapPlan::Embedded(
+                    EmbeddedTenantBootstrapPlan {
+                        provider_kind: EmbeddedProviderKind::Sqlite,
+                        data_dir: data_dir.clone(),
+                    },
+                ),
+            }),
+            (
+                PersistenceDialect::Postgres,
+                PersistenceTopology::ExternalPrimary,
+                TenantRoutingConfig::SchemaPerTenant {
+                    metadata_schema,
+                    tenant_schema_prefix,
+                },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => {
+                let ProviderCredentials::ConnectionString(connection_string) =
+                    &self.tenant_provider.credentials
+                else {
+                    return Err(Error::InvalidInput(
+                        "Postgres tenant persistence requires a connection string".to_string(),
+                    ));
+                };
+                Ok(ServiceBootstrapPlan {
+                    service_data_dir: control_data_dir.clone(),
+                    control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
+                        data_dir: control_data_dir.clone(),
+                    },
+                    tenant_provider: TenantProviderBootstrapPlan::Postgres(
+                        PostgresTenantBootstrapPlan {
+                            connection_string: connection_string.clone(),
+                            metadata_schema: metadata_schema.clone(),
+                            tenant_schema_prefix: tenant_schema_prefix.clone(),
+                            pool: self.tenant_provider.pool.clone(),
+                        },
+                    ),
+                })
+            }
+            (
+                PersistenceDialect::Sqlite,
+                PersistenceTopology::ExternalPrimaryWithReplicas,
+                TenantRoutingConfig::NamespacePerTenant {
+                    metadata_namespace,
+                    tenant_namespace_prefix,
+                    replica_cache_dir,
+                },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => {
+                let ProviderCredentials::LibsqlReplica {
+                    primary_url,
+                    auth_token,
+                    admin_api_url,
+                    admin_auth_header,
+                } = &self.tenant_provider.credentials
+                else {
+                    return Err(Error::InvalidInput(
+                        "Replica-connected SQLite tenant persistence requires a primary URL, optional primary auth token, and admin API configuration".to_string(),
+                    ));
+                };
+                Ok(ServiceBootstrapPlan {
+                    service_data_dir: control_data_dir.clone(),
+                    control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
+                        data_dir: control_data_dir.clone(),
+                    },
+                    tenant_provider: TenantProviderBootstrapPlan::LibsqlReplica(
+                        LibsqlReplicaTenantBootstrapPlan {
+                            primary_url: primary_url.clone(),
+                            auth_token: auth_token.clone(),
+                            admin_api_url: admin_api_url.clone(),
+                            admin_auth_header: admin_auth_header.clone(),
+                            metadata_namespace: metadata_namespace.clone(),
+                            tenant_namespace_prefix: tenant_namespace_prefix.clone(),
+                            replica_cache_dir: replica_cache_dir.clone(),
+                        },
+                    ),
+                })
+            }
+            (
+                PersistenceDialect::MySql,
+                PersistenceTopology::ExternalPrimary,
+                TenantRoutingConfig::DatabasePerTenant {
+                    metadata_database,
+                    tenant_database_prefix,
+                },
+                ControlPlaneConfig::EmbeddedRedb {
+                    data_dir: control_data_dir,
+                },
+            ) => {
+                let ProviderCredentials::ConnectionString(connection_string) =
+                    &self.tenant_provider.credentials
+                else {
+                    return Err(Error::InvalidInput(
+                        "MySQL tenant persistence requires a connection string".to_string(),
+                    ));
+                };
+                Ok(ServiceBootstrapPlan {
+                    service_data_dir: control_data_dir.clone(),
+                    control_plane: ControlPlaneBootstrapPlan::EmbeddedRedb {
+                        data_dir: control_data_dir.clone(),
+                    },
+                    tenant_provider: TenantProviderBootstrapPlan::MySql(MySqlTenantBootstrapPlan {
+                        connection_string: connection_string.clone(),
+                        metadata_database: metadata_database.clone(),
+                        tenant_database_prefix: tenant_database_prefix.clone(),
+                        pool: self.tenant_provider.pool.clone(),
+                    }),
+                })
+            }
+            _ => Err(Error::InvalidInput(
+                "unsupported persistence config combination".to_string(),
+            )),
+        }
     }
 
     /// Returns which local persistence families are eligible for encryption
@@ -514,5 +724,87 @@ impl ControlPlaneConfig {
         Self::EmbeddedRedb {
             data_dir: data_dir.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_bootstrap_plan_preserves_tenant_and_control_plane_dirs() {
+        let config = ServicePersistenceConfig {
+            tenant_provider: TenantProviderConfig::embedded(
+                PathBuf::from("./tenant-data"),
+                EmbeddedProviderKind::Sqlite,
+            ),
+            control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
+            local_encryption: LocalEncryptionConfig::Disabled,
+        };
+
+        let plan = config
+            .bootstrap_plan()
+            .expect("embedded config should map to a bootstrap plan");
+        assert_eq!(plan.service_data_dir, PathBuf::from("./tenant-data"));
+        assert_eq!(
+            plan.control_plane,
+            ControlPlaneBootstrapPlan::EmbeddedRedb {
+                data_dir: PathBuf::from("./control-data"),
+            }
+        );
+        assert_eq!(
+            plan.tenant_provider,
+            TenantProviderBootstrapPlan::Embedded(EmbeddedTenantBootstrapPlan {
+                provider_kind: EmbeddedProviderKind::Sqlite,
+                data_dir: PathBuf::from("./tenant-data"),
+            })
+        );
+    }
+
+    #[test]
+    fn libsql_replica_bootstrap_plan_captures_routing_and_control_plane() {
+        let config = ServicePersistenceConfig {
+            tenant_provider: TenantProviderConfig {
+                dialect: PersistenceDialect::Sqlite,
+                topology: PersistenceTopology::ExternalPrimaryWithReplicas,
+                routing: TenantRoutingConfig::NamespacePerTenant {
+                    metadata_namespace: "meta_ns".to_string(),
+                    tenant_namespace_prefix: "tenant_ns_".to_string(),
+                    replica_cache_dir: PathBuf::from("./replica-cache"),
+                },
+                pool: PoolConfig::default(),
+                credentials: ProviderCredentials::LibsqlReplica {
+                    primary_url: "libsql://primary".to_string(),
+                    auth_token: Some("token".to_string()),
+                    admin_api_url: "https://admin.example.com".to_string(),
+                    admin_auth_header: Some("Bearer token".to_string()),
+                },
+            },
+            control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
+            local_encryption: LocalEncryptionConfig::Disabled,
+        };
+
+        let plan = config
+            .bootstrap_plan()
+            .expect("libsql replica config should map to a bootstrap plan");
+        assert_eq!(plan.service_data_dir, PathBuf::from("./control-data"));
+        assert_eq!(
+            plan.control_plane,
+            ControlPlaneBootstrapPlan::EmbeddedRedb {
+                data_dir: PathBuf::from("./control-data"),
+            }
+        );
+        assert_eq!(
+            plan.tenant_provider,
+            TenantProviderBootstrapPlan::LibsqlReplica(LibsqlReplicaTenantBootstrapPlan {
+                primary_url: "libsql://primary".to_string(),
+                auth_token: Some("token".to_string()),
+                admin_api_url: "https://admin.example.com".to_string(),
+                admin_auth_header: Some("Bearer token".to_string()),
+                metadata_namespace: "meta_ns".to_string(),
+                tenant_namespace_prefix: "tenant_ns_".to_string(),
+                replica_cache_dir: PathBuf::from("./replica-cache"),
+            })
+        );
     }
 }

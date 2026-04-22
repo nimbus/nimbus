@@ -1,4 +1,5 @@
 use super::*;
+use crate::adapters::convex::execution::RuntimeInvocationContext;
 
 /// Executes a Convex-style mutation over Neovex's existing mutation engine.
 pub(crate) async fn mutation(
@@ -18,11 +19,15 @@ pub(crate) async fn mutation(
     let value = match request {
         ConvexMutationRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
-            invoke_named_convex_function_async_cancellable(
+            let runtime_service_registry = state.runtime_service_registry();
+            let context = RuntimeInvocationContext::new(
                 &service,
                 &registry,
-                &state.runtime_service_registry(),
+                &runtime_service_registry,
                 &tenant_id,
+            );
+            invoke_named_convex_function_async_cancellable(
+                &context,
                 InvocationRequest {
                     kind: InvocationKind::Mutation,
                     function_name: request.name,
@@ -30,9 +35,7 @@ pub(crate) async fn mutation(
                     page_size: None,
                     cursor: None,
                     auth: auth.clone(),
-                    services: state
-                        .runtime_service_registry()
-                        .snapshot_for_tenant(&tenant_id),
+                    services: context.runtime_services(),
                 },
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-mutation")),

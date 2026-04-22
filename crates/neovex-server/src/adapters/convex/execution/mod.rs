@@ -16,7 +16,8 @@ pub(super) use async_ops::{
     execute_schedule_command_async,
 };
 pub(super) use runtime_backed::{
-    bootstrap_runtime_named_subscription_async, invoke_named_convex_function_async_cancellable,
+    RuntimeInvocationContext, bootstrap_runtime_named_subscription_async,
+    invoke_named_convex_function_async_cancellable,
     invoke_named_convex_function_with_trace_async_cancellable,
 };
 #[cfg(test)]

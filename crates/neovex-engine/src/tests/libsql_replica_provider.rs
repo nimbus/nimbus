@@ -1,6 +1,8 @@
 use std::env;
 use std::future::Future;
+use std::io::Read;
 use std::net::TcpListener;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,7 +12,10 @@ use neovex_core::{
     SequenceNumber, TableSchema, TenantId, Timestamp,
 };
 use neovex_storage::libsql::libsql_transport_connector;
-use neovex_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
+use neovex_storage::{
+    KeyManifest, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, LocalKeySubject,
+    ManifestCipher,
+};
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers_modules::testcontainers::{
     ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner,
@@ -19,8 +24,8 @@ use testcontainers_modules::testcontainers::{
 use super::*;
 use crate::{
     ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, LocalEncryptionConfig,
-    PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
-    TenantRoutingConfig,
+    LocalKeyProviderConfig, MasterKeyFileConfig, PersistenceDialect, PersistenceTopology,
+    PoolConfig, ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
 };
 
 const LIBSQL_URL_ENV: &str = "NEOVEX_LIBSQL_URL";
@@ -445,6 +450,111 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn encrypted_libsql_replica_config_reads_seeded_remote_state_and_reopens_existing_cache() {
+    with_encrypted_libsql_replica_service_config(|service_config, provider_config| async move {
+        let provider = LibsqlReplicaProvider::connect(provider_config.clone())
+            .await
+            .expect("replica provider should connect");
+        let tenant_id =
+            TenantId::new("libsql-replica-encrypted-tenant").expect("tenant id should build");
+        let registration = provider
+            .create_tenant(&tenant_id)
+            .await
+            .expect("tenant should create through provider");
+        let document_id = DocumentId::new();
+        seed_remote_namespace(
+            &provider_config,
+            &registration.namespace,
+            &tasks_schema(),
+            document_id,
+            serde_json::json!({
+                "title": "from-encrypted-primary"
+            }),
+        )
+        .await;
+        let replica_path = provider.replica_path_for_tenant(&tenant_id);
+        let manifest_path = KeyManifest::manifest_path(&replica_path);
+        drop(provider);
+
+        assert!(
+            !replica_path.exists(),
+            "local replica cache should not exist before the first encrypted open"
+        );
+        assert!(
+            !manifest_path.exists(),
+            "manifest should not exist before the first encrypted open"
+        );
+
+        let service = Arc::new(
+            Service::new_with_persistence_config(service_config.clone())
+                .await
+                .expect("encrypted replica-backed service should create"),
+        );
+        service
+            .ensure_tenant_exists_async(tenant_id.clone())
+            .await
+            .expect("tenant should lazy load through the encrypted replica provider");
+        let documents = service
+            .query_documents_async(tenant_id.clone(), query_for("tasks"))
+            .await
+            .expect("encrypted replica-backed query should succeed");
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].id, document_id);
+        assert_eq!(
+            documents[0]
+                .fields
+                .get("title")
+                .and_then(|value| value.as_str()),
+            Some("from-encrypted-primary")
+        );
+        assert!(replica_path.exists(), "encrypted cache should materialize");
+        assert!(
+            manifest_path.exists(),
+            "encrypted cache manifest should materialize"
+        );
+
+        let manifest = KeyManifest::read_for(&replica_path)
+            .expect("encrypted cache manifest should read back after first open");
+        assert_eq!(manifest.header.cipher, ManifestCipher::SqlCipher);
+        let logical_name = replica_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("replica cache path should end with a filename");
+        assert_eq!(
+            manifest.header.subject_descriptor,
+            LocalKeySubject::libsql_cache(tenant_id.clone(), logical_name).descriptor()
+        );
+        assert_sqlite_file_is_not_plaintext_header(&replica_path);
+
+        service.quiesce().await;
+        drop(service);
+
+        let reopened = Arc::new(
+            Service::new_with_persistence_config(service_config)
+                .await
+                .expect("encrypted replica-backed service should reopen"),
+        );
+        let reopened_documents = reopened
+            .query_documents_async(tenant_id.clone(), query_for("tasks"))
+            .await
+            .expect("reopened encrypted replica-backed query should succeed");
+        assert_eq!(reopened_documents.len(), 1);
+        assert_eq!(reopened_documents[0].id, document_id);
+        assert_eq!(
+            reopened_documents[0]
+                .fields
+                .get("title")
+                .and_then(|value| value.as_str()),
+            Some("from-encrypted-primary")
+        );
+        assert_sqlite_file_is_not_plaintext_header(&replica_path);
+        reopened.quiesce().await;
+    })
+    .await;
+}
+
 async fn with_libsql_replica_service_config<F, Fut>(test: F)
 where
     F: FnOnce(ServicePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
@@ -456,6 +566,69 @@ where
         },
     )
     .await;
+}
+
+async fn with_encrypted_libsql_replica_service_config<F, Fut>(test: F)
+where
+    F: FnOnce(ServicePersistenceConfig, LibsqlReplicaProviderConfig) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let connection = match test_connection().await {
+        Some(connection) => connection,
+        None => return,
+    };
+    let suffix = unique_suffix();
+    let metadata_namespace = format!("neovex_meta_{}", &suffix[..16.min(suffix.len())]);
+    let tenant_namespace_prefix = format!("tenant_{}_", &suffix[..12.min(suffix.len())]);
+    let replica_cache_dir = tempdir().expect("encrypted replica cache dir should create");
+    let control_dir = tempdir().expect("encrypted control tempdir should build");
+    let key_dir = tempdir().expect("master key tempdir should build");
+    let key_path = key_dir.path().join("master.key");
+    std::fs::write(&key_path, [0x42_u8; 32]).expect("master key file should write");
+
+    let provider_config = LibsqlReplicaProviderConfig {
+        primary_url: connection.primary_url().to_string(),
+        auth_token: connection.auth_token().map(ToOwned::to_owned),
+        admin_api_url: connection.admin_api_url().to_string(),
+        admin_auth_header: connection.admin_auth_header().map(ToOwned::to_owned),
+        metadata_namespace: metadata_namespace.clone(),
+        tenant_namespace_prefix: tenant_namespace_prefix.clone(),
+        replica_cache_dir: replica_cache_dir.path().to_path_buf(),
+        encryption_provider: None,
+    };
+
+    let service_config = ServicePersistenceConfig {
+        tenant_provider: TenantProviderConfig {
+            dialect: PersistenceDialect::Sqlite,
+            topology: PersistenceTopology::ExternalPrimaryWithReplicas,
+            routing: TenantRoutingConfig::NamespacePerTenant {
+                metadata_namespace,
+                tenant_namespace_prefix,
+                replica_cache_dir: replica_cache_dir.path().to_path_buf(),
+            },
+            pool: PoolConfig::default(),
+            credentials: ProviderCredentials::LibsqlReplica {
+                primary_url: connection.primary_url().to_string(),
+                auth_token: connection.auth_token().map(ToOwned::to_owned),
+                admin_api_url: connection.admin_api_url().to_string(),
+                admin_auth_header: connection.admin_auth_header().map(ToOwned::to_owned),
+            },
+        },
+        control_plane: ControlPlaneConfig::embedded_redb(control_dir.path()),
+        local_encryption: LocalEncryptionConfig::Enabled(LocalKeyProviderConfig::MasterKeyFile(
+            MasterKeyFileConfig { path: key_path },
+        )),
+    };
+
+    test(service_config, provider_config.clone()).await;
+
+    LibsqlReplicaProvider::connect(provider_config)
+        .await
+        .expect("cleanup provider should connect")
+        .drop_provider_namespaces_for_test()
+        .await
+        .expect("provider namespaces should clean up");
+    drop(connection);
 }
 
 async fn with_shared_libsql_replica_service_configs<F, Fut>(test: F)
@@ -666,6 +839,23 @@ async fn test_connection() -> Option<TestConnection> {
         admin_auth_header: None,
         _container: Box::new(container),
     })
+}
+
+fn assert_sqlite_file_is_not_plaintext_header(path: &Path) {
+    let mut header = [0_u8; 16];
+    let mut file = std::fs::File::open(path).expect("replica cache file should open");
+    let bytes_read = file
+        .read(&mut header)
+        .expect("replica cache header should read");
+    assert_eq!(
+        bytes_read,
+        header.len(),
+        "replica cache file should contain a full SQLite header-sized prefix"
+    );
+    assert_ne!(
+        &header, b"SQLite format 3\0",
+        "encrypted replica cache should not expose the plaintext SQLite header on disk"
+    );
 }
 
 fn unique_suffix() -> String {

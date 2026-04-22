@@ -122,16 +122,16 @@ impl Service {
         let prepare_elapsed = prepare_started.elapsed();
         match prepared {
             None => {
-                maybe_emit_query_profile(
-                    &tenant_id,
-                    "none",
-                    tenant_load_elapsed,
-                    visibility_elapsed,
-                    prepare_elapsed,
-                    Duration::ZERO,
-                    Duration::ZERO,
-                    total_started.elapsed(),
-                );
+                maybe_emit_query_profile(QueryProfileSample {
+                    tenant_id: &tenant_id,
+                    plan: "none",
+                    tenant_load: tenant_load_elapsed,
+                    wait_visibility: visibility_elapsed,
+                    prepare: prepare_elapsed,
+                    execute: Duration::ZERO,
+                    cache: Duration::ZERO,
+                    total: total_started.elapsed(),
+                });
                 Ok(Vec::new())
             }
             Some(prepared) if matches!(prepared.plan, QueryPlan::FullScan) => {
@@ -151,16 +151,16 @@ impl Service {
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
                 let cache_elapsed = cache_started.elapsed();
-                maybe_emit_query_profile(
-                    &tenant_id,
-                    query_plan_metric_kind_label(plan_kind),
-                    tenant_load_elapsed,
-                    visibility_elapsed,
-                    prepare_elapsed,
-                    execute_elapsed,
-                    cache_elapsed,
-                    total_started.elapsed(),
-                );
+                maybe_emit_query_profile(QueryProfileSample {
+                    tenant_id: &tenant_id,
+                    plan: query_plan_metric_kind_label(plan_kind),
+                    tenant_load: tenant_load_elapsed,
+                    wait_visibility: visibility_elapsed,
+                    prepare: prepare_elapsed,
+                    execute: execute_elapsed,
+                    cache: cache_elapsed,
+                    total: total_started.elapsed(),
+                });
                 Ok(documents)
             }
             Some(prepared) => {
@@ -178,16 +178,16 @@ impl Service {
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
                 let cache_elapsed = cache_started.elapsed();
-                maybe_emit_query_profile(
-                    &tenant_id,
-                    query_plan_metric_kind_label(plan_kind),
-                    tenant_load_elapsed,
-                    visibility_elapsed,
-                    prepare_elapsed,
-                    execute_elapsed,
-                    cache_elapsed,
-                    total_started.elapsed(),
-                );
+                maybe_emit_query_profile(QueryProfileSample {
+                    tenant_id: &tenant_id,
+                    plan: query_plan_metric_kind_label(plan_kind),
+                    tenant_load: tenant_load_elapsed,
+                    wait_visibility: visibility_elapsed,
+                    prepare: prepare_elapsed,
+                    execute: execute_elapsed,
+                    cache: cache_elapsed,
+                    total: total_started.elapsed(),
+                });
                 Ok(documents)
             }
         }
@@ -440,23 +440,32 @@ impl Service {
     }
 }
 
-fn maybe_emit_query_profile(
-    tenant_id: &TenantId,
-    plan: &str,
+struct QueryProfileSample<'a> {
+    tenant_id: &'a TenantId,
+    plan: &'a str,
     tenant_load: Duration,
     wait_visibility: Duration,
     prepare: Duration,
     execute: Duration,
     cache: Duration,
     total: Duration,
-) {
+}
+
+fn maybe_emit_query_profile(sample: QueryProfileSample<'_>) {
     if std::env::var_os("NEOVEX_QUERY_PROFILE").is_none() {
         return;
     }
 
     eprintln!(
         "query-profile tenant={} plan={} tenant_load={:?} wait_visibility={:?} prepare={:?} execute={:?} cache={:?} total={:?}",
-        tenant_id, plan, tenant_load, wait_visibility, prepare, execute, cache, total,
+        sample.tenant_id,
+        sample.plan,
+        sample.tenant_load,
+        sample.wait_visibility,
+        sample.prepare,
+        sample.execute,
+        sample.cache,
+        sample.total,
     );
 }
 

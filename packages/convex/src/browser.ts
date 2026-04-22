@@ -3,7 +3,12 @@ import {
   NeovexHttpClient,
   NeovexReactClient,
 } from "neovex/browser";
-import type { WebSocketConstructor } from "neovex/browser";
+import type {
+  AuthTokenFetcher,
+  ConnectionState,
+  Unsubscribe,
+  WebSocketConstructor,
+} from "neovex/browser";
 import type {
   ConvexActionReference,
   ConvexMutationReference,
@@ -30,30 +35,14 @@ export {
   makePaginatedQueryReference,
   makeQueryReference,
 } from "./internal/shared.ts";
+export type {
+  AuthTokenFetcher,
+  ConnectionState,
+  Unsubscribe,
+  WebSocketConstructor,
+} from "neovex/browser";
 
 type FetchLike = typeof globalThis.fetch;
-
-export type ConnectionState = {
-  hasInflightRequests: boolean;
-  isWebSocketConnected: boolean;
-  timeOfOldestInflightRequest: Date | null;
-  hasEverConnected: boolean;
-  connectionCount: number;
-  connectionRetries: number;
-  inflightMutations: number;
-  inflightActions: number;
-};
-
-export type Unsubscribe<T> = {
-  (): void;
-  unsubscribe(): void;
-  getCurrentValue(): T | undefined;
-  getQueryLogs(): string[] | undefined;
-};
-
-export type AuthTokenFetcher = (args: {
-  forceRefreshToken: boolean;
-}) => Promise<string | null | undefined>;
 
 type ConvexHttpClientOptions = {
   skipConvexDeploymentUrlCheck?: boolean;
@@ -286,18 +275,6 @@ export class ConvexClient extends NeovexClient {
     super(address, withConvexDeploymentUrlCheck(options));
   }
 
-  connectionState(): ConnectionState {
-    return super.connectionState();
-  }
-
-  subscribeToConnectionState(callback: () => void) {
-    return super.subscribeToConnectionState(callback);
-  }
-
-  setAuth(value: string | AuthTokenFetcher, onChange?: (isAuthenticated: boolean) => void) {
-    super.setAuth(value, onChange);
-  }
-
   async query<Query extends ConvexQueryReference<any, any>>(
     query: Query,
     args?: InferArgs<Query>,
@@ -455,18 +432,6 @@ export class ConvexClient extends NeovexClient {
 export class ConvexReactClient extends NeovexReactClient {
   constructor(address: string, options: ConvexClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
-  }
-
-  connectionState(): ConnectionState {
-    return super.connectionState();
-  }
-
-  subscribeToConnectionState(callback: () => void) {
-    return super.subscribeToConnectionState(callback);
-  }
-
-  setAuth(value: string | AuthTokenFetcher, onChange?: (isAuthenticated: boolean) => void) {
-    super.setAuth(value, onChange);
   }
 
   async query<Query extends ConvexQueryReference<any, any>>(

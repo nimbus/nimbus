@@ -27,8 +27,8 @@ all = "deny"
 
 [workspace.dependencies]
 aes-gcm-siv = "0.11"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-kms = "1"
+aws-config = { version = "1.8.16", features = ["behavior-version-latest"] }
+aws-sdk-kms = { version = "1.105.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
