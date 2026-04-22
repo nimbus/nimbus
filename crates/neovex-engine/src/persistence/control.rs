@@ -16,7 +16,7 @@ impl ControlPlaneProvider {
     ) -> Result<bool> {
         match self {
             Self::EmbeddedRedb(provider) => provider
-                .usage_store()
+                .usage_store()?
                 .record_monthly_active_user(token_identifier, observed_at_unix_ms),
         }
     }
@@ -29,7 +29,7 @@ impl ControlPlaneProvider {
         match self {
             Self::EmbeddedRedb(provider) => {
                 provider
-                    .usage_storage()
+                    .usage_storage()?
                     .execute(move |usage_store| {
                         usage_store
                             .record_monthly_active_user(&token_identifier, observed_at_unix_ms)
@@ -45,7 +45,7 @@ impl ControlPlaneProvider {
     ) -> Result<MonthlyActiveUsersSnapshot> {
         match self {
             Self::EmbeddedRedb(provider) => provider
-                .usage_store()
+                .usage_store()?
                 .monthly_active_users_for(observed_at_unix_ms),
         }
     }
@@ -57,7 +57,7 @@ impl ControlPlaneProvider {
         match self {
             Self::EmbeddedRedb(provider) => {
                 provider
-                    .usage_storage()
+                    .usage_storage()?
                     .execute(move |usage_store| {
                         usage_store.monthly_active_users_for(observed_at_unix_ms)
                     })

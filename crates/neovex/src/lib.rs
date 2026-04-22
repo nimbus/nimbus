@@ -11,8 +11,11 @@ pub use neovex_core::{
     TenantId, Timestamp, WriteOp, WriteOpType,
 };
 pub use neovex_engine::{
-    ControlPlaneConfig, MonthlyActiveUsersSnapshot, PersistenceDialect, PersistenceTopology,
-    PoolConfig, ProviderCredentials, Service, ServicePersistenceConfig, SubscriptionUpdate,
+    AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionStatus,
+    EncryptionValidationError, InitializedKeyProvider, KeyDirectoryConfig, KeyProviderDescriptor,
+    LocalEncryptionConfig, LocalKeyProviderConfig, LocalPersistenceFamily, MasterKeyFileConfig,
+    MonthlyActiveUsersSnapshot, PersistenceDialect, PersistenceTopology, PoolConfig,
+    ProviderCredentials, Service, ServicePersistenceConfig, SubscriptionUpdate,
     TenantProviderConfig, TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
 };
 pub use neovex_runtime::{
@@ -42,5 +45,18 @@ pub use neovex_server::{
     serve_with_convex_and_license_and_sandbox_service_manager, serve_with_license,
     serve_with_license_and_sandbox_catalog,
 };
+#[cfg(feature = "aws-kms")]
+pub use neovex_storage::AwsKmsKeyProvider;
 pub use neovex_storage::EmbeddedProviderKind;
 pub use neovex_storage::TenantStore;
+pub use neovex_storage::{
+    KeyDirectoryProvider, KeyManifest, KeyManifestHeader, LOGICAL_PAGE_SIZE, LocalArtifactRole,
+    LocalDatabaseRole, LocalKeyProvider, LocalKeySubject, LocalKeySubjectKind, ManifestCipher,
+    MasterKeyFileProvider, PHYSICAL_PAGE_SIZE, generate_database_manifest,
+    resolve_database_encryption_key, unwrap_database_manifest_key,
+};
+pub use neovex_storage::{
+    checkpoint_encrypted_database_at_path, export_encrypted_to_plaintext,
+    export_plaintext_to_encrypted, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,
+    rekey_encrypted_database, rekey_encrypted_database_at_path,
+};

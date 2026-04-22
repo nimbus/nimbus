@@ -23,21 +23,34 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     })
     .collect::<Vec<_>>();
     let mut markdown = String::new();
-    markdown.push_str("# SQLite Storage Backend Benchmark Report\n\n");
+    markdown.push_str("# Embedded Storage Benchmark Report\n\n");
     markdown.push_str("Generated with:\n\n");
     markdown.push_str("```bash\n");
-    markdown.push_str(
-        "make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md\n",
-    );
+    markdown.push_str("make bench-embedded-providers");
+    if config.encryption_mode.is_enabled() {
+        markdown.push_str(" ENCRYPTION=");
+        markdown.push_str(config.encryption_mode.cli_value());
+    }
+    markdown.push_str(" REPORT=docs/research/sqlite-storage-benchmark-report.md\n");
     markdown.push_str("```\n\n");
     markdown.push_str("## Methodology\n\n");
     markdown.push_str(&format!(
-        "- backend order alternates every round inside each workload and lane: round 1 runs `redb -> sqlite`, round 2 runs `sqlite -> redb`, then repeats\n- steady-state warmup rounds: `{STEADY_STATE_WARMUP_ROUNDS}`; steady-state measured rounds: `{STEADY_STATE_MEASURE_ROUNDS}`\n- cold-start warmup rounds: `{COLD_START_WARMUP_ROUNDS}`; cold-start measured rounds: `{COLD_START_MEASURE_ROUNDS}`\n- cold-start read/query/journal lanes seed one canonical on-disk dataset per backend, clone that dataset before each sample, and then time only the fresh open plus first representative execution\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n- subscription cold-start includes fresh subscription registration/bootstrap because subscriptions are in-memory and do not survive reopen\n"
+        "- local encryption mode: `{}`\n- backend order alternates every round inside each workload and lane: round 1 runs `redb -> sqlite`, round 2 runs `sqlite -> redb`, then repeats\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- cold-start read/query/journal lanes seed one canonical on-disk dataset per backend, clone that dataset before each sample, and then time only the fresh open plus first representative execution\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n- subscription cold-start includes fresh subscription registration/bootstrap because subscriptions are in-memory and do not survive reopen\n- encryption-enabled runs use one benchmark-only 32-byte master key file per benchmark process so cloned cold-start samples reopen through the same manifest-backed key path\n",
+        config.encryption_mode.cli_value(),
+        BenchmarkLane::SteadyState.warmup_rounds(),
+        BenchmarkLane::SteadyState.measure_rounds(),
+        BenchmarkLane::ColdStart.warmup_rounds(),
+        BenchmarkLane::ColdStart.measure_rounds(),
     ));
     markdown.push('\n');
     markdown.push_str("## Configuration\n\n");
     markdown.push_str(&format!(
         "- CRUD documents per sample: `{CRUD_DOCUMENTS}`\n- point reads per sample: `{POINT_READ_BATCH_SIZE}` over `{POINT_READ_DOCUMENTS}` seeded documents\n- indexed queries per sample: `{INDEXED_QUERY_BATCH_SIZE}` over `{INDEXED_QUERY_DOCUMENTS}` seeded documents\n- journal dataset size: `{JOURNAL_DOCUMENTS}` writes with stream page limit `{JOURNAL_STREAM_LIMIT}`\n- subscription fan-out count: `{SUBSCRIPTION_FANOUT_COUNT}`\n- mixed-load tenants: `{MIXED_LOAD_TENANTS}` with `{MIXED_LOAD_OPS_PER_TENANT}` ops per tenant per sample\n",
+    ));
+    markdown.push_str(&format!(
+        "- local encryption posture: `{}`\n- local encryption notes: {}\n",
+        config.encryption_mode.label(),
+        config.encryption_mode.notes(),
     ));
     if let Some(path) = &config.markdown_output {
         markdown.push_str(&format!("- report path: `{}`\n", path.display()));

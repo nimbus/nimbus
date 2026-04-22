@@ -229,6 +229,7 @@ pub(super) fn materialize_snapshot_to_replica_cache(
     replica_dir: &Path,
     replica_path: &Path,
     snapshot: RemoteNamespaceSnapshot,
+    dek: Option<&[u8; 32]>,
 ) -> Result<()> {
     std::fs::create_dir_all(replica_dir).map_err(storage_io_error)?;
     let staging_path = staged_replica_path(replica_path);
@@ -236,6 +237,10 @@ pub(super) fn materialize_snapshot_to_replica_cache(
 
     let conn =
         LocalSqliteConnection::open(staging_path.as_path()).map_err(map_local_sqlite_error)?;
+    if let Some(key) = dek {
+        crate::sqlite::encryption::apply_encryption_key(&conn, key)?;
+        crate::sqlite::encryption::harden_temp_storage(&conn)?;
+    }
     initialize_local_replica_cache(&conn)?;
     let write_result = (|| {
         conn.execute_batch("BEGIN IMMEDIATE")

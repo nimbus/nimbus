@@ -4,6 +4,9 @@ use std::sync::Arc;
 use neovex_core::{Error, Result, TenantId};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
+use crate::encryption::{
+    KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
+};
 use crate::{Clock, FaultInjector, TenantStore};
 
 use super::helpers::map_join_error;
@@ -46,6 +49,7 @@ pub struct EmbeddedRedbProvider {
     fault_injector: Arc<dyn FaultInjector>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
+    encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
 }
 
 impl EmbeddedRedbProvider {
@@ -62,7 +66,30 @@ impl EmbeddedRedbProvider {
             fault_injector,
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
+            encryption_provider: None,
         })
+    }
+
+    pub fn new_encrypted(
+        data_dir: impl Into<PathBuf>,
+        provider: Arc<dyn LocalKeyProvider>,
+        clock: Arc<dyn Clock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+    ) -> Result<Self> {
+        let data_dir = data_dir.into();
+        Ok(Self {
+            data_dir,
+            clock,
+            fault_injector,
+            storage_handle,
+            tenant_read_parallelism: default_tenant_read_parallelism(),
+            encryption_provider: Some(provider),
+        })
+    }
+
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption_provider.is_some()
     }
 
     pub fn read_storage_for_store(&self, store: Arc<TenantStore>) -> Arc<RedbTenantStorage> {
@@ -84,7 +111,7 @@ impl EmbeddedRedbProvider {
             )));
         }
 
-        self.open_tenant_at_path(path).await
+        self.open_tenant_at_path(tenant_id.clone(), path).await
     }
 
     pub async fn open_existing_tenant(
@@ -99,13 +126,21 @@ impl EmbeddedRedbProvider {
             return Ok(None);
         }
 
-        Ok(Some(self.open_tenant_at_path(path).await?))
+        Ok(Some(
+            self.open_tenant_at_path(tenant_id.clone(), path).await?,
+        ))
     }
 
     pub async fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
-        tokio::fs::remove_file(self.tenant_path(tenant_id))
+        let path = self.tenant_path(tenant_id);
+        tokio::fs::remove_file(&path)
             .await
-            .map_err(|error| Error::Internal(error.to_string()))
+            .map_err(|error| Error::Internal(error.to_string()))?;
+        if self.encryption_provider.is_some() {
+            let manifest_path = KeyManifest::manifest_path(&path);
+            let _ = tokio::fs::remove_file(manifest_path).await;
+        }
+        Ok(())
     }
 
     pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
@@ -122,12 +157,34 @@ impl EmbeddedRedbProvider {
         ))
     }
 
-    async fn open_tenant_at_path(&self, path: PathBuf) -> Result<OpenedEmbeddedRedbTenant> {
+    async fn open_tenant_at_path(
+        &self,
+        tenant_id: TenantId,
+        path: PathBuf,
+    ) -> Result<OpenedEmbeddedRedbTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
+        let provider = self.encryption_provider.clone();
         let store = self
             .storage_handle
-            .spawn_blocking(move || TenantStore::open_with_simulation(path, clock, fault_injector))
+            .spawn_blocking(move || {
+                if let Some(provider) = provider {
+                    let logical_name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "tenant.redb".to_string());
+                    let subject = LocalKeySubject::redb_tenant(tenant_id, logical_name);
+                    let dek = resolve_database_encryption_key(
+                        &path,
+                        provider.as_ref(),
+                        &subject,
+                        ManifestCipher::RedbAes256GcmSiv,
+                    )?;
+                    TenantStore::open_encrypted_with_simulation(path, &dek, clock, fault_injector)
+                } else {
+                    TenantStore::open_with_simulation(path, clock, fault_injector)
+                }
+            })
             .await
             .map_err(map_join_error)??;
 

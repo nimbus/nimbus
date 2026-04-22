@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use neovex_core::{Error, Result, TenantId};
 
@@ -182,6 +183,7 @@ impl Service {
         tenant_id: &TenantId,
     ) -> Result<Arc<TenantRuntime>> {
         self.ensure_provider_background_tasks_started();
+        let total_started = Instant::now();
         if let Some(runtime) = self
             .tenants
             .read()
@@ -189,6 +191,18 @@ impl Service {
             .get(tenant_id)
             .cloned()
         {
+            maybe_emit_tenant_load_profile(
+                tenant_id,
+                true,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                total_started.elapsed(),
+            );
             return Ok(runtime);
         }
 
@@ -200,9 +214,22 @@ impl Service {
             .get(tenant_id)
             .cloned()
         {
+            maybe_emit_tenant_load_profile(
+                tenant_id,
+                true,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                total_started.elapsed(),
+            );
             return Ok(runtime);
         }
 
+        let open_started = Instant::now();
         let Some(opened) = self
             .persistence_provider
             .open_existing_tenant(tenant_id)
@@ -210,31 +237,61 @@ impl Service {
         else {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         };
+        let open_elapsed = open_started.elapsed();
         let opened_executor = opened.executor.clone();
-        let runtime = Arc::new(
-            TenantRuntime::from_parts_async(opened.persistence.clone(), opened_executor).await?,
-        );
-        let progress = match &opened.persistence {
-            TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
-            TenantPersistence::Redb(_)
-            | TenantPersistence::Sqlite(_)
-            | TenantPersistence::LibsqlReplica(_)
-            | TenantPersistence::MySql(_) => {
-                opened
-                    .executor
-                    .execute(|store| store.recover_durable_journal())
-                    .await?
+        let runtime_init_started = Instant::now();
+        let (initial_state, runtime_profile) =
+            TenantRuntime::load_initial_state_async(&opened.persistence, &opened_executor).await?;
+        let runtime = Arc::new(TenantRuntime::from_loaded_state(
+            opened.persistence.clone(),
+            opened_executor,
+            initial_state,
+        ));
+        let runtime_init_elapsed = runtime_init_started.elapsed();
+        let recover_started = Instant::now();
+        let progress = if runtime.applied_head().0 < runtime.durable_head().0 {
+            match &opened.persistence {
+                TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
+                TenantPersistence::Redb(_)
+                | TenantPersistence::Sqlite(_)
+                | TenantPersistence::LibsqlReplica(_)
+                | TenantPersistence::MySql(_) => {
+                    opened
+                        .executor
+                        .execute(|store| store.recover_durable_journal())
+                        .await?
+                }
+            }
+        } else {
+            neovex_storage::JournalProgress {
+                durable_head: runtime.durable_head(),
+                applied_head: runtime.applied_head(),
             }
         };
+        let recover_elapsed = recover_started.elapsed();
         runtime.sync_mutation_journal_progress(progress);
+        let catch_up_started = Instant::now();
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(runtime.clone(), tenant_id, true, true)
                 .await?;
         }
+        let catch_up_elapsed = catch_up_started.elapsed();
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")
             .insert(tenant_id.clone(), runtime.clone());
+        maybe_emit_tenant_load_profile(
+            tenant_id,
+            false,
+            open_elapsed,
+            runtime_init_elapsed,
+            runtime_profile.schema_load,
+            runtime_profile.journal_progress,
+            runtime_profile.total,
+            recover_elapsed,
+            catch_up_elapsed,
+            total_started.elapsed(),
+        );
         Ok(runtime)
     }
 
@@ -248,4 +305,38 @@ impl Service {
             embedded_provider_kind.tenant_file_extension()
         ))
     }
+}
+
+fn maybe_emit_tenant_load_profile(
+    tenant_id: &TenantId,
+    cache_hit: bool,
+    open_existing: Duration,
+    runtime_init: Duration,
+    runtime_schema_load: Duration,
+    runtime_journal_progress: Duration,
+    runtime_profile_total: Duration,
+    recover_durable: Duration,
+    catch_up: Duration,
+    total: Duration,
+) {
+    if std::env::var_os("NEOVEX_TENANT_LOAD_PROFILE").is_none() {
+        return;
+    }
+    if std::env::var_os("NEOVEX_PROFILE_ONLY_COLD_SAMPLES").is_some() && cache_hit {
+        return;
+    }
+
+    eprintln!(
+        "tenant-load-profile tenant={} cache_hit={} open_existing={:?} runtime_init={:?} runtime_schema_load={:?} runtime_journal_progress={:?} runtime_profile_total={:?} recover_durable={:?} catch_up={:?} total={:?}",
+        tenant_id,
+        cache_hit,
+        open_existing,
+        runtime_init,
+        runtime_schema_load,
+        runtime_journal_progress,
+        runtime_profile_total,
+        recover_durable,
+        catch_up,
+        total,
+    );
 }

@@ -1,6 +1,20 @@
-use super::config::{BenchmarkEnvironment, BenchmarkLane, WorkloadKind};
+use super::config::{BenchmarkEnvironment, BenchmarkLane, LocalCacheEncryptionMode, WorkloadKind};
 use super::models::{BenchmarkReport, MeasuredBackend};
 use super::*;
+
+static LOCAL_CACHE_ENCRYPTION_MODE: OnceLock<LocalCacheEncryptionMode> = OnceLock::new();
+
+pub(super) fn configure_local_cache_encryption(mode: LocalCacheEncryptionMode) -> BenchResult<()> {
+    LOCAL_CACHE_ENCRYPTION_MODE.set(mode).map_err(|_| {
+        "libsql replica benchmark local-cache encryption mode was already configured".into()
+    })
+}
+
+fn local_cache_encryption_mode() -> LocalCacheEncryptionMode {
+    *LOCAL_CACHE_ENCRYPTION_MODE
+        .get()
+        .unwrap_or(&LocalCacheEncryptionMode::Disabled)
+}
 
 pub(super) async fn run_workload<Fut>(workload: WorkloadKind, run: Fut) -> BenchResult<()>
 where
@@ -131,8 +145,17 @@ pub(super) fn record_contrast_measurements(
 pub(super) fn libsql_replica_service_config(
     control_dir: &Path,
     provider_config: &LibsqlReplicaProviderConfig,
-) -> ServicePersistenceConfig {
-    ServicePersistenceConfig {
+) -> BenchResult<ServicePersistenceConfig> {
+    let local_encryption = match local_cache_encryption_mode() {
+        LocalCacheEncryptionMode::Disabled => LocalEncryptionConfig::Disabled,
+        LocalCacheEncryptionMode::TempMasterKeyFile => {
+            let key_path = super::common::write_benchmark_master_key(control_dir)?;
+            LocalEncryptionConfig::Enabled(LocalKeyProviderConfig::MasterKeyFile(
+                MasterKeyFileConfig { path: key_path },
+            ))
+        }
+    };
+    Ok(ServicePersistenceConfig {
         tenant_provider: TenantProviderConfig {
             dialect: PersistenceDialect::Sqlite,
             topology: PersistenceTopology::ExternalPrimaryWithReplicas,
@@ -150,7 +173,8 @@ pub(super) fn libsql_replica_service_config(
             },
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir),
-    }
+        local_encryption,
+    })
 }
 
 pub(super) fn benchmark_libsql_provider_config(
@@ -170,6 +194,7 @@ pub(super) fn benchmark_libsql_provider_config(
         metadata_namespace,
         tenant_namespace_prefix,
         replica_cache_dir: replica_cache_dir.to_path_buf(),
+        encryption_provider: None,
     }
 }
 

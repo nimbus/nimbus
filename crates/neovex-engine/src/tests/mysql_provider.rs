@@ -13,8 +13,8 @@ use testcontainers_modules::{
 
 use super::*;
 use crate::{
-    ControlPlaneConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,
-    TenantProviderConfig, TenantRoutingConfig,
+    ControlPlaneConfig, LocalEncryptionConfig, PersistenceDialect, PersistenceTopology, PoolConfig,
+    ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
 };
 
 const MYSQL_URL_ENV: &str = "NEOVEX_MYSQL_URL";
@@ -455,10 +455,12 @@ where
             ),
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
+        local_encryption: LocalEncryptionConfig::Disabled,
     };
     let service_config_b = ServicePersistenceConfig {
         tenant_provider: service_config_a.tenant_provider.clone(),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
+        local_encryption: LocalEncryptionConfig::Disabled,
     };
 
     test(service_config_a, service_config_b, provider_config.clone()).await;

@@ -11,6 +11,7 @@ workspace = true
 
 [features]
 test-hooks = []
+aws-kms = ["neovex-storage/aws-kms"]
 
 [dependencies]
 arc-swap.workspace = true
@@ -21,11 +22,13 @@ neovex-storage = { path = "../neovex-storage" }
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
+hkdf.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 hyper.workspace = true

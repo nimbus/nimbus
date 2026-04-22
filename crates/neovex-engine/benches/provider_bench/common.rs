@@ -93,6 +93,14 @@ pub(super) fn copy_dir_all(source: &Path, destination: &Path) -> BenchResult<()>
     Ok(())
 }
 
+pub(super) fn write_benchmark_master_key(_root: &Path) -> BenchResult<PathBuf> {
+    let path = env::temp_dir().join(format!("neovex-bench-master-{}.key", std::process::id()));
+    if !path.exists() {
+        fs::write(&path, [0x42_u8; 32])?;
+    }
+    Ok(path)
+}
+
 pub(super) fn read_round_override(env_key: &str, default: usize) -> usize {
     env::var(env_key)
         .ok()

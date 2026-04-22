@@ -6,6 +6,7 @@ use redb::{Database, ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime};
 
+use crate::encrypted_redb::{EncryptedFileBackend, EncryptedMemoryBackend};
 use crate::keys::prefix_end;
 use crate::store::map_redb_error;
 
@@ -31,13 +32,35 @@ pub struct UsageStore {
 
 impl UsageStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let db = Database::create(path).map_err(map_redb_error)?;
+        let db = redb::Database::builder()
+            .create(path)
+            .map_err(map_redb_error)?;
+        Ok(Self { db })
+    }
+
+    /// Opens or creates an encrypted usage store.
+    ///
+    /// The DEK must be a 32-byte key obtained from the key provider system.
+    pub fn open_encrypted(path: impl AsRef<Path>, dek: &[u8; 32]) -> Result<Self> {
+        let backend = EncryptedFileBackend::create(path, dek).map_err(map_redb_error)?;
+        let db = redb::Database::builder()
+            .create_with_backend(backend)
+            .map_err(map_redb_error)?;
         Ok(Self { db })
     }
 
     pub fn create_in_memory() -> Result<Self> {
-        let db = Database::builder()
+        let db = redb::Database::builder()
             .create_with_backend(InMemoryBackend::new())
+            .map_err(map_redb_error)?;
+        Ok(Self { db })
+    }
+
+    /// Creates an in-memory encrypted usage store for testing.
+    pub fn create_in_memory_encrypted(dek: &[u8; 32]) -> Result<Self> {
+        let backend = EncryptedMemoryBackend::new(dek).map_err(map_redb_error)?;
+        let db = redb::Database::builder()
+            .create_with_backend(backend)
             .map_err(map_redb_error)?;
         Ok(Self { db })
     }

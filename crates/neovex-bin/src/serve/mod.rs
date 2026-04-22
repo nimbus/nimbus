@@ -9,8 +9,8 @@ mod runtime_limits;
 mod tests;
 
 pub(crate) use self::boot::run_serve_command;
-use self::config::CliTenantProvider;
 pub(crate) use self::config::service_persistence_config_from_serve_command;
+use self::config::{CliKeyProvider, CliTenantProvider};
 use self::runtime_limits::{
     default_runtime_heap_mb, default_runtime_initial_heap_mb, default_runtime_max_instances,
     default_runtime_max_nested_calls, default_runtime_timeout_secs, default_runtime_worker_threads,
@@ -154,6 +154,39 @@ pub(crate) struct ServeCommand {
     /// Maximum number of nested runtime ctx.run* invocations allowed per request tree.
     #[arg(long, default_value_t = default_runtime_max_nested_calls())]
     pub(crate) runtime_max_nested_calls: usize,
+
+    // -------------------------------------------------------------------------
+    // Local encryption options
+    // -------------------------------------------------------------------------
+    /// Local encryption key provider. One of: master-key-file, key-dir, aws-kms.
+    ///
+    /// `aws-kms` uses the same manifest-backed per-subject DEK contract as the
+    /// local providers, but wraps those DEKs with AWS KMS `GenerateDataKey`,
+    /// `Decrypt`, and `ReEncrypt`. If this flag is not specified, local
+    /// encryption is disabled.
+    #[arg(long, value_enum)]
+    pub(crate) encryption_key_provider: Option<CliKeyProvider>,
+
+    /// Path to the master key file when `--encryption-key-provider=master-key-file`.
+    /// The file must contain exactly 32 bytes of key material.
+    #[arg(long)]
+    pub(crate) encryption_master_key_file: Option<PathBuf>,
+
+    /// Path to the key directory when `--encryption-key-provider=key-dir`.
+    #[arg(long)]
+    pub(crate) encryption_key_dir: Option<PathBuf>,
+
+    /// AWS KMS key ID (ARN or alias) when `--encryption-key-provider=aws-kms`.
+    #[arg(long)]
+    pub(crate) encryption_aws_kms_key_id: Option<String>,
+
+    /// AWS region override when `--encryption-key-provider=aws-kms`.
+    #[arg(long)]
+    pub(crate) encryption_aws_region: Option<String>,
+
+    /// AWS KMS endpoint URL override for testing or VPC endpoints.
+    #[arg(long)]
+    pub(crate) encryption_aws_endpoint_url: Option<String>,
 }
 
 impl Default for ServeCommand {
@@ -190,6 +223,12 @@ impl Default for ServeCommand {
             runtime_max_instances: default_runtime_max_instances(),
             runtime_worker_threads: default_runtime_worker_threads(),
             runtime_max_nested_calls: default_runtime_max_nested_calls(),
+            encryption_key_provider: None,
+            encryption_master_key_file: None,
+            encryption_key_dir: None,
+            encryption_aws_kms_key_id: None,
+            encryption_aws_region: None,
+            encryption_aws_endpoint_url: None,
         }
     }
 }

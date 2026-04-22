@@ -8,6 +8,8 @@ use super::support::{
     register_libsql_replica_cleanup, slugify_label,
 };
 use super::*;
+use libsql::{Builder, Database};
+use neovex_storage::libsql::libsql_transport_connector;
 
 #[derive(Clone)]
 pub(super) struct TenantFixture {
@@ -170,7 +172,7 @@ pub(super) async fn create_tenant_service(
                 Service::new_with_persistence_config(libsql_replica_service_config(
                     control_dir.path(),
                     &provider_config,
-                ))
+                )?)
                 .await?,
             );
             let tenant_id = benchmark_tenant_id(tenant_label)?;
@@ -203,15 +205,41 @@ pub(super) async fn create_point_read_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<PointReadFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
-    let mut ids = Vec::with_capacity(POINT_READ_DOCUMENTS);
-    for rank in 0..POINT_READ_DOCUMENTS {
-        ids.push(
-            tenant
-                .service
-                .insert_document_async(
-                    tenant.tenant_id.clone(),
-                    tasks_table(),
+    let (tenant, ids) = match backend {
+        MeasuredBackend::Sqlite => {
+            let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+            let mut ids = Vec::with_capacity(POINT_READ_DOCUMENTS);
+            for rank in 0..POINT_READ_DOCUMENTS {
+                ids.push(
+                    tenant
+                        .service
+                        .insert_document_async(
+                            tenant.tenant_id.clone(),
+                            tasks_table(),
+                            serde_json::Map::from_iter([
+                                (
+                                    "status".to_string(),
+                                    json!(if rank % 2 == 0 { "open" } else { "done" }),
+                                ),
+                                ("rank".to_string(), json!(rank)),
+                                ("title".to_string(), json!(format!("task-{rank:05}"))),
+                            ]),
+                        )
+                        .await?,
+                );
+            }
+            (tenant, ids)
+        }
+        MeasuredBackend::LibsqlReplica => {
+            let mut seeded_documents = Vec::with_capacity(POINT_READ_DOCUMENTS);
+            let mut ids = Vec::with_capacity(POINT_READ_DOCUMENTS);
+            for rank in 0..POINT_READ_DOCUMENTS {
+                let id = DocumentId::new();
+                ids.push(id);
+                seeded_documents.push((
+                    ids.last()
+                        .expect("point-read document id should exist")
+                        .clone(),
                     serde_json::Map::from_iter([
                         (
                             "status".to_string(),
@@ -220,10 +248,19 @@ pub(super) async fn create_point_read_fixture(
                         ("rank".to_string(), json!(rank)),
                         ("title".to_string(), json!(format!("task-{rank:05}"))),
                     ]),
-                )
-                .await?,
-        );
-    }
+                ));
+            }
+            let tenant = create_seeded_libsql_replica_tenant_service(
+                label,
+                tenant_label,
+                environment,
+                None,
+                seeded_documents.as_slice(),
+            )
+            .await?;
+            (tenant, ids)
+        }
+    };
     Ok(PointReadFixture { tenant, ids })
 }
 
@@ -233,28 +270,57 @@ pub(super) async fn create_indexed_query_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<QueryFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
-    tenant
-        .service
-        .set_table_schema_async(tenant.tenant_id.clone(), single_field_schema())
-        .await?;
-    for rank in 0..INDEXED_QUERY_DOCUMENTS {
-        tenant
-            .service
-            .insert_document_async(
-                tenant.tenant_id.clone(),
-                tasks_table(),
-                serde_json::Map::from_iter([
-                    (
-                        "status".to_string(),
-                        json!(if rank % 5 == 0 { "open" } else { "done" }),
-                    ),
-                    ("rank".to_string(), json!(rank)),
-                    ("title".to_string(), json!(format!("task-{rank:05}"))),
-                ]),
+    let tenant = match backend {
+        MeasuredBackend::Sqlite => {
+            let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+            tenant
+                .service
+                .set_table_schema_async(tenant.tenant_id.clone(), single_field_schema())
+                .await?;
+            for rank in 0..INDEXED_QUERY_DOCUMENTS {
+                tenant
+                    .service
+                    .insert_document_async(
+                        tenant.tenant_id.clone(),
+                        tasks_table(),
+                        serde_json::Map::from_iter([
+                            (
+                                "status".to_string(),
+                                json!(if rank % 5 == 0 { "open" } else { "done" }),
+                            ),
+                            ("rank".to_string(), json!(rank)),
+                            ("title".to_string(), json!(format!("task-{rank:05}"))),
+                        ]),
+                    )
+                    .await?;
+            }
+            tenant
+        }
+        MeasuredBackend::LibsqlReplica => {
+            let mut seeded_documents = Vec::with_capacity(INDEXED_QUERY_DOCUMENTS);
+            for rank in 0..INDEXED_QUERY_DOCUMENTS {
+                seeded_documents.push((
+                    DocumentId::new(),
+                    serde_json::Map::from_iter([
+                        (
+                            "status".to_string(),
+                            json!(if rank % 5 == 0 { "open" } else { "done" }),
+                        ),
+                        ("rank".to_string(), json!(rank)),
+                        ("title".to_string(), json!(format!("task-{rank:05}"))),
+                    ]),
+                ));
+            }
+            create_seeded_libsql_replica_tenant_service(
+                label,
+                tenant_label,
+                environment,
+                Some(single_field_schema()),
+                seeded_documents.as_slice(),
             )
-            .await?;
-    }
+            .await?
+        }
+    };
     Ok(QueryFixture {
         tenant,
         query: Query {
@@ -272,28 +338,57 @@ pub(super) async fn create_composite_query_fixture(
     backend: MeasuredBackend,
     environment: &BenchmarkEnvironment,
 ) -> BenchResult<QueryFixture> {
-    let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
-    tenant
-        .service
-        .set_table_schema_async(tenant.tenant_id.clone(), composite_schema())
-        .await?;
-    for rank in 0..INDEXED_QUERY_DOCUMENTS {
-        let team = if rank % 2 == 0 { "alpha" } else { "beta" };
-        let status = if rank % 3 == 0 { "open" } else { "done" };
-        tenant
-            .service
-            .insert_document_async(
-                tenant.tenant_id.clone(),
-                tasks_table(),
-                serde_json::Map::from_iter([
-                    ("team".to_string(), json!(team)),
-                    ("status".to_string(), json!(status)),
-                    ("rank".to_string(), json!(rank)),
-                    ("title".to_string(), json!(format!("task-{rank:05}"))),
-                ]),
+    let tenant = match backend {
+        MeasuredBackend::Sqlite => {
+            let tenant = create_tenant_service(label, tenant_label, backend, environment).await?;
+            tenant
+                .service
+                .set_table_schema_async(tenant.tenant_id.clone(), composite_schema())
+                .await?;
+            for rank in 0..INDEXED_QUERY_DOCUMENTS {
+                let team = if rank % 2 == 0 { "alpha" } else { "beta" };
+                let status = if rank % 3 == 0 { "open" } else { "done" };
+                tenant
+                    .service
+                    .insert_document_async(
+                        tenant.tenant_id.clone(),
+                        tasks_table(),
+                        serde_json::Map::from_iter([
+                            ("team".to_string(), json!(team)),
+                            ("status".to_string(), json!(status)),
+                            ("rank".to_string(), json!(rank)),
+                            ("title".to_string(), json!(format!("task-{rank:05}"))),
+                        ]),
+                    )
+                    .await?;
+            }
+            tenant
+        }
+        MeasuredBackend::LibsqlReplica => {
+            let mut seeded_documents = Vec::with_capacity(INDEXED_QUERY_DOCUMENTS);
+            for rank in 0..INDEXED_QUERY_DOCUMENTS {
+                let team = if rank % 2 == 0 { "alpha" } else { "beta" };
+                let status = if rank % 3 == 0 { "open" } else { "done" };
+                seeded_documents.push((
+                    DocumentId::new(),
+                    serde_json::Map::from_iter([
+                        ("team".to_string(), json!(team)),
+                        ("status".to_string(), json!(status)),
+                        ("rank".to_string(), json!(rank)),
+                        ("title".to_string(), json!(format!("task-{rank:05}"))),
+                    ]),
+                ));
+            }
+            create_seeded_libsql_replica_tenant_service(
+                label,
+                tenant_label,
+                environment,
+                Some(composite_schema()),
+                seeded_documents.as_slice(),
             )
-            .await?;
-    }
+            .await?
+        }
+    };
     Ok(QueryFixture {
         tenant,
         query: Query {
@@ -346,7 +441,7 @@ pub(super) async fn create_mixed_load_fixture(
                 Service::new_with_persistence_config(libsql_replica_service_config(
                     control_dir.path(),
                     &provider_config,
-                ))
+                )?)
                 .await?,
             );
             (
@@ -421,6 +516,7 @@ pub(super) async fn create_peer_catch_up_fixture(
         metadata_namespace: metadata_namespace.clone(),
         tenant_namespace_prefix: tenant_namespace_prefix.clone(),
         replica_cache_dir: creator_cache.path().to_path_buf(),
+        encryption_provider: None,
     };
     let opener_provider_config = LibsqlReplicaProviderConfig {
         replica_cache_dir: opener_cache.path().to_path_buf(),
@@ -431,14 +527,14 @@ pub(super) async fn create_peer_catch_up_fixture(
         Service::new_with_persistence_config(libsql_replica_service_config(
             creator_control.path(),
             &creator_provider_config,
-        ))
+        )?)
         .await?,
     );
     let opener_service = Arc::new(
         Service::new_with_persistence_config(libsql_replica_service_config(
             opener_control.path(),
             &opener_provider_config,
-        ))
+        )?)
         .await?,
     );
 
@@ -593,7 +689,7 @@ impl SeedResource {
                     Service::new_with_persistence_config(libsql_replica_service_config(
                         control_dir.path(),
                         &reopened_config,
-                    ))
+                    )?)
                     .await?,
                 );
                 Ok((
@@ -666,4 +762,93 @@ impl PeerCatchUpFixture {
             .await?;
         Ok(())
     }
+}
+
+async fn create_seeded_libsql_replica_tenant_service(
+    label: &str,
+    tenant_label: &str,
+    environment: &BenchmarkEnvironment,
+    schema: Option<TableSchema>,
+    documents: &[(DocumentId, serde_json::Map<String, serde_json::Value>)],
+) -> BenchResult<TenantFixture> {
+    let control_dir = Arc::new(BenchDir::new(&format!("{label}-replica-control"))?);
+    let replica_cache_dir = Arc::new(BenchDir::new(&format!("{label}-replica-cache"))?);
+    let provider_config =
+        benchmark_libsql_provider_config(label, environment, replica_cache_dir.path());
+    let provider = LibsqlReplicaProvider::connect(provider_config.clone()).await?;
+    let tenant_id = benchmark_tenant_id(tenant_label)?;
+    let registration = provider.create_tenant(&tenant_id).await?;
+    seed_remote_namespace_documents(
+        &provider_config,
+        &registration.namespace,
+        schema.as_ref(),
+        documents,
+    )
+    .await?;
+    drop(provider);
+
+    let service = Arc::new(
+        Service::new_with_persistence_config(libsql_replica_service_config(
+            control_dir.path(),
+            &provider_config,
+        )?)
+        .await?,
+    );
+    service
+        .ensure_tenant_exists_async(tenant_id.clone())
+        .await?;
+    Ok(TenantFixture {
+        resource: LiveResource::LibsqlReplica {
+            control_dir,
+            replica_cache_dir,
+            provider_config,
+        },
+        service,
+        tenant_id,
+    })
+}
+
+async fn seed_remote_namespace_documents(
+    config: &LibsqlReplicaProviderConfig,
+    namespace: &str,
+    schema: Option<&TableSchema>,
+    documents: &[(DocumentId, serde_json::Map<String, serde_json::Value>)],
+) -> BenchResult<()> {
+    let database = open_remote_namespace_database(config, namespace).await?;
+    let conn = database.connect()?;
+    conn.execute_batch("BEGIN IMMEDIATE").await?;
+    if let Some(schema) = schema {
+        conn.execute(
+            "INSERT OR REPLACE INTO schemas (table_name, schema_json) VALUES (?, ?)",
+            libsql::params![schema.table.as_str(), serde_json::to_string(schema)?,],
+        )
+        .await?;
+    }
+    for (index, (document_id, fields)) in documents.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO documents (table_name, id, data_json, creation_time) VALUES (?, ?, ?, ?)",
+            libsql::params![
+                tasks_table().as_str(),
+                document_id.to_string(),
+                serde_json::Value::Object(fields.clone()).to_string(),
+                i64::try_from(index + 1)?,
+            ],
+        )
+        .await?;
+    }
+    conn.execute_batch("COMMIT").await?;
+    Ok(())
+}
+
+async fn open_remote_namespace_database(
+    config: &LibsqlReplicaProviderConfig,
+    namespace: &str,
+) -> BenchResult<Database> {
+    let builder = Builder::new_remote(
+        config.primary_url.clone(),
+        config.auth_token.clone().unwrap_or_default(),
+    )
+    .namespace(namespace.to_string())
+    .connector(libsql_transport_connector()?);
+    Ok(builder.build().await?)
 }

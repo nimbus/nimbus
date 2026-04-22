@@ -36,13 +36,41 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     markdown.push_str("# Replica-Connected SQLite Provider Benchmark Report\n\n");
     markdown.push_str("Generated with:\n\n");
     markdown.push_str("```bash\n");
+    markdown.push_str("NEOVEX_LIBSQL_URL='http://127.0.0.1:18080' \\\n");
+    markdown.push_str("NEOVEX_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \\\n");
+    markdown.push_str("make bench-libsql-replica-provider");
+    if !config.workload_filters.is_empty() {
+        let workload_values = config
+            .workload_filters
+            .iter()
+            .map(|workload| workload.cli_value())
+            .collect::<Vec<_>>()
+            .join(" ");
+        markdown.push_str(" WORKLOADS='");
+        markdown.push_str(&workload_values);
+        markdown.push('\'');
+    }
+    if config.local_cache_encryption.is_enabled() {
+        markdown.push_str(" ENCRYPTION=");
+        markdown.push_str(config.local_cache_encryption.cli_value());
+    }
+    markdown.push_str(" REPORT=");
     markdown.push_str(
-        "NEOVEX_LIBSQL_URL='http://127.0.0.1:18080' \\\nNEOVEX_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \\\nmake bench-libsql-replica-provider REPORT=docs/research/libsql-replica-provider-benchmark-report.md\n",
+        config
+            .markdown_output
+            .as_deref()
+            .unwrap_or_else(|| {
+                Path::new("docs/research/libsql-replica-provider-benchmark-report.md")
+            })
+            .to_string_lossy()
+            .as_ref(),
     );
+    markdown.push('\n');
     markdown.push_str("```\n\n");
     markdown.push_str("## Methodology\n\n");
     markdown.push_str(&format!(
-        "- steady-state lane compares embedded `sqlite` against `libsql replica` with alternating backend order\n- cold-start lane compares fresh service open plus the first representative execution for embedded `sqlite` and `libsql replica`\n- replica-operational lane measures the real freshness contract shipped today: same-service barrier refresh after a remote-primary write, plus peer catch-up / delegated-write visibility through the provider poll worker\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- replica-operational warmup rounds: `{}`; replica-operational measured rounds: `{}`\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n",
+        "- local cache encryption mode: `{}`\n- steady-state lane compares embedded `sqlite` against `libsql replica` with alternating backend order\n- cold-start lane compares fresh service open plus the first representative execution for embedded `sqlite` and `libsql replica`\n- replica-operational lane measures the real freshness contract shipped today: same-service barrier refresh after a remote-primary write, plus peer catch-up / delegated-write visibility through the provider poll worker\n- steady-state warmup rounds: `{}`; steady-state measured rounds: `{}`\n- cold-start warmup rounds: `{}`; cold-start measured rounds: `{}`\n- replica-operational warmup rounds: `{}`; replica-operational measured rounds: `{}`\n- 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency\n- encryption-enabled runs use one benchmark-only 32-byte master key file per benchmark process so local redb control state and replica-cache SQLite files both reopen through the same manifest-backed path during the benchmark\n",
+        config.local_cache_encryption.cli_value(),
         BenchmarkLane::SteadyState.warmup_rounds(),
         BenchmarkLane::SteadyState.measure_rounds(),
         BenchmarkLane::ColdStart.warmup_rounds(),
@@ -57,11 +85,22 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
         PEER_CATCH_UP_TIMEOUT_SECS,
         format_duration(Duration::from_millis(PEER_CATCH_UP_POLL_INTERVAL_MS)),
     ));
+    markdown.push_str(&format!(
+        "- local cache encryption posture: `{}`\n- local cache encryption notes: {}\n",
+        config.local_cache_encryption.label(),
+        config.local_cache_encryption.notes(),
+    ));
     if let Some(path) = &config.markdown_output {
         markdown.push_str(&format!("- report path: `{}`\n", path.display()));
     }
-    if let Some(workload) = config.workload_filter {
-        markdown.push_str(&format!("- workload filter: `{}`\n", workload.label()));
+    if !config.workload_filters.is_empty() {
+        let workload_labels = config
+            .workload_filters
+            .iter()
+            .map(|workload| workload.label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        markdown.push_str(&format!("- workload filter: `{workload_labels}`\n"));
     }
     markdown.push('\n');
 

@@ -1,5 +1,6 @@
 mod background_executor;
 mod diagnostics;
+mod encryption;
 mod execution_units;
 mod mutations;
 mod provider_hints;
@@ -22,7 +23,7 @@ use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
     Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
     EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    MySqlProvider, MySqlProviderConfig, NoopFaultInjector, PostgresProvider,
+    LocalKeyProvider, MySqlProvider, MySqlProviderConfig, NoopFaultInjector, PostgresProvider,
     PostgresProviderConfig, SqliteTenantStore, SystemClock, TenantStore,
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify};
@@ -36,6 +37,7 @@ use crate::persistence_config::{
 use crate::tenant::TenantRuntime;
 use background_executor::BackgroundExecutor;
 
+pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 pub(crate) use queries::{
     evaluate_with_index_cancellable_for_principal, paginate_documents_for_store_with_principal,
@@ -62,6 +64,7 @@ pub struct Service {
     provider_hint_listener_ready: AtomicBool,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
+    encryption_status: Option<encryption::EncryptionStatus>,
 }
 
 tokio::task_local! {
@@ -114,6 +117,10 @@ impl Service {
 
     /// Creates a new service with deterministic simulation seams and an
     /// explicit embedded persistence provider.
+    ///
+    /// Note: This API does not support encryption. Use
+    /// `new_with_simulation_and_persistence_config` with a `LocalEncryptionConfig`
+    /// to enable encrypted embedded providers.
     pub fn new_with_simulation_and_embedded_provider(
         data_dir: impl Into<PathBuf>,
         clock: Arc<dyn Clock>,
@@ -124,6 +131,8 @@ impl Service {
         Self::new_with_simulation_and_embedded_config(
             data_dir.clone(),
             data_dir,
+            None, // No encryption for direct embedded provider usage
+            None, // No control plane encryption for direct embedded provider usage
             clock,
             storage_fault_injector,
             embedded_provider_kind,
@@ -137,7 +146,14 @@ impl Service {
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        match (
+        // Initialize the configured local key provider if encryption is enabled.
+        // This performs fail-fast validation for unsupported configurations.
+        let key_provider = encryption::initialize_encryption(&config)?;
+
+        // Capture encryption status from config for later assignment
+        let encryption_status = encryption::EncryptionStatus::from_config(&config);
+
+        let mut service = match (
             &config.tenant_provider.dialect,
             &config.tenant_provider.topology,
             &config.tenant_provider.routing,
@@ -153,6 +169,8 @@ impl Service {
             ) => Self::new_with_simulation_and_embedded_config(
                 data_dir.clone(),
                 control_data_dir.clone(),
+                key_provider.as_ref().map(InitializedKeyProvider::provider),
+                key_provider.as_ref().map(InitializedKeyProvider::provider),
                 clock,
                 storage_fault_injector,
                 EmbeddedProviderKind::Redb,
@@ -167,6 +185,8 @@ impl Service {
             ) => Self::new_with_simulation_and_embedded_config(
                 data_dir.clone(),
                 control_data_dir.clone(),
+                key_provider.as_ref().map(InitializedKeyProvider::provider),
+                key_provider.as_ref().map(InitializedKeyProvider::provider),
                 clock,
                 storage_fault_injector,
                 EmbeddedProviderKind::Sqlite,
@@ -191,6 +211,7 @@ impl Service {
                 };
                 Self::new_with_simulation_and_postgres_config(
                     control_data_dir.clone(),
+                    key_provider.as_ref().map(InitializedKeyProvider::provider),
                     PostgresProviderConfig {
                         connection_string: connection_string.clone(),
                         metadata_schema: metadata_schema.clone(),
@@ -228,6 +249,7 @@ impl Service {
                 };
                 Self::new_with_simulation_and_libsql_replica_config(
                     control_data_dir.clone(),
+                    key_provider.as_ref().map(InitializedKeyProvider::provider),
                     LibsqlReplicaProviderConfig {
                         primary_url: primary_url.clone(),
                         auth_token: auth_token.clone(),
@@ -236,6 +258,9 @@ impl Service {
                         metadata_namespace: metadata_namespace.clone(),
                         tenant_namespace_prefix: tenant_namespace_prefix.clone(),
                         replica_cache_dir: replica_cache_dir.clone(),
+                        encryption_provider: key_provider
+                            .as_ref()
+                            .map(InitializedKeyProvider::provider),
                     },
                     clock,
                     storage_fault_injector,
@@ -262,6 +287,7 @@ impl Service {
                 };
                 Self::new_with_simulation_and_mysql_config(
                     control_data_dir.clone(),
+                    key_provider.as_ref().map(InitializedKeyProvider::provider),
                     MySqlProviderConfig {
                         connection_string: connection_string.clone(),
                         metadata_database: metadata_database.clone(),
@@ -277,12 +303,18 @@ impl Service {
             _ => Err(Error::InvalidInput(
                 "unsupported persistence config combination".to_string(),
             )),
-        }
+        }?;
+
+        // Set the encryption status from the config
+        service.encryption_status = Some(encryption_status);
+        Ok(service)
     }
 
     fn new_with_simulation_and_embedded_config(
         tenant_data_dir: PathBuf,
         control_data_dir: PathBuf,
+        encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
+        control_plane_provider: Option<Arc<dyn LocalKeyProvider>>,
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
         embedded_provider_kind: EmbeddedProviderKind,
@@ -296,24 +328,54 @@ impl Service {
         let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
         let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
         let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
-            EmbeddedRedbControlPlaneProvider::new(control_data_dir, storage_executor.handle())?,
+            if let Some(provider) = control_plane_provider {
+                EmbeddedRedbControlPlaneProvider::new_encrypted(
+                    control_data_dir,
+                    provider,
+                    storage_executor.handle(),
+                )?
+            } else {
+                EmbeddedRedbControlPlaneProvider::new(control_data_dir, storage_executor.handle())?
+            },
         ));
         let persistence_provider = match embedded_provider_kind {
             EmbeddedProviderKind::Redb => {
-                PersistenceProvider::Redb(Arc::new(EmbeddedRedbProvider::new(
-                    tenant_data_dir.clone(),
-                    clock.clone(),
-                    storage_fault_injector.clone(),
-                    storage_executor.handle(),
-                )?))
+                let provider = if let Some(provider) = encryption_provider {
+                    EmbeddedRedbProvider::new_encrypted(
+                        tenant_data_dir.clone(),
+                        provider,
+                        clock.clone(),
+                        storage_fault_injector.clone(),
+                        storage_executor.handle(),
+                    )?
+                } else {
+                    EmbeddedRedbProvider::new(
+                        tenant_data_dir.clone(),
+                        clock.clone(),
+                        storage_fault_injector.clone(),
+                        storage_executor.handle(),
+                    )?
+                };
+                PersistenceProvider::Redb(Arc::new(provider))
             }
             EmbeddedProviderKind::Sqlite => {
-                PersistenceProvider::Sqlite(Arc::new(EmbeddedSqliteProvider::new(
-                    tenant_data_dir.clone(),
-                    clock.clone(),
-                    storage_fault_injector.clone(),
-                    storage_executor.handle(),
-                )?))
+                let provider = if let Some(provider) = encryption_provider {
+                    EmbeddedSqliteProvider::new_encrypted(
+                        tenant_data_dir.clone(),
+                        provider,
+                        clock.clone(),
+                        storage_fault_injector.clone(),
+                        storage_executor.handle(),
+                    )?
+                } else {
+                    EmbeddedSqliteProvider::new(
+                        tenant_data_dir.clone(),
+                        clock.clone(),
+                        storage_fault_injector.clone(),
+                        storage_executor.handle(),
+                    )?
+                };
+                PersistenceProvider::Sqlite(Arc::new(provider))
             }
         };
         Ok(Self {
@@ -330,11 +392,13 @@ impl Service {
             provider_hint_listener_ready: AtomicBool::new(false),
             engine_executor,
             storage_executor,
+            encryption_status: None, // Set by config-based callers
         })
     }
 
     async fn new_with_simulation_and_postgres_config(
         control_data_dir: PathBuf,
+        control_plane_encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
         provider_config: PostgresProviderConfig,
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
@@ -343,11 +407,20 @@ impl Service {
             .map_err(|error| Error::Internal(error.to_string()))?;
         let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
         let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider =
-            ControlPlaneProvider::EmbeddedRedb(Arc::new(EmbeddedRedbControlPlaneProvider::new(
-                control_data_dir.clone(),
-                storage_executor.handle(),
-            )?));
+        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
+            if let Some(provider) = control_plane_encryption_provider {
+                EmbeddedRedbControlPlaneProvider::new_encrypted(
+                    control_data_dir.clone(),
+                    provider,
+                    storage_executor.handle(),
+                )?
+            } else {
+                EmbeddedRedbControlPlaneProvider::new(
+                    control_data_dir.clone(),
+                    storage_executor.handle(),
+                )?
+            },
+        ));
         let postgres_provider = Arc::new(
             PostgresProvider::connect_with_simulation(
                 provider_config,
@@ -371,11 +444,13 @@ impl Service {
             provider_hint_listener_ready: AtomicBool::new(false),
             engine_executor,
             storage_executor,
+            encryption_status: None, // Set by config-based callers
         })
     }
 
     async fn new_with_simulation_and_libsql_replica_config(
         control_data_dir: PathBuf,
+        control_plane_encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
         provider_config: LibsqlReplicaProviderConfig,
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
@@ -384,11 +459,20 @@ impl Service {
             .map_err(|error| Error::Internal(error.to_string()))?;
         let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
         let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider =
-            ControlPlaneProvider::EmbeddedRedb(Arc::new(EmbeddedRedbControlPlaneProvider::new(
-                control_data_dir.clone(),
-                storage_executor.handle(),
-            )?));
+        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
+            if let Some(provider) = control_plane_encryption_provider {
+                EmbeddedRedbControlPlaneProvider::new_encrypted(
+                    control_data_dir.clone(),
+                    provider,
+                    storage_executor.handle(),
+                )?
+            } else {
+                EmbeddedRedbControlPlaneProvider::new(
+                    control_data_dir.clone(),
+                    storage_executor.handle(),
+                )?
+            },
+        ));
         let libsql_replica_provider = Arc::new(
             LibsqlReplicaProvider::connect_with_simulation(
                 provider_config,
@@ -412,11 +496,13 @@ impl Service {
             provider_hint_listener_ready: AtomicBool::new(false),
             engine_executor,
             storage_executor,
+            encryption_status: None, // Set by config-based callers
         })
     }
 
     async fn new_with_simulation_and_mysql_config(
         control_data_dir: PathBuf,
+        control_plane_encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
         provider_config: MySqlProviderConfig,
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
@@ -425,11 +511,20 @@ impl Service {
             .map_err(|error| Error::Internal(error.to_string()))?;
         let engine_executor = BackgroundExecutor::new("neovex-engine-bg", 2);
         let storage_executor = BackgroundExecutor::new("neovex-storage-bg", 1);
-        let control_plane_provider =
-            ControlPlaneProvider::EmbeddedRedb(Arc::new(EmbeddedRedbControlPlaneProvider::new(
-                control_data_dir.clone(),
-                storage_executor.handle(),
-            )?));
+        let control_plane_provider = ControlPlaneProvider::EmbeddedRedb(Arc::new(
+            if let Some(provider) = control_plane_encryption_provider {
+                EmbeddedRedbControlPlaneProvider::new_encrypted(
+                    control_data_dir.clone(),
+                    provider,
+                    storage_executor.handle(),
+                )?
+            } else {
+                EmbeddedRedbControlPlaneProvider::new(
+                    control_data_dir.clone(),
+                    storage_executor.handle(),
+                )?
+            },
+        ));
         let mysql_provider = Arc::new(
             MySqlProvider::connect_with_simulation(
                 provider_config,
@@ -453,7 +548,17 @@ impl Service {
             provider_hint_listener_ready: AtomicBool::new(false),
             engine_executor,
             storage_executor,
+            encryption_status: None, // Set by config-based callers
         })
+    }
+
+    /// Returns the service's encryption status, if configured.
+    ///
+    /// Returns `Some` when the service was created via `new_with_persistence_config`
+    /// or `new_with_simulation_and_persistence_config`. Returns `None` for services
+    /// created via direct embedded provider constructors.
+    pub fn encryption_status(&self) -> Option<&encryption::EncryptionStatus> {
+        self.encryption_status.as_ref()
     }
 
     pub(crate) fn wake_scheduler(&self) {

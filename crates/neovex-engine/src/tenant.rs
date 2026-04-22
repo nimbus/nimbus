@@ -1,5 +1,4 @@
 use std::sync::Arc;
-#[cfg(test)]
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -79,6 +78,17 @@ pub struct TenantOperationGuard {
 
 pub struct TenantDeletionGuard;
 
+pub(crate) struct TenantRuntimeInitialState {
+    pub schema: Schema,
+    pub progress: neovex_storage::JournalProgress,
+}
+
+pub(crate) struct TenantRuntimeInitialStateProfile {
+    pub schema_load: Duration,
+    pub journal_progress: Duration,
+    pub total: Duration,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantEngineDiagnosticsSnapshot {
     pub mutation_admission: MutationAdmissionStats,
@@ -120,6 +130,61 @@ impl TenantRuntime {
         }
     }
 
+    pub(crate) fn from_loaded_state(
+        store: TenantPersistence,
+        read_storage: TenantPersistenceExecutor,
+        initial_state: TenantRuntimeInitialState,
+    ) -> Self {
+        Self::from_initialized_parts(
+            store,
+            read_storage,
+            initial_state.schema,
+            initial_state.progress,
+        )
+    }
+
+    pub(crate) async fn load_initial_state_async(
+        store: &TenantPersistence,
+        read_storage: &TenantPersistenceExecutor,
+    ) -> Result<(TenantRuntimeInitialState, TenantRuntimeInitialStateProfile)> {
+        let total_started = Instant::now();
+        let (schema, progress, schema_load, journal_progress) = match store {
+            TenantPersistence::Postgres(store) => {
+                let schema_started = Instant::now();
+                let schema = store.load_schema_async().await?;
+                let schema_load = schema_started.elapsed();
+                let progress_started = Instant::now();
+                let progress = store.journal_progress_async().await?;
+                let journal_progress = progress_started.elapsed();
+                (schema, progress, schema_load, journal_progress)
+            }
+            TenantPersistence::Redb(_)
+            | TenantPersistence::Sqlite(_)
+            | TenantPersistence::LibsqlReplica(_)
+            | TenantPersistence::MySql(_) => {
+                read_storage
+                    .execute(|store| {
+                        let schema_started = Instant::now();
+                        let schema = store.load_schema()?;
+                        let schema_load = schema_started.elapsed();
+                        let progress_started = Instant::now();
+                        let progress = store.journal_progress()?;
+                        let journal_progress = progress_started.elapsed();
+                        Ok((schema, progress, schema_load, journal_progress))
+                    })
+                    .await?
+            }
+        };
+        Ok((
+            TenantRuntimeInitialState { schema, progress },
+            TenantRuntimeInitialStateProfile {
+                schema_load,
+                journal_progress,
+                total: total_started.elapsed(),
+            },
+        ))
+    }
+
     /// Creates a tenant runtime from a store.
     pub fn from_parts(
         store: TenantPersistence,
@@ -140,27 +205,8 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
     ) -> Result<Self> {
-        let (schema, progress) = match &store {
-            TenantPersistence::Postgres(store) => {
-                let schema = store.load_schema_async().await?;
-                let progress = store.journal_progress_async().await?;
-                (schema, progress)
-            }
-            TenantPersistence::Redb(_)
-            | TenantPersistence::Sqlite(_)
-            | TenantPersistence::LibsqlReplica(_)
-            | TenantPersistence::MySql(_) => {
-                read_storage
-                    .execute(|store| Ok((store.load_schema()?, store.journal_progress()?)))
-                    .await?
-            }
-        };
-        Ok(Self::from_initialized_parts(
-            store,
-            read_storage,
-            schema,
-            progress,
-        ))
+        let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
+        Ok(Self::from_loaded_state(store, read_storage, initial_state))
     }
 
     /// Returns the current schema snapshot.

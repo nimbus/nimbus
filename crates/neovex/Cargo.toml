@@ -9,6 +9,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+aws-kms = ["neovex-engine/aws-kms", "neovex-storage/aws-kms"]
+
 [dependencies]
 neovex-runtime = { path = "../neovex-runtime" }
 neovex-sandbox = { path = "../neovex-sandbox" }

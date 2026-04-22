@@ -2,16 +2,20 @@ use std::env;
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use neovex_core::{
     DocumentId, FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, OrderBy, OrderDirection,
     Query, SequenceNumber, TableName, TableSchema, TenantId,
 };
-use neovex_engine::{EmbeddedProviderKind, Service, SubscriptionRegistration, SubscriptionUpdate};
+use neovex_engine::{
+    EmbeddedProviderKind, LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig,
+    Service, ServicePersistenceConfig, SubscriptionRegistration, SubscriptionUpdate,
+};
 use neovex_storage::{
+    LocalKeySubject, ManifestCipher, MasterKeyFileProvider, resolve_database_encryption_key,
     sqlite_index_scan_composite_range_query_sql, sqlite_index_scan_prefix_query_sql,
 };
 use rusqlite::{Connection, params};
@@ -43,6 +47,7 @@ mod workloads;
 use config::BenchmarkConfig;
 use report::render_markdown;
 use suite::run_suite;
+use support::configure_encryption_mode;
 
 const STEADY_STATE_WARMUP_ROUNDS: usize = 2;
 const STEADY_STATE_MEASURE_ROUNDS: usize = 12;
@@ -66,6 +71,7 @@ static BENCH_DIR_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> BenchResult<()> {
     let config = BenchmarkConfig::from_args()?;
+    configure_encryption_mode(config.encryption_mode)?;
     let report = run_suite(&config).await?;
     let markdown = render_markdown(&config, &report);
     if let Some(path) = config.markdown_output.as_deref() {

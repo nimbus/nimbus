@@ -11,9 +11,9 @@ use neovex_core::{
     OrderBy, OrderDirection, Query, TableName, TableSchema, TenantId,
 };
 use neovex_engine::{
-    ControlPlaneConfig, EmbeddedProviderKind, PersistenceDialect, PersistenceTopology, PoolConfig,
-    ProviderCredentials, Service, ServicePersistenceConfig, TenantProviderConfig,
-    TenantRoutingConfig,
+    ControlPlaneConfig, EmbeddedProviderKind, LocalEncryptionConfig, LocalKeyProviderConfig,
+    MasterKeyFileConfig, PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials,
+    Service, ServicePersistenceConfig, TenantProviderConfig, TenantRoutingConfig,
 };
 use neovex_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
 use serde_json::json;
@@ -43,6 +43,7 @@ mod workloads;
 use config::{BenchmarkConfig, BenchmarkEnvironment};
 use report::render_markdown;
 use suite::run_suite;
+use support::configure_local_cache_encryption;
 
 const STEADY_STATE_WARMUP_ROUNDS: usize = 2;
 const STEADY_STATE_MEASURE_ROUNDS: usize = 10;
@@ -76,6 +77,7 @@ static REPLICA_CLEANUP_QUEUE: OnceLock<StdMutex<Vec<LibsqlReplicaProviderConfig>
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> BenchResult<()> {
     let config = BenchmarkConfig::from_args()?;
+    configure_local_cache_encryption(config.local_cache_encryption)?;
     let environment = BenchmarkEnvironment::new(&config);
     let report = run_suite(&config, &environment).await?;
     let markdown = render_markdown(&config, &report);
