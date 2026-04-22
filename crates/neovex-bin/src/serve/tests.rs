@@ -1,20 +1,20 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::{Parser, error::ErrorKind};
+use neovex::RuntimeLimits;
+use serde_json::json;
 
 use super::config::{
     CliTenantProvider, PersistenceEnv, PersistenceFileConfig, load_runtime_config_file,
     service_persistence_config_from_sources,
 };
 use super::*;
+use crate::codegen::CodegenCommand;
 use crate::{Cli, Command};
 
-#[cfg(target_os = "linux")]
 use std::env;
-#[cfg(target_os = "linux")]
-use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
@@ -63,6 +63,18 @@ where
     *command
 }
 
+fn parse_codegen<I, T>(args: I) -> CodegenCommand
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let cli = Cli::parse_from(args);
+    let Command::Codegen(command) = cli.command else {
+        panic!("codegen subcommand should parse");
+    };
+    command
+}
+
 #[test]
 fn cli_defaults_to_embedded_sqlite() {
     let cli = parse_serve(["neovex", "serve"]);
@@ -96,7 +108,7 @@ fn cli_supports_top_level_version_flag() {
 }
 
 #[test]
-fn cli_help_describes_machine_and_service_surface() {
+fn cli_help_describes_codegen_machine_and_service_surface() {
     let error = Cli::try_parse_from(["neovex", "--help"]).expect_err("help should short-circuit");
     assert_eq!(error.kind(), ErrorKind::DisplayHelp);
     let rendered = error.to_string();
@@ -105,9 +117,11 @@ fn cli_help_describes_machine_and_service_surface() {
     assert!(rendered.contains("Available Commands:"));
     assert!(rendered.contains("Examples:"));
     assert!(rendered.contains("neovex serve"));
+    assert!(rendered.contains("neovex codegen --app ./demos/convex/html"));
     assert!(rendered.contains("neovex machine start"));
     assert!(rendered.contains("neovex service up"));
     assert!(rendered.contains("serve"));
+    assert!(rendered.contains("codegen"));
     assert!(rendered.contains("machine"));
     assert!(rendered.contains("service"));
 }
@@ -116,6 +130,193 @@ fn cli_help_describes_machine_and_service_surface() {
 fn cli_parses_serve_command_with_optional_compose_file() {
     let cli = parse_serve(["neovex", "serve", "--compose-file", "./compose.dev.yaml"]);
     assert_eq!(cli.compose_file, Some(PathBuf::from("./compose.dev.yaml")));
+}
+
+#[test]
+fn cli_parses_serve_command_with_app_dir() {
+    let cli = parse_serve(["neovex", "serve", "--app-dir", "./demos/convex/html"]);
+    assert_eq!(cli.app_dir, Some(PathBuf::from("./demos/convex/html")));
+}
+
+#[test]
+fn cli_parses_serve_command_with_skip_codegen() {
+    let cli = parse_serve([
+        "neovex",
+        "serve",
+        "--app-dir",
+        "./demos/convex/html",
+        "--skip-codegen",
+    ]);
+    assert_eq!(cli.app_dir, Some(PathBuf::from("./demos/convex/html")));
+    assert!(cli.skip_codegen);
+}
+
+#[test]
+fn cli_parses_codegen_command_with_default_app_dir() {
+    let cli = parse_codegen(["neovex", "codegen"]);
+    assert_eq!(cli.app, PathBuf::from("."));
+}
+
+#[test]
+fn cli_parses_codegen_command_with_explicit_app_dir() {
+    let cli = parse_codegen(["neovex", "codegen", "--app", "./demos/convex/html"]);
+    assert_eq!(cli.app, PathBuf::from("./demos/convex/html"));
+}
+
+#[test]
+fn cli_rejects_legacy_convex_app_dir_flag() {
+    let error = Cli::try_parse_from(["neovex", "serve", "--convex-app-dir", "./demo"])
+        .expect_err("legacy app-dir flag should be removed");
+    assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+    assert!(error.to_string().contains("--convex-app-dir"));
+}
+
+#[test]
+fn serve_help_shows_app_dir_flag_name() {
+    let error =
+        Cli::try_parse_from(["neovex", "serve", "--help"]).expect_err("help should short-circuit");
+    assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    let rendered = error.to_string();
+    assert!(rendered.contains("--app-dir"));
+    assert!(rendered.contains("--skip-codegen"));
+    assert!(rendered.contains("neovex serve --app-dir ./demos/convex/html"));
+    assert!(rendered.contains("neovex serve --app-dir ./demos/convex/html --skip-codegen"));
+    assert!(!rendered.contains("--convex-app-dir"));
+}
+
+#[tokio::test]
+async fn serve_missing_functions_manifest_reports_actionable_error() {
+    let temp = tempdir_in_repo_target();
+    let app_dir = temp.path().to_path_buf();
+    let command = ServeCommand {
+        app_dir: Some(app_dir.clone()),
+        skip_codegen: true,
+        port: 0,
+        ..ServeCommand::default()
+    };
+
+    let error = super::boot::run_serve_command(command)
+        .await
+        .expect_err("missing functions manifest should fail serve startup");
+    let rendered = error.to_string();
+    let functions_path = app_dir
+        .join(".neovex")
+        .join("convex")
+        .join("functions.json");
+    assert!(
+        rendered.contains(&format!(
+            "No generated function manifest found at {}.",
+            functions_path.display()
+        )),
+        "error should point at the missing manifest: {rendered}"
+    );
+    assert!(
+        rendered.contains(&format!("neovex codegen --app {}", app_dir.display())),
+        "error should include the exact codegen command: {rendered}"
+    );
+    assert!(
+        rendered.contains("--skip-codegen"),
+        "error should explain the skip-codegen escape hatch: {rendered}"
+    );
+}
+
+#[test]
+fn load_convex_registry_accepts_manifest_only_app_dir_without_bundle() {
+    let temp = tempdir_in_repo_target();
+    let convex_dir = temp.path().join(".neovex").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [{
+                "name": "messages:list",
+                "kind": "query",
+                "plan": {
+                    "type": "limit",
+                    "source": { "type": "scan", "table": "messages" },
+                    "limit": 20
+                }
+            }]
+        }))
+        .expect("manifest json should serialize"),
+    )
+    .expect("manifest should write");
+
+    let command = ServeCommand {
+        app_dir: Some(temp.path().to_path_buf()),
+        skip_codegen: true,
+        ..ServeCommand::default()
+    };
+    let registry = super::boot::load_convex_registry(&command, &RuntimeLimits::default())
+        .expect("manifest-only app dir should load");
+    assert!(
+        registry.is_some(),
+        "manifest-only app dir should still load a registry without bundle.mjs"
+    );
+}
+
+#[tokio::test]
+async fn serve_codegen_preflight_generates_runtime_artifacts() {
+    let temp = tempdir_in_repo_target();
+    write_codegen_source_fixture(temp.path());
+
+    let command = ServeCommand {
+        app_dir: Some(temp.path().to_path_buf()),
+        ..ServeCommand::default()
+    };
+
+    super::boot::run_codegen_preflight(&command)
+        .await
+        .expect("codegen preflight should succeed");
+
+    let convex_dir = temp.path().join(".neovex").join("convex");
+    assert!(
+        convex_dir.join("functions.json").is_file(),
+        "functions manifest should be generated"
+    );
+    assert!(
+        convex_dir.join("bundle.mjs").is_file(),
+        "runtime bundle should be generated"
+    );
+    assert!(
+        temp.path()
+            .join("convex")
+            .join("_generated")
+            .join("api.ts")
+            .is_file(),
+        "_generated api file should be generated"
+    );
+}
+
+#[tokio::test]
+async fn serve_codegen_preflight_honors_skip_codegen() {
+    let temp = tempdir_in_repo_target();
+    write_codegen_source_fixture(temp.path());
+
+    let command = ServeCommand {
+        app_dir: Some(temp.path().to_path_buf()),
+        skip_codegen: true,
+        ..ServeCommand::default()
+    };
+
+    super::boot::run_codegen_preflight(&command)
+        .await
+        .expect("skip-codegen should bypass preflight");
+
+    let convex_dir = temp.path().join(".neovex").join("convex");
+    assert!(
+        !convex_dir.join("functions.json").exists(),
+        "skip-codegen should leave manifests untouched"
+    );
+    assert!(
+        !temp
+            .path()
+            .join("convex")
+            .join("_generated")
+            .join("api.ts")
+            .exists(),
+        "skip-codegen should leave generated source untouched"
+    );
 }
 
 #[test]
@@ -599,6 +800,33 @@ services:
     )
     .expect("compose smoke fixture should write");
     compose_path
+}
+
+fn tempdir_in_repo_target() -> tempfile::TempDir {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate manifest dir should have repo root");
+    let target_dir = repo_root.join("target");
+    fs::create_dir_all(&target_dir).expect("repo target dir should exist");
+    tempfile::tempdir_in(&target_dir).expect("tempdir in repo target should create")
+}
+
+fn write_codegen_source_fixture(app_dir: &Path) {
+    let convex_dir = app_dir.join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex source dir should create");
+    fs::write(
+        convex_dir.join("messages.ts"),
+        r#"
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => [],
+});
+"#,
+    )
+    .expect("convex source fixture should write");
 }
 
 #[cfg(target_os = "linux")]

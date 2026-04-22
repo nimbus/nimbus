@@ -104,6 +104,15 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/distribution-plan.md` open for the macOS Homebrew contract and
   Linux dependency context, but treat the install-script plan as the execution
   owner.
+- **For Convex or Neovex CLI/codegen workflow work:** after
+  `docs/reference/convex-ai-guidelines.md`, open `docs/reference/cli.md` and
+  `docs/convex/compatibility.md` for `packages/codegen/`,
+  `packages/convex/`, `demos/convex/`, or the `neovex serve --app-dir`
+  contract. Use `docs/plans/archive/codegen-cli-plan.md` only when a task
+  needs the completed CLI/codegen rollout's execution record or exact
+  verification bundle, and `docs/plans/archive/neovex-source-root-plan.md`
+  only for the completed source-root rollout's historical context. Promote a
+  new active plan before landing another CLI/codegen workflow wave.
 
 ## Context Window Discipline
 
@@ -166,6 +175,14 @@ Use the repo docs for architecture and behavior details:
   `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log`
   when the task needs the landed shared reliability baseline or exact closeout
   evidence.
+- For Convex or Neovex CLI/codegen workflow work, open
+  `docs/reference/convex-ai-guidelines.md`, `docs/reference/cli.md`, and
+  `docs/convex/compatibility.md` after the three top-level docs. Use
+  `docs/plans/archive/codegen-cli-plan.md` only when you need the completed
+  CLI/codegen rollout's execution record or exact verification bundle, and
+  open `docs/plans/archive/neovex-source-root-plan.md` only when historical
+  source-root rollout detail is needed. Promote a new active plan before
+  landing another CLI/codegen workflow wave.
 - If work spans a platform/reference doc and historical machine CLI follow-on
   context, treat the platform/reference doc as the active owner and
   `docs/plans/archive/machine-cli-follow-on-plan.md` as historical

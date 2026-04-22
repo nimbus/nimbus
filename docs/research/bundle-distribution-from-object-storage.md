@@ -14,7 +14,7 @@ filesystem copies on every node.
 
 ## Problem Statement
 
-Today, `--convex-app-dir` points at a local directory containing the codegen
+Today, `--app-dir` points at a local directory containing the codegen
 output:
 
 ```
@@ -56,7 +56,7 @@ lifetime of the server.
 
 1. **Preserve single-binary DX.** No external processes, FUSE mounts, or
    infrastructure dependencies beyond the object store itself.
-2. **One flag to go remote.** `--convex-app-dir s3://bucket/path` should work
+2. **One flag to go remote.** `--app-dir s3://bucket/path` should work
    with the same flag that accepts local paths today. URI scheme detection
    selects the backend.
 3. **Pre-warm is mandatory.** Bundles are fetched and verified before the server
@@ -73,25 +73,25 @@ lifetime of the server.
 
 ```bash
 # Local development (unchanged)
-neovex serve --convex-app-dir ./my-app
+neovex serve --app-dir ./my-app
 
 # Single node, local bundles (unchanged)
-neovex serve --convex-app-dir /opt/bundles/my-app
+neovex serve --app-dir /opt/bundles/my-app
 
 # Remote bundles from S3
-neovex serve --convex-app-dir s3://my-bucket/my-app
+neovex serve --app-dir s3://my-bucket/my-app
 
 # Remote bundles from GCS
-neovex serve --convex-app-dir gs://my-bucket/my-app
+neovex serve --app-dir gs://my-bucket/my-app
 
 # Remote bundles from Azure Blob Storage
-neovex serve --convex-app-dir az://my-container/my-app
+neovex serve --app-dir az://my-container/my-app
 
 # Remote bundles from Cloudflare R2
-neovex serve --convex-app-dir s3://my-r2-bucket/my-app  # R2 is S3-compatible
+neovex serve --app-dir s3://my-r2-bucket/my-app  # R2 is S3-compatible
 
 # Explicit cache directory (optional, defaults to {data-dir}/bundle-cache)
-neovex serve --convex-app-dir s3://bucket/app --bundle-cache-dir /data/cache
+neovex serve --app-dir s3://bucket/app --bundle-cache-dir /data/cache
 ```
 
 Credentials follow standard cloud SDK conventions:
@@ -109,7 +109,7 @@ Credentials follow standard cloud SDK conventions:
 ```
 ┌──────────────────────────────────────────────┐
 │  neovex-bin (CLI)                            │
-│  --convex-app-dir s3://bucket/app            │
+│  --app-dir s3://bucket/app                   │
 └──────────────┬───────────────────────────────┘
                │ parse URI scheme
                ▼
@@ -380,7 +380,7 @@ operators who don't want cloud vendor dependency, the deploy model becomes:
 
 ```bash
 # Self-hosted
-neovex serve --convex-app-dir s3://localhost:3900/bundles \
+neovex serve --app-dir s3://localhost:3900/bundles \
   --env AWS_ACCESS_KEY_ID=garage-key \
   --env AWS_SECRET_ACCESS_KEY=garage-secret
 ```

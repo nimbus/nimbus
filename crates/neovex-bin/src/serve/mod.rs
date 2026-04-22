@@ -118,9 +118,14 @@ pub(crate) struct ServeCommand {
     #[arg(long)]
     pub(crate) mysql_max_connections: Option<usize>,
 
-    /// Optional app directory with a generated .neovex/convex/functions.json manifest.
+    /// Optional app directory with generated .neovex/convex/ runtime artifacts.
     #[arg(long)]
-    pub(crate) convex_app_dir: Option<PathBuf>,
+    pub(crate) app_dir: Option<PathBuf>,
+
+    /// Skip automatic codegen before serving. Use when manifests are
+    /// pre-built by a separate build step.
+    #[arg(long, default_value_t = false)]
+    pub(crate) skip_codegen: bool,
 
     /// Optional Compose file that declares sandbox-backed services for
     /// `ctx.services.*` activation.
@@ -214,7 +219,8 @@ impl Default for ServeCommand {
             mysql_tenant_database_prefix: None,
             mysql_min_connections: None,
             mysql_max_connections: None,
-            convex_app_dir: None,
+            app_dir: None,
+            skip_codegen: false,
             compose_file: None,
             license_file: None,
             runtime_heap_mb: default_runtime_heap_mb(),

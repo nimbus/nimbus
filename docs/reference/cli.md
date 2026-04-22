@@ -6,10 +6,15 @@ also exposes service and machine management subcommands.
 Current shipped CLI shape:
 
 ```bash
+neovex codegen [--app PATH]
+```
+
+```bash
 neovex serve [flags]
 ```
 
-`neovex serve` is the current server-start path.
+`neovex codegen` is the first-party artifact-generation command. `neovex serve`
+is the current server-start path.
 
 Current shipped service-management commands:
 
@@ -100,7 +105,7 @@ neovex machine os upgrade [--dry-run] [--restart]
 ```
 
 ```bash
-neovex serve --compose-file ./compose.yaml [--convex-app-dir ./app]
+neovex serve [--app-dir ./app] [--skip-codegen] [--compose-file ./compose.yaml]
 ```
 
 For local development from source:
@@ -111,6 +116,8 @@ cargo run -p neovex-bin -- serve [flags]
 
 Current command taxonomy:
 
+- `neovex codegen`
+  shipped first-party code generation for `neovex/` or `convex/` source roots
 - `neovex serve`
   shipped explicit server-start verb
 - `neovex service ...`
@@ -124,7 +131,8 @@ Current command taxonomy:
 | --- | --- | --- |
 | `--port` | `8080` | port to listen on |
 | `--data-dir` | `./data` | data directory for tenant databases |
-| `--convex-app-dir` | unset | optional app directory whose user source root may be `neovex/` or `convex/`; codegen still writes the runtime manifests consumed by `serve` under `.neovex/convex/` |
+| `--app-dir` | unset | optional app directory whose user source root may be `neovex/` or `convex/`; generated runtime artifacts still live under `.neovex/convex/` |
+| `--skip-codegen` | `false` | skip the one-shot startup-time codegen preflight when `--app-dir` is set |
 | `--license-file` | unset | optional explicit path to a Neovex license file |
 
 If `--license-file` is not provided, Neovex next checks
@@ -219,16 +227,36 @@ environment variables or the JSON config file referenced by `--config` or
 | `--runtime-max-instances` | available hardware parallelism | maximum concurrent top-level runtime instances |
 | `--runtime-max-nested-calls` | `64` | maximum nested `ctx.run*` invocations per request tree |
 
+## Codegen Behavior
+
+`neovex codegen` generates two classes of artifacts from the selected app
+directory:
+
+- `_generated/*` files under the detected `neovex/` or `convex/` source root
+- runtime manifests and bundle files under `.neovex/convex/`
+
+Equivalent entrypoints:
+
+- `neovex codegen --app ./my-app`
+- `npx convex codegen --app ./my-app`
+- `npx neovex-codegen --app ./my-app`
+
+The shared pipeline still expects generated files to be checked into version
+control for stable typechecking and frontend workflows. The serve-side
+preflight described below is a startup convenience, not a watched `dev` loop.
+
 ## Startup Behavior
 
 Neovex requires an explicit subcommand. `neovex serve` starts the server. On
 startup, it:
 
 - initializes tracing
+- when `--app-dir` is set and `--skip-codegen` is not, runs one codegen
+  preflight pass before loading manifests
 - loads the service with the configured data directory
 - loads tenants with scheduled work
 - starts the scheduler loop
-- optionally loads the Convex-compatible registry from `--convex-app-dir`
+- optionally loads the Convex-compatible registry from `--app-dir`
 - optionally loads declared sandbox-backed services from `--compose-file`
 - loads license state from the explicit path, environment, default path, or
   built-in community defaults
@@ -236,13 +264,17 @@ startup, it:
 When `--compose-file` is present, Neovex validates the Compose file through the
 same adapter used by `neovex service config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
-manager. With `--convex-app-dir`, `ctx.services.*` can activate those declared
+manager. With `--app-dir`, `ctx.services.*` can activate those declared
 services on first use. The app directory may use `neovex/` as the native user
 source root or `convex/` as the compatibility root; in both cases the runtime
 registry still loads the generated manifests from `.neovex/convex/`. The
 explicit `neovex service up/down/...` commands share that same Compose
 lowering, deterministic project identity, and project-scoped backend root
 instead of inventing a second lifecycle control plane.
+
+The `serve` preflight is intentionally one-shot. After startup, Neovex does not
+watch the filesystem or regenerate `_generated/*` as functions change. If you
+want watched edit-loop behavior, that remains follow-on work.
 
 On macOS, if that Compose project resolves to the forwarded guest container
 backend and the default machine is initialized but stopped, `neovex serve`
