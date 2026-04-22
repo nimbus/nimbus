@@ -5,10 +5,13 @@ import { runCliFromArgs } from "@neovex/codegen";
 const HELP_TEXT = `Usage: convex <command> [options]
 
 Commands:
-  codegen   Generate convex/_generated files and the compatible runtime bundle
+  codegen   Generate _generated files and the compatible runtime bundle
 
 Supported today:
   convex codegen --app <dir>
+
+Source roots:
+  uses neovex/ when present, otherwise convex/
 `;
 
 async function main() {
@@ -20,7 +23,11 @@ async function main() {
   }
 
   if (command === "codegen") {
-    await runCliFromArgs(rest);
+    await runCliFromArgs(rest, {
+      onInfo(message) {
+        console.error(message);
+      },
+    });
     return;
   }
 

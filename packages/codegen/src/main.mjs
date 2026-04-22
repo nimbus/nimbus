@@ -1,26 +1,33 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { collectModuleFiles, resolveAppDirectory, sha256Hex } from "./app.mjs";
+import {
+  collectModuleFiles,
+  resolveAppDirectory,
+  resolveSourceRoot,
+  sha256Hex,
+} from "./app.mjs";
 import { loadAuthConfig } from "./auth_config.mjs";
 import { generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
 import { generateRuntimeBundle } from "./emit/runtime_bundle.mjs";
 import { parseHttpRoutes, parseModule } from "./parser.mjs";
 import { loadSchemaDefinition } from "./schema.mjs";
 
-async function generateConvexArtifacts({ appDir }) {
-  const convexDir = path.join(appDir, "convex");
-  const generatedDir = path.join(convexDir, "_generated");
+async function generateConvexArtifacts({ appDir, sourceRoot }) {
+  const resolvedSourceRoot = sourceRoot ?? await resolveSourceRoot(appDir);
+  const sourceDir = resolvedSourceRoot.sourceDirPath;
+  const packageNamespace = resolvedSourceRoot.packageNamespace;
+  const generatedDir = path.join(sourceDir, "_generated");
   const internalDir = path.join(appDir, ".neovex", "convex");
-  const schema = await loadSchemaDefinition(convexDir);
-  const authConfig = await loadAuthConfig(convexDir);
+  const schema = await loadSchemaDefinition(sourceDir);
+  const authConfig = await loadAuthConfig(sourceDir);
 
-  const moduleFiles = await collectModuleFiles(convexDir);
+  const moduleFiles = await collectModuleFiles(sourceDir);
   const modules = [];
   const manifest = [];
 
   for (const filePath of moduleFiles) {
-    const moduleInfo = await parseModule(convexDir, filePath, schema);
+    const moduleInfo = await parseModule(sourceDir, filePath, schema);
     modules.push(moduleInfo);
     for (const fn of moduleInfo.functions) {
       if (fn.kind === "http_action") {
@@ -40,28 +47,28 @@ async function generateConvexArtifacts({ appDir }) {
     }
   }
 
-  const httpRoutes = await parseHttpRoutes(convexDir, schema, modules);
+  const httpRoutes = await parseHttpRoutes(sourceDir, schema, modules);
 
   await fs.mkdir(generatedDir, { recursive: true });
   await fs.mkdir(internalDir, { recursive: true });
   await fs.writeFile(
     path.join(generatedDir, "api.ts"),
-    generateApiFile(modules, schema),
+    generateApiFile(modules, schema, packageNamespace),
     "utf8",
   );
   await fs.writeFile(
     path.join(generatedDir, "server.ts"),
-    generateServerFile(),
+    generateServerFile(packageNamespace),
     "utf8",
   );
   await fs.writeFile(
     path.join(generatedDir, "scheduled_functions.ts"),
-    generateScheduledFunctionsFile(modules, schema),
+    generateScheduledFunctionsFile(modules, schema, packageNamespace),
     "utf8",
   );
   await fs.writeFile(
     path.join(generatedDir, "dataModel.d.ts"),
-    generateDataModelFile(schema),
+    generateDataModelFile(schema, packageNamespace),
     "utf8",
   );
   await fs.writeFile(
@@ -103,13 +110,19 @@ async function generateConvexArtifacts({ appDir }) {
     modules,
     schema,
     authConfig,
+    sourceRoot: resolvedSourceRoot,
   };
 }
 
-async function runCliFromArgs(args = process.argv.slice(2)) {
-  return generateConvexArtifacts({
-    appDir: resolveAppDirectory(args),
-  });
+async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
+  const appDir = resolveAppDirectory(args);
+  const sourceRoot = await resolveSourceRoot(appDir);
+
+  if (sourceRoot.detectedBothRoots) {
+    onInfo?.(`Detected both neovex/ and convex/ in ${appDir}; using neovex/.`);
+  }
+
+  return generateConvexArtifacts({ appDir, sourceRoot });
 }
 
 export { generateConvexArtifacts, runCliFromArgs };

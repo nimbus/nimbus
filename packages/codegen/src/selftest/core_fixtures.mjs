@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   createAppFixture,
@@ -14,6 +17,10 @@ async function runCoreFixtures() {
   await testSupportedServerFixture();
   await testSchemaFixture();
   await testAuthConfigFixture();
+  await testNeovexAuthConfigFixture();
+  await testNeovexSourceRootFixture();
+  await testBothRootsPreferNeovexFixture();
+  await testMissingSourceRootFixture();
   await testDuplicateAuthConfigFixture();
   await testUnsupportedFixture();
 }
@@ -112,6 +119,7 @@ export const storeInternal = internalMutation({
 
   const generatedApi = await readGeneratedFile(appDir, "api.ts");
   assert.match(generatedApi, /export const api = /);
+  assert.match(generatedApi, /from "convex\/browser"/);
   assert.match(
     generatedApi,
     /list: makeQueryReference<\{\}, unknown\[]>\("messages:list", "public"\)/,
@@ -125,6 +133,7 @@ export const storeInternal = internalMutation({
   const generatedServer = await readGeneratedFile(appDir, "server.ts");
   assert.match(generatedServer, /internalMutation/);
   assert.match(generatedServer, /query/);
+  assert.match(generatedServer, /from "convex\/server"/);
 
   const generatedScheduled = await readGeneratedFile(appDir, "scheduled_functions.ts");
   assert.match(
@@ -167,6 +176,7 @@ export default defineSchema({
 
   const generatedDataModel = await readGeneratedFile(appDir, "dataModel.d.ts");
   assert.match(generatedDataModel, /export type TableNames = "messages";/);
+  assert.match(generatedDataModel, /from "convex\/values"/);
   assert.match(generatedDataModel, /_id: Id<"messages">;/);
   assert.match(generatedDataModel, /_creationTime: number;/);
   assert.match(generatedDataModel, /"channelId": GenericId<"channels">;/);
@@ -234,6 +244,159 @@ export default {
       },
     ],
   });
+}
+
+async function testNeovexAuthConfigFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+import { query } from "./_generated/server";
+
+export const whoami = query({
+  args: {},
+  handler: async (ctx) => await ctx.auth.getUserIdentity(),
+});
+`,
+      "auth.config.ts": `
+import { AuthConfig } from "neovex/server";
+
+export default {
+  providers: [
+    {
+      domain: "https://auth.example.com",
+      applicationID: "neovex-dev",
+    },
+  ],
+} satisfies AuthConfig;
+`,
+    },
+    { sourceDir: "neovex" },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const authConfig = await readConvexJson(appDir, "auth.config.json");
+  assert.deepEqual(authConfig, {
+    providers: [
+      {
+        domain: "https://auth.example.com",
+        applicationID: "neovex-dev",
+      },
+    ],
+  });
+}
+
+async function testNeovexSourceRootFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+import { query } from "./_generated/server";
+import { v } from "neovex/values";
+
+export const list = query({
+  args: { channel: v.string() },
+  handler: async (_ctx, _args) => ({
+    table: "messages",
+    filters: [],
+    order: null,
+    limit: 10,
+  }),
+});
+`,
+    },
+    { sourceDir: "neovex" },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const generatedApi = await readGeneratedFile(appDir, "api.ts", {
+    sourceDir: "neovex",
+  });
+  assert.match(generatedApi, /messages:list/);
+  assert.match(generatedApi, /from "neovex\/browser"/);
+
+  const generatedServer = await readGeneratedFile(appDir, "server.ts", {
+    sourceDir: "neovex",
+  });
+  assert.match(generatedServer, /from "neovex\/server"/);
+
+  const generatedDataModel = await readGeneratedFile(appDir, "dataModel.d.ts", {
+    sourceDir: "neovex",
+  });
+  assert.match(generatedDataModel, /from "neovex\/values"/);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions.length, 1);
+  assert.equal(manifest.functions[0].name, "messages:list");
+}
+
+async function testBothRootsPreferNeovexFixture() {
+  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex_codegen_"));
+  await fs.mkdir(path.join(appDir, "neovex"), { recursive: true });
+  await fs.mkdir(path.join(appDir, "convex"), { recursive: true });
+  await fs.writeFile(
+    path.join(appDir, "neovex", "messages.ts"),
+    `
+import { defineQuery } from "convex/browser";
+
+export const selected = defineQuery("messages:selected", () => ({
+  table: "messages",
+  filters: [],
+  order: null,
+  limit: 11,
+}));
+`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(appDir, "convex", "messages.ts"),
+    `
+import { defineQuery } from "convex/browser";
+
+export const ignored = defineQuery("messages:ignored", () => ({
+  table: "messages",
+  filters: [],
+  order: null,
+  limit: 3,
+}));
+`,
+    "utf8",
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(
+    result.stderr,
+    /Detected both neovex\/ and convex\/ in .*; using neovex\/\.\n?/,
+  );
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions.length, 1);
+  assert.equal(manifest.functions[0].name, "messages:selected");
+
+  const generatedApi = await fs.readFile(
+    path.join(appDir, "neovex", "_generated", "api.ts"),
+    "utf8",
+  );
+  assert.match(generatedApi, /messages:selected/);
+  assert.match(generatedApi, /from "neovex\/browser"/);
+  await assert.rejects(
+    fs.readFile(path.join(appDir, "convex", "_generated", "api.ts"), "utf8"),
+    { code: "ENOENT" },
+  );
+}
+
+async function testMissingSourceRootFixture() {
+  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex_codegen_"));
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr || result.stdout,
+    /No neovex\/ or convex\/ directory found in .*Create one of those directories and place your app functions there\./,
+  );
 }
 
 async function testDuplicateAuthConfigFixture() {
