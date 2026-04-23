@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::http::{HeaderValue, Method, header};
 use axum::routing::{any, delete, get, post};
 use neovex_engine::Service;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 
 use crate::adapters::convex::{self, ConvexRegistry};
@@ -239,9 +240,34 @@ pub(crate) fn build_router_with_convex_and_runtime_service_registry(
 
 fn build_cors_layer() -> CorsLayer {
     CorsLayer::new()
-        .allow_origin(Any)
-        .allow_headers(Any)
-        .allow_methods(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _request_head| {
+            is_allowed_local_cors_origin(origin)
+        }))
+        .allow_headers([header::ACCEPT, header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ])
+}
+
+fn is_allowed_local_cors_origin(origin: &HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    let Some(authority) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+
+    matches!(authority, "localhost" | "127.0.0.1" | "[::1]")
+        || authority.starts_with("localhost:")
+        || authority.starts_with("127.0.0.1:")
+        || authority.starts_with("[::1]:")
 }
 
 fn build_core_router() -> Router<Arc<AppState>> {
