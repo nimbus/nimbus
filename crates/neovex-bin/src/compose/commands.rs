@@ -5,8 +5,6 @@ use neovex::TenantId;
 
 use crate::cli_ux;
 
-use super::file;
-
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
@@ -42,9 +40,11 @@ pub(super) enum ComposeSubcommand {
     after_help = cli_ux::COMPOSE_CONFIG_HELP_EXAMPLES
 )]
 pub(super) struct ComposeConfigCommand {
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Print only service names, one per line.
     #[arg(long)]
@@ -60,9 +60,11 @@ pub(super) struct ComposeUpCommand {
     /// Optional service name. When omitted, starts all declared services.
     pub(super) service: Option<String>,
 
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]
@@ -78,9 +80,11 @@ pub(super) struct ComposeDownCommand {
     /// Optional service name. When omitted, stops all persisted services in the tenant.
     pub(super) service: Option<String>,
 
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]
@@ -93,9 +97,11 @@ pub(super) struct ComposeDownCommand {
     after_help = cli_ux::COMPOSE_PS_HELP_EXAMPLES
 )]
 pub(super) struct ComposePsCommand {
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Output format.
     #[arg(short = 'f', long, value_enum, default_value_t = ComposePsOutputFormat::Table)]
@@ -120,9 +126,11 @@ pub(super) struct ComposeInspectCommand {
     /// Service name to inspect.
     pub(super) service: String,
 
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]
@@ -142,9 +150,11 @@ pub(super) struct ComposeLogsCommand {
     /// Service name to read logs for.
     pub(super) service: String,
 
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]
@@ -164,9 +174,11 @@ pub(super) struct ComposeTopCommand {
     /// Service name to inspect process state for.
     pub(super) service: String,
 
-    /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
-    pub(super) file: PathBuf,
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Neovex uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
     #[arg(long)]

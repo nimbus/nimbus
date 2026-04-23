@@ -21,7 +21,9 @@ mod render;
 mod tests;
 mod warnings;
 
+#[cfg(test)]
 pub(crate) use self::render::render_compose_project;
+pub(crate) use self::render::render_compose_project_selection;
 
 pub(crate) const DEFAULT_COMPOSE_FILE: &str = "compose.yaml";
 const CONFIG_VALIDATION_TENANT_ID: &str = "compose-config";

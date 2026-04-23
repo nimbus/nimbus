@@ -30,6 +30,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
     dark mode, a11y, optional Electron shell (Phase 2); depends on the three
     prerequisite plans above
+
 ## Stable implementation baselines
 
 - `docs/reference/microvm-service-baseline.md`
@@ -245,6 +246,16 @@ completed plans unless explicitly asked to review historical work.
     deploy/admin API plus `neovex deploy`, `neovex start` replacement for the
     retired `neovex serve` surface, final naming/DX review, and verification
     bundle
+- `docs/plans/archive/compose-discovery-plan.md`
+  - completed Docker/Podman-compatible compose discovery plan; records the
+    shared cwd-plus-parent discovery contract, supported filename family,
+    provenance-aware selection model, default override pairing, and alignment
+    across `neovex compose ...`, `neovex dev`, and `neovex start`
+- `docs/plans/archive/compose-explicit-multifile-plan.md`
+  - completed explicit multi-file Compose follow-on; records ordered repeated
+    compose-path flags, `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR`, shared
+    multi-file selection semantics, help/reference follow-up polish, and cwd
+    test-lock hardening on top of the landed discovery baseline
 
 ## How To Use This Folder
 

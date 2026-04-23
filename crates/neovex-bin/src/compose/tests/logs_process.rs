@@ -27,7 +27,7 @@ fn resolve_service_ctr_log_path_defaults_to_local_project_tenant_and_honors_over
     let default_path = resolve_service_ctr_log_path(
         &ComposeLogsCommand {
             service: "db".to_owned(),
-            file: compose_path.clone(),
+            file: vec![compose_path.clone()],
             tenant: None,
             follow: false,
         },
@@ -39,7 +39,7 @@ fn resolve_service_ctr_log_path_defaults_to_local_project_tenant_and_honors_over
     let override_path = resolve_service_ctr_log_path(
         &ComposeLogsCommand {
             service: "db".to_owned(),
-            file: compose_path,
+            file: vec![compose_path],
             tenant: Some(TenantId::new("tenant-other").expect("tenant should parse")),
             follow: false,
         },
@@ -141,7 +141,7 @@ fn render_compose_top_reads_pidfiles_from_persisted_state() {
     let rendered = render_compose_top_for_platform(
         &ComposeTopCommand {
             service: "db".to_owned(),
-            file: compose_path,
+            file: vec![compose_path],
             tenant: None,
             format: ComposeTopOutputFormat::Table,
             no_heading: false,

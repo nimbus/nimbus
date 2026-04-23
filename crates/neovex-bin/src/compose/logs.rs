@@ -8,12 +8,12 @@ use neovex::Error;
 use neovex_sandbox::backends::krun::KrunSandboxStateView;
 
 use crate::cli_ux;
+use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ComposeLogsCommand, ServiceHostPlatform, load_compose_project_context,
-    lookup_current_remote_service_details, machine_api_operation_error,
-    missing_persisted_service_error, render_state_lookup_error,
+    ComposeLogsCommand, ServiceHostPlatform, lookup_current_remote_service_details,
+    machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
     require_krun_backend_for_service_operation, resolve_service_execution_surface,
     validate_forwarded_machine_api_operations,
 };
@@ -24,7 +24,24 @@ pub(super) fn run_compose_logs_for_platform(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<(), Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let selection = super::resolve_required_compose_selection(command.file.as_slice())?;
+    run_compose_logs_for_selection(
+        command,
+        &selection,
+        control_data_dir,
+        host_platform,
+        machine_api_client,
+    )
+}
+
+pub(super) fn run_compose_logs_for_selection(
+    command: &ComposeLogsCommand,
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    host_platform: ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<(), Error> {
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
         .tenant
         .clone()
@@ -37,7 +54,8 @@ pub(super) fn run_compose_logs_for_platform(
         machine_api_client,
     )? {
         super::ServiceExecutionSurface::Krun { .. } => {
-            let log_path = resolve_service_ctr_log_path(command, control_data_dir)?;
+            let log_path =
+                resolve_service_ctr_log_path_for_selection(command, selection, control_data_dir)?;
             let mut offset = 0;
             loop {
                 let (chunk, next_offset) = read_log_chunk(&log_path, offset)?;
@@ -104,11 +122,21 @@ pub(super) fn flush_service_log_chunk(service_name: &str, chunk: &str) -> Result
     })
 }
 
+#[cfg(test)]
 pub(super) fn resolve_service_ctr_log_path(
     command: &ComposeLogsCommand,
     control_data_dir: &Path,
 ) -> Result<PathBuf, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let selection = super::resolve_required_compose_selection(command.file.as_slice())?;
+    resolve_service_ctr_log_path_for_selection(command, &selection, control_data_dir)
+}
+
+pub(super) fn resolve_service_ctr_log_path_for_selection(
+    command: &ComposeLogsCommand,
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+) -> Result<PathBuf, Error> {
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     require_krun_backend_for_service_operation(&context, Some(&command.service), "compose logs")?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());

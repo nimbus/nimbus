@@ -1,5 +1,6 @@
 use super::parse::compose_lifecycle_spec;
 use super::*;
+use crate::compose::discovery::resolve_compose_selection;
 
 fn write_compose_fixture(tempdir: &tempfile::TempDir, name: &str, contents: &str) -> PathBuf {
     let path = tempdir.path().join(name);
@@ -276,6 +277,129 @@ services:
         "expected service warning to surface in list mode, got {:?}",
         rendered.warnings
     );
+}
+
+#[test]
+fn compose_project_load_selection_merges_auto_discovered_override_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let base = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+name: Demo App
+services:
+  api:
+    image: busybox:latest
+    command: ["./base"]
+    environment:
+      BASE_ONLY: from-base
+      OVERRIDE_ME: base
+    ports:
+      - "8080:80"
+    labels:
+      layer: base
+    x_neovex:
+      snapshot: true
+volumes:
+  shared: {}
+"#,
+    );
+    write_compose_fixture(
+        &tempdir,
+        "compose.override.yaml",
+        r#"
+services:
+  api:
+    command: ["./override"]
+    environment:
+      OVERRIDE_ME: override
+      OVERRIDE_ONLY: from-override
+    ports:
+      - "8081:81"
+    labels:
+      role: api
+    x_neovex:
+      idle_timeout: 30s
+  worker:
+    image: redis:7
+"#,
+    );
+    let selection = resolve_compose_selection(&[], tempdir.path())
+        .expect("selection should resolve")
+        .expect("selection should exist");
+
+    let project =
+        ComposeProjectPlan::load_selection(&selection).expect("merged selection should load");
+
+    assert_eq!(project.source_file, base);
+    assert_eq!(project.project_name, "demo-app");
+    assert_eq!(project.volumes, vec!["shared".to_owned()]);
+
+    let api = project
+        .services
+        .get("api")
+        .expect("api service should exist");
+    assert_eq!(
+        api.process.command,
+        Some(ComposeCommandPlan::List(vec!["./override".to_owned()]))
+    );
+    assert_eq!(
+        api.process.environment.get("BASE_ONLY"),
+        Some(&"from-base".to_owned())
+    );
+    assert_eq!(
+        api.process.environment.get("OVERRIDE_ME"),
+        Some(&"override".to_owned())
+    );
+    assert_eq!(
+        api.process.environment.get("OVERRIDE_ONLY"),
+        Some(&"from-override".to_owned())
+    );
+    assert_eq!(api.ports.len(), 2);
+    assert_eq!(api.labels.get("layer"), Some(&"base".to_owned()));
+    assert_eq!(api.labels.get("role"), Some(&"api".to_owned()));
+    assert_eq!(
+        api.x_neovex
+            .as_ref()
+            .and_then(|extensions| extensions.snapshot),
+        Some(true)
+    );
+    assert_eq!(
+        api.x_neovex
+            .as_ref()
+            .and_then(|extensions| extensions.idle_timeout.as_deref()),
+        Some("30s")
+    );
+    assert!(
+        project.services.contains_key("worker"),
+        "override service should merge into the project"
+    );
+}
+
+#[test]
+fn render_compose_project_selection_renders_merged_services() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        "services:\n  api:\n    image: busybox:latest\n",
+    );
+    write_compose_fixture(
+        &tempdir,
+        "compose.override.yaml",
+        "services:\n  worker:\n    image: redis:7\n",
+    );
+    let selection = resolve_compose_selection(&[], tempdir.path())
+        .expect("selection should resolve")
+        .expect("selection should exist");
+
+    let rendered = render_compose_project_selection(&selection, false)
+        .expect("rendered compose config should resolve");
+
+    assert!(rendered.stdout.contains("source_file:"));
+    assert!(rendered.stdout.contains("compose.yaml"));
+    assert!(rendered.stdout.contains("api:"));
+    assert!(rendered.stdout.contains("worker:"));
 }
 
 #[test]

@@ -33,6 +33,8 @@ pub(super) fn write_compose_fixture_with_body(root: &Path, body: &str) -> PathBu
     compose_path
 }
 
+pub(super) use crate::test_support::with_current_dir;
+
 pub(super) fn wait_for_machine_api_health(client: &MachineApiClient) {
     let start = std::time::Instant::now();
     loop {

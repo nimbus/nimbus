@@ -2,22 +2,30 @@ use super::parse::*;
 use super::raw::*;
 use super::warnings::*;
 use super::*;
+use crate::compose::discovery::ResolvedComposeSelection;
 
 impl ComposeProjectPlan {
+    #[cfg(test)]
     pub(crate) fn load(path: &Path) -> Result<Self, Error> {
-        let bytes = fs::read(path).map_err(|error| {
-            Error::InvalidInput(format!(
-                "failed to read compose file {}: {error}",
-                path.display()
-            ))
-        })?;
-        let raw: RawComposeDocument = serde_yaml::from_slice(&bytes).map_err(|error| {
-            Error::InvalidInput(format!(
-                "failed to parse compose file {} as YAML: {error}",
-                path.display()
-            ))
-        })?;
-        Self::from_raw(path, raw)
+        Self::load_selection(&ResolvedComposeSelection::explicit(path.to_path_buf()))
+    }
+
+    pub(crate) fn load_selection(selection: &ResolvedComposeSelection) -> Result<Self, Error> {
+        if selection.files.is_empty() {
+            return Err(Error::InvalidInput(
+                "resolved compose selection did not include any files".to_owned(),
+            ));
+        }
+
+        let mut documents = selection.files.iter();
+        let primary_file = documents
+            .next()
+            .expect("selection should include a primary compose file");
+        let mut raw = read_raw_compose_document(primary_file)?;
+        for path in documents {
+            raw.merge_from(read_raw_compose_document(path)?);
+        }
+        Self::from_raw(selection.primary_file(), raw)
     }
 
     fn from_raw(path: &Path, raw: RawComposeDocument) -> Result<Self, Error> {
@@ -121,6 +129,22 @@ impl SandboxServiceCatalog for ComposeServiceCatalog {
         })
     }
 }
+
+fn read_raw_compose_document(path: &Path) -> Result<RawComposeDocument, Error> {
+    let bytes = fs::read(path).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to read compose file {}: {error}",
+            path.display()
+        ))
+    })?;
+    serde_yaml::from_slice(&bytes).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to parse compose file {} as YAML: {error}",
+            path.display()
+        ))
+    })
+}
+
 impl ComposeServicePlan {
     fn from_raw(
         service_name: &str,

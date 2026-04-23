@@ -8,6 +8,8 @@ mod runtime_limits;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use self::boot::resolve_optional_compose_selection;
 pub(crate) use self::boot::run_start_command;
 pub(crate) use self::config::persistence_config_from_start_command;
 pub(crate) use self::config::{CliKeyProvider, CliTenantProvider};
@@ -127,10 +129,12 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = false)]
     pub(crate) skip_codegen: bool,
 
-    /// Optional Compose file that declares sandbox-backed services for
-    /// `ctx.services.*` activation.
+    /// Optional ordered Compose file list that declares sandbox-backed
+    /// services for `ctx.services.*` activation. Repeat `--compose-file` to
+    /// merge overlays. When omitted, Neovex uses `COMPOSE_FILE` when set, then
+    /// discovers from the current directory and parent directories.
     #[arg(long)]
-    pub(crate) compose_file: Option<PathBuf>,
+    pub(crate) compose_file: Vec<PathBuf>,
 
     /// Optional path to a Neovex license file. Defaults to ./.neovex/license.json when present.
     #[arg(long)]
@@ -225,7 +229,7 @@ impl Default for StartCommand {
             mysql_max_connections: None,
             app_dir: None,
             skip_codegen: false,
-            compose_file: None,
+            compose_file: Vec::new(),
             license_file: None,
             runtime_heap_mb: default_runtime_heap_mb(),
             runtime_initial_heap_mb: default_runtime_initial_heap_mb(),

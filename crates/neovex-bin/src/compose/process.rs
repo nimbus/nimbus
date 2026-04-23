@@ -6,12 +6,13 @@ use neovex::{Error, SandboxStatus, TenantId};
 use neovex_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
+use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ComposeTopCommand, ServiceHostPlatform, load_compose_project_context,
-    lookup_current_remote_service_details, machine_api_operation_error,
-    missing_persisted_service_error, render_state_lookup_error,
+    ComposeProjectContext, ComposeTopCommand, ServiceHostPlatform,
+    load_compose_project_context_for_selection, lookup_current_remote_service_details,
+    machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
     require_krun_backend_for_service_operation, resolve_service_execution_surface,
     validate_forwarded_machine_api_operations,
 };
@@ -36,54 +37,14 @@ pub(super) struct ServiceProcessRow {
     pub(super) command: String,
 }
 
-pub(super) fn resolve_service_process_snapshot(
+pub(super) fn resolve_service_process_snapshot_for_selection(
     command: &ComposeTopCommand,
-    control_data_dir: &Path,
-) -> Result<ServiceProcessSnapshot, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
-    require_krun_backend_for_service_operation(&context, Some(&command.service), "compose top")?;
-    let state_view =
-        KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    let details = state_view
-        .inspect_service(&tenant, &command.service)
-        .map_err(|error| render_state_lookup_error("resolve persisted service processes", error))?
-        .ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "no persisted sandbox state found for service {} in tenant {} under project {}",
-                command.service, tenant, context.control_plane.project_name
-            ))
-        })?;
-
-    let runtime_pidfile = details.state_dir.join("pidfile");
-    let conmon_pidfile = details.state_dir.join("conmon.pid");
-    let runtime_pid = read_pid_file_if_exists(&runtime_pidfile)?;
-    let conmon_pid = read_pid_file_if_exists(&conmon_pidfile)?;
-    let process_rows = snapshot_process_rows(runtime_pid, conmon_pid)?;
-
-    Ok(ServiceProcessSnapshot {
-        sandbox_id: details.summary.sandbox_id,
-        tenant_id: details.summary.tenant_id,
-        service_name: details.summary.service_name,
-        status: details.summary.status,
-        runtime_pidfile,
-        conmon_pidfile,
-        runtime_pid,
-        conmon_pid,
-        process_rows,
-    })
-}
-
-pub(super) fn resolve_service_process_snapshot_for_platform(
-    command: &ComposeTopCommand,
+    selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<ServiceProcessSnapshot, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
         .tenant
         .clone()
@@ -96,7 +57,7 @@ pub(super) fn resolve_service_process_snapshot_for_platform(
         machine_api_client,
     )? {
         super::ServiceExecutionSurface::Krun { .. } => {
-            resolve_service_process_snapshot(command, control_data_dir)
+            resolve_krun_service_process_snapshot(&context, &tenant, &command.service)
         }
         super::ServiceExecutionSurface::ForwardedContainer { client, .. } => {
             validate_forwarded_machine_api_operations(
@@ -150,6 +111,43 @@ pub(super) fn resolve_service_process_snapshot_for_platform(
             })
         }
     }
+}
+
+fn resolve_krun_service_process_snapshot(
+    context: &ComposeProjectContext,
+    tenant: &TenantId,
+    service_name: &str,
+) -> Result<ServiceProcessSnapshot, Error> {
+    require_krun_backend_for_service_operation(context, Some(service_name), "compose top")?;
+    let state_view =
+        KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
+    let details = state_view
+        .inspect_service(tenant, service_name)
+        .map_err(|error| render_state_lookup_error("resolve persisted service processes", error))?
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "no persisted sandbox state found for service {} in tenant {} under project {}",
+                service_name, tenant, context.control_plane.project_name
+            ))
+        })?;
+
+    let runtime_pidfile = details.state_dir.join("pidfile");
+    let conmon_pidfile = details.state_dir.join("conmon.pid");
+    let runtime_pid = read_pid_file_if_exists(&runtime_pidfile)?;
+    let conmon_pid = read_pid_file_if_exists(&conmon_pidfile)?;
+    let process_rows = snapshot_process_rows(runtime_pid, conmon_pid)?;
+
+    Ok(ServiceProcessSnapshot {
+        sandbox_id: details.summary.sandbox_id,
+        tenant_id: details.summary.tenant_id,
+        service_name: details.summary.service_name,
+        status: details.summary.status,
+        runtime_pidfile,
+        conmon_pidfile,
+        runtime_pid,
+        conmon_pid,
+        process_rows,
+    })
 }
 
 pub(super) fn read_pid_file_if_exists(path: &Path) -> Result<Option<u32>, Error> {
