@@ -1,3 +1,5 @@
+import ts from "typescript";
+
 import { OPERATION_MARKER, QUERY_STATE_MARKER } from "../constants.mjs";
 import { unsupportedError } from "../errors.mjs";
 
@@ -93,6 +95,7 @@ async function evaluateResolverPlan(
 }
 
 function compileResolver(resolverText, filePath, compileBindings = {}) {
+  validateResolverForCompileTimeEvaluation(resolverText, filePath);
   try {
     const bindingNames = Object.keys(compileBindings);
     return new Function(...bindingNames, `return (${resolverText});`)(
@@ -101,6 +104,117 @@ function compileResolver(resolverText, filePath, compileBindings = {}) {
   } catch (error) {
     throw unsupportedError(filePath, `resolver parsing (${error.message})`);
   }
+}
+
+const FORBIDDEN_COMPILE_TIME_IDENTIFIERS = new Set([
+  "Bun",
+  "Deno",
+  "Function",
+  "WebSocket",
+  "XMLHttpRequest",
+  "document",
+  "eval",
+  "exports",
+  "fetch",
+  "globalThis",
+  "importScripts",
+  "localStorage",
+  "module",
+  "process",
+  "require",
+  "sessionStorage",
+  "window",
+]);
+
+const FORBIDDEN_COMPILE_TIME_PROPERTIES = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+function validateResolverForCompileTimeEvaluation(resolverText, filePath) {
+  const sourceFile = ts.createSourceFile(
+    `${filePath}.resolver.ts`,
+    `const __neovexResolver = ${resolverText};`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  if (sourceFile.parseDiagnostics.length > 0) {
+    const diagnostic = sourceFile.parseDiagnostics[0];
+    throw unsupportedError(
+      filePath,
+      `resolver parsing (${ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")})`,
+    );
+  }
+
+  const rejection = findUnsafeCompileTimeExpression(sourceFile);
+  if (rejection) {
+    throw unsupportedError(filePath, rejection);
+  }
+}
+
+function findUnsafeCompileTimeExpression(sourceFile) {
+  let rejection = null;
+  const reject = (message) => {
+    rejection ??= message;
+  };
+
+  const visit = (node) => {
+    if (rejection) {
+      return;
+    }
+
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      reject("unsafe compile-time resolver reference \"this\"");
+      return;
+    }
+
+    if (
+      ts.isIdentifier(node) &&
+      FORBIDDEN_COMPILE_TIME_IDENTIFIERS.has(node.text)
+    ) {
+      reject(`unsafe compile-time resolver reference "${node.text}"`);
+      return;
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      reject("unsafe compile-time resolver dynamic import");
+      return;
+    }
+
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      FORBIDDEN_COMPILE_TIME_PROPERTIES.has(node.name.text)
+    ) {
+      reject(`unsafe compile-time resolver property "${node.name.text}"`);
+      return;
+    }
+
+    if (
+      ts.isElementAccessExpression(node) &&
+      isStringLiteralLike(node.argumentExpression) &&
+      FORBIDDEN_COMPILE_TIME_PROPERTIES.has(node.argumentExpression.text)
+    ) {
+      reject(
+        `unsafe compile-time resolver property "${node.argumentExpression.text}"`,
+      );
+      return;
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return rejection;
+}
+
+function isStringLiteralLike(node) {
+  return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
 }
 
 export { evaluateResolverPlan };
