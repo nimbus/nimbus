@@ -35,18 +35,42 @@ Usage:\n  {usage}\n\n\
 
 pub(crate) const ROOT_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex serve
+  neovex start
+  neovex dev
+  neovex deploy --url http://localhost:3210
   neovex codegen --app ./demos/convex/html
   neovex machine start
-  neovex service up";
+  neovex compose up";
 
-pub(crate) const SERVE_HELP_EXAMPLES: &str = "\
+pub(crate) const DEV_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex serve
-  neovex serve --app-dir ./demos/convex/html
-  neovex serve --app-dir ./demos/convex/html --skip-codegen
-  neovex serve --compose-file ./compose.yaml
-  neovex serve --tenant-provider postgres --postgres-url postgres://localhost/neovex";
+  neovex dev
+  neovex dev --app-dir ./demos/convex/html
+  neovex dev --app-dir ./demos/convex/html --skip-codegen
+  neovex dev --data-dir ./.neovex/dev
+
+P3 scope:
+  neovex dev now watches neovex/ or convex/ for debounced codegen reruns.
+  Use --once for startup only. Watched codegen locally activates generated
+  artifacts after validation. Live runtime log multiplexing is still pending.";
+
+pub(crate) const DEPLOY_HELP_EXAMPLES: &str = "\
+Examples:
+  neovex deploy --url http://localhost:3210
+  NEOVEX_DEPLOY_URL=http://localhost:3210 neovex deploy
+  neovex deploy --app-dir ./demos/convex/html --dry-run
+
+Deploy target:
+  neovex deploy requires an explicit self-hosted target URL via --url or
+  NEOVEX_DEPLOY_URL. Authenticate with --token or NEOVEX_DEPLOY_TOKEN.";
+
+pub(crate) const START_HELP_EXAMPLES: &str = "\
+Examples:
+  neovex start
+  neovex start --app-dir ./demos/convex/html
+  neovex start --app-dir ./demos/convex/html --skip-codegen
+  neovex start --compose-file ./compose.yaml
+  neovex start --tenant-provider postgres --postgres-url postgres://localhost/neovex";
 
 pub(crate) const CODEGEN_HELP_EXAMPLES: &str = "\
 Examples:
@@ -136,54 +160,54 @@ Examples:
   neovex machine os upgrade --dry-run
   neovex machine os upgrade --restart";
 
-pub(crate) const SERVICE_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service config
-  neovex service up
-  neovex service logs api --follow";
+  neovex compose config
+  neovex compose up
+  neovex compose logs api --follow";
 
-pub(crate) const SERVICE_CONFIG_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_CONFIG_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service config
-  neovex service config --file ./compose.dev.yaml
-  neovex service config --services";
+  neovex compose config
+  neovex compose config --file ./compose.dev.yaml
+  neovex compose config --services";
 
-pub(crate) const SERVICE_UP_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_UP_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service up
-  neovex service up api
-  neovex service up --tenant demo";
+  neovex compose up
+  neovex compose up api
+  neovex compose up --tenant demo";
 
-pub(crate) const SERVICE_DOWN_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_DOWN_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service down
-  neovex service down api
-  neovex service down --tenant demo";
+  neovex compose down
+  neovex compose down api
+  neovex compose down --tenant demo";
 
-pub(crate) const SERVICE_LIST_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_PS_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service list
-  neovex service list --all-tenants
-  neovex service list --noheading
-  neovex service list -f json";
+  neovex compose ps
+  neovex compose ps --all-tenants
+  neovex compose ps --noheading
+  neovex compose ps -f json";
 
-pub(crate) const SERVICE_INSPECT_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_INSPECT_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service inspect api
-  neovex service inspect api --tenant demo
-  neovex service inspect api -f yaml";
+  neovex compose inspect api
+  neovex compose inspect api --tenant demo
+  neovex compose inspect api -f yaml";
 
-pub(crate) const SERVICE_LOGS_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_LOGS_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service logs api
-  neovex service logs api --follow";
+  neovex compose logs api
+  neovex compose logs api --follow";
 
-pub(crate) const SERVICE_PS_HELP_EXAMPLES: &str = "\
+pub(crate) const COMPOSE_TOP_HELP_EXAMPLES: &str = "\
 Examples:
-  neovex service ps api
-  neovex service ps api --noheading
-  neovex service ps api --tenant demo
-  neovex service ps api -f json";
+  neovex compose top api
+  neovex compose top api --noheading
+  neovex compose top api --tenant demo
+  neovex compose top api -f json";
 
 const SUPPRESS_PHASE_OUTPUT: usize = 1 << 0;
 const SUPPRESS_INFO_OUTPUT: usize = 1 << 1;

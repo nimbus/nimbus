@@ -1,6 +1,6 @@
 # Plan: Localhost Server Security
 
-Canonical execution plan for hardening `neovex serve` as a localhost service:
+Canonical execution plan for hardening `neovex start` as a localhost service:
 token-based authentication, origin allowlist, session cookie bootstrap,
 Content Security Policy, server discovery, and audit logging. These
 protections apply regardless of whether a UI exists — any localhost-exposed
@@ -12,8 +12,8 @@ Reviewed against:
   middleware exists today)
 - `crates/neovex-server/src/ws/mod.rs` — WebSocket upgrade handler (no
   origin check, no auth gating)
-- `crates/neovex-bin/src/main.rs` — CLI subcommands (`serve`, `machine`,
-  `service`); no `token` subcommand exists
+- `crates/neovex-bin/src/main.rs` — CLI subcommands (`start`, `machine`,
+  `compose`); no `token` subcommand exists
 - `crates/neovex-bin/src/machine/mod.rs:2206-2246` — established XDG path
   convention (`$XDG_CONFIG_HOME/neovex/machine/`, etc.)
 - `docs/reference/macos-machine-flow.md:232-237` — settled XDG convention
@@ -88,7 +88,7 @@ On Windows: `%LOCALAPPDATA%\neovex\`.
 }
 ```
 
-Generated on first `neovex serve` if absent. `neovex token rotate` bumps
+Generated on first `neovex start` if absent. `neovex token rotate` bumps
 `generation`, invalidating outstanding sessions with `auth.token_revoked`.
 
 ### Authentication paths
@@ -167,7 +167,7 @@ All active simultaneously:
 
 Implement XDG-compliant path resolution for auth, run state, and logs —
 consistent with the existing machine manager convention. Write
-`server.json` on `neovex serve` bind with `RemoveOnDrop` guard. PID
+`server.json` on `neovex start` bind with `RemoveOnDrop` guard. PID
 liveness check on startup for stale file recovery.
 
 **Verification:** (a) `server.json` written on bind with correct PID/address,
@@ -179,12 +179,12 @@ next startup, (d) paths respect `$XDG_DATA_HOME`, `$XDG_RUNTIME_DIR`,
 
 ### LS2 — Token file lifecycle and CLI subcommand
 
-Generate 256-bit token on first `neovex serve`, write to
+Generate 256-bit token on first `neovex start`, write to
 `$XDG_DATA_HOME/neovex/auth/token` with `0600` permissions (ACL on
 Windows). Add `Command::Token(TokenCommand)` to the CLI with
 `TokenSubcommand::Rotate` that bumps `generation`.
 
-**Verification:** (a) token file created on first serve, (b) permissions
+**Verification:** (a) token file created on first start, (b) permissions
 are 0600, (c) `neovex token rotate` increments generation, (d) token
 file is reused across restarts, (e) Windows ACL restricts to current user.
 

@@ -218,7 +218,7 @@ services:
     wait_for_machine_api_health(&client);
 
     let rendered_up = render_service_up_for_platform(
-        &ServiceUpCommand {
+        &ComposeUpCommand {
             service: Some("db".to_owned()),
             file: compose_path,
             tenant: None,
@@ -228,9 +228,9 @@ services:
         Some(client),
     )
     .await
-    .expect("service up should render");
+    .expect("compose up should render");
     assert!(
-        rendered_up.contains("Service up completed for project demo-app"),
+        rendered_up.contains("Compose up completed for project demo-app"),
         "{rendered_up}"
     );
     assert!(
@@ -269,7 +269,7 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
     wait_for_machine_api_health(&client);
 
     let rendered_up = render_service_up_for_platform(
-        &ServiceUpCommand {
+        &ComposeUpCommand {
             service: Some("db".to_owned()),
             file: compose_path,
             tenant: None,
@@ -279,9 +279,9 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
         Some(client),
     )
     .await
-    .expect("service up should render for default macOS backend");
+    .expect("compose up should render for default macOS backend");
     assert!(
-        rendered_up.contains("Service up completed for project demo-app"),
+        rendered_up.contains("Compose up completed for project demo-app"),
         "{rendered_up}"
     );
     assert!(
@@ -317,7 +317,7 @@ services:
     let surface = resolve_service_execution_surface(
         &context,
         Some("db"),
-        "service up",
+        "compose up",
         ServiceHostPlatform::Macos,
         None,
     )
@@ -369,7 +369,7 @@ services:
             ServiceHostPlatform::Macos,
         )
         .expect("container compose project should evaluate"),
-        "container-backed macOS serve should auto-start the default machine"
+        "container-backed macOS start should auto-start the default machine"
     );
     assert!(
         !should_auto_start_default_machine_for_host_loader(
@@ -377,7 +377,7 @@ services:
             ServiceHostPlatform::Macos,
         )
         .expect("krun compose project should evaluate"),
-        "krun-backed macOS serve should stay on the local backend"
+        "krun-backed macOS start should stay on the local backend"
     );
     assert!(
         !should_auto_start_default_machine_for_host_loader(
@@ -385,7 +385,7 @@ services:
             ServiceHostPlatform::Linux,
         )
         .expect("linux compose project should evaluate"),
-        "non-macOS serve should not auto-start the default machine"
+        "non-macOS start should not auto-start the default machine"
     );
 }
 
@@ -446,9 +446,9 @@ services:
     fs::write(container_dir.join("conmon.pid"), "1001\n").expect("conmon pidfile should write");
 
     let rendered_list = render_service_list_for_platform(
-        &ServiceListCommand {
+        &ComposePsCommand {
             file: compose_path.clone(),
-            format: ServiceListOutputFormat::Table,
+            format: ComposePsOutputFormat::Table,
             no_heading: false,
             all_tenants: false,
         },
@@ -456,7 +456,7 @@ services:
         ServiceHostPlatform::Macos,
         Some(client.clone()),
     )
-    .expect("service list should render");
+    .expect("compose ps should render");
     assert!(
         rendered_list.contains(context.control_plane.local_tenant_id.as_str()),
         "{rendered_list}"
@@ -465,17 +465,17 @@ services:
     assert!(rendered_list.contains("db"), "{rendered_list}");
 
     let rendered_inspect = render_service_inspect_for_platform(
-        &ServiceInspectCommand {
+        &ComposeInspectCommand {
             service: "db".to_owned(),
             file: compose_path.clone(),
             tenant: None,
-            format: ServiceInspectOutputFormat::Json,
+            format: ComposeInspectOutputFormat::Json,
         },
         &control_data_dir,
         ServiceHostPlatform::Macos,
         Some(client.clone()),
     )
-    .expect("service inspect should render");
+    .expect("compose inspect should render");
     assert!(
         rendered_inspect.contains("\"service_name\": \"db\""),
         "{rendered_inspect}"
@@ -492,34 +492,34 @@ services:
     fs::write(current.state_dir.join("conmon.pid"), "4294967295\n")
         .expect("conmon pidfile should write");
 
-    let rendered_ps = render_service_ps_for_platform(
-        &ServicePsCommand {
+    let rendered_top = render_compose_top_for_platform(
+        &ComposeTopCommand {
             service: "db".to_owned(),
             file: compose_path.clone(),
             tenant: None,
-            format: ServicePsOutputFormat::Table,
+            format: ComposeTopOutputFormat::Table,
             no_heading: false,
         },
         &control_data_dir,
         ServiceHostPlatform::Macos,
         Some(client.clone()),
     )
-    .expect("service ps should render");
+    .expect("compose top should render");
     assert!(
-        rendered_ps.contains("runtime pid: 4294967294"),
-        "{rendered_ps}"
+        rendered_top.contains("runtime pid: 4294967294"),
+        "{rendered_top}"
     );
     assert!(
-        rendered_ps.contains("conmon pid: 4294967295"),
-        "{rendered_ps}"
+        rendered_top.contains("conmon pid: 4294967295"),
+        "{rendered_top}"
     );
     assert!(
-        rendered_ps.contains("tracked processes: none"),
-        "{rendered_ps}"
+        rendered_top.contains("tracked processes: none"),
+        "{rendered_top}"
     );
 
     let rendered_down = render_service_down_for_platform(
-        &ServiceDownCommand {
+        &ComposeDownCommand {
             service: Some("db".to_owned()),
             file: compose_path,
             tenant: None,
@@ -529,9 +529,9 @@ services:
         Some(client),
     )
     .await
-    .expect("service down should render");
+    .expect("compose down should render");
     assert!(
-        rendered_down.contains("Service down completed for project demo-app"),
+        rendered_down.contains("Compose down completed for project demo-app"),
         "{rendered_down}"
     );
     assert!(
@@ -566,12 +566,12 @@ services:
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
 
-    let error = require_krun_backend_for_service_operation(&context, None, "service up")
+    let error = require_krun_backend_for_service_operation(&context, None, "compose up")
         .expect_err("mixed backend project should fail fast");
 
     assert_eq!(
         error.to_string(),
-        "invalid input: compose project demo-app mixes sandbox backends across services (api=krun, db=container); neovex service up currently requires one backend family per project-wide operation"
+        "invalid input: compose project demo-app mixes sandbox backends across services (api=krun, db=container); neovex compose up currently requires one backend family per project-wide operation"
     );
 }
 
@@ -595,13 +595,13 @@ services:
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
 
-    require_krun_backend_for_service_operation(&context, Some("api"), "service up")
+    require_krun_backend_for_service_operation(&context, Some("api"), "compose up")
         .expect("krun service in mixed project should remain allowed");
 
-    let error = require_krun_backend_for_service_operation(&context, Some("db"), "service up")
+    let error = require_krun_backend_for_service_operation(&context, Some("db"), "compose up")
         .expect_err("container service should fail fast");
     assert_eq!(
         error.to_string(),
-        "invalid input: service db in compose project demo-app selects sandbox backend container, but neovex service up only supports the krun backend today"
+        "invalid input: service db in compose project demo-app selects sandbox backend container, but neovex compose up only supports the krun backend today"
     );
 }

@@ -5,45 +5,45 @@ use neovex::TenantId;
 
 use crate::cli_ux;
 
-use super::compose;
+use super::file;
 
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_HELP_EXAMPLES,
+    after_help = cli_ux::COMPOSE_HELP_EXAMPLES,
     subcommand_help_heading = "Available Commands"
 )]
-pub(crate) struct ServiceCommand {
+pub(crate) struct ComposeCommand {
     #[command(subcommand)]
-    pub(super) command: ServiceSubcommand,
+    pub(super) command: ComposeSubcommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(super) enum ServiceSubcommand {
+pub(super) enum ComposeSubcommand {
     /// Validate and print the resolved service plan from a Compose file.
-    Config(ServiceConfigCommand),
+    Config(ComposeConfigCommand),
     /// Start one or more declared services for the current Compose project.
-    Up(ServiceUpCommand),
+    Up(ComposeUpCommand),
     /// Stop one or more persisted services for the current Compose project.
-    Down(ServiceDownCommand),
+    Down(ComposeDownCommand),
     /// Show persisted sandbox state for the current Compose project.
-    List(ServiceListCommand),
+    Ps(ComposePsCommand),
     /// Show persisted sandbox details for one service in the current Compose project.
-    Inspect(ServiceInspectCommand),
+    Inspect(ComposeInspectCommand),
     /// Print persisted service logs for one service in the current Compose project.
-    Logs(ServiceLogsCommand),
+    Logs(ComposeLogsCommand),
     /// Show the persisted PID snapshot for one service in the current Compose project.
-    Ps(ServicePsCommand),
+    Top(ComposeTopCommand),
 }
 
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_CONFIG_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_CONFIG_HELP_EXAMPLES
 )]
-pub(super) struct ServiceConfigCommand {
+pub(super) struct ComposeConfigCommand {
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Print only service names, one per line.
@@ -54,14 +54,14 @@ pub(super) struct ServiceConfigCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_UP_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_UP_HELP_EXAMPLES
 )]
-pub(super) struct ServiceUpCommand {
+pub(super) struct ComposeUpCommand {
     /// Optional service name. When omitted, starts all declared services.
     pub(super) service: Option<String>,
 
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
@@ -72,14 +72,14 @@ pub(super) struct ServiceUpCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_DOWN_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_DOWN_HELP_EXAMPLES
 )]
-pub(super) struct ServiceDownCommand {
+pub(super) struct ComposeDownCommand {
     /// Optional service name. When omitted, stops all persisted services in the tenant.
     pub(super) service: Option<String>,
 
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
@@ -90,16 +90,16 @@ pub(super) struct ServiceDownCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_LIST_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_PS_HELP_EXAMPLES
 )]
-pub(super) struct ServiceListCommand {
+pub(super) struct ComposePsCommand {
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Output format.
-    #[arg(short = 'f', long, value_enum, default_value_t = ServiceListOutputFormat::Table)]
-    pub(super) format: ServiceListOutputFormat,
+    #[arg(short = 'f', long, value_enum, default_value_t = ComposePsOutputFormat::Table)]
+    pub(super) format: ComposePsOutputFormat,
 
     /// Omit table headings from table output.
     #[arg(short = 'n', long = "noheading")]
@@ -114,14 +114,14 @@ pub(super) struct ServiceListCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_INSPECT_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_INSPECT_HELP_EXAMPLES
 )]
-pub(super) struct ServiceInspectCommand {
+pub(super) struct ComposeInspectCommand {
     /// Service name to inspect.
     pub(super) service: String,
 
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
@@ -129,21 +129,21 @@ pub(super) struct ServiceInspectCommand {
     pub(super) tenant: Option<TenantId>,
 
     /// Output format.
-    #[arg(short = 'f', long, value_enum, default_value_t = ServiceInspectOutputFormat::Json)]
-    pub(super) format: ServiceInspectOutputFormat,
+    #[arg(short = 'f', long, value_enum, default_value_t = ComposeInspectOutputFormat::Json)]
+    pub(super) format: ComposeInspectOutputFormat,
 }
 
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_LOGS_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_LOGS_HELP_EXAMPLES
 )]
-pub(super) struct ServiceLogsCommand {
+pub(super) struct ComposeLogsCommand {
     /// Service name to read logs for.
     pub(super) service: String,
 
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
@@ -158,14 +158,14 @@ pub(super) struct ServiceLogsCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = cli_ux::SERVICE_PS_HELP_EXAMPLES
+    after_help = cli_ux::COMPOSE_TOP_HELP_EXAMPLES
 )]
-pub(super) struct ServicePsCommand {
+pub(super) struct ComposeTopCommand {
     /// Service name to inspect process state for.
     pub(super) service: String,
 
     /// Compose file to read. Defaults to ./compose.yaml.
-    #[arg(long, default_value = compose::DEFAULT_COMPOSE_FILE)]
+    #[arg(long, default_value = file::DEFAULT_COMPOSE_FILE)]
     pub(super) file: PathBuf,
 
     /// Optional tenant override. Defaults to the deterministic local project tenant.
@@ -173,8 +173,8 @@ pub(super) struct ServicePsCommand {
     pub(super) tenant: Option<TenantId>,
 
     /// Output format.
-    #[arg(short = 'f', long, value_enum, default_value_t = ServicePsOutputFormat::Table)]
-    pub(super) format: ServicePsOutputFormat,
+    #[arg(short = 'f', long, value_enum, default_value_t = ComposeTopOutputFormat::Table)]
+    pub(super) format: ComposeTopOutputFormat,
 
     /// Omit table headings from table output.
     #[arg(short = 'n', long = "noheading")]
@@ -182,7 +182,7 @@ pub(super) struct ServicePsCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
-pub(super) enum ServiceListOutputFormat {
+pub(super) enum ComposePsOutputFormat {
     Json,
     Yaml,
     #[default]
@@ -190,14 +190,14 @@ pub(super) enum ServiceListOutputFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
-pub(super) enum ServiceInspectOutputFormat {
+pub(super) enum ComposeInspectOutputFormat {
     #[default]
     Json,
     Yaml,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
-pub(super) enum ServicePsOutputFormat {
+pub(super) enum ComposeTopOutputFormat {
     Json,
     Yaml,
     #[default]

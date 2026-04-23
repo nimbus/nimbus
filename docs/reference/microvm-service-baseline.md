@@ -34,7 +34,7 @@ Current implementation by layer:
 | Isolation backend | krun backend in `neovex-sandbox` | OCI lowering, lifecycle, logs, manifests |
 | VM launch stack | `buildah` + `conmon` + patched `crun` + `libkrun` | subprocess orchestration |
 | Service manager | `SandboxServiceManager` in `neovex-server` | declared services, activation, readiness, teardown |
-| Developer/operator UX | `neovex-bin` | Compose validation and `neovex service ...` |
+| Developer/operator UX | `neovex-bin` | Compose validation and `neovex compose ...` |
 
 Linux request path:
 
@@ -68,9 +68,9 @@ Current macOS completion notes:
 - the host server startup path can now select a forwarded guest machine-API
   backend for container-backed Compose projects on macOS when the guest
   machine API advertises `service_execution_ready`
-- the explicit `neovex service ...` lifecycle commands now share that
+- the explicit `neovex compose ...` lifecycle commands now share that
   forwarded guest path on macOS for container-backed projects: `up`, `down`,
-  `list`, `inspect`, `logs`, and `ps` talk to the guest machine API instead of
+  `ps`, `inspect`, `logs`, and `top` talk to the guest machine API instead of
   host-local krun state, while Linux production and krun-backed projects stay
   unchanged
 - mixed-backend project-wide operations still reject until the repo chooses a
@@ -164,23 +164,23 @@ service in the guest is still `Starting` or `NotReady`.
 Neovex currently exposes three operator paths relevant to services and macOS
 developer machines:
 
-- `neovex serve --compose-file ./compose.yaml`
+- `neovex start --compose-file ./compose.yaml`
   starts the server with a declared service catalog available for
   request-time activation through `ctx.services.*`
-- `neovex service ...`
+- `neovex compose ...`
   manages those services explicitly through the same backend-owned state model
 - `neovex machine ...`
   owns the shipped macOS machine CLI and persisted machine-state foundation
 
 Supported CLI commands today:
 
-- `neovex service config`
-- `neovex service up`
-- `neovex service down`
-- `neovex service list`
-- `neovex service inspect`
-- `neovex service logs`
-- `neovex service ps`
+- `neovex compose config`
+- `neovex compose up`
+- `neovex compose down`
+- `neovex compose ps`
+- `neovex compose inspect`
+- `neovex compose logs`
+- `neovex compose top`
 - `neovex machine init`
 - `neovex machine start`
 - `neovex machine stop`
@@ -190,11 +190,12 @@ Supported CLI commands today:
 - `neovex machine os apply`
 - `neovex machine os upgrade`
 
-Server startup now uses the explicit `neovex serve` subcommand. `service` is
-the managed-service namespace. The current command taxonomy is:
+Server startup now uses the explicit `neovex start` subcommand. `compose` is
+the managed-service namespace for Compose-declared local dependencies. The
+current command taxonomy is:
 
-- `neovex serve` for explicit server startup
-- `neovex service ...` for managed service lifecycle
+- `neovex start` for explicit server startup
+- `neovex compose ...` for managed service lifecycle
 - `neovex machine ...` for macOS machine lifecycle
 
 The current `machine` surface now includes the direct `krunkit` + `gvproxy`

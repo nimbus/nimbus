@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, Query as QueryParams, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Redirect;
 use neovex_core::{
     CreateCronRequest, DocumentId, Error, Page, PaginatedQuery, Query, ScheduleRequest, Schema,
@@ -18,6 +18,7 @@ use crate::protocol::{
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
 
+mod deploy;
 mod documents;
 mod metadata;
 mod queries;
@@ -25,6 +26,7 @@ mod scheduling;
 mod schema;
 mod tenants;
 
+pub(crate) use deploy::deploy_app;
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };

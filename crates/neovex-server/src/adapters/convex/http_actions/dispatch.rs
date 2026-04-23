@@ -8,8 +8,8 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
     let tenant_id = TenantId::new(tenant_id)?;
     let registry = state
         .convex_registry
-        .clone()
-        .expect("convex http route requires Convex support state");
+        .current()
+        .ok_or_else(|| AppError::not_found("convex http route requires Convex support state"))?;
     let request_auth = registry
         .verify_authorization_header(&route_request.headers)
         .await?;

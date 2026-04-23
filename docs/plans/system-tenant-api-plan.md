@@ -16,7 +16,7 @@ Reviewed against:
   (`/api/tenants/{tenant_id}/documents/{table}`, etc.)
 - `crates/neovex-bin/src/main.rs` — `--app-dir` flag, CLI subcommands
 - `crates/neovex-bin/src/machine/mod.rs` — `MachineManager` state tracking
-- `crates/neovex-bin/src/service/mod.rs` — `ServiceManager` state tracking
+- `crates/neovex-bin/src/compose/mod.rs` — Compose-backed service state tracking
 - `crates/neovex-engine/src/service/` — `Service`, tenant runtime, subscription
   delivery, query planning
 
@@ -36,7 +36,7 @@ Reviewed against:
 ## Current Assessed State
 
 - Machine and service state lives in CLI-level managers
-  (`crates/neovex-bin/src/machine/`, `crates/neovex-bin/src/service/`), not
+  (`crates/neovex-bin/src/machine/`, `crates/neovex-bin/src/compose/`), not
   in the engine's document storage. No API client can observe machine state
   reactively.
 - The Convex adapter supports runtime-backed function execution via
@@ -153,7 +153,7 @@ Create the `_neovex` system tenant automatically on server startup.
 Define table schemas for all 9 system tables. Reserve the `_` prefix for
 system tenants — reject user-created tenants starting with `_`.
 
-**Verification:** (a) `_neovex` tenant exists after `neovex serve` starts,
+**Verification:** (a) `_neovex` tenant exists after `neovex start` starts,
 (b) all 9 tables are defined with correct schemas, (c) `POST /api/tenants`
 with `_` prefix name → 400 rejected.
 

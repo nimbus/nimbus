@@ -11,7 +11,7 @@ Reviewed against:
 - `docs/plans/distribution-plan.md`
 - `crates/neovex-bin/src/machine/mod.rs`
 - `crates/neovex-bin/src/machine/stub/`
-- `crates/neovex-bin/src/service/mod.rs`
+- `crates/neovex-bin/src/compose/mod.rs`
 - `crates/neovex-sandbox/src/backends/`
 - `.github/workflows/release.yml` — confirms `neovex.exe` already builds on
   `windows-latest` with `x86_64-pc-windows-msvc` and ships in every release
@@ -583,7 +583,7 @@ choice:
 - **Machine lifecycle is explicit.** `neovex machine init/start/stop/rm`
   gives the developer a clear mental model consistent across macOS and Windows.
 - **One developer-facing workflow on all platforms.** Linux, macOS, and Windows
-  developers all use the same `neovex serve` + `neovex service ...` commands.
+  developers all use the same `neovex start` + `neovex compose ...` commands.
 
 ### Accepted architecture
 
@@ -617,10 +617,10 @@ Windows host
         │     └── stops win-sshproxy (read TID file, PostThreadMessageW + WM_QUIT)
         ├── neovex machine rm
         │     └── wsl --unregister neovex-{name}
-        ├── neovex serve
+        ├── neovex start
         │     ├── authoritative API/runtime/storage on Windows host
         │     └── guest machine-API client over named pipe
-        └── neovex service ...
+        └── neovex compose ...
               └── same guest machine-API client
 
 WSL2 Linux guest (neovex-{name} distro)
@@ -746,11 +746,11 @@ PowerShell / cmd.exe
       -> cleanup signal handler
 ```
 
-#### `neovex serve` on Windows
+#### `neovex start` on Windows
 
 ```text
 PowerShell / cmd.exe
-  -> neovex.exe serve
+  -> neovex.exe start
       -> load machine config
       -> ensure machine is started (or auto-start)
       -> verify named pipe \\.\pipe\neovex-machine-{name} is answering
@@ -768,7 +768,7 @@ PowerShell / cmd.exe
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    Linux (Production)                               │
 │                                                                     │
-│  neovex serve (native Linux binary)                                 │
+│  neovex start (native Linux binary)                                 │
 │    └── neovex-sandbox krun backend                                  │
 │          └── conmon → crun → libkrun (per-service microVMs)         │
 │                                                                     │
@@ -779,7 +779,7 @@ PowerShell / cmd.exe
 │                    macOS (Developer)                                 │
 │                                                                     │
 │  macOS host                                                         │
-│    ├── neovex serve (host-resident, authoritative)                  │
+│    ├── neovex start (host-resident, authoritative)                  │
 │    ├── neovex machine ... (krunkit + gvproxy)                       │
 │    │     └── gvproxy: API forwarding AND port forwarding            │
 │    └── forwarded <machine>-api.sock (Unix socket via gvproxy/SSH)   │
@@ -821,7 +821,7 @@ PowerShell / cmd.exe
 | Remote control seam | n/a | host talks to guest machine API via forwarded Unix socket | host talks to guest machine API via named pipe (win-sshproxy) | do not grow a generic remote engine |
 | Service networking | krun TSI host:guest ports | host localhost → gvproxy → guest container ports | WSL2 native networking → Windows localhost | `ctx.services.<name>.port` semantics |
 | Readiness model | server waits for actual service reachability | same layered contract across host and guest | same layered readiness contract (3-layer + machine-API + service) | no "running means ready" regression |
-| Compose/service UX | landed `neovex serve --compose-file ...` and `neovex service ...` | same commands from mac host | same commands from Windows PowerShell/cmd.exe | one developer-facing workflow |
+| Compose/service UX | landed `neovex start --compose-file ...` and `neovex compose ...` | same commands from mac host | same commands from Windows PowerShell/cmd.exe | one developer-facing workflow |
 
 ## Transport Reality Matrix
 
@@ -848,7 +848,7 @@ verification:
 | W2: SSH command execution | can the host execute a command inside the guest via SSH? | `LocalhostSSHSilent(..., "true")` | to implement |
 | W3: named pipe reachability | is `\\.\pipe\neovex-machine-{name}` answering? | `WaitPipeExists` (80 retries × 250ms) | to implement |
 | W4: guest machine-API health | does the forwarded guest `neovex.sock` answer health/capabilities? | Neovex-specific (narrower than Podman API) | to implement |
-| W5: host Neovex readiness | is host `neovex.exe serve` ready with its guest machine-API client wired? | Neovex-specific | to implement |
+| W5: host Neovex readiness | is host `neovex.exe start` ready with its guest machine-API client wired? | Neovex-specific | to implement |
 | W6: guest service readiness | are published guest services reachable from Windows localhost? | Neovex-specific | to implement |
 
 Windows architectural rule:
@@ -858,8 +858,8 @@ Windows architectural rule:
 - a running WSL2 distro is not enough to declare SSH reachable
 - a reachable SSH is not enough to declare the named pipe answering
 - a reachable named pipe is not enough to declare the guest machine API healthy
-- a healthy guest machine API is not enough to declare host `neovex serve` ready
-- a ready host `neovex serve` is not enough to declare every declared guest
+- a healthy guest machine API is not enough to declare host `neovex start` ready
+- a ready host `neovex start` is not enough to declare every declared guest
   service ready
 
 ## Podman Source Reference for Implementation
@@ -1263,7 +1263,7 @@ Acceptance criteria:
   shipping, there is no reason to diverge from Podman's proven Windows-native
   pattern. The Windows-native approach also mirrors the macOS hybrid
   control-plane architecture (host-resident server, guest-resident machine API)
-  and gives developers a consistent `neovex machine` + `neovex serve` workflow
+  and gives developers a consistent `neovex machine` + `neovex start` workflow
   across all platforms. Renumbered roadmap items from WIN1-WIN7 with clear
   separation of WSL2 provider, win-sshproxy, named pipe client, networking,
   developer UX, and packaging.

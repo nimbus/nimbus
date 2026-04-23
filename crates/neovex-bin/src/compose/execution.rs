@@ -13,7 +13,7 @@ use crate::machine::{
     require_default_machine_api_client,
 };
 
-use super::{ComposeProjectContext, ServiceLifecycleTarget, compose};
+use super::{ComposeProjectContext, ServiceLifecycleTarget, file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ServiceHostPlatform {
@@ -278,13 +278,13 @@ pub(super) fn load_sandbox_service_catalog_for_execution_platform(
     file: &Path,
     host_platform: ServiceHostPlatform,
 ) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    let mut plan = compose::ComposeProjectPlan::load(file)?;
+    let mut plan = file::ComposeProjectPlan::load(file)?;
     apply_platform_backend_defaults(&mut plan, host_platform);
     Ok(Arc::new(plan.into_service_catalog()?))
 }
 
 fn apply_platform_backend_defaults(
-    plan: &mut compose::ComposeProjectPlan,
+    plan: &mut file::ComposeProjectPlan,
     host_platform: ServiceHostPlatform,
 ) {
     if host_platform != ServiceHostPlatform::Macos {
@@ -299,7 +299,7 @@ fn apply_platform_backend_defaults(
 }
 
 fn effective_service_backend(
-    service: &compose::ComposeServicePlan,
+    service: &file::ComposeServicePlan,
     host_platform: ServiceHostPlatform,
 ) -> SandboxBackendKind {
     if host_platform == ServiceHostPlatform::Macos
@@ -312,7 +312,7 @@ fn effective_service_backend(
     }
 }
 
-fn service_declares_backend(service: &compose::ComposeServicePlan) -> bool {
+fn service_declares_backend(service: &file::ComposeServicePlan) -> bool {
     service
         .x_neovex
         .as_ref()

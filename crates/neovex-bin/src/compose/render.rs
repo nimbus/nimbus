@@ -4,8 +4,8 @@ use serde::Serialize;
 use crate::cli_ux;
 
 use super::{
-    ServiceInspectOutputFormat, ServiceLifecycleOutcome, ServiceListOutputFormat,
-    ServiceProcessSnapshot, ServicePsOutputFormat,
+    ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat,
+    ServiceLifecycleOutcome, ServiceProcessSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -55,17 +55,17 @@ pub(super) fn render_service_lifecycle_action_summary(
 
 pub(super) fn render_service_list_view(
     summaries: &[ServiceSandboxSummaryView],
-    format: ServiceListOutputFormat,
+    format: ComposePsOutputFormat,
     no_heading: bool,
 ) -> Result<String, Error> {
     match format {
-        ServiceListOutputFormat::Json => serde_json::to_string_pretty(summaries).map_err(|error| {
-            Error::Serialization(format!("failed to render service list: {error}"))
+        ComposePsOutputFormat::Json => serde_json::to_string_pretty(summaries).map_err(|error| {
+            Error::Serialization(format!("failed to render compose ps output: {error}"))
         }),
-        ServiceListOutputFormat::Yaml => serde_yaml::to_string(summaries).map_err(|error| {
-            Error::Serialization(format!("failed to render service list: {error}"))
+        ComposePsOutputFormat::Yaml => serde_yaml::to_string(summaries).map_err(|error| {
+            Error::Serialization(format!("failed to render compose ps output: {error}"))
         }),
-        ServiceListOutputFormat::Table => Ok(render_service_list_table(summaries, no_heading)),
+        ComposePsOutputFormat::Table => Ok(render_service_list_table(summaries, no_heading)),
     }
 }
 
@@ -107,11 +107,11 @@ fn render_service_list_table(summaries: &[ServiceSandboxSummaryView], no_heading
 
 pub(super) fn render_service_inspect_view<T: Serialize>(
     details: &T,
-    format: ServiceInspectOutputFormat,
+    format: ComposeInspectOutputFormat,
     service_name: &str,
 ) -> Result<String, Error> {
     match format {
-        ServiceInspectOutputFormat::Json => {
+        ComposeInspectOutputFormat::Json => {
             serde_json::to_string_pretty(details).map_err(|error| {
                 Error::Serialization(format!(
                     "failed to render sandbox details for service {}: {error}",
@@ -119,7 +119,7 @@ pub(super) fn render_service_inspect_view<T: Serialize>(
                 ))
             })
         }
-        ServiceInspectOutputFormat::Yaml => serde_yaml::to_string(details).map_err(|error| {
+        ComposeInspectOutputFormat::Yaml => serde_yaml::to_string(details).map_err(|error| {
             Error::Serialization(format!(
                 "failed to render sandbox details for service {}: {error}",
                 service_name
@@ -130,15 +130,17 @@ pub(super) fn render_service_inspect_view<T: Serialize>(
 
 pub(super) fn render_service_process_snapshot_view(
     snapshot: &ServiceProcessSnapshot,
-    format: ServicePsOutputFormat,
+    format: ComposeTopOutputFormat,
     no_heading: bool,
 ) -> Result<String, Error> {
     match format {
-        ServicePsOutputFormat::Json => serde_json::to_string_pretty(snapshot)
-            .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
-        ServicePsOutputFormat::Yaml => serde_yaml::to_string(snapshot)
-            .map_err(|error| Error::Serialization(format!("failed to render service ps: {error}"))),
-        ServicePsOutputFormat::Table => {
+        ComposeTopOutputFormat::Json => serde_json::to_string_pretty(snapshot).map_err(|error| {
+            Error::Serialization(format!("failed to render compose top output: {error}"))
+        }),
+        ComposeTopOutputFormat::Yaml => serde_yaml::to_string(snapshot).map_err(|error| {
+            Error::Serialization(format!("failed to render compose top output: {error}"))
+        }),
+        ComposeTopOutputFormat::Table => {
             Ok(render_service_process_snapshot_table(snapshot, no_heading))
         }
     }
@@ -170,7 +172,7 @@ fn render_service_process_snapshot_table(
         detail_lines.push("tracked processes: none".to_owned());
         return cli_ux::format_action_block(
             &format!(
-                "Service process snapshot for {} (tenant {})",
+                "Compose top snapshot for {} (tenant {})",
                 snapshot.service_name, snapshot.tenant_id
             ),
             &detail_lines,
@@ -179,7 +181,7 @@ fn render_service_process_snapshot_table(
 
     let mut rendered = cli_ux::format_action_block(
         &format!(
-            "Service process snapshot for {} (tenant {})",
+            "Compose top snapshot for {} (tenant {})",
             snapshot.service_name, snapshot.tenant_id
         ),
         &detail_lines,

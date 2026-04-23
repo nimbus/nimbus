@@ -34,12 +34,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 - `docs/reference/microvm-service-baseline.md`
   - concise current baseline for the landed krun-backed microVM runtime,
-    service activation, Compose-backed `neovex service ...` surface, and the
+    service activation, Compose-backed `neovex compose ...` surface, and the
     Linux-versus-macOS platform model
 - `docs/reference/macos-machine-flow.md`
   - concise current reference for the settled macOS developer-machine contract:
     pinned Podman image digest, host-managed guest binary sync, forwarded
-    machine API, host-resident `neovex serve`, and proof-helper entrypoints
+    machine API, host-resident `neovex start`, and proof-helper entrypoints
 
 - `docs/plans/install-script-plan.md`
   - canonical execution plan for the neovex install script (Channel 1):
@@ -204,7 +204,8 @@ completed plans unless explicitly asked to review historical work.
 - `docs/plans/archive/service-control-plane-plan.md`
   - completed execution record for the Compose-backed service control plane:
     project identity, control-root layout, backend-owned lifecycle state, and
-    `neovex service ...` command wiring
+    the then-current `neovex service ...` command wiring superseded by
+    `neovex compose ...`
 - `docs/plans/archive/convex-demos-compatibility-plan.md`
   - completed Convex compatibility and demo baseline; records the landed
     browser/client ergonomics, repo-owned demo variants, served browser bundle,
@@ -238,6 +239,12 @@ completed plans unless explicitly asked to review historical work.
     rollout for Podman-aligned `machine info`, output-shaping parity, stronger
     `machine list` ergonomics, help/reference cleanup, and the final real
     macOS host proof bundle
+- `docs/plans/archive/cli-command-surface-plan.md`
+  - completed CLI command-surface wave; records the `neovex compose`
+    replacement for the retired `neovex service` surface, `neovex dev`,
+    deploy/admin API plus `neovex deploy`, `neovex start` replacement for the
+    retired `neovex serve` surface, final naming/DX review, and verification
+    bundle
 
 ## How To Use This Folder
 
@@ -260,6 +267,9 @@ completed plans unless explicitly asked to review historical work.
   `docs/plans/archive/machine-cli-follow-on-plan.md` only when you need the
   completed `CLIF1`-`CLIF5` rollout, exact proof-bundle paths, or the settled
   follow-on command-surface contract.
+- Use `docs/plans/archive/cli-command-surface-plan.md` only when you need the
+  completed `compose` / `dev` / `deploy` / `start` rollout, exact
+  verification bundle, or retired `service` / `serve` decision record.
 - Use `docs/plans/archive/machine-cli-alignment-plan.md` only for the
   completed `CLIA1`-`CLIA10` rollout, older historical proof-bundle paths, and
   the baseline contract the follow-on wave refined.
@@ -282,7 +292,7 @@ completed plans unless explicitly asked to review historical work.
   of the landed compatibility baseline, then promote a new active plan before
   resuming further Convex compat work.
 - For Convex or Neovex CLI/codegen workflow work (`packages/codegen/`,
-  `packages/convex/`, `demos/convex/`, or the `neovex serve --app-dir`
+  `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
   contract), start with `docs/reference/convex-ai-guidelines.md`,
   `docs/reference/cli.md`, and `docs/convex/compatibility.md`. Use
   `archive/codegen-cli-plan.md` only for the completed CLI/codegen rollout's

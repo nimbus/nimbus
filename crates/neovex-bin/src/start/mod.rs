@@ -8,9 +8,9 @@ mod runtime_limits;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::boot::run_serve_command;
-pub(crate) use self::config::service_persistence_config_from_serve_command;
-use self::config::{CliKeyProvider, CliTenantProvider};
+pub(crate) use self::boot::run_start_command;
+pub(crate) use self::config::persistence_config_from_start_command;
+pub(crate) use self::config::{CliKeyProvider, CliTenantProvider};
 use self::runtime_limits::{
     default_runtime_heap_mb, default_runtime_initial_heap_mb, default_runtime_max_instances,
     default_runtime_max_nested_calls, default_runtime_timeout_secs, default_runtime_worker_threads,
@@ -19,9 +19,9 @@ use self::runtime_limits::{
 #[derive(Debug, Args)]
 #[command(
     help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = crate::cli_ux::SERVE_HELP_EXAMPLES
+    after_help = crate::cli_ux::START_HELP_EXAMPLES
 )]
-pub(crate) struct ServeCommand {
+pub(crate) struct StartCommand {
     /// Optional JSON config file. CLI flags override env and file values.
     #[arg(long)]
     pub(crate) config: Option<PathBuf>,
@@ -122,7 +122,7 @@ pub(crate) struct ServeCommand {
     #[arg(long)]
     pub(crate) app_dir: Option<PathBuf>,
 
-    /// Skip automatic codegen before serving. Use when manifests are
+    /// Skip automatic codegen before startup. Use when manifests are
     /// pre-built by a separate build step.
     #[arg(long, default_value_t = false)]
     pub(crate) skip_codegen: bool,
@@ -192,9 +192,13 @@ pub(crate) struct ServeCommand {
     /// AWS KMS endpoint URL override for testing or VPC endpoints.
     #[arg(long)]
     pub(crate) encryption_aws_endpoint_url: Option<String>,
+
+    /// Internal bearer token used by development workflows to activate local app generations.
+    #[arg(skip)]
+    pub(crate) deploy_admin_token: Option<String>,
 }
 
-impl Default for ServeCommand {
+impl Default for StartCommand {
     fn default() -> Self {
         Self {
             config: None,
@@ -235,6 +239,7 @@ impl Default for ServeCommand {
             encryption_aws_kms_key_id: None,
             encryption_aws_region: None,
             encryption_aws_endpoint_url: None,
+            deploy_admin_token: None,
         }
     }
 }

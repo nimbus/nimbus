@@ -7,7 +7,7 @@ use neovex::{
 };
 use serde::Deserialize;
 
-use super::ServeCommand;
+use super::StartCommand;
 
 const DEFAULT_DATA_DIR: &str = "./data";
 const CONFIG_FILE_ENV: &str = "NEOVEX_CONFIG";
@@ -470,7 +470,7 @@ impl ResolvedTenantProviderConfig {
         }
     }
 
-    fn into_service_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
+    fn into_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
         match self {
             Self::Embedded {
                 data_dir,
@@ -570,7 +570,7 @@ impl ResolvedTenantProviderConfig {
 
 impl ResolvedPersistenceInputs {
     fn from_sources(
-        command: &ServeCommand,
+        command: &StartCommand,
         file: &PersistenceFileConfig,
         env: &PersistenceEnv,
     ) -> Self {
@@ -709,11 +709,11 @@ impl ResolvedPersistenceInputs {
         }
     }
 
-    fn into_service_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
+    fn into_persistence_config(self) -> neovex::Result<ServicePersistenceConfig> {
         let encryption_config =
             ResolvedEncryptionInputs::from_inputs(&self).into_local_encryption_config()?;
         let base_config =
-            ResolvedTenantProviderConfig::from_inputs(self)?.into_service_persistence_config()?;
+            ResolvedTenantProviderConfig::from_inputs(self)?.into_persistence_config()?;
         let config = base_config.with_local_encryption(encryption_config);
 
         // Validate the encryption config against the provider
@@ -794,8 +794,8 @@ impl ResolvedPersistenceInputs {
     }
 }
 
-pub(crate) fn service_persistence_config_from_serve_command(
-    command: &ServeCommand,
+pub(crate) fn persistence_config_from_start_command(
+    command: &StartCommand,
 ) -> neovex::Result<ServicePersistenceConfig> {
     let config_path = command
         .config
@@ -803,18 +803,18 @@ pub(crate) fn service_persistence_config_from_serve_command(
         .or_else(|| std::env::var_os(CONFIG_FILE_ENV).map(PathBuf::from));
     let file_config = load_runtime_config_file(config_path.as_deref())?;
     let env = PersistenceEnv::load()?;
-    service_persistence_config_from_sources(command, &file_config.persistence, &env)
+    persistence_config_from_sources(command, &file_config.persistence, &env)
 }
 
-pub(crate) fn service_persistence_config_from_sources(
-    command: &ServeCommand,
+pub(crate) fn persistence_config_from_sources(
+    command: &StartCommand,
     file: &PersistenceFileConfig,
     env: &PersistenceEnv,
 ) -> neovex::Result<ServicePersistenceConfig> {
-    ResolvedPersistenceInputs::from_sources(command, file, env).into_service_persistence_config()
+    ResolvedPersistenceInputs::from_sources(command, file, env).into_persistence_config()
 }
 
-pub(super) fn control_data_dir_from_service_config(config: &ServicePersistenceConfig) -> &Path {
+pub(super) fn control_data_dir_from_persistence_config(config: &ServicePersistenceConfig) -> &Path {
     match &config.control_plane {
         neovex::ControlPlaneConfig::EmbeddedRedb { data_dir } => data_dir.as_path(),
     }

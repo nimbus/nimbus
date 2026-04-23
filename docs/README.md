@@ -32,13 +32,16 @@ and where to go next.
   without cargo-cult timeout increases
 - [MicroVM and service-control baseline](reference/microvm-service-baseline.md):
   concise current baseline for the landed krun-backed microVM runtime,
-  `ctx.services.*` integration, and `neovex service ...` control surface
+  `ctx.services.*` integration, and `neovex compose ...` control surface
 - [macOS machine image and control flows](reference/macos-machine-flow.md):
   current source-backed diagrams for the pinned Podman/Quay macOS bring-up
   image, the later Neovex-owned image track, macOS image pull/materialization,
   and host/guest service execution flow
 - [HTTP and WebSocket API](reference/http-api.md):
   native and optional Convex route catalog
+- [Deploy admin API](reference/deploy-admin-api.md):
+  authenticated staging, diffing, validation, and generation activation
+  contract behind `neovex deploy`
 - [CLI reference](reference/cli.md):
   server flags plus the current service, machine, and encryption command surface
 - [Encryption at rest reference](reference/encryption.md):

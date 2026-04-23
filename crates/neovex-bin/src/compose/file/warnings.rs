@@ -9,10 +9,10 @@ pub(super) fn warnings_for_known_ignored_service_fields(
         warnings.push("networks: ignored (neovex uses TSI networking)".to_owned());
     }
     if service.configs.is_some() {
-        warnings.push("configs: ignored (not yet supported by neovex service config)".to_owned());
+        warnings.push("configs: ignored (not yet supported by neovex compose config)".to_owned());
     }
     if service.secrets.is_some() {
-        warnings.push("secrets: ignored (not yet supported by neovex service config)".to_owned());
+        warnings.push("secrets: ignored (not yet supported by neovex compose config)".to_owned());
     }
     if service.cap_add.is_some() {
         warnings.push("cap_add: ignored (VM isolation replaces container capabilities)".to_owned());

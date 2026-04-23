@@ -266,7 +266,7 @@ services:
 "#,
     );
 
-    let rendered = render_compose_project(&compose, true).expect("service listing should render");
+    let rendered = render_compose_project(&compose, true).expect("service names should render");
     assert_eq!(rendered.stdout, "cache\ndb\n");
     assert!(
         rendered

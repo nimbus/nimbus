@@ -503,7 +503,7 @@ macOS Apple Silicon.
 - `brew install --cask agentstation/tap/neovex` or
   `brew upgrade --cask agentstation/tap/neovex`
 - Verify the installed cask layout includes bundled `libexec/gvproxy`
-- Print getting-started: `neovex machine init` + `neovex serve`
+- Print getting-started: `neovex machine init` + `neovex start`
 
 **Acceptance criteria:**
 - `sh scripts/install.sh` on a clean macOS M1+ installs `agentstation/tap/neovex`

@@ -1,49 +1,61 @@
 # CLI Reference
 
-Neovex serves HTTP/WebSocket traffic through an explicit `serve` subcommand and
-also exposes service and machine management subcommands.
+Neovex serves HTTP/WebSocket traffic through an explicit `start` subcommand and
+also exposes compose-backed service and machine management subcommands.
 
 Current shipped CLI shape:
+
+```bash
+neovex dev [--app-dir PATH] [--port 3210] [--data-dir ./.neovex/dev] [--once] [--skip-codegen] [--tail-logs always|pause-on-sync|disable] [--compose-file compose.yaml]
+```
+
+```bash
+neovex deploy [--url URL] [--token TOKEN] [--app-dir PATH] [--dry-run] [--skip-codegen] [--verbose]
+```
 
 ```bash
 neovex codegen [--app PATH]
 ```
 
 ```bash
-neovex serve [flags]
+neovex start [flags]
 ```
 
-`neovex codegen` is the first-party artifact-generation command. `neovex serve`
-is the current server-start path.
+`neovex dev` starts the local development path with dev defaults, watched
+codegen reruns, and local activation. `neovex deploy` pushes generated app
+artifacts to an explicit self-hosted target. `neovex codegen` is the
+first-party artifact-generation command. `neovex start` is the foreground
+server-start path. The retired `neovex serve` command is not retained as a
+legacy alias.
 
-Current shipped service-management commands:
-
-```bash
-neovex service config [--file compose.yaml] [--services]
-```
-
-```bash
-neovex service up [service] [--file compose.yaml] [--tenant <tenant-id>]
-```
+Current shipped compose-management commands:
 
 ```bash
-neovex service down [service] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose config [--file compose.yaml] [--services]
 ```
 
 ```bash
-neovex service list [-f json|yaml|table] [--noheading] [--file compose.yaml] [--all-tenants]
+neovex compose up [service] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex service inspect <service> [-f json|yaml] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose down [service] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex service logs <service> [--file compose.yaml] [--tenant <tenant-id>] [--follow]
+neovex compose ps [-f json|yaml|table] [--noheading] [--file compose.yaml] [--all-tenants]
 ```
 
 ```bash
-neovex service ps <service> [-f json|yaml|table] [--noheading] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose inspect <service> [-f json|yaml] [--file compose.yaml] [--tenant <tenant-id>]
+```
+
+```bash
+neovex compose logs <service> [--file compose.yaml] [--tenant <tenant-id>] [--follow]
+```
+
+```bash
+neovex compose top <service> [-f json|yaml|table] [--noheading] [--file compose.yaml] [--tenant <tenant-id>]
 ```
 
 Current shipped machine commands:
@@ -105,23 +117,30 @@ neovex machine os upgrade [--dry-run] [--restart]
 ```
 
 ```bash
-neovex serve [--app-dir ./app] [--skip-codegen] [--compose-file ./compose.yaml]
+neovex start [--app-dir ./app] [--skip-codegen] [--compose-file ./compose.yaml]
 ```
 
 For local development from source:
 
 ```bash
-cargo run -p neovex-bin -- serve [flags]
+cargo run -p neovex-bin -- start [flags]
 ```
 
 Current command taxonomy:
 
+- `neovex dev`
+  shipped local development server with one-shot startup codegen, debounced
+  watched codegen reruns, local generation activation, and development
+  persistence defaults
+- `neovex deploy`
+  shipped explicit-target deploy command for validating, diffing, and
+  activating generated app artifacts on a running server
 - `neovex codegen`
   shipped first-party code generation for `neovex/` or `convex/` source roots
-- `neovex serve`
+- `neovex start`
   shipped explicit server-start verb
-- `neovex service ...`
-  shipped managed-service lifecycle namespace
+- `neovex compose ...`
+  shipped Compose-backed service lifecycle namespace
 - `neovex machine ...`
   shipped macOS machine lifecycle namespace
 
@@ -141,7 +160,7 @@ to the built-in community license.
 
 ## Encryption Flags
 
-Local encryption for `neovex serve` is controlled with
+Local encryption for `neovex start` is controlled with
 `--encryption-key-provider`:
 
 - `master-key-file`
@@ -227,6 +246,45 @@ environment variables or the JSON config file referenced by `--config` or
 | `--runtime-max-instances` | available hardware parallelism | maximum concurrent top-level runtime instances |
 | `--runtime-max-nested-calls` | `64` | maximum nested `ctx.run*` invocations per request tree |
 
+## Dev Command
+
+`neovex dev` is the Convex-migration happy path for local work. In the current
+watch-loop slice it:
+
+- auto-detects the app directory from the current directory by looking for a
+  `neovex/` or `convex/` source root, falling back to the current directory
+- runs one initial codegen pass unless `--skip-codegen` is set
+- starts the same local server path as `neovex start`
+- watches the selected `neovex/` or `convex/` source root for source changes
+  and reruns codegen after a short debounce
+- validates and locally activates regenerated artifacts through the deploy
+  generation-swap path after watched codegen succeeds
+- listens on port `3210` by default
+- uses a shared project-local persistence root at `./.neovex/dev/` by default
+  for both tenant data and local control state
+- prints the local URL, app directory, persistence root, and watched source
+  root on startup
+
+Current watch-loop scope:
+
+- watched codegen activates generated artifacts locally after validation; old
+  in-flight requests keep their captured generation and new requests see the
+  new generation after activation
+- it does not multiplex live runtime logs
+- it does not print a dashboard URL
+
+Flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--port` | `3210` | local development server port |
+| `--app-dir` | auto-detected | app directory whose user source root may be `neovex/` or `convex/`; generated runtime artifacts still live under `.neovex/convex/` |
+| `--data-dir` | `./.neovex/dev/` under the resolved app directory | shared local dev persistence root for tenant data and control state |
+| `--once` | `false` | run startup only and disable the watched codegen loop |
+| `--skip-codegen` | `false` | skip the initial codegen pass and use already-generated artifacts |
+| `--tail-logs` | `pause-on-sync` | accepted log-tail mode (`always`, `pause-on-sync`, or `disable`); live runtime log multiplexing remains pending runtime log plumbing |
+| `--compose-file` | unset | optional Compose file that declares local service dependencies |
+
 ## Codegen Behavior
 
 `neovex codegen` generates two classes of artifacts from the selected app
@@ -242,15 +300,61 @@ Equivalent entrypoints:
 - `npx neovex-codegen --app ./my-app`
 
 The shared pipeline still expects generated files to be checked into version
-control for stable typechecking and frontend workflows. The serve-side
+control for stable typechecking and frontend workflows. The start-side
 preflight described below is a startup convenience, not a watched `dev` loop.
+
+## Deploy Command
+
+`neovex deploy` packages generated app artifacts and sends them to a running
+Neovex server. The target is explicit in v1: use `--url` or
+`NEOVEX_DEPLOY_URL`. Authentication uses `--token` or `NEOVEX_DEPLOY_TOKEN`,
+matching the token configured on the server.
+
+Default behavior:
+
+- auto-detects the app directory from the current directory by looking for a
+  `neovex/` or `convex/` source root, falling back to the current directory
+- runs codegen before packaging unless `--skip-codegen` is set
+- packages generated artifacts from `.neovex/convex/`
+- uploads to `POST /api/admin/deploy`
+- prints a concise human diff for functions, HTTP routes, schema/index
+  changes, and runtime-bundle changes
+
+Flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--url` | `NEOVEX_DEPLOY_URL` or required | explicit target Neovex server URL |
+| `--token` | `NEOVEX_DEPLOY_TOKEN` or required | deploy admin bearer token |
+| `--app-dir` | auto-detected | app directory whose generated artifacts live under `.neovex/convex/` |
+| `--dry-run` | `false` | validate and diff without activating a new generation |
+| `--skip-codegen` | `false` | package existing generated artifacts without running codegen |
+| `--verbose` | `false` | show extra packaging phase detail |
+
+## Deploy Admin API
+
+Start the server with `NEOVEX_DEPLOY_TOKEN` to enable
+`POST /api/admin/deploy`; callers authenticate with
+`Authorization: Bearer <token>`.
+
+The endpoint accepts generated app artifacts, stages them into a temporary app
+directory, validates manifests, schema/index definitions, auth config, and
+runtime bundle integrity, then returns a human-renderable diff. Dry-runs
+validate and diff without activation. Non-dry-run requests atomically activate
+the new app generation only after validation succeeds, so in-flight requests
+continue on the generation they already captured while new requests observe the
+new generation after activation.
+
+See `docs/reference/deploy-admin-api.md` for the request and response schema.
 
 ## Startup Behavior
 
-Neovex requires an explicit subcommand. `neovex serve` starts the server. On
+Neovex requires an explicit subcommand. `neovex start` starts the server. On
 startup, it:
 
 - initializes tracing
+- prints a concise startup summary with the local URL, server-owned scope,
+  app directory/codegen state, optional Compose file, and deploy-admin status
 - when `--app-dir` is set and `--skip-codegen` is not, runs one codegen
   preflight pass before loading manifests
 - loads the service with the configured data directory
@@ -262,29 +366,29 @@ startup, it:
   built-in community defaults
 
 When `--compose-file` is present, Neovex validates the Compose file through the
-same adapter used by `neovex service config`, lowers it into a typed
+same adapter used by `neovex compose config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
 manager. With `--app-dir`, `ctx.services.*` can activate those declared
 services on first use. The app directory may use `neovex/` as the native user
 source root or `convex/` as the compatibility root; in both cases the runtime
 registry still loads the generated manifests from `.neovex/convex/`. The
-explicit `neovex service up/down/...` commands share that same Compose
+explicit `neovex compose up/down/...` commands share that same Compose
 lowering, deterministic project identity, and project-scoped backend root
 instead of inventing a second lifecycle control plane.
 
-The `serve` preflight is intentionally one-shot. After startup, Neovex does not
+The `start` preflight is intentionally one-shot. After startup, Neovex does not
 watch the filesystem or regenerate `_generated/*` as functions change. If you
 want watched edit-loop behavior, that remains follow-on work.
 
 On macOS, if that Compose project resolves to the forwarded guest container
-backend and the default machine is initialized but stopped, `neovex serve`
+backend and the default machine is initialized but stopped, `neovex start`
 now starts the machine first and only then wires the forwarded guest manager.
 
-This is why `serve` and `service` are not the same concept:
+This is why `start` and `compose` are not the same concept:
 
 - server startup owns the Neovex API surface itself: HTTP, WebSocket,
   Convex-compatible routes, runtime execution, and `ctx.services.*` activation
-- `service` commands manage declared backing workloads that Neovex may start,
+- `compose` commands manage declared backing workloads that Neovex may start,
   stop, inspect, or log
 
 `machine` is a third concept:
@@ -307,27 +411,27 @@ Output-shaping contract:
 - Go-template output is intentionally not supported in the current shipped CLI;
   `json` and `yaml` remain the stable machine-readable formats
 
-## Service Commands
+## Compose Commands
 
-The current landed service-control surface exposes Compose validation plus
+The current landed compose-control surface exposes Compose validation plus
 explicit lifecycle control:
 
 | Command | Meaning |
 | --- | --- |
-| `neovex service config` | parse `compose.yaml`, validate the supported subset, and print the resolved service plan as YAML |
-| `neovex service config --file ./stack.yml` | validate a specific Compose file |
-| `neovex service config --services` | list only service names, one per line |
-| `neovex service up` | start all declared services for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump; active current services are reported inline as `already_running` |
-| `neovex service up db --tenant tenant-a` | start only service `db` for an explicit tenant and print the same action-summary contract |
-| `neovex service down` | stop one current persisted sandbox per service identity for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump |
-| `neovex service down db` | stop the current persisted sandbox for service `db` in the deterministic local project tenant with the same action-summary contract |
-| `neovex service list` | list persisted sandbox state for the deterministic local project tenant in a human table by default; use `-f json` or `-f yaml` for structured output, or `--noheading` to suppress table headers |
-| `neovex service list --all-tenants` | list all persisted sandboxes under the project-scoped backend root with the same table-vs-structured contract |
-| `neovex service inspect db` | inspect persisted sandbox details for service `db` in the deterministic local project tenant as JSON by default; `-f yaml` is the explicit structured alternative |
-| `neovex service inspect db --tenant tenant-a` | inspect persisted sandbox details for service `db` in an explicit tenant with the same structured contract |
-| `neovex service logs db` | print the persisted `ctr.log` for service `db` in the deterministic local project tenant |
-| `neovex service logs db --follow` | keep polling the persisted `ctr.log` for appended output |
-| `neovex service ps db` | show the persisted PID snapshot and matching host `ps` rows for service `db` as a human summary by default; use `-f json` or `-f yaml` for structured output, or `--noheading` to suppress the process table headings |
+| `neovex compose config` | parse `compose.yaml`, validate the supported subset, and print the resolved service plan as YAML |
+| `neovex compose config --file ./stack.yml` | validate a specific Compose file |
+| `neovex compose config --services` | list only service names, one per line |
+| `neovex compose up` | start all declared services for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump; active current services are reported inline as `already_running` |
+| `neovex compose up db --tenant tenant-a` | start only service `db` for an explicit tenant and print the same action-summary contract |
+| `neovex compose down` | stop one current persisted sandbox per service identity for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump |
+| `neovex compose down db` | stop the current persisted sandbox for service `db` in the deterministic local project tenant with the same action-summary contract |
+| `neovex compose ps` | list persisted sandbox state for the deterministic local project tenant in a human table by default; use `-f json` or `-f yaml` for structured output, or `--noheading` to suppress table headers |
+| `neovex compose ps --all-tenants` | list all persisted sandboxes under the project-scoped backend root with the same table-vs-structured contract |
+| `neovex compose inspect db` | inspect persisted sandbox details for service `db` in the deterministic local project tenant as JSON by default; `-f yaml` is the explicit structured alternative |
+| `neovex compose inspect db --tenant tenant-a` | inspect persisted sandbox details for service `db` in an explicit tenant with the same structured contract |
+| `neovex compose logs db` | print the persisted `ctr.log` for service `db` in the deterministic local project tenant |
+| `neovex compose logs db --follow` | keep polling the persisted `ctr.log` for appended output |
+| `neovex compose top db` | show the persisted PID snapshot and matching host `ps` rows for service `db` as a human summary by default; use `-f json` or `-f yaml` for structured output, or `--noheading` to suppress the process table headings |
 
 Current scope:
 
@@ -338,7 +442,7 @@ Current scope:
 - validates lowerable lifecycle settings such as `restart` and
   `stop_grace_period` against the generic sandbox lifecycle seam
 - validates the declared-service catalog handoff used by both the server-owned
-  service manager and the explicit `service up` launch path
+  service manager and the explicit `compose up` launch path
 - lowers `ports`, restart policy, and CPU/memory limits into the resolved plan
 - preserves `depends_on`, `healthcheck`, `volumes`, labels, and `x-neovex`
   metadata for lifecycle commands and recovery drills
@@ -348,18 +452,18 @@ Current scope:
   service database: krun manifests/logs locally for krun-backed projects, and
   forwarded guest container manifests/logs on macOS for container-backed
   projects
-- on macOS, container-backed `neovex service up/down/list/inspect/logs/ps`
+- on macOS, container-backed `neovex compose up/down/ps/inspect/logs/top`
   commands now route through the forwarded guest machine API and guest
   container-manifest state instead of assuming host-local krun state
 - mixed-backend project-wide Compose operations still reject because
-  `neovex service ...` requires one backend family per project-wide command
+  `neovex compose ...` requires one backend family per project-wide command
 - the server startup path can now load container-backed Compose managers on
   macOS through the forwarded guest machine API; if the default machine is
-  initialized but stopped, `neovex serve` now starts it first under the same
+  initialized but stopped, `neovex start` now starts it first under the same
   machine convergence contract, then requires `service_execution_ready`
 - derives a deterministic local project tenant id from the Compose project key,
-  and uses that tenant by default for `service up` / `service down` /
-  `service list` / `service inspect` / `service logs` / `service ps`
+  and uses that tenant by default for `compose up` / `compose down` /
+  `compose ps` / `compose inspect` / `compose logs` / `compose top`
 
 ## Machine Commands
 

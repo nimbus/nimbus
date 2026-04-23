@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -18,14 +18,16 @@ pub(crate) struct AppStateConfig {
     pub(crate) convex_registry: Option<ConvexRegistry>,
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    pub(crate) deploy_admin_token: Option<String>,
 }
 
 /// Shared application state.
 pub(crate) struct AppState {
     pub(crate) service: Arc<Service>,
-    pub(crate) convex_registry: Option<Arc<ConvexRegistry>>,
+    pub(crate) convex_registry: Arc<ActiveConvexRegistry>,
     pub(crate) license_state: Arc<LicenseState>,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    pub(crate) deploy_admin_token: Option<String>,
 }
 
 impl AppState {
@@ -35,12 +37,14 @@ impl AppState {
             convex_registry,
             license_state,
             runtime_service_registry,
+            deploy_admin_token,
         } = config;
         Self {
             service,
-            convex_registry: convex_registry.map(Arc::new),
+            convex_registry: Arc::new(ActiveConvexRegistry::new(convex_registry)),
             license_state: Arc::new(license_state),
             runtime_service_registry,
+            deploy_admin_token,
         }
     }
 
@@ -49,11 +53,69 @@ impl AppState {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct ActiveConvexRegistry {
+    inner: RwLock<ActiveConvexRegistryState>,
+}
+
+#[derive(Debug, Default)]
+struct ActiveConvexRegistryState {
+    generation: u64,
+    registry: Option<Arc<ConvexRegistry>>,
+}
+
+impl ActiveConvexRegistry {
+    fn new(registry: Option<ConvexRegistry>) -> Self {
+        let generation = u64::from(registry.is_some());
+        Self {
+            inner: RwLock::new(ActiveConvexRegistryState {
+                generation,
+                registry: registry.map(Arc::new),
+            }),
+        }
+    }
+
+    pub(crate) fn current(&self) -> Option<Arc<ConvexRegistry>> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .registry
+            .clone()
+    }
+
+    pub(crate) fn snapshot(&self) -> (u64, Option<Arc<ConvexRegistry>>) {
+        let state = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (state.generation, state.registry.clone())
+    }
+
+    pub(crate) fn activate(&self, registry: ConvexRegistry) -> (u64, Option<Arc<ConvexRegistry>>) {
+        let mut state = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = state.registry.replace(Arc::new(registry));
+        state.generation = state.generation.saturating_add(1);
+        (state.generation, previous)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn generation(&self) -> u64 {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .generation
+    }
+}
+
 /// HTTP-facing application error wrapper.
 #[derive(Debug)]
 pub(crate) enum AppError {
     Core(Error),
     Unauthorized(String),
+    NotFound(String),
 }
 
 impl From<Error> for AppError {
@@ -95,6 +157,9 @@ impl IntoResponse for AppError {
             Self::Unauthorized(message) => {
                 (StatusCode::UNAUTHORIZED, Json(json!({ "error": message }))).into_response()
             }
+            Self::NotFound(message) => {
+                (StatusCode::NOT_FOUND, Json(json!({ "error": message }))).into_response()
+            }
         }
     }
 }
@@ -103,6 +168,10 @@ impl AppError {
     pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
         Self::Unauthorized(message.into())
     }
+
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
+        Self::NotFound(message.into())
+    }
 }
 
 impl std::fmt::Display for AppError {
@@ -110,6 +179,7 @@ impl std::fmt::Display for AppError {
         match self {
             Self::Core(error) => write!(f, "{error}"),
             Self::Unauthorized(message) => write!(f, "{message}"),
+            Self::NotFound(message) => write!(f, "{message}"),
         }
     }
 }
@@ -129,6 +199,29 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn active_convex_registry_keeps_previous_generation_arc_alive_after_activation() {
+        let registry = ActiveConvexRegistry::new(Some(ConvexRegistry::empty()));
+        let previous = registry
+            .current()
+            .expect("initial generation should be present");
+        let previous_ptr = Arc::as_ptr(&previous);
+
+        let (generation, replaced) = registry.activate(ConvexRegistry::empty());
+        let current = registry
+            .current()
+            .expect("activated generation should be present");
+
+        assert_eq!(generation, 2);
+        assert_eq!(registry.generation(), 2);
+        assert_eq!(
+            Arc::as_ptr(&replaced.expect("previous generation should return")),
+            previous_ptr
+        );
+        assert_ne!(Arc::as_ptr(&current), previous_ptr);
+        assert_eq!(Arc::as_ptr(&previous), previous_ptr);
     }
 }
 

@@ -11,15 +11,15 @@ use crate::cli_ux;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ServiceHostPlatform, ServiceLogsCommand, load_compose_project_context,
+    ComposeLogsCommand, ServiceHostPlatform, load_compose_project_context,
     lookup_current_remote_service_details, machine_api_operation_error,
     missing_persisted_service_error, render_state_lookup_error,
     require_krun_backend_for_service_operation, resolve_service_execution_surface,
     validate_forwarded_machine_api_operations,
 };
 
-pub(super) fn run_service_logs_for_platform(
-    command: &ServiceLogsCommand,
+pub(super) fn run_compose_logs_for_platform(
+    command: &ComposeLogsCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -32,7 +32,7 @@ pub(super) fn run_service_logs_for_platform(
     match resolve_service_execution_surface(
         &context,
         Some(&command.service),
-        "service logs",
+        "compose logs",
         host_platform,
         machine_api_client,
     )? {
@@ -53,7 +53,7 @@ pub(super) fn run_service_logs_for_platform(
             validate_forwarded_machine_api_operations(
                 &context,
                 &client,
-                "service logs",
+                "compose logs",
                 &[
                     "service-sandboxes.inspect-current",
                     "service-sandboxes.logs",
@@ -78,7 +78,7 @@ pub(super) fn run_service_logs_for_platform(
                 let response = client
                     .read_service_sandbox_log_chunk(&details.summary.sandbox_id, offset)
                     .map_err(|error| {
-                        machine_api_operation_error("read persisted service logs", &client, error)
+                        machine_api_operation_error("read persisted compose logs", &client, error)
                     })?;
                 flush_service_log_chunk(&command.service, &response.chunk)?;
                 offset = response.next_offset;
@@ -105,11 +105,11 @@ pub(super) fn flush_service_log_chunk(service_name: &str, chunk: &str) -> Result
 }
 
 pub(super) fn resolve_service_ctr_log_path(
-    command: &ServiceLogsCommand,
+    command: &ComposeLogsCommand,
     control_data_dir: &Path,
 ) -> Result<PathBuf, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
-    require_krun_backend_for_service_operation(&context, Some(&command.service), "service logs")?;
+    require_krun_backend_for_service_operation(&context, Some(&command.service), "compose logs")?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let tenant = command

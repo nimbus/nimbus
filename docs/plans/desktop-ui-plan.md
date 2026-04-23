@@ -198,7 +198,7 @@ neovex ui --ensure   # start server first if none running, then open browser
 ```
 
 Discovers server via `$XDG_RUNTIME_DIR/neovex/server.json` (written by
-`neovex serve` — see `localhost-server-security-plan.md` LS1). Uses
+`neovex start` — see `localhost-server-security-plan.md` LS1). Uses
 `open::that` for cross-platform browser launch.
 
 ### Disconnected state UX
@@ -249,7 +249,7 @@ assertion for release builds.
 Add `neovex ui` and `neovex ui --ensure`. Reads server discovery file,
 opens browser via `open::that`. `--ensure` starts server if not running.
 
-**Verification:** (a) `neovex serve &` + `neovex ui` opens browser,
+**Verification:** (a) `neovex start &` + `neovex ui` opens browser,
 (b) no server → clear error, (c) `--ensure` starts then opens.
 
 **Status:** `pending`
@@ -342,7 +342,7 @@ Testing pyramid:
 | Unit | Vitest 4.1.x + JSDOM | Hooks, utilities, pure logic |
 | Component | Vitest + RTL 16.3.x + `@axe-core/react` | Rendering, interaction, a11y |
 | Integration | Vitest + mocked WebSocket | useQuery/useMutation against mock |
-| E2E | Playwright 1.59.x | Full flows against `neovex serve` |
+| E2E | Playwright 1.59.x | Full flows against `neovex start` |
 
 Co-located `.spec.tsx` beside every `.tsx` (Podman Desktop pattern).
 Storybook for all components + error rendering matrix (~12 stories).
@@ -369,7 +369,7 @@ native-app behavior (dock icon, tray, auto-update, deep links).
 | Shell complexity | `loadURL(localhost)` — no Rust logic needed | Rust build pipeline friction |
 | Bundle size | ~150 MB | ~10 MB |
 
-The shell wraps `localhost:PORT/ui` and manages `neovex serve` lifecycle.
+The shell wraps `localhost:PORT/ui` and manages `neovex start` lifecycle.
 All business logic stays in the Rust server.
 
 ### Security configuration (Electron 41.2.x)

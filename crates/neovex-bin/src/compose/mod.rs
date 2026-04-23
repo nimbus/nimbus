@@ -15,21 +15,21 @@ use crate::cli_ux;
 use crate::machine::MachineApiClient;
 
 mod commands;
-mod compose;
 mod execution;
+mod file;
 mod lifecycle;
 mod logs;
 mod process;
 mod project;
 mod render;
 
-pub(crate) use self::commands::ServiceCommand;
+pub(crate) use self::commands::ComposeCommand;
 use self::commands::{
-    ServiceConfigCommand, ServiceDownCommand, ServiceInspectCommand, ServiceListCommand,
-    ServiceLogsCommand, ServicePsCommand, ServiceSubcommand, ServiceUpCommand,
+    ComposeConfigCommand, ComposeDownCommand, ComposeInspectCommand, ComposeLogsCommand,
+    ComposePsCommand, ComposeSubcommand, ComposeTopCommand, ComposeUpCommand,
 };
 #[allow(unused_imports)]
-use self::commands::{ServiceInspectOutputFormat, ServiceListOutputFormat, ServicePsOutputFormat};
+use self::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
 use self::execution::{
     ServiceExecutionSurface, ServiceHostPlatform,
     load_host_backed_sandbox_service_manager_for_platform,
@@ -45,7 +45,7 @@ use self::lifecycle::{ServiceLifecycleAction, ServiceLifecycleTarget};
 use self::lifecycle::{
     ServiceLifecycleOutcome, service_down_outcomes_for_platform, service_up_outcomes_for_platform,
 };
-use self::logs::run_service_logs_for_platform;
+use self::logs::run_compose_logs_for_platform;
 #[allow(unused_imports)]
 use self::process::ServiceProcessRow;
 use self::process::{ServiceProcessSnapshot, resolve_service_process_snapshot_for_platform};
@@ -56,19 +56,19 @@ use self::render::{
 };
 pub(crate) use project::ComposeProjectContext;
 
-pub(crate) async fn run_service_command(
-    command: ServiceCommand,
-    service_config: &ServicePersistenceConfig,
+pub(crate) async fn run_compose_command(
+    command: ComposeCommand,
+    persistence_config: &ServicePersistenceConfig,
 ) -> Result<(), Error> {
-    let control_data_dir = control_data_dir_from_service_config(service_config);
+    let control_data_dir = control_data_dir_from_persistence_config(persistence_config);
     match command.command {
-        ServiceSubcommand::Config(config) => run_service_config(config),
-        ServiceSubcommand::Up(up) => run_service_up(up, control_data_dir).await,
-        ServiceSubcommand::Down(down) => run_service_down(down, control_data_dir).await,
-        ServiceSubcommand::List(list) => run_service_list(list, control_data_dir),
-        ServiceSubcommand::Inspect(inspect) => run_service_inspect(inspect, control_data_dir),
-        ServiceSubcommand::Logs(logs) => run_service_logs(logs, control_data_dir),
-        ServiceSubcommand::Ps(ps) => run_service_ps(ps, control_data_dir),
+        ComposeSubcommand::Config(config) => run_compose_config(config),
+        ComposeSubcommand::Up(up) => run_compose_up(up, control_data_dir).await,
+        ComposeSubcommand::Down(down) => run_compose_down(down, control_data_dir).await,
+        ComposeSubcommand::Ps(list) => run_compose_ps(list, control_data_dir),
+        ComposeSubcommand::Inspect(inspect) => run_compose_inspect(inspect, control_data_dir),
+        ComposeSubcommand::Logs(logs) => run_compose_logs(logs, control_data_dir),
+        ComposeSubcommand::Top(top) => run_compose_top(top, control_data_dir),
     }
 }
 
@@ -77,7 +77,7 @@ pub(crate) fn load_sandbox_service_catalog(
     file: &std::path::Path,
 ) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
     Ok(Arc::new(
-        compose::ComposeProjectPlan::load(file)?.into_service_catalog()?,
+        file::ComposeProjectPlan::load(file)?.into_service_catalog()?,
     ))
 }
 
@@ -111,8 +111,8 @@ pub(crate) fn load_host_backed_sandbox_service_manager(
     )
 }
 
-fn run_service_config(command: ServiceConfigCommand) -> Result<(), Error> {
-    let rendered = compose::render_compose_project(&command.file, command.services)?;
+fn run_compose_config(command: ComposeConfigCommand) -> Result<(), Error> {
+    let rendered = file::render_compose_project(&command.file, command.services)?;
 
     for warning in rendered.warnings {
         cli_ux::write_stderr_prefixed_line("Warning:", &warning).map_err(|error| {
@@ -124,7 +124,7 @@ fn run_service_config(command: ServiceConfigCommand) -> Result<(), Error> {
     Ok(())
 }
 
-async fn run_service_up(command: ServiceUpCommand, control_data_dir: &Path) -> Result<(), Error> {
+async fn run_compose_up(command: ComposeUpCommand, control_data_dir: &Path) -> Result<(), Error> {
     let rendered = render_service_up_for_platform(
         &command,
         control_data_dir,
@@ -136,8 +136,8 @@ async fn run_service_up(command: ServiceUpCommand, control_data_dir: &Path) -> R
     Ok(())
 }
 
-async fn run_service_down(
-    command: ServiceDownCommand,
+async fn run_compose_down(
+    command: ComposeDownCommand,
     control_data_dir: &Path,
 ) -> Result<(), Error> {
     let rendered = render_service_down_for_platform(
@@ -151,7 +151,7 @@ async fn run_service_down(
     Ok(())
 }
 
-fn run_service_list(command: ServiceListCommand, control_data_dir: &Path) -> Result<(), Error> {
+fn run_compose_ps(command: ComposePsCommand, control_data_dir: &Path) -> Result<(), Error> {
     let rendered = render_service_list_for_platform(
         &command,
         control_data_dir,
@@ -162,8 +162,8 @@ fn run_service_list(command: ServiceListCommand, control_data_dir: &Path) -> Res
     Ok(())
 }
 
-fn run_service_inspect(
-    command: ServiceInspectCommand,
+fn run_compose_inspect(
+    command: ComposeInspectCommand,
     control_data_dir: &Path,
 ) -> Result<(), Error> {
     let rendered = render_service_inspect_for_platform(
@@ -176,8 +176,8 @@ fn run_service_inspect(
     Ok(())
 }
 
-fn run_service_logs(command: ServiceLogsCommand, control_data_dir: &Path) -> Result<(), Error> {
-    run_service_logs_for_platform(
+fn run_compose_logs(command: ComposeLogsCommand, control_data_dir: &Path) -> Result<(), Error> {
+    run_compose_logs_for_platform(
         &command,
         control_data_dir,
         ServiceHostPlatform::current(),
@@ -185,8 +185,8 @@ fn run_service_logs(command: ServiceLogsCommand, control_data_dir: &Path) -> Res
     )
 }
 
-fn run_service_ps(command: ServicePsCommand, control_data_dir: &Path) -> Result<(), Error> {
-    let rendered = render_service_ps_for_platform(
+fn run_compose_top(command: ComposeTopCommand, control_data_dir: &Path) -> Result<(), Error> {
+    let rendered = render_compose_top_for_platform(
         &command,
         control_data_dir,
         ServiceHostPlatform::current(),
@@ -198,13 +198,13 @@ fn run_service_ps(command: ServicePsCommand, control_data_dir: &Path) -> Result<
 
 fn emit_service_stdout(rendered: &str) -> Result<(), Error> {
     cli_ux::write_stdout(rendered)
-        .map_err(|error| Error::Internal(format!("failed to write service output: {error}")))
+        .map_err(|error| Error::Internal(format!("failed to write compose output: {error}")))
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 async fn render_service_up(
-    command: &ServiceUpCommand,
+    command: &ComposeUpCommand,
     control_data_dir: &Path,
 ) -> Result<String, Error> {
     render_service_up_for_platform(
@@ -219,7 +219,7 @@ async fn render_service_up(
 #[cfg(test)]
 #[allow(dead_code)]
 async fn render_service_down(
-    command: &ServiceDownCommand,
+    command: &ComposeDownCommand,
     control_data_dir: &Path,
 ) -> Result<String, Error> {
     render_service_down_for_platform(
@@ -232,7 +232,7 @@ async fn render_service_down(
 }
 
 fn render_service_list_for_platform(
-    command: &ServiceListCommand,
+    command: &ComposePsCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -241,7 +241,7 @@ fn render_service_list_for_platform(
     match resolve_service_execution_surface(
         &context,
         None,
-        "service list",
+        "compose ps",
         host_platform,
         machine_api_client,
     )? {
@@ -271,7 +271,7 @@ fn render_service_list_for_platform(
             validate_forwarded_machine_api_operations(
                 &context,
                 &client,
-                "service list",
+                "compose ps",
                 &["service-sandboxes.list"],
             )?;
             let summaries = client
@@ -300,7 +300,7 @@ fn render_service_list_for_platform(
 }
 
 async fn render_service_up_for_platform(
-    command: &ServiceUpCommand,
+    command: &ComposeUpCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -318,7 +318,7 @@ async fn render_service_up_for_platform(
     )
     .await?;
     Ok(render_service_lifecycle_action_summary(
-        "Service up completed",
+        "Compose up completed",
         &context.control_plane.project_name,
         &tenant,
         &outcomes,
@@ -326,7 +326,7 @@ async fn render_service_up_for_platform(
 }
 
 async fn render_service_down_for_platform(
-    command: &ServiceDownCommand,
+    command: &ComposeDownCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -344,7 +344,7 @@ async fn render_service_down_for_platform(
     )
     .await?;
     Ok(render_service_lifecycle_action_summary(
-        "Service down completed",
+        "Compose down completed",
         &context.control_plane.project_name,
         &tenant,
         &outcomes,
@@ -352,7 +352,7 @@ async fn render_service_down_for_platform(
 }
 
 fn render_service_inspect_for_platform(
-    command: &ServiceInspectCommand,
+    command: &ComposeInspectCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -365,7 +365,7 @@ fn render_service_inspect_for_platform(
     match resolve_service_execution_surface(
         &context,
         Some(&command.service),
-        "service inspect",
+        "compose inspect",
         host_platform,
         machine_api_client,
     )? {
@@ -388,7 +388,7 @@ fn render_service_inspect_for_platform(
             validate_forwarded_machine_api_operations(
                 &context,
                 &client,
-                "service inspect",
+                "compose inspect",
                 &["service-sandboxes.inspect-current"],
             )?;
             let details = lookup_current_remote_service_details(
@@ -410,8 +410,8 @@ fn render_service_inspect_for_platform(
     }
 }
 
-fn render_service_ps_for_platform(
-    command: &ServicePsCommand,
+fn render_compose_top_for_platform(
+    command: &ComposeTopCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -428,7 +428,7 @@ fn render_service_ps_for_platform(
 #[cfg(test)]
 #[allow(dead_code)]
 async fn service_up_outcomes(
-    command: &ServiceUpCommand,
+    command: &ComposeUpCommand,
     control_data_dir: &Path,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     service_up_outcomes_for_platform(
@@ -443,7 +443,7 @@ async fn service_up_outcomes(
 #[cfg(test)]
 #[allow(dead_code)]
 async fn service_down_outcomes(
-    command: &ServiceDownCommand,
+    command: &ComposeDownCommand,
     control_data_dir: &Path,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     service_down_outcomes_for_platform(
@@ -455,7 +455,7 @@ async fn service_down_outcomes(
     .await
 }
 
-fn control_data_dir_from_service_config(config: &ServicePersistenceConfig) -> &Path {
+fn control_data_dir_from_persistence_config(config: &ServicePersistenceConfig) -> &Path {
     match &config.control_plane {
         neovex::ControlPlaneConfig::EmbeddedRedb { data_dir } => data_dir.as_path(),
     }

@@ -5,7 +5,7 @@ use neovex::{Error, SandboxBackendKind, TenantId};
 use neovex_sandbox::backends::krun::KrunSandboxBackendConfig;
 use sha2::{Digest, Sha256};
 
-use crate::service::compose::ComposeProjectPlan;
+use crate::compose::file::ComposeProjectPlan;
 
 const SERVICES_CONTROL_ROOT: &str = "services";
 const PROJECTS_CONTROL_ROOT: &str = "projects";

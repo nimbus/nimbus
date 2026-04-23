@@ -242,11 +242,11 @@ macOS (Apple Silicon, M1+, macOS 14+)
         │     ├── guest networking + published localhost ports
         │     └── forwarded guest API/control socket
         │
-        └── neovex serve (proxied to Linux guest via a host-local control channel)
+        └── neovex start (proxied to Linux guest via a host-local control channel)
               │
               └── Linux guest VM (Fedora CoreOS + neovex deps)
                     │
-                    └── neovex serve (same Linux binary as production)
+                    └── neovex start (same Linux binary as production)
                           │
                           └── services run as containers (crun, same as Podman on macOS)
 ```
@@ -352,31 +352,26 @@ machine runtime directory.
 #### CLI taxonomy
 
 Target command taxonomy for this channel:
-- `neovex serve` starts or attaches to the neovex server process
+- `neovex start` starts or attaches to the neovex server process
 - `neovex machine ...` owns machine-VM lifecycle on macOS
-- reserve `neovex services ...` for future workload-management nouns if we ever
-  need them, such as listing, inspecting, restarting, or tailing managed
-  workloads
+- `neovex compose ...` owns Compose-backed local service lifecycle commands
 - do not use `neovex service` as the daemon-start command
 
 Why this split:
-- `serve` is a verb, which matches "start the server" and avoids overloading
-  the word "service"
+- `start` is a verb, which matches "start the server" and avoids overloading
+  the word "service" with daemon semantics
 - `machine` is a managed resource, so a noun namespace is idiomatic and aligns
   with Podman and Docker Desktop concepts
 - `service` would be ambiguous in neovex because the codebase already uses
   "service" for the core engine type and for tenant-facing workloads
-- `services` is a better future namespace than `service` if we want commands
-  like `neovex services list`, `neovex services inspect <name>`, or
-  `neovex services logs <name>`
-- `serve` is not redundant with `services`: one starts neovex itself, the other
-  would manage workloads running under neovex
+- `compose` is not redundant with `start`: one manages declared local
+  workloads, while the other starts Neovex itself
 
 Current implementation note:
-- today's binary is still a flag-driven server entrypoint rather than a
-  shipped subcommand CLI
-- this section defines the intended command surface when Channel 4 activates;
-  do not read the examples here as proof that the subcommands already exist
+- the shipped CLI now has explicit `start`, `machine`, and `compose`
+  subcommands; treat examples in this section as the current distribution
+  command vocabulary unless an execution-log row is explicitly labeled
+  historical
 
 #### Why krunkit
 
@@ -487,7 +482,7 @@ brew install agentstation/tap/neovex
 # Installs: neovex CLI, krunkit, gvproxy
 
 neovex machine init   # One-time: record the default machine contract
-neovex serve          # Auto-starts that initialized machine if needed
+neovex start          # Auto-starts that initialized machine if needed
 ```
 
 #### Developer experience
@@ -501,7 +496,7 @@ neovex machine ssh      # debug: SSH into the VM
 neovex machine status   # show VM state, resource usage
 ```
 
-`neovex serve` on macOS auto-starts the initialized machine if not running.
+`neovex start` on macOS auto-starts the initialized machine if not running.
 
 #### Optional Docker compatibility
 
@@ -681,7 +676,7 @@ updates the Homebrew cask on tagged releases.
 - Install script (Channel 1) adds the repo and installs
 
 **Acceptance criteria:**
-- Fresh Debian 13 VM: `curl ... | sh && neovex serve` works
+- Fresh Debian 13 VM: `curl ... | sh && neovex start` works
 - Dependencies automatically pulled (conmon, buildah, etc.)
 
 ### Phase D3: Fedora/COPR (Fedora/RHEL)
@@ -773,19 +768,19 @@ future image ownership separate.
 
 #### Phase D4c: API forwarding + port forwarding
 
-**Goal:** `neovex serve` on macOS feels transparent while remaining a
+**Goal:** `neovex start` on macOS feels transparent while remaining a
 host-resident server.
 
 **Scope:**
 - host-local control socket/channel for the guest Neovex API
-- `neovex serve` on macOS auto-starts the machine and proxies through that
+- `neovex start` on macOS auto-starts the machine and proxies through that
   control channel
 - gvproxy port forwarding: services accessible from macOS localhost
 - machine-level readiness, guest Neovex readiness, and guest service readiness
   remain distinct probe stages
 
 **Acceptance criteria:**
-- `neovex serve` on macOS starts the initialized machine, stays host-resident,
+- `neovex start` on macOS starts the initialized machine, stays host-resident,
   and proxies
   transparently to the guest machine API
 - WebSocket subscriptions work through the macOS guest-control proxy
@@ -814,8 +809,8 @@ ledger row.
 - KVM verified working
 
 **Acceptance criteria:**
-- Launch AMI on c5.metal → `neovex serve` works immediately
-- Launch GCP VM with nested virt → `neovex serve` works immediately
+- Launch AMI on c5.metal → `neovex start` works immediately
+- Launch GCP VM with nested virt → `neovex start` works immediately
 
 ---
 
@@ -828,7 +823,7 @@ ledger row.
 | D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, and release-driven mirror workflow landed; live COPR publication and first `dnf copr enable ...` proof still remain |
 | D4a: Homebrew + krunkit | `done` | D1 | Apple Silicon, macOS 14+ cask ships bundled `gvproxy`, owns `krunkit`, auto-updates from the release workflow, and now has both isolated release-proof and real `brew upgrade` validation |
 | D4b: Guest VM image | `done` | D4a | current macOS v1 contract is the pinned Podman machine image plus host-managed guest-binary sync; `agentstation/neovex-machine-os` remains the future Neovex-owned supply-side track |
-| D4c: API + port forwarding | `done` | D4b | `neovex serve` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, `ctx.services` activation, localhost service reachability, native `/ws` push, and tenant teardown on the real host |
+| D4c: API + port forwarding | `done` | D4b | `neovex start` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, `ctx.services` activation, localhost service reachability, native `/ws` push, and tenant teardown on the real host |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 
 ---
@@ -839,7 +834,9 @@ Earlier investigation and intermediate documentation entries (D4a prep
 sequence, initial D1/D4a intermediate rows) were archived to
 `docs/plans/archive/distribution-execution-log-early.md` on 2026-04-18.
 The entries below record phase-completion milestones and current in-progress
-work only.
+work only. Older D4c proof rows retain then-current `neovex serve` command
+strings and `src/service` paths as historical evidence; the active public
+surface is now `neovex start` plus `neovex compose`.
 
 | Date | Phase | Status | Notes | Verification | Next |
 |------|-------|--------|-------|--------------|------|

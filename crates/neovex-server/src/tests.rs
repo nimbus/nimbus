@@ -216,6 +216,8 @@ mod convex_functions;
 mod convex_runtime;
 #[path = "tests/core_http.rs"]
 mod core_http;
+#[path = "tests/deploy.rs"]
+mod deploy;
 #[path = "tests/registry_and_license/mod.rs"]
 mod registry_and_license;
 #[path = "tests/scheduling.rs"]

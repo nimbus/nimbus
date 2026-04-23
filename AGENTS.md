@@ -78,17 +78,21 @@ Use the repo docs for architecture and behavior details:
   Open `docs/plans/archive/macos-machine-support-plan.md` only when a task
   needs the historical MAC1-MAC7 execution record or exact proof-bundle paths.
 - For historical machine/service CLI UX work, help/output/progress
-  consistency, or Podman/Docker-style command-surface work, open
-  `docs/plans/archive/machine-cli-follow-on-plan.md` after the microVM
-  baseline only when a task needs the completed `CLIF1`-`CLIF5` execution
-  record, exact macOS proof-bundle paths, or the settled follow-on contract.
-  Use `docs/plans/archive/machine-cli-alignment-plan.md` only for the older
+  consistency, or Podman/Docker-style command-surface work, start with
+  `docs/reference/cli.md` and `docs/reference/microvm-service-baseline.md`.
+  Use `docs/plans/archive/cli-command-surface-plan.md` only when a task needs
+  the completed `compose` / `dev` / `deploy` / `start` rollout, exact
+  verification bundle, or retired `service` / `serve` decision record. Use
+  `docs/plans/archive/machine-cli-follow-on-plan.md` only when a task needs the
+  completed `CLIF1`-`CLIF5` execution record, exact macOS proof-bundle paths,
+  or the settled older follow-on contract. Use
+  `docs/plans/archive/machine-cli-alignment-plan.md` only for the older
   completed `CLIA1`-`CLIA10` rollout, earlier macOS proof bundles, and the
   baseline contract the follow-on wave built on. Use
   `docs/plans/archive/machine-cli-dx-plan.md` only for the first-wave
   `DX1`-`DX11` rollout, older proof bundle paths, and the pre-alignment
-  comparative audit context. Promote a new active plan before landing new
-  machine/service CLI work.
+  comparative audit context. Promote a new active plan before landing another
+  CLI command-surface wave.
 - For shared machine-lifecycle hardening, enterprise machine-management
   reliability, or Windows-provider groundwork that reuses the existing machine
   manager seams, open
@@ -107,7 +111,7 @@ Use the repo docs for architecture and behavior details:
 - **For Convex or Neovex CLI/codegen workflow work:** after
   `docs/reference/convex-ai-guidelines.md`, open `docs/reference/cli.md` and
   `docs/convex/compatibility.md` for `packages/codegen/`,
-  `packages/convex/`, `demos/convex/`, or the `neovex serve --app-dir`
+  `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
   contract. Use `docs/plans/archive/codegen-cli-plan.md` only when a task
   needs the completed CLI/codegen rollout's execution record or exact
   verification bundle, and `docs/plans/archive/neovex-source-root-plan.md`
@@ -157,17 +161,20 @@ Use the repo docs for architecture and behavior details:
   Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
   the historical MAC1-MAC7 execution record, exact real-host proof paths, or
   phase-by-phase closeout context.
-- For historical machine/service CLI alignment work, open
-  `docs/plans/archive/machine-cli-follow-on-plan.md` after the microVM
-  baseline only when you need the completed `CLIF1`-`CLIF5` rollout, exact
-  macOS proof-bundle paths, or the settled follow-on command-surface
-  contract. Use `docs/plans/archive/machine-cli-alignment-plan.md` only for
-  the older completed `CLIA1`-`CLIA10` rollout, proof-bundle paths, and the
-  baseline output/help/progress/table contract the follow-on wave refined.
-  Open `docs/plans/archive/machine-cli-dx-plan.md` only when you need the
-  completed first-wave comparative audit, closeout order, or older archived
-  proof bundles. Promote a new active plan before starting another CLI UX
-  wave.
+- For historical machine/service CLI alignment work, start with
+  `docs/reference/cli.md` and `docs/reference/microvm-service-baseline.md`.
+  Use `docs/plans/archive/cli-command-surface-plan.md` only when you need the
+  completed `compose` / `dev` / `deploy` / `start` rollout, exact verification
+  bundle, or retired `service` / `serve` decision record. Use
+  `docs/plans/archive/machine-cli-follow-on-plan.md` only when you need the
+  completed `CLIF1`-`CLIF5` rollout, exact macOS proof-bundle paths, or the
+  settled older follow-on command-surface contract. Use
+  `docs/plans/archive/machine-cli-alignment-plan.md` only for the older
+  completed `CLIA1`-`CLIA10` rollout, proof-bundle paths, and the baseline
+  output/help/progress/table contract the follow-on wave refined. Open
+  `docs/plans/archive/machine-cli-dx-plan.md` only when you need the completed
+  first-wave comparative audit, closeout order, or older archived proof
+  bundles. Promote a new active plan before starting another CLI UX wave.
 - For shared machine-lifecycle hardening work, open
   `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the microVM
   baseline and reread its `Current Assessed State`, `Current Review Findings`,

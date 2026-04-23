@@ -3,7 +3,8 @@
 This document lists the public server routes exposed by Neovex today.
 
 Native routes are always available. Convex routes are available only when the
-server starts with `--app-dir`.
+server has an active app generation from `--app-dir` or deploy activation; the
+routes return `404` before a generation is active.
 
 ## Core Service Routes
 
@@ -12,6 +13,7 @@ server starts with `--app-dir`.
 | `GET` | `/health` | health check |
 | `GET` | `/debug/license/status` | current license snapshot and usage state |
 | `GET` | `/debug/tenants/{tenant_id}/engine/metrics` | per-tenant engine durability, worker, serving, and provider-specific diagnostics such as `libsql` replica freshness |
+| `POST` | `/api/admin/deploy` | deploy admin API; disabled unless `NEOVEX_DEPLOY_TOKEN` was configured at startup |
 | `GET` | `/demos` | redirects to the demo index |
 | `GET` | `/demos/` | serves the demo directory |
 
@@ -72,8 +74,8 @@ Notes:
 
 ## Optional Convex Routes
 
-These routes are present only when the server is started with
-`--app-dir`.
+These routes are usable only when the server has an active Convex-compatible
+app generation from `--app-dir` or deploy activation.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

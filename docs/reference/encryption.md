@@ -21,7 +21,7 @@ Encryption is disabled by default. To enable it:
 
 2. Start Neovex with encryption enabled:
    ```bash
-   neovex serve \
+   neovex start \
      --encryption-key-provider master-key-file \
      --encryption-master-key-file /secure/path/master.key
    ```
@@ -57,7 +57,7 @@ a persisted export command for them.
 A single 32-byte key file for self-hosted deployments.
 
 ```bash
-neovex serve \
+neovex start \
   --encryption-key-provider master-key-file \
   --encryption-master-key-file /secure/path/master.key
 ```
@@ -77,7 +77,7 @@ therefore protect many local databases without reusing their DEKs.
 Per-subject key files for advanced deployments.
 
 ```bash
-neovex serve \
+neovex start \
   --encryption-key-provider key-dir \
   --encryption-key-dir /secure/path/keys/
 ```
@@ -96,7 +96,7 @@ CloudTrail visibility, and KMS-managed wrapping keys without changing the
 per-database manifest contract.
 
 ```bash
-neovex serve \
+neovex start \
   --encryption-key-provider aws-kms \
   --encryption-aws-kms-key-id alias/neovex-production \
   --encryption-aws-region us-east-1

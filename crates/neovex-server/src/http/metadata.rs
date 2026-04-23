@@ -17,13 +17,12 @@ pub(crate) async fn license_status(
 /// Returns runtime limits and live runtime metrics for diagnostics.
 pub(crate) async fn runtime_diagnostics(
     State(state): State<Arc<AppState>>,
-) -> Json<RuntimeDiagnosticsResponse> {
-    let registry = state
-        .convex_registry
-        .clone()
-        .expect("runtime diagnostics route requires Convex support state");
+) -> Result<Json<RuntimeDiagnosticsResponse>, AppError> {
+    let registry = state.convex_registry.current().ok_or_else(|| {
+        AppError::not_found("runtime diagnostics require an active app generation")
+    })?;
     let limits = registry.runtime_limits();
-    Json(RuntimeDiagnosticsResponse {
+    Ok(Json(RuntimeDiagnosticsResponse {
         limits: RuntimeLimitsResponse {
             runtime_backend: limits.backend_kind,
             execution_model: limits.execution_model,
@@ -51,7 +50,7 @@ pub(crate) async fn runtime_diagnostics(
         },
         reset_capabilities: limits.reset_capabilities(),
         metrics: registry.runtime_metrics_snapshot(),
-    })
+    }))
 }
 
 /// Returns per-tenant engine durability, worker, and serving diagnostics.

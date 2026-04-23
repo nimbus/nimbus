@@ -8,7 +8,8 @@ pub(super) struct RootCli {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum RootCommand {
-    Service(ServiceCommand),
+    #[command(name = "compose")]
+    Compose(ComposeCommand),
 }
 
 pub(super) fn write_compose_fixture(root: &Path) -> PathBuf {
