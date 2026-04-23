@@ -60,6 +60,11 @@ Use the repo docs for architecture and behavior details:
   manager seams, start with `docs/reference/microvm-service-baseline.md`,
   `docs/reference/macos-machine-flow.md` when relevant, and the active platform
   plan from `docs/plans/README.md`.
+- **For localhost/server security work:** `docs/plans/localhost-server-security-plan.md`
+  is the active control plane. Use it for local bind/auth/session/origin/CORS,
+  token lifecycle, server discovery, route-family gating, audit logging,
+  `/ui/*` bootstrap security, and the server-access versus application-auth
+  boundary.
 - **For install script work (Channel 1):** `docs/plans/install-script-plan.md`
   is the active control plan for the `curl | sh` quick-start bootstrapper. Its
   parent is `docs/plans/distribution-plan.md` (Channel 1 section). Start I1
@@ -100,6 +105,11 @@ Use the repo docs for architecture and behavior details:
 - For shared machine-lifecycle hardening work, open
   `docs/reference/microvm-service-baseline.md` after the microVM baseline and
   then the active platform plan from `docs/plans/README.md`.
+- For localhost/server security work, open
+  `docs/plans/localhost-server-security-plan.md` after the three top-level
+  docs and treat it as the owning active plan. Keep local server-access auth
+  separate from tenant/application auth unless that plan explicitly says
+  otherwise.
 - For Convex or Neovex CLI/codegen workflow work, open
   `docs/reference/convex-ai-guidelines.md`, `docs/reference/cli.md`, and
   `docs/convex/compatibility.md` after the three top-level docs. Promote a new
