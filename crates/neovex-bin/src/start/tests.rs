@@ -36,8 +36,6 @@ use neovex_testing::{
     wait_for_condition,
 };
 #[cfg(target_os = "linux")]
-use serde_json::json;
-#[cfg(target_os = "linux")]
 use tempfile::tempdir;
 
 static TEST_CONFIG_COUNTER: AtomicU64 = AtomicU64::new(0);
