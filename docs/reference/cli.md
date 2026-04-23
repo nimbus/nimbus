@@ -6,7 +6,7 @@ also exposes compose-backed service and machine management subcommands.
 Current shipped CLI shape:
 
 ```bash
-neovex dev [--app-dir PATH] [--port 3210] [--data-dir ./.neovex/dev] [--once] [--skip-codegen] [--tail-logs always|pause-on-sync|disable] [--compose-file compose.yaml]
+neovex dev [--app-dir PATH] [--port 3210] [--data-dir ./.neovex/dev] [--once] [--skip-codegen] [--tail-logs always|pause-on-sync|disable] [--compose-file PATH]...
 ```
 
 ```bash
@@ -31,31 +31,31 @@ legacy alias.
 Current shipped compose-management commands:
 
 ```bash
-neovex compose config [--file compose.yaml] [--services]
+neovex compose config [--file PATH]... [--services]
 ```
 
 ```bash
-neovex compose up [service] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose up [service] [--file PATH]... [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex compose down [service] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose down [service] [--file PATH]... [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex compose ps [-f json|yaml|table] [--noheading] [--file compose.yaml] [--all-tenants]
+neovex compose ps [-f json|yaml|table] [--noheading] [--file PATH]... [--all-tenants]
 ```
 
 ```bash
-neovex compose inspect <service> [-f json|yaml] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose inspect <service> [-f json|yaml] [--file PATH]... [--tenant <tenant-id>]
 ```
 
 ```bash
-neovex compose logs <service> [--file compose.yaml] [--tenant <tenant-id>] [--follow]
+neovex compose logs <service> [--file PATH]... [--tenant <tenant-id>] [--follow]
 ```
 
 ```bash
-neovex compose top <service> [-f json|yaml|table] [--noheading] [--file compose.yaml] [--tenant <tenant-id>]
+neovex compose top <service> [-f json|yaml|table] [--noheading] [--file PATH]... [--tenant <tenant-id>]
 ```
 
 Current shipped machine commands:
@@ -117,7 +117,7 @@ neovex machine os upgrade [--dry-run] [--restart]
 ```
 
 ```bash
-neovex start [--app-dir ./app] [--skip-codegen] [--compose-file ./compose.yaml]
+neovex start [--app-dir ./app] [--skip-codegen] [--compose-file PATH]...
 ```
 
 For local development from source:
@@ -246,6 +246,31 @@ environment variables or the JSON config file referenced by `--config` or
 | `--runtime-max-instances` | available hardware parallelism | maximum concurrent top-level runtime instances |
 | `--runtime-max-nested-calls` | `64` | maximum nested `ctx.run*` invocations per request tree |
 
+## Shared Compose Discovery
+
+`neovex compose ...`, `neovex dev`, and `neovex start` now share one Compose
+discovery rule:
+
+- explicit repeated `--file` or `--compose-file` flags win and load exactly
+  those files in the order provided
+- when explicit flags are absent, `COMPOSE_FILE` provides an ordered explicit
+  file list; `COMPOSE_PATH_SEPARATOR` overrides the platform default separator
+  (`:` on macOS/Linux, `;` on Windows)
+- without explicit flags or `COMPOSE_FILE`, Neovex searches the current
+  directory first and
+  then parent directories for `compose.yaml`, `compose.yml`,
+  `docker-compose.yaml`, or `docker-compose.yml`
+- when auto-discovery selects canonical `compose.yaml` and
+  `compose.override.yaml` exists beside it, both files are loaded in that
+  order as one logical Compose project
+- if both legacy names exist in the same directory, Neovex fails with an
+  actionable error instead of guessing
+- relative paths in explicit flag lists and `COMPOSE_FILE` entries resolve from
+  the current working directory, and `files[0]` remains the project identity
+  plus relative-path anchor for merged Compose semantics
+- `--app-dir` is separate: it selects the app/codegen context and does not
+  redefine Compose discovery
+
 ## Dev Command
 
 `neovex dev` is the Convex-migration happy path for local work. In the current
@@ -262,8 +287,8 @@ watch-loop slice it:
 - listens on port `3210` by default
 - uses a shared project-local persistence root at `./.neovex/dev/` by default
   for both tenant data and local control state
-- prints the local URL, app directory, persistence root, and watched source
-  root on startup
+- prints the local URL, app directory, persistence root, watched source root,
+  and resolved Compose selection when one is active
 
 Current watch-loop scope:
 
@@ -283,7 +308,7 @@ Flags:
 | `--once` | `false` | run startup only and disable the watched codegen loop |
 | `--skip-codegen` | `false` | skip the initial codegen pass and use already-generated artifacts |
 | `--tail-logs` | `pause-on-sync` | accepted log-tail mode (`always`, `pause-on-sync`, or `disable`); live runtime log multiplexing remains pending runtime log plumbing |
-| `--compose-file` | unset | optional Compose file that declares local service dependencies |
+| `--compose-file` | unset | optional explicit ordered Compose path list for local service dependencies; repeat the flag to merge overlays in order. When omitted, `dev` uses `COMPOSE_FILE` if set, then the shared cwd/parent discovery rule |
 
 ## Codegen Behavior
 
@@ -354,27 +379,29 @@ startup, it:
 
 - initializes tracing
 - prints a concise startup summary with the local URL, server-owned scope,
-  app directory/codegen state, optional Compose file, and deploy-admin status
+  app directory/codegen state, optional Compose selection, and deploy-admin
+  status
 - when `--app-dir` is set and `--skip-codegen` is not, runs one codegen
   preflight pass before loading manifests
 - loads the service with the configured data directory
 - loads tenants with scheduled work
 - starts the scheduler loop
 - optionally loads the Convex-compatible registry from `--app-dir`
-- optionally loads declared sandbox-backed services from `--compose-file`
+- optionally loads declared sandbox-backed services from the shared Compose
+  discovery contract
 - loads license state from the explicit path, environment, default path, or
   built-in community defaults
 
-When `--compose-file` is present, Neovex validates the Compose file through the
-same adapter used by `neovex compose config`, lowers it into a typed
+When a Compose selection is present, Neovex validates it through the same
+adapter used by `neovex compose config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
 manager. With `--app-dir`, `ctx.services.*` can activate those declared
 services on first use. The app directory may use `neovex/` as the native user
 source root or `convex/` as the compatibility root; in both cases the runtime
 registry still loads the generated manifests from `.neovex/convex/`. The
 explicit `neovex compose up/down/...` commands share that same Compose
-lowering, deterministic project identity, and project-scoped backend root
-instead of inventing a second lifecycle control plane.
+discovery, lowering, deterministic project identity, and project-scoped
+backend root instead of inventing a second lifecycle control plane.
 
 The `start` preflight is intentionally one-shot. After startup, Neovex does not
 watch the filesystem or regenerate `_generated/*` as functions change. If you
@@ -413,13 +440,13 @@ Output-shaping contract:
 
 ## Compose Commands
 
-The current landed compose-control surface exposes Compose validation plus
-explicit lifecycle control:
+The current landed compose-control surface exposes shared-discovery Compose
+validation plus explicit lifecycle control:
 
 | Command | Meaning |
 | --- | --- |
-| `neovex compose config` | parse `compose.yaml`, validate the supported subset, and print the resolved service plan as YAML |
-| `neovex compose config --file ./stack.yml` | validate a specific Compose file |
+| `neovex compose config` | validate the discovered Compose project, the `COMPOSE_FILE` selection when present, or an explicit ordered `--file` list, and print the resolved service plan as YAML |
+| `neovex compose config --file ./stack.yml --file ./stack.dev.yml` | validate a specific ordered Compose file list |
 | `neovex compose config --services` | list only service names, one per line |
 | `neovex compose up` | start all declared services for the deterministic local project tenant and print a concise action summary instead of a YAML lifecycle dump; active current services are reported inline as `already_running` |
 | `neovex compose up db --tenant tenant-a` | start only service `db` for an explicit tenant and print the same action-summary contract |
@@ -443,6 +470,8 @@ Current scope:
   `stop_grace_period` against the generic sandbox lifecycle seam
 - validates the declared-service catalog handoff used by both the server-owned
   service manager and the explicit `compose up` launch path
+- uses the same cwd/parent discovery contract for `compose`, `dev`, and
+  `start`, while keeping project identity anchored on the primary Compose file
 - lowers `ports`, restart policy, and CPU/memory limits into the resolved plan
 - preserves `depends_on`, `healthcheck`, `volumes`, labels, and `x-neovex`
   metadata for lifecycle commands and recovery drills

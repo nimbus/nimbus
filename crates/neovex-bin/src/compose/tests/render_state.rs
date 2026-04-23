@@ -26,7 +26,7 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
 
     let rendered_local = render_service_list_for_platform(
         &ComposePsCommand {
-            file: compose_path.clone(),
+            file: vec![compose_path.clone()],
             format: ComposePsOutputFormat::Table,
             no_heading: false,
             all_tenants: false,
@@ -44,7 +44,7 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
 
     let rendered_all = render_service_list_for_platform(
         &ComposePsCommand {
-            file: compose_path,
+            file: vec![compose_path],
             format: ComposePsOutputFormat::Table,
             no_heading: false,
             all_tenants: true,
@@ -56,6 +56,44 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
     .expect("all-tenant list should render");
     assert!(rendered_all.contains(context.control_plane.local_tenant_id.as_str()));
     assert!(rendered_all.contains("tenant-other"));
+}
+
+#[test]
+fn render_service_list_discovers_parent_project_when_file_is_omitted() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let compose_path = write_compose_fixture(temp_dir.path());
+    let nested_dir = temp_dir.path().join("apps").join("web");
+    fs::create_dir_all(&nested_dir).expect("nested directory should build");
+    let control_data_dir = temp_dir.path().join("control");
+    let context = load_compose_project_context(&compose_path, &control_data_dir)
+        .expect("compose project context should load");
+    let krun_config = context.control_plane.krun_backend_config();
+
+    write_manifest(
+        &krun_config.state_root,
+        "db-01aaa",
+        context.control_plane.local_tenant_id.as_str(),
+        "db",
+        SandboxStatus::Ready,
+    );
+
+    let rendered = with_current_dir(&nested_dir, || {
+        render_service_list_for_platform(
+            &ComposePsCommand {
+                file: Vec::new(),
+                format: ComposePsOutputFormat::Table,
+                no_heading: false,
+                all_tenants: false,
+            },
+            &control_data_dir,
+            ServiceHostPlatform::Linux,
+            None,
+        )
+    })
+    .expect("nested compose discovery should render");
+
+    assert!(rendered.contains("db-01aaa"), "{rendered}");
+    assert!(rendered.contains(context.control_plane.local_tenant_id.as_str()));
 }
 
 #[test]
@@ -107,7 +145,7 @@ fn render_service_inspect_defaults_to_local_project_tenant_and_honors_tenant_ove
     let rendered_default = render_service_inspect_for_platform(
         &ComposeInspectCommand {
             service: "db".to_owned(),
-            file: compose_path.clone(),
+            file: vec![compose_path.clone()],
             tenant: None,
             format: ComposeInspectOutputFormat::Json,
         },
@@ -124,7 +162,7 @@ fn render_service_inspect_defaults_to_local_project_tenant_and_honors_tenant_ove
     let rendered_override = render_service_inspect_for_platform(
         &ComposeInspectCommand {
             service: "db".to_owned(),
-            file: compose_path,
+            file: vec![compose_path],
             tenant: Some(TenantId::new("tenant-other").expect("tenant should parse")),
             format: ComposeInspectOutputFormat::Yaml,
         },

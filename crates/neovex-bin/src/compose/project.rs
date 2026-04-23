@@ -5,6 +5,7 @@ use neovex::{Error, SandboxBackendKind, TenantId};
 use neovex_sandbox::backends::krun::KrunSandboxBackendConfig;
 use sha2::{Digest, Sha256};
 
+use crate::compose::discovery::ResolvedComposeSelection;
 use crate::compose::file::ComposeProjectPlan;
 
 const SERVICES_CONTROL_ROOT: &str = "services";
@@ -18,15 +19,28 @@ const PROJECT_KEY_SLUG_LEN: usize = 48;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ComposeProjectContext {
+    pub(crate) selection: ResolvedComposeSelection,
     pub(crate) plan: ComposeProjectPlan,
     pub(crate) control_plane: ComposeProjectControlPlane,
 }
 
 impl ComposeProjectContext {
+    #[cfg(test)]
     pub(crate) fn load(file: &Path, control_data_dir: &Path) -> Result<Self, Error> {
-        let plan = ComposeProjectPlan::load(file)?;
+        Self::load_selection(
+            &ResolvedComposeSelection::explicit(file.to_path_buf()),
+            control_data_dir,
+        )
+    }
+
+    pub(crate) fn load_selection(
+        selection: &ResolvedComposeSelection,
+        control_data_dir: &Path,
+    ) -> Result<Self, Error> {
+        let plan = ComposeProjectPlan::load_selection(selection)?;
         let control_plane = ComposeProjectControlPlane::from_plan(&plan, control_data_dir)?;
         Ok(Self {
+            selection: selection.clone(),
             plan,
             control_plane,
         })
@@ -130,6 +144,7 @@ fn truncate_ascii(value: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 
     fn write_compose_fixture(
         tempdir: &tempfile::TempDir,
@@ -241,6 +256,50 @@ services:
         assert_ne!(
             first_context.control_plane.project_key,
             second_context.control_plane.project_key
+        );
+    }
+
+    #[test]
+    fn compose_project_context_load_selection_keeps_primary_file_identity() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let base = write_compose_fixture(
+            &tempdir,
+            "stack/compose.yaml",
+            "name: demo\nservices:\n  api:\n    image: busybox:latest\n",
+        );
+        let override_file = write_compose_fixture(
+            &tempdir,
+            "stack/compose.override.yaml",
+            "services:\n  worker:\n    image: redis:7\n",
+        );
+        let control_data_dir = tempdir.path().join("control");
+        let auto_selection = resolve_compose_selection(&[], &tempdir.path().join("stack"))
+            .expect("selection should resolve")
+            .expect("selection should exist");
+        let explicit_selection = ResolvedComposeSelection::explicit(base.clone());
+
+        let auto_context =
+            ComposeProjectContext::load_selection(&auto_selection, &control_data_dir)
+                .expect("auto context should load");
+        let explicit_context =
+            ComposeProjectContext::load_selection(&explicit_selection, &control_data_dir)
+                .expect("explicit context should load");
+
+        assert_eq!(
+            auto_context.selection.files,
+            vec![base.clone(), override_file]
+        );
+        assert_eq!(
+            auto_context.control_plane.compose_file,
+            fs::canonicalize(&base).unwrap()
+        );
+        assert_eq!(
+            auto_context.control_plane.project_key,
+            explicit_context.control_plane.project_key
+        );
+        assert_eq!(
+            auto_context.control_plane.local_tenant_id,
+            explicit_context.control_plane.local_tenant_id
         );
     }
 }

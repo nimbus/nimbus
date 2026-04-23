@@ -8,6 +8,7 @@ use neovex::{
 };
 use neovex_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
+use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::{
     ForwardedMachineApiSandboxBackend, MachineApiClient, ensure_default_machine_api_client_started,
     require_default_machine_api_client,
@@ -45,13 +46,28 @@ pub(super) enum ServiceExecutionSurface {
     },
 }
 
+#[cfg(test)]
 pub(super) fn load_host_backed_sandbox_service_manager_for_platform(
     file: &Path,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<SandboxServiceManager, Error> {
-    let context = super::load_compose_project_context(file, control_data_dir)?;
+    load_host_backed_sandbox_service_manager_for_platform_selection(
+        &ResolvedComposeSelection::explicit(file.to_path_buf()),
+        control_data_dir,
+        host_platform,
+        machine_api_client,
+    )
+}
+
+pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    host_platform: ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<SandboxServiceManager, Error> {
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let machine_api_client = match machine_api_client {
         Some(client) => Some(client),
         None if should_auto_start_default_machine_for_host_loader(&context, host_platform)? => {
@@ -61,7 +77,7 @@ pub(super) fn load_host_backed_sandbox_service_manager_for_platform(
     };
     let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
     Ok(SandboxServiceManager::new(
-        load_sandbox_service_catalog_for_execution_platform(file, host_platform)?,
+        load_sandbox_service_catalog_for_execution_platform(selection, host_platform)?,
         backend,
     ))
 }
@@ -275,10 +291,10 @@ pub(super) fn required_project_backend(
 }
 
 pub(super) fn load_sandbox_service_catalog_for_execution_platform(
-    file: &Path,
+    selection: &ResolvedComposeSelection,
     host_platform: ServiceHostPlatform,
 ) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    let mut plan = file::ComposeProjectPlan::load(file)?;
+    let mut plan = file::ComposeProjectPlan::load_selection(selection)?;
     apply_platform_backend_defaults(&mut plan, host_platform);
     Ok(Arc::new(plan.into_service_catalog()?))
 }

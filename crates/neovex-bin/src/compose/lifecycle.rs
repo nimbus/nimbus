@@ -4,12 +4,13 @@ use neovex::{Error, SandboxBackend, SandboxHandle, SandboxServiceLaunch, Sandbox
 use neovex_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
+use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ComposeDownCommand, ComposeUpCommand, load_compose_project_context,
-    load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
-    requested_service_names, resolve_remote_service_down_targets, resolve_service_down_targets,
+    ComposeDownCommand, ComposeUpCommand, load_sandbox_service_catalog_for_execution_platform,
+    lookup_current_remote_service_details, requested_service_names,
+    resolve_remote_service_down_targets, resolve_service_down_targets,
     resolve_service_execution_surface, validate_forwarded_machine_api_backend,
     validate_forwarded_machine_api_operations,
 };
@@ -79,20 +80,39 @@ impl ServiceLifecycleTarget {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn service_up_outcomes_for_platform(
     command: &ComposeUpCommand,
     control_data_dir: &Path,
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let selection = super::resolve_required_compose_selection(command.file.as_slice())?;
+    service_up_outcomes_for_selection(
+        command,
+        &selection,
+        control_data_dir,
+        host_platform,
+        machine_api_client,
+    )
+    .await
+}
+
+pub(super) async fn service_up_outcomes_for_selection(
+    command: &ComposeUpCommand,
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    host_platform: super::ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
         .tenant
         .clone()
         .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
     let service_names = requested_service_names(&context, command.service.as_deref())?;
     let service_catalog =
-        load_sandbox_service_catalog_for_execution_platform(&command.file, host_platform)?;
+        load_sandbox_service_catalog_for_execution_platform(selection, host_platform)?;
 
     match resolve_service_execution_surface(
         &context,
@@ -187,13 +207,32 @@ pub(super) async fn service_up_outcomes_for_platform(
     }
 }
 
+#[cfg(test)]
 pub(super) async fn service_down_outcomes_for_platform(
     command: &ComposeDownCommand,
     control_data_dir: &Path,
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let context = load_compose_project_context(&command.file, control_data_dir)?;
+    let selection = super::resolve_required_compose_selection(command.file.as_slice())?;
+    service_down_outcomes_for_selection(
+        command,
+        &selection,
+        control_data_dir,
+        host_platform,
+        machine_api_client,
+    )
+    .await
+}
+
+pub(super) async fn service_down_outcomes_for_selection(
+    command: &ComposeDownCommand,
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    host_platform: super::ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
         .tenant
         .clone()

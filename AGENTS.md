@@ -38,69 +38,28 @@ Use the repo docs for architecture and behavior details:
 - `README.md`
 - `ARCHITECTURE.md`
 - `docs/README.md`
+- Use `docs/plans/README.md` to identify the current active plan before
+  landing roadmap work. Prefer the active owner over archived history.
 - For generic maintainability, refactor, modularity, reliability hardening,
   canonical naming, or god-file cleanup work, open
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` after the three docs above.
-  Open
-  `docs/plans/archive/codebase-architecture-and-maintainability-plan.md`
-  only when a task needs the latest completed repo-wide architecture and
-  maintainability wave's execution detail, closeout verification bundle, or
-  governance baseline for provider capability cleanup, sync/async/cancellable
-  flow convergence, typed server build pipelines, host-call family ownership,
-  service command ownership, and architecture-doc packaging. Open
-  `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
-  only when a task needs the latest completed repo-wide maintainability wave's
-  execution detail, closeout verification bundle, or governance baseline for
-  thin roots, concept-owned naming, helper-bucket avoidance, threshold
-  exceptions, and wrapper-first JS compatibility guidance. Open
-  `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
-  only when a task needs the completed hardening wave's execution detail,
-  closeout verification baseline, or proof-packaging decisions. Open
-  `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
-  only when a task needs the latest completed hotspot wave's execution
-  detail, closeout justification, or architecture-doc packaging baseline.
-  Open
-  `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
-  only when a task needs the completed follow-on maintainability wave's
-  execution detail, closeout justification, or benchmark-packaging baseline.
-  Open `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
-  only when a task needs the predecessor wave's execution detail or checkpoint
-  chain. Promote a new active plan before landing another repo-wide
-  maintainability or reliability-hardening wave unless another active plan
-  already owns the slice.
-- For the landed krun-backed microVM and service-control architecture, go
-  directly to `docs/reference/microvm-service-baseline.md` after the three
-  docs above. Open the archived plans only when a task needs historical
-  execution detail or exact closeout evidence.
+  Promote a new active plan before landing another repo-wide maintainability
+  or reliability-hardening wave unless an active plan already owns the slice.
+- For the landed krun-backed microVM and service-control architecture, open
+  `docs/reference/microvm-service-baseline.md` after the three docs above.
 - For current macOS developer-machine behavior, open
   `docs/reference/macos-machine-flow.md` after the microVM baseline.
-  Open `docs/plans/archive/macos-machine-support-plan.md` only when a task
-  needs the historical MAC1-MAC7 execution record or exact proof-bundle paths.
-- For historical machine/service CLI UX work, help/output/progress
-  consistency, or Podman/Docker-style command-surface work, start with
-  `docs/reference/cli.md` and `docs/reference/microvm-service-baseline.md`.
-  Use `docs/plans/archive/cli-command-surface-plan.md` only when a task needs
-  the completed `compose` / `dev` / `deploy` / `start` rollout, exact
-  verification bundle, or retired `service` / `serve` decision record. Use
-  `docs/plans/archive/machine-cli-follow-on-plan.md` only when a task needs the
-  completed `CLIF1`-`CLIF5` execution record, exact macOS proof-bundle paths,
-  or the settled older follow-on contract. Use
-  `docs/plans/archive/machine-cli-alignment-plan.md` only for the older
-  completed `CLIA1`-`CLIA10` rollout, earlier macOS proof bundles, and the
-  baseline contract the follow-on wave built on. Use
-  `docs/plans/archive/machine-cli-dx-plan.md` only for the first-wave
-  `DX1`-`DX11` rollout, older proof bundle paths, and the pre-alignment
-  comparative audit context. Promote a new active plan before landing another
-  CLI command-surface wave.
+- For machine/service CLI UX work, help/output/progress consistency, or
+  Podman/Docker-style command-surface work, start with `docs/reference/cli.md`
+  and `docs/reference/microvm-service-baseline.md`. Promote a new active plan
+  before landing another CLI command-surface wave unless one already owns the
+  slice.
 - For shared machine-lifecycle hardening, enterprise machine-management
   reliability, or Windows-provider groundwork that reuses the existing machine
-  manager seams, open
-  `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the microVM
-  baseline. That archived plan records the landed `MLH1`-`MLH7` robustness
-  baseline; use it for historical context and prerequisites, then resume the
-  owning active platform plan or promote a new active plan before starting new
-  shared machine-hardening scope.
+  manager seams, start with `docs/reference/microvm-service-baseline.md`,
+  `docs/reference/macos-machine-flow.md` when relevant, and the active platform
+  plan from `docs/plans/README.md`.
 - **For install script work (Channel 1):** `docs/plans/install-script-plan.md`
   is the active control plan for the `curl | sh` quick-start bootstrapper. Its
   parent is `docs/plans/distribution-plan.md` (Channel 1 section). Start I1
@@ -112,96 +71,40 @@ Use the repo docs for architecture and behavior details:
   `docs/reference/convex-ai-guidelines.md`, open `docs/reference/cli.md` and
   `docs/convex/compatibility.md` for `packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
-  contract. Use `docs/plans/archive/codegen-cli-plan.md` only when a task
-  needs the completed CLI/codegen rollout's execution record or exact
-  verification bundle, and `docs/plans/archive/neovex-source-root-plan.md`
-  only for the completed source-root rollout's historical context. Promote a
-  new active plan before landing another CLI/codegen workflow wave.
+  contract. Promote a new active plan before landing another CLI/codegen
+  workflow wave unless one already owns the slice.
 
 ## Context Window Discipline
 
 - `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
 - Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
+- Use `docs/plans/README.md` to discover the current active plan owner for the
+  slice you are touching. Do not rely on archived plans as the default source
+  of truth.
 - For generic maintainability, refactor, modularity, reliability hardening,
   canonical naming, or readability cleanup work, open
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` immediately after those three
-  docs. Open
-  `docs/plans/archive/codebase-architecture-and-maintainability-plan.md`
-  only when you need the latest completed repo-wide architecture and
-  maintainability wave's execution record, closeout verification bundle, or
-  governance baseline for provider capability cleanup, sync/async/cancellable
-  flow convergence, typed server build pipelines, host-call family ownership,
-  service command ownership, and architecture-doc packaging. Open
-  `docs/plans/archive/architecture-modularity-and-maintainability-plan.md`
-  only when you need the latest completed repo-wide maintainability wave's
-  execution record, closeout verification bundle, or governance baseline for
-  thin roots, concept-owned naming, helper-bucket avoidance, threshold
-  exceptions, and wrapper-first JS compatibility guidance. Open
-  `docs/plans/archive/codebase-reliability-and-maintainability-hardening-plan.md`
-  only when you need the completed hardening wave's execution record,
-  closeout verification baseline, or proof-packaging decisions. Open
-  `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
-  only when you need the latest completed hotspot wave's execution record,
-  closeout justification, or architecture-doc packaging baseline. Open
-  `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
-  only when you need the completed follow-on maintainability wave's execution
-  record, closeout justification, or benchmark-packaging baseline. Open
-  `docs/plans/archive/codebase-modularity-and-maintainability-plan.md` only
-  when you need the predecessor wave's historical execution record or
-  checkpoints. Promote a new active plan before landing another repo-wide
+  docs. Promote a new active plan before landing another repo-wide
   maintainability or reliability-hardening wave unless another active plan
   already owns the slice.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
-  docs. Only load the archived plans if the task genuinely needs historical
-  verification detail or phase-by-phase context.
+  docs.
 - For macOS developer-machine work, open
   `docs/reference/macos-machine-flow.md` after the microVM baseline.
-  Open `docs/plans/archive/macos-machine-support-plan.md` only when you need
-  the historical MAC1-MAC7 execution record, exact real-host proof paths, or
-  phase-by-phase closeout context.
 - For historical machine/service CLI alignment work, start with
   `docs/reference/cli.md` and `docs/reference/microvm-service-baseline.md`.
-  Use `docs/plans/archive/cli-command-surface-plan.md` only when you need the
-  completed `compose` / `dev` / `deploy` / `start` rollout, exact verification
-  bundle, or retired `service` / `serve` decision record. Use
-  `docs/plans/archive/machine-cli-follow-on-plan.md` only when you need the
-  completed `CLIF1`-`CLIF5` rollout, exact macOS proof-bundle paths, or the
-  settled older follow-on command-surface contract. Use
-  `docs/plans/archive/machine-cli-alignment-plan.md` only for the older
-  completed `CLIA1`-`CLIA10` rollout, proof-bundle paths, and the baseline
-  output/help/progress/table contract the follow-on wave refined. Open
-  `docs/plans/archive/machine-cli-dx-plan.md` only when you need the completed
-  first-wave comparative audit, closeout order, or older archived proof
-  bundles. Promote a new active plan before starting another CLI UX wave.
+  Promote a new active plan before starting another CLI UX wave unless one
+  already owns the slice.
 - For shared machine-lifecycle hardening work, open
-  `docs/plans/archive/machine-lifecycle-hardening-plan.md` after the microVM
-  baseline and reread its `Current Assessed State`, `Current Review Findings`,
-  `Podman Alignment Matrix`, `Control Plan Rules`,
-  `Verification Contract`, `Roadmap Status Ledger`, and `Execution Log`
-  when the task needs the landed shared reliability baseline or exact closeout
-  evidence.
+  `docs/reference/microvm-service-baseline.md` after the microVM baseline and
+  then the active platform plan from `docs/plans/README.md`.
 - For Convex or Neovex CLI/codegen workflow work, open
   `docs/reference/convex-ai-guidelines.md`, `docs/reference/cli.md`, and
-  `docs/convex/compatibility.md` after the three top-level docs. Use
-  `docs/plans/archive/codegen-cli-plan.md` only when you need the completed
-  CLI/codegen rollout's execution record or exact verification bundle, and
-  open `docs/plans/archive/neovex-source-root-plan.md` only when historical
-  source-root rollout detail is needed. Promote a new active plan before
-  landing another CLI/codegen workflow wave.
-- If work spans a platform/reference doc and historical machine CLI follow-on
-  context, treat the platform/reference doc as the active owner and
-  `docs/plans/archive/machine-cli-follow-on-plan.md` as historical
-  user-surface context only. Use
-  `docs/plans/archive/machine-cli-alignment-plan.md` only as older
-  command-surface context, and the archived machine CLI DX plan only as even
-  earlier historical context. Promote a new active plan before landing new
-  CLI UX scope.
-- If work spans a platform plan and the archived lifecycle hardening plan,
-  treat the platform plan as the active owner and the archived lifecycle plan
-  as historical reliability context; promote a new active plan before landing
-  new shared lifecycle scope.
+  `docs/convex/compatibility.md` after the three top-level docs. Promote a new
+  active plan before landing another CLI/codegen workflow wave unless one
+  already owns the slice.
 - Treat the current git worktree plus the owning active plan, when there is
   one, as progress state. Do not rely on chat history to remember where work
   stopped.

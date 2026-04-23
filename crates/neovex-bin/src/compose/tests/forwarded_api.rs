@@ -220,7 +220,7 @@ services:
     let rendered_up = render_service_up_for_platform(
         &ComposeUpCommand {
             service: Some("db".to_owned()),
-            file: compose_path,
+            file: vec![compose_path],
             tenant: None,
         },
         &control_data_dir,
@@ -271,7 +271,7 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
     let rendered_up = render_service_up_for_platform(
         &ComposeUpCommand {
             service: Some("db".to_owned()),
-            file: compose_path,
+            file: vec![compose_path],
             tenant: None,
         },
         &control_data_dir,
@@ -447,7 +447,7 @@ services:
 
     let rendered_list = render_service_list_for_platform(
         &ComposePsCommand {
-            file: compose_path.clone(),
+            file: vec![compose_path.clone()],
             format: ComposePsOutputFormat::Table,
             no_heading: false,
             all_tenants: false,
@@ -467,7 +467,7 @@ services:
     let rendered_inspect = render_service_inspect_for_platform(
         &ComposeInspectCommand {
             service: "db".to_owned(),
-            file: compose_path.clone(),
+            file: vec![compose_path.clone()],
             tenant: None,
             format: ComposeInspectOutputFormat::Json,
         },
@@ -495,7 +495,7 @@ services:
     let rendered_top = render_compose_top_for_platform(
         &ComposeTopCommand {
             service: "db".to_owned(),
-            file: compose_path.clone(),
+            file: vec![compose_path.clone()],
             tenant: None,
             format: ComposeTopOutputFormat::Table,
             no_heading: false,
@@ -521,7 +521,7 @@ services:
     let rendered_down = render_service_down_for_platform(
         &ComposeDownCommand {
             service: Some("db".to_owned()),
-            file: compose_path,
+            file: vec![compose_path],
             tenant: None,
         },
         &control_data_dir,

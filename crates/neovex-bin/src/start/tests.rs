@@ -13,6 +13,7 @@ use super::config::{
 };
 use super::*;
 use crate::codegen::CodegenCommand;
+use crate::test_support::with_current_dir;
 use crate::{Cli, Command};
 
 use std::env;
@@ -139,7 +140,26 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
 #[test]
 fn cli_parses_start_command_with_optional_compose_file() {
     let cli = parse_start(["neovex", "start", "--compose-file", "./compose.dev.yaml"]);
-    assert_eq!(cli.compose_file, Some(PathBuf::from("./compose.dev.yaml")));
+    assert_eq!(cli.compose_file, vec![PathBuf::from("./compose.dev.yaml")]);
+}
+
+#[test]
+fn cli_parses_start_command_with_multiple_compose_files_in_order() {
+    let cli = parse_start([
+        "neovex",
+        "start",
+        "--compose-file",
+        "./compose.yaml",
+        "--compose-file",
+        "./compose.dev.yaml",
+    ]);
+    assert_eq!(
+        cli.compose_file,
+        vec![
+            PathBuf::from("./compose.yaml"),
+            PathBuf::from("./compose.dev.yaml")
+        ]
+    );
 }
 
 #[test]
@@ -167,13 +187,18 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
         port: 0,
         app_dir: Some(PathBuf::from("./app")),
         skip_codegen: true,
-        compose_file: Some(PathBuf::from("./compose.yaml")),
+        compose_file: vec![PathBuf::from("./compose.yaml")],
         deploy_admin_token: Some("dev-token".to_string()),
         ..StartCommand::default()
     };
 
     let lines = super::boot::start_startup_summary_lines(
         &command,
+        Some(
+            &crate::compose::discovery::ResolvedComposeSelection::explicit(PathBuf::from(
+                "./compose.yaml",
+            )),
+        ),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         true,
     );
@@ -195,6 +220,132 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
             .any(|line| line == "compose file: ./compose.yaml")
     );
     assert!(lines.iter().any(|line| line == "deploy admin API: enabled"));
+}
+
+#[test]
+fn start_startup_summary_reports_auto_discovered_override_companion() {
+    let command = StartCommand::default();
+    let selection = crate::compose::discovery::ResolvedComposeSelection {
+        origin: crate::compose::discovery::ComposeSelectionOrigin::AutoDiscovered,
+        project_root: PathBuf::from("/workspace"),
+        files: vec![
+            PathBuf::from("/workspace/compose.yaml"),
+            PathBuf::from("/workspace/compose.override.yaml"),
+        ],
+        display_files: vec![
+            PathBuf::from("/workspace/compose.yaml"),
+            PathBuf::from("/workspace/compose.override.yaml"),
+        ],
+    };
+
+    let lines = super::boot::start_startup_summary_lines(
+        &command,
+        Some(&selection),
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        false,
+    );
+
+    assert!(lines.iter().any(|line| {
+        line == "compose file: auto-discovered /workspace/compose.yaml (+ compose.override.yaml)"
+    }));
+}
+
+#[test]
+fn start_startup_summary_reports_compose_file_environment_selection() {
+    let command = StartCommand::default();
+    let selection = crate::compose::discovery::ResolvedComposeSelection {
+        origin: crate::compose::discovery::ComposeSelectionOrigin::ExplicitEnvironment,
+        project_root: PathBuf::from("/workspace"),
+        files: vec![
+            PathBuf::from("/workspace/compose.yaml"),
+            PathBuf::from("/workspace/compose.dev.yaml"),
+        ],
+        display_files: vec![
+            PathBuf::from("./compose.yaml"),
+            PathBuf::from("./compose.dev.yaml"),
+        ],
+    };
+
+    let lines = super::boot::start_startup_summary_lines(
+        &command,
+        Some(&selection),
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        false,
+    );
+
+    assert!(lines.iter().any(|line| {
+        line == "compose file: COMPOSE_FILE=./compose.yaml (+ 1 extra Compose files)"
+    }));
+}
+
+#[test]
+fn start_compose_selection_discovers_from_current_dir_not_app_dir() {
+    let temp = tempfile::tempdir().expect("tempdir should build");
+    let project_root = temp.path().join("workspace");
+    let nested_cwd = project_root.join("apps").join("web");
+    let app_dir = temp.path().join("separate-app");
+    fs::create_dir_all(&nested_cwd).expect("nested cwd should build");
+    fs::create_dir_all(app_dir.join("convex")).expect("app dir should build");
+    let compose_path = project_root.join("compose.yaml");
+    fs::write(
+        &compose_path,
+        "name: demo\nservices:\n  db:\n    image: busybox:latest\n",
+    )
+    .expect("compose fixture should write");
+    let command = StartCommand {
+        app_dir: Some(app_dir),
+        compose_file: Vec::new(),
+        ..StartCommand::default()
+    };
+
+    let selection = with_current_dir(&nested_cwd, || {
+        super::boot::resolve_optional_compose_selection(&command)
+    })
+    .expect("compose selection should resolve")
+    .expect("compose selection should be discovered");
+
+    assert_eq!(
+        fs::canonicalize(selection.primary_file()).unwrap(),
+        fs::canonicalize(&compose_path).unwrap()
+    );
+    assert_eq!(
+        fs::canonicalize(&selection.project_root).unwrap(),
+        fs::canonicalize(&project_root).unwrap()
+    );
+}
+
+#[test]
+fn start_compose_selection_prefers_explicit_flag_over_auto_discovery() {
+    let temp = tempfile::tempdir().expect("tempdir should build");
+    let nested_cwd = temp.path().join("apps").join("web");
+    fs::create_dir_all(&nested_cwd).expect("nested cwd should build");
+    fs::write(
+        temp.path().join("compose.yaml"),
+        "name: auto\nservices:\n  db:\n    image: busybox:latest\n",
+    )
+    .expect("auto compose fixture should write");
+    let explicit_path = nested_cwd.join("compose.custom.yaml");
+    fs::write(
+        &explicit_path,
+        "name: explicit\nservices:\n  db:\n    image: redis:7\n",
+    )
+    .expect("explicit compose fixture should write");
+    let command = StartCommand {
+        compose_file: vec![PathBuf::from("./compose.custom.yaml")],
+        ..StartCommand::default()
+    };
+
+    let selection = with_current_dir(&nested_cwd, || {
+        super::boot::resolve_optional_compose_selection(&command)
+    })
+    .expect("compose selection should resolve")
+    .expect("compose selection should exist");
+
+    assert_eq!(
+        fs::canonicalize(selection.primary_file()).unwrap(),
+        fs::canonicalize(&explicit_path).unwrap()
+    );
+    assert_eq!(selection.files.len(), 1);
 }
 
 #[test]
@@ -227,6 +378,7 @@ fn start_help_shows_app_dir_flag_name() {
     assert!(rendered.contains("--skip-codegen"));
     assert!(rendered.contains("neovex start --app-dir ./demos/convex/html"));
     assert!(rendered.contains("neovex start --app-dir ./demos/convex/html --skip-codegen"));
+    assert!(rendered.contains("COMPOSE_FILE"));
     assert!(!rendered.contains("--convex-app-dir"));
 }
 

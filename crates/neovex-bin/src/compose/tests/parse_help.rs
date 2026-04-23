@@ -58,6 +58,7 @@ fn compose_leaf_help_uses_shared_template_and_examples() {
         assert!(rendered.contains("Usage:"), "{rendered}");
         assert!(rendered.contains("Examples:"), "{rendered}");
         assert!(rendered.contains(example_snippet), "{rendered}");
+        assert!(rendered.contains("COMPOSE_FILE"), "{rendered}");
     }
 }
 
@@ -77,7 +78,34 @@ fn parses_compose_config_subcommand() {
 
     match compose_command.command {
         ComposeSubcommand::Config(config) => {
-            assert_eq!(config.file, PathBuf::from("stack.yml"));
+            assert_eq!(config.file, vec![PathBuf::from("stack.yml")]);
+            assert!(!config.services);
+        }
+        _ => panic!("expected config subcommand"),
+    }
+}
+
+#[test]
+fn parses_compose_config_with_multiple_file_flags_in_order() {
+    let cli = RootCli::parse_from([
+        "neovex",
+        "compose",
+        "config",
+        "--file",
+        "stack.yml",
+        "--file",
+        "stack.dev.yml",
+    ]);
+    let Some(RootCommand::Compose(compose_command)) = cli.command else {
+        panic!("compose subcommand should parse");
+    };
+
+    match compose_command.command {
+        ComposeSubcommand::Config(config) => {
+            assert_eq!(
+                config.file,
+                vec![PathBuf::from("stack.yml"), PathBuf::from("stack.dev.yml")]
+            );
             assert!(!config.services);
         }
         _ => panic!("expected config subcommand"),
@@ -93,7 +121,7 @@ fn parses_compose_config_services_listing_flag() {
 
     match compose_command.command {
         ComposeSubcommand::Config(config) => {
-            assert_eq!(config.file, PathBuf::from(file::DEFAULT_COMPOSE_FILE));
+            assert!(config.file.is_empty());
             assert!(config.services);
         }
         _ => panic!("expected config subcommand"),
@@ -109,7 +137,7 @@ fn parses_compose_ps_all_tenants_flag() {
 
     match compose_command.command {
         ComposeSubcommand::Ps(list) => {
-            assert_eq!(list.file, PathBuf::from(file::DEFAULT_COMPOSE_FILE));
+            assert!(list.file.is_empty());
             assert!(list.all_tenants);
             assert_eq!(list.format, ComposePsOutputFormat::Table);
             assert!(!list.no_heading);
@@ -148,7 +176,7 @@ fn parses_compose_up_with_optional_service_and_tenant_override() {
                 up.tenant.expect("tenant override should parse").as_str(),
                 "svc-demo"
             );
-            assert_eq!(up.file, PathBuf::from(file::DEFAULT_COMPOSE_FILE));
+            assert!(up.file.is_empty());
         }
         _ => panic!("expected up subcommand"),
     }
@@ -164,7 +192,7 @@ fn parses_compose_down_without_service_uses_default_compose_file() {
     match compose_command.command {
         ComposeSubcommand::Down(down) => {
             assert_eq!(down.service, None);
-            assert_eq!(down.file, PathBuf::from(file::DEFAULT_COMPOSE_FILE));
+            assert!(down.file.is_empty());
             assert_eq!(down.tenant, None);
         }
         _ => panic!("expected down subcommand"),
@@ -220,7 +248,7 @@ fn parses_compose_logs_with_follow_flag() {
     match compose_command.command {
         ComposeSubcommand::Logs(logs) => {
             assert_eq!(logs.service, "db");
-            assert_eq!(logs.file, PathBuf::from(file::DEFAULT_COMPOSE_FILE));
+            assert!(logs.file.is_empty());
             assert!(logs.follow);
         }
         _ => panic!("expected logs subcommand"),

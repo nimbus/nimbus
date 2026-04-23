@@ -9,6 +9,9 @@ use rand::RngCore;
 
 use crate::cli_ux;
 use crate::codegen::run_codegen_for_app_dir;
+use crate::compose::discovery::{
+    ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
+};
 use crate::deploy::{DeployRequest, post_deploy_request};
 use crate::start::{CliTenantProvider, StartCommand, run_start_command};
 
@@ -31,9 +34,12 @@ pub(crate) struct DevCommand {
     #[arg(long)]
     pub(crate) app_dir: Option<PathBuf>,
 
-    /// Optional Compose file that declares local service dependencies.
+    /// Optional ordered Compose file list that declares local service
+    /// dependencies. Repeat `--compose-file` to merge overlays. When omitted,
+    /// Neovex uses `COMPOSE_FILE` when set, then discovers from the current
+    /// directory and parent directories.
     #[arg(long)]
-    pub(crate) compose_file: Option<PathBuf>,
+    pub(crate) compose_file: Vec<PathBuf>,
 
     /// Run startup only, without the watched codegen loop.
     #[arg(long, default_value_t = false)]
@@ -79,6 +85,7 @@ pub(crate) enum DevTailLogsMode {
 struct DevPlan {
     app_dir: PathBuf,
     data_dir: PathBuf,
+    compose_selection: Option<ResolvedComposeSelection>,
     local_url: String,
     source_root: Option<PathBuf>,
     once: bool,
@@ -114,6 +121,9 @@ impl DevPlan {
 fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
     let source_root = detect_source_root(&app_dir);
+    let explicit_compose_files = command.compose_file.as_slice();
+    let compose_selection = resolve_compose_selection(explicit_compose_files, cwd)
+        .map_err(|error| io::Error::other(error.to_string()))?;
     let data_dir = command
         .data_dir
         .as_deref()
@@ -136,6 +146,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
     Ok(DevPlan {
         app_dir,
         data_dir,
+        compose_selection,
         local_url,
         source_root,
         once: command.once,
@@ -214,29 +225,42 @@ fn canonicalize_dir(path: &Path) -> io::Result<PathBuf> {
 }
 
 fn emit_dev_banner(plan: &DevPlan) -> io::Result<()> {
-    cli_ux::write_stderr_line("Neovex dev ready to start")?;
-    cli_ux::write_stderr_line(&format!("Local:   {}", plan.local_url))?;
-    cli_ux::write_stderr_line(&format!("App dir: {}", plan.app_dir.display()))?;
-    cli_ux::write_stderr_line(&format!("Data:    {}", plan.data_dir.display()))?;
+    for line in dev_banner_lines(plan) {
+        cli_ux::write_stderr_line(&line)?;
+    }
+    Ok(())
+}
+
+fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
+    let mut lines = vec![
+        "Neovex dev ready to start".to_string(),
+        format!("Local:   {}", plan.local_url),
+        format!("App dir: {}", plan.app_dir.display()),
+        format!("Data:    {}", plan.data_dir.display()),
+    ];
+    if let Some(selection) = plan.compose_selection.as_ref() {
+        lines.push(format!("Compose: {}", compose_selection_summary(selection)));
+    }
     match &plan.source_root {
-        Some(source_root) if plan.once => cli_ux::write_stderr_line(&format!(
+        Some(source_root) if plan.once => lines.push(format!(
             "Watch:   disabled by --once; detected {}",
             source_root.display()
-        ))?,
+        )),
         Some(source_root) => {
-            cli_ux::write_stderr_line(&format!("Watch:   {}", source_root.display()))?;
+            lines.push(format!("Watch:   {}", source_root.display()));
         }
         None if plan.once => {
-            cli_ux::write_stderr_line("Watch:   disabled by --once; no source root detected")?;
+            lines.push("Watch:   disabled by --once; no source root detected".to_string());
         }
         None => {
-            cli_ux::write_stderr_line("Watch:   disabled; no neovex/ or convex/ root detected")?;
+            lines.push("Watch:   disabled; no neovex/ or convex/ root detected".to_string());
         }
     }
-    cli_ux::write_stderr_line(&format!("Logs:    {}", plan.tail_logs.as_str()))?;
-    cli_ux::write_stderr_line(
-        "Note: watched codegen activates regenerated artifacts locally after validation; runtime log multiplexing is still pending.",
-    )
+    lines.push(format!("Logs:    {}", plan.tail_logs.as_str()));
+    lines.push(
+        "Note: watched codegen activates regenerated artifacts locally after validation; runtime log multiplexing is still pending.".to_string(),
+    );
+    lines
 }
 
 async fn run_dev_watch_loop(plan: DevWatchPlan) -> Result<(), Box<dyn std::error::Error>> {
@@ -443,6 +467,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_support::with_current_dir;
     use crate::{Cli, Command};
 
     fn parse_dev<I, T>(args: I) -> DevCommand
@@ -467,7 +492,7 @@ mod tests {
         assert_eq!(command.port, DEFAULT_DEV_PORT);
         assert_eq!(command.app_dir, None);
         assert_eq!(command.data_dir, None);
-        assert_eq!(command.compose_file, None);
+        assert_eq!(command.compose_file, Vec::<PathBuf>::new());
         assert!(!command.once);
         assert!(!command.skip_codegen);
         assert_eq!(command.tail_logs, DevTailLogsMode::PauseOnSync);
@@ -494,10 +519,30 @@ mod tests {
         assert_eq!(command.port, 4567);
         assert_eq!(command.app_dir, Some(PathBuf::from("./demo")));
         assert_eq!(command.data_dir, Some(PathBuf::from("./state")));
-        assert_eq!(command.compose_file, Some(PathBuf::from("./compose.yaml")));
+        assert_eq!(command.compose_file, vec![PathBuf::from("./compose.yaml")]);
         assert!(command.once);
         assert!(command.skip_codegen);
         assert_eq!(command.tail_logs, DevTailLogsMode::Disable);
+    }
+
+    #[test]
+    fn cli_parses_dev_multiple_compose_files_in_order() {
+        let command = parse_dev([
+            "neovex",
+            "dev",
+            "--compose-file",
+            "./compose.yaml",
+            "--compose-file",
+            "./compose.dev.yaml",
+        ]);
+
+        assert_eq!(
+            command.compose_file,
+            vec![
+                PathBuf::from("./compose.yaml"),
+                PathBuf::from("./compose.dev.yaml")
+            ]
+        );
     }
 
     #[test]
@@ -514,6 +559,7 @@ mod tests {
         assert!(rendered.contains("debounced codegen reruns"));
         assert!(rendered.contains("locally activates"));
         assert!(rendered.contains("runtime log multiplexing"));
+        assert!(rendered.contains("COMPOSE_FILE"));
     }
 
     #[test]
@@ -603,6 +649,209 @@ mod tests {
             Some(temp.path().join("./state"))
         );
         assert!(plan.start_command.skip_codegen);
+        assert_eq!(plan.start_command.compose_file, Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn dev_banner_lines_report_explicit_compose_file() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("compose.custom.yaml"),
+            "services:\n  db:\n    image: busybox:latest\n",
+        )
+        .expect("compose fixture should write");
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--compose-file", "./compose.custom.yaml"]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve");
+
+        let lines = dev_banner_lines(&plan);
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Compose: ./compose.custom.yaml")
+        );
+    }
+
+    #[test]
+    fn dev_banner_lines_report_auto_discovered_override_selection() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("compose.yaml"),
+            "services:\n  db:\n    image: busybox:latest\n",
+        )
+        .expect("compose fixture should write");
+        fs::write(
+            temp.path().join("compose.override.yaml"),
+            "services:\n  worker:\n    image: redis:7\n",
+        )
+        .expect("compose override fixture should write");
+
+        let plan = resolve_dev_plan(parse_dev(["neovex", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+
+        let lines = dev_banner_lines(&plan);
+        let expected = format!(
+            "Compose: auto-discovered {} (+ compose.override.yaml)",
+            temp.path().join("compose.yaml").display()
+        );
+
+        assert!(lines.iter().any(|line| line == &expected), "{lines:?}");
+    }
+
+    #[test]
+    fn dev_banner_lines_report_compose_file_environment_selection() {
+        let selection = crate::compose::discovery::ResolvedComposeSelection {
+            origin: crate::compose::discovery::ComposeSelectionOrigin::ExplicitEnvironment,
+            project_root: PathBuf::from("/workspace"),
+            files: vec![
+                PathBuf::from("/workspace/compose.yaml"),
+                PathBuf::from("/workspace/compose.dev.yaml"),
+            ],
+            display_files: vec![
+                PathBuf::from("./compose.yaml"),
+                PathBuf::from("./compose.dev.yaml"),
+            ],
+        };
+        let plan = DevPlan {
+            app_dir: PathBuf::from("/workspace"),
+            data_dir: PathBuf::from("/workspace/.neovex/dev"),
+            compose_selection: Some(selection),
+            local_url: "http://localhost:3210/".to_owned(),
+            source_root: None,
+            once: false,
+            tail_logs: DevTailLogsMode::PauseOnSync,
+            start_command: StartCommand::default(),
+        };
+
+        let lines = dev_banner_lines(&plan);
+
+        assert!(lines.iter().any(|line| {
+            line == "Compose: COMPOSE_FILE=./compose.yaml (+ 1 extra Compose files)"
+        }));
+    }
+
+    #[test]
+    fn dev_start_and_compose_resolve_same_project_from_same_cwd() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("compose.yaml"),
+            "services:\n  db:\n    image: busybox:latest\n",
+        )
+        .expect("compose fixture should write");
+        let nested_cwd = temp.path().join("convex");
+
+        let compose_selection = with_current_dir(&nested_cwd, || {
+            crate::compose::resolve_required_compose_selection(&[])
+        })
+        .expect("compose selection should resolve");
+        let start_selection = with_current_dir(&nested_cwd, || {
+            crate::start::resolve_optional_compose_selection(&StartCommand::default())
+        })
+        .expect("start selection should resolve")
+        .expect("start selection should exist");
+        let dev_plan = resolve_dev_plan(parse_dev(["neovex", "dev"]), &nested_cwd)
+            .expect("dev plan should resolve");
+        let dev_selection = dev_plan
+            .compose_selection
+            .expect("dev selection should exist");
+
+        assert_eq!(
+            compose_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>(),
+            start_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            compose_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>(),
+            dev_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn dev_start_and_compose_explicit_paths_override_auto_discovery() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        fs::write(
+            temp.path().join("compose.yaml"),
+            "services:\n  db:\n    image: busybox:latest\n",
+        )
+        .expect("auto compose fixture should write");
+        let nested_cwd = temp.path().join("convex");
+        let explicit_path = nested_cwd.join("compose.custom.yaml");
+        fs::write(&explicit_path, "services:\n  db:\n    image: redis:7\n")
+            .expect("explicit compose fixture should write");
+        let explicit_flag = Path::new("./compose.custom.yaml");
+
+        let compose_selection = with_current_dir(&nested_cwd, || {
+            crate::compose::resolve_required_compose_selection(&[explicit_flag.to_path_buf()])
+        })
+        .expect("compose selection should resolve");
+        let start_selection = with_current_dir(&nested_cwd, || {
+            crate::start::resolve_optional_compose_selection(&StartCommand {
+                compose_file: vec![PathBuf::from("./compose.custom.yaml")],
+                ..StartCommand::default()
+            })
+        })
+        .expect("start selection should resolve")
+        .expect("start selection should exist");
+        let dev_plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--compose-file", "./compose.custom.yaml"]),
+            &nested_cwd,
+        )
+        .expect("dev plan should resolve");
+        let dev_selection = dev_plan
+            .compose_selection
+            .expect("dev selection should exist");
+
+        assert_eq!(
+            fs::canonicalize(compose_selection.primary_file()).unwrap(),
+            fs::canonicalize(&explicit_path).unwrap()
+        );
+        assert_eq!(
+            compose_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>(),
+            start_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            compose_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>(),
+            dev_selection
+                .files
+                .iter()
+                .map(|path| fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

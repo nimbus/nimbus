@@ -13,7 +13,10 @@ use super::config::{
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::run_codegen_for_app_dir;
-use crate::compose::load_host_backed_sandbox_service_manager;
+use crate::compose::discovery::{
+    ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
+};
+use crate::compose::load_host_backed_sandbox_service_manager_for_selection;
 
 pub(crate) async fn run_start_command(
     command: StartCommand,
@@ -28,8 +31,9 @@ pub(crate) async fn run_start_command(
     let deploy_admin_enabled =
         command.deploy_admin_token.is_some() || std::env::var_os("NEOVEX_DEPLOY_TOKEN").is_some();
     let convex_registry = load_convex_registry(&command, &runtime_limits)?;
+    let compose_selection = resolve_optional_compose_selection(&command)?;
     let sandbox_service_manager =
-        load_sandbox_service_manager(&command, &compose_control_data_dir)?;
+        load_sandbox_service_manager(compose_selection.as_ref(), &compose_control_data_dir)?;
     let service = Arc::new(Service::new_with_persistence_config(persistence_config).await?);
     let shutdown_service = service.clone();
     service.recover_scheduled_work_on_startup_async().await?;
@@ -39,7 +43,12 @@ pub(crate) async fn run_start_command(
         run_scheduler(scheduler_service, shutdown_rx).await;
     });
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", command.port)).await?;
-    emit_start_startup_summary(&command, listener.local_addr()?, deploy_admin_enabled);
+    emit_start_startup_summary(
+        &command,
+        compose_selection.as_ref(),
+        listener.local_addr()?,
+        deploy_admin_enabled,
+    );
 
     tracing::info!(
         license_kind = ?license_snapshot.kind,
@@ -102,14 +111,28 @@ pub(super) fn load_convex_registry(
         .transpose()
 }
 
-fn load_sandbox_service_manager(
+pub(crate) fn resolve_optional_compose_selection(
     command: &StartCommand,
+) -> Result<Option<ResolvedComposeSelection>, Error> {
+    let cwd = std::env::current_dir().map_err(|error| {
+        Error::Internal(format!("failed to determine current directory: {error}"))
+    })?;
+    let explicit_compose_files = command.compose_file.as_slice();
+    resolve_compose_selection(explicit_compose_files, &cwd)
+        .map_err(|error| Error::InvalidInput(error.to_string()))
+}
+
+pub(super) fn load_sandbox_service_manager(
+    compose_selection: Option<&ResolvedComposeSelection>,
     compose_control_data_dir: &std::path::Path,
 ) -> Result<Option<Arc<neovex::SandboxServiceManager>>, Error> {
-    command
-        .compose_file
-        .as_deref()
-        .map(|path| load_host_backed_sandbox_service_manager(path, compose_control_data_dir))
+    compose_selection
+        .map(|selection| {
+            load_host_backed_sandbox_service_manager_for_selection(
+                selection,
+                compose_control_data_dir,
+            )
+        })
         .transpose()
         .map(|manager| manager.map(Arc::new))
 }
@@ -122,16 +145,23 @@ fn emit_start_info(message: impl AsRef<str>) {
 
 fn emit_start_startup_summary(
     command: &StartCommand,
+    compose_selection: Option<&ResolvedComposeSelection>,
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) {
-    for line in start_startup_summary_lines(command, listen_addr, deploy_admin_enabled) {
+    for line in start_startup_summary_lines(
+        command,
+        compose_selection,
+        listen_addr,
+        deploy_admin_enabled,
+    ) {
         emit_start_info(line);
     }
 }
 
 pub(super) fn start_startup_summary_lines(
     command: &StartCommand,
+    compose_selection: Option<&ResolvedComposeSelection>,
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) -> Vec<String> {
@@ -154,8 +184,11 @@ pub(super) fn start_startup_summary_lines(
         None => lines
             .push("app dir: none; Convex-compatible routes wait for deploy activation".to_string()),
     }
-    if let Some(compose_file) = command.compose_file.as_deref() {
-        lines.push(format!("compose file: {}", compose_file.display()));
+    if let Some(selection) = compose_selection {
+        lines.push(format!(
+            "compose file: {}",
+            compose_selection_summary(selection)
+        ));
     }
     if deploy_admin_enabled {
         lines.push("deploy admin API: enabled".to_string());
