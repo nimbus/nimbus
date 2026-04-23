@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.21] - 2026-04-23
+
+### Added
+
+- Land Docker/Podman-style compose discovery, explicit multi-file Compose
+  selections, and `COMPOSE_FILE` support by @jackspirou
+
+### Documentation
+
+- Archive completed compose plans and simplify `AGENTS.md` to point at active
+  plans plus stable reference docs by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.20...v0.1.21
+
 ## [0.1.20] - 2026-04-19
 
 ### Documentation
