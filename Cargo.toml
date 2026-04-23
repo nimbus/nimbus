@@ -57,7 +57,11 @@ reqwest = { version = "0.12", features = ["blocking", "json", "native-tls-vendor
 ring = "0.17"
 rmp = "0.8"
 rmp-serde = "1"
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
+# Keep the bundled SQLCipher lane self-contained on Windows release builds:
+# upstream `bundled-sqlcipher` requires OPENSSL_DIR there unless we also opt
+# into vendored OpenSSL, which would otherwise make the GitHub runner
+# environment part of the release contract.
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 serial_test = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
