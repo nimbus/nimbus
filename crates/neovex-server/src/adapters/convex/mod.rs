@@ -44,6 +44,9 @@ pub(crate) use self::handlers::{
 };
 use self::host_bridge::*;
 use self::manifest::*;
+pub(crate) use self::registry::{
+    ConvexFunctionDeploySummary, ConvexHttpRouteDeploySummary, ConvexRegistryDeploySummary,
+};
 use self::requests::*;
 use self::templates::{empty_args, resolve_http_template};
 

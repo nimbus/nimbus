@@ -25,9 +25,9 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
     );
 
     let rendered_local = render_service_list_for_platform(
-        &ServiceListCommand {
+        &ComposePsCommand {
             file: compose_path.clone(),
-            format: ServiceListOutputFormat::Table,
+            format: ComposePsOutputFormat::Table,
             no_heading: false,
             all_tenants: false,
         },
@@ -43,9 +43,9 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
     assert!(!rendered_local.contains("tenant-other"));
 
     let rendered_all = render_service_list_for_platform(
-        &ServiceListCommand {
+        &ComposePsCommand {
             file: compose_path,
-            format: ServiceListOutputFormat::Table,
+            format: ComposePsOutputFormat::Table,
             no_heading: false,
             all_tenants: true,
         },
@@ -71,7 +71,7 @@ fn render_service_list_can_omit_headings() {
         shutdown_requested: false,
     }];
 
-    let rendered = render_service_list_view(&summaries, ServiceListOutputFormat::Table, true)
+    let rendered = render_service_list_view(&summaries, ComposePsOutputFormat::Table, true)
         .expect("table output without headings should render");
 
     assert!(!rendered.contains("SERVICE"));
@@ -105,11 +105,11 @@ fn render_service_inspect_defaults_to_local_project_tenant_and_honors_tenant_ove
     );
 
     let rendered_default = render_service_inspect_for_platform(
-        &ServiceInspectCommand {
+        &ComposeInspectCommand {
             service: "db".to_owned(),
             file: compose_path.clone(),
             tenant: None,
-            format: ServiceInspectOutputFormat::Json,
+            format: ComposeInspectOutputFormat::Json,
         },
         &control_data_dir,
         ServiceHostPlatform::Linux,
@@ -122,11 +122,11 @@ fn render_service_inspect_defaults_to_local_project_tenant_and_honors_tenant_ove
     assert!(rendered_default.contains("ctr.log"));
 
     let rendered_override = render_service_inspect_for_platform(
-        &ServiceInspectCommand {
+        &ComposeInspectCommand {
             service: "db".to_owned(),
             file: compose_path,
             tenant: Some(TenantId::new("tenant-other").expect("tenant should parse")),
-            format: ServiceInspectOutputFormat::Yaml,
+            format: ComposeInspectOutputFormat::Yaml,
         },
         &control_data_dir,
         ServiceHostPlatform::Linux,

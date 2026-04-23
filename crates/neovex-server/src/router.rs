@@ -41,6 +41,7 @@ pub(crate) struct RouterBuildConfig {
     convex_registry: Option<ConvexRegistry>,
     license_state: LicenseState,
     runtime_service_source: RuntimeServiceSource,
+    deploy_admin_token: Option<String>,
 }
 
 impl RouterBuildConfig {
@@ -52,6 +53,7 @@ impl RouterBuildConfig {
             runtime_service_source: RuntimeServiceSource::SandboxCatalog(Arc::new(
                 EmptySandboxCatalog,
             )),
+            deploy_admin_token: std::env::var("NEOVEX_DEPLOY_TOKEN").ok(),
         }
     }
 
@@ -67,6 +69,17 @@ impl RouterBuildConfig {
 
     pub(crate) fn with_sandbox_catalog(mut self, sandbox_catalog: Arc<dyn SandboxCatalog>) -> Self {
         self.runtime_service_source = RuntimeServiceSource::SandboxCatalog(sandbox_catalog);
+        self
+    }
+
+    pub(crate) fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
+        self.deploy_admin_token = Some(token.into());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn without_deploy_admin_token(mut self) -> Self {
+        self.deploy_admin_token = None;
         self
     }
 
@@ -90,22 +103,18 @@ impl RouterBuildConfig {
     }
 
     pub(crate) fn build(self) -> Router {
-        let include_convex = self.convex_registry.is_some();
         let state = Arc::new(AppState::from_config(AppStateConfig {
             service: self.service,
             convex_registry: self.convex_registry,
             license_state: self.license_state,
             runtime_service_registry: self.runtime_service_source.into_runtime_service_registry(),
+            deploy_admin_token: self.deploy_admin_token,
         }));
 
-        let router = build_core_router();
-        let router = if include_convex {
-            router.merge(build_convex_router())
-        } else {
-            router
-        };
-
-        router.layer(build_cors_layer()).with_state(state)
+        build_core_router()
+            .merge(build_convex_router())
+            .layer(build_cors_layer())
+            .with_state(state)
     }
 }
 
@@ -242,6 +251,7 @@ fn build_core_router() -> Router<Arc<AppState>> {
         .route("/health", get(http::health))
         .route("/debug/license/status", get(http::license_status))
         .route("/debug/encryption/status", get(http::encryption_status))
+        .route("/api/admin/deploy", post(http::deploy_app))
         .route(
             "/debug/tenants/{tenant_id}/consistency",
             get(http::tenant_consistency_report),

@@ -80,6 +80,7 @@ pub(super) struct NamedSubscriptionRequest {
 pub(super) async fn handle_convex_socket_for_tenant(
     socket: WebSocket,
     state: Arc<AppState>,
+    convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     initial_auth: Option<InvocationAuth>,
 ) {
@@ -91,10 +92,6 @@ pub(super) async fn handle_convex_socket_for_tenant(
         mpsc::channel::<SubscriptionUpdate>(neovex_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
     let transforms = Arc::new(RwLock::new(ConvexSubscriptionTransforms::default()));
     let runtime_cancellation = HostCallCancellation::default();
-    let convex_registry = state
-        .convex_registry
-        .clone()
-        .expect("convex websocket route requires Convex support state");
 
     let mut tasks = OwnedTaskSet::new();
     tasks.spawn(forwarding::run_subscription_forwarder(

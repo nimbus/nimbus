@@ -1,35 +1,36 @@
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use neovex::{
-    ConvexRegistry, Error, LicenseState, SandboxCatalog, Service, run_scheduler,
-    serve_with_convex_and_license, serve_with_convex_and_license_and_sandbox_service_manager,
-    serve_with_license, serve_with_license_and_sandbox_catalog,
+    ConvexRegistry, Error, LicenseState, ServeOptions, Service, run_scheduler, serve_with_options,
 };
 
-use super::ServeCommand;
+use super::StartCommand;
 use super::config::{
-    control_data_dir_from_service_config, service_persistence_config_from_serve_command,
+    control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::run_codegen_for_app_dir;
-use crate::service::load_host_backed_sandbox_service_manager;
+use crate::compose::load_host_backed_sandbox_service_manager;
 
-pub(crate) async fn run_serve_command(
-    command: ServeCommand,
+pub(crate) async fn run_start_command(
+    command: StartCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let service_config = service_persistence_config_from_serve_command(&command)?;
+    let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
-        control_data_dir_from_service_config(&service_config).to_path_buf();
+        control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
     run_codegen_preflight(&command).await?;
     let runtime_limits = runtime_limits_from_command(&command);
     let license_state = LicenseState::load(command.license_file.as_deref())?;
     let license_snapshot = license_state.snapshot();
+    let deploy_admin_enabled =
+        command.deploy_admin_token.is_some() || std::env::var_os("NEOVEX_DEPLOY_TOKEN").is_some();
     let convex_registry = load_convex_registry(&command, &runtime_limits)?;
     let sandbox_service_manager =
         load_sandbox_service_manager(&command, &compose_control_data_dir)?;
-    let service = Arc::new(Service::new_with_persistence_config(service_config).await?);
+    let service = Arc::new(Service::new_with_persistence_config(persistence_config).await?);
     let shutdown_service = service.clone();
     service.recover_scheduled_work_on_startup_async().await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -38,6 +39,7 @@ pub(crate) async fn run_serve_command(
         run_scheduler(scheduler_service, shutdown_rx).await;
     });
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", command.port)).await?;
+    emit_start_startup_summary(&command, listener.local_addr()?, deploy_admin_enabled);
 
     tracing::info!(
         license_kind = ?license_snapshot.kind,
@@ -50,12 +52,13 @@ pub(crate) async fn run_serve_command(
     }
 
     tracing::info!("neovex listening on {}", listener.local_addr()?);
-    let server_result = serve_with_optional_runtime_and_services(
+    let server_result = run_server_with_optional_runtime_and_services(
         listener,
         service,
         convex_registry,
         license_state,
         sandbox_service_manager,
+        command.deploy_admin_token,
     )
     .await;
     let _ = shutdown_tx.send(true);
@@ -66,7 +69,7 @@ pub(crate) async fn run_serve_command(
 }
 
 pub(super) async fn run_codegen_preflight(
-    command: &ServeCommand,
+    command: &StartCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(app_dir) = command.app_dir.as_deref() else {
         return Ok(());
@@ -75,17 +78,17 @@ pub(super) async fn run_codegen_preflight(
         return Ok(());
     }
 
-    emit_serve_info(format!(
+    emit_start_info(format!(
         "running one-shot codegen preflight for {}",
         app_dir.display()
     ));
     run_codegen_for_app_dir(app_dir).await?;
-    emit_serve_info(format!("generated app artifacts for {}", app_dir.display()));
+    emit_start_info(format!("generated app artifacts for {}", app_dir.display()));
     Ok(())
 }
 
 pub(super) fn load_convex_registry(
-    command: &ServeCommand,
+    command: &StartCommand,
     runtime_limits: &neovex::RuntimeLimits,
 ) -> Result<Option<ConvexRegistry>, Error> {
     command
@@ -100,7 +103,7 @@ pub(super) fn load_convex_registry(
 }
 
 fn load_sandbox_service_manager(
-    command: &ServeCommand,
+    command: &StartCommand,
     compose_control_data_dir: &std::path::Path,
 ) -> Result<Option<Arc<neovex::SandboxServiceManager>>, Error> {
     command
@@ -111,10 +114,62 @@ fn load_sandbox_service_manager(
         .map(|manager| manager.map(Arc::new))
 }
 
-fn emit_serve_info(message: impl AsRef<str>) {
+fn emit_start_info(message: impl AsRef<str>) {
     if cli_ux::info_output_enabled() {
         let _ = cli_ux::write_stderr_prefixed_line("info:", message.as_ref());
     }
+}
+
+fn emit_start_startup_summary(
+    command: &StartCommand,
+    listen_addr: SocketAddr,
+    deploy_admin_enabled: bool,
+) {
+    for line in start_startup_summary_lines(command, listen_addr, deploy_admin_enabled) {
+        emit_start_info(line);
+    }
+}
+
+pub(super) fn start_startup_summary_lines(
+    command: &StartCommand,
+    listen_addr: SocketAddr,
+    deploy_admin_enabled: bool,
+) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "Neovex server listening at {}",
+            local_listen_url(listen_addr)
+        ),
+        "server process owns HTTP, WebSocket, scheduler, and runtime startup".to_string(),
+    ];
+    match command.app_dir.as_deref() {
+        Some(app_dir) => {
+            lines.push(format!("app dir: {}", app_dir.display()));
+            if command.skip_codegen {
+                lines.push("codegen preflight: skipped by --skip-codegen".to_string());
+            } else {
+                lines.push("codegen preflight: completed before registry load".to_string());
+            }
+        }
+        None => lines
+            .push("app dir: none; Convex-compatible routes wait for deploy activation".to_string()),
+    }
+    if let Some(compose_file) = command.compose_file.as_deref() {
+        lines.push(format!("compose file: {}", compose_file.display()));
+    }
+    if deploy_admin_enabled {
+        lines.push("deploy admin API: enabled".to_string());
+    }
+    lines
+}
+
+fn local_listen_url(addr: SocketAddr) -> String {
+    let host = if addr.ip().is_unspecified() {
+        "localhost".to_string()
+    } else {
+        addr.ip().to_string()
+    };
+    format!("http://{host}:{}/", addr.port())
 }
 
 fn ensure_required_functions_manifest(app_dir: &Path, skip_codegen: bool) -> Result<(), Error> {
@@ -146,7 +201,7 @@ fn required_functions_manifest_path(app_dir: &Path) -> PathBuf {
 fn manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) -> String {
     if skip_codegen {
         format!(
-            "Run \"neovex codegen --app {}\" to generate it, or remove --skip-codegen to generate manifests automatically on serve.",
+            "Run \"neovex codegen --app {}\" to generate it, or remove --skip-codegen to generate manifests automatically on start.",
             app_dir.display()
         )
     } else {
@@ -157,37 +212,23 @@ fn manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) -> String {
     }
 }
 
-async fn serve_with_optional_runtime_and_services(
+async fn run_server_with_optional_runtime_and_services(
     listener: tokio::net::TcpListener,
     service: Arc<Service>,
     convex_registry: Option<ConvexRegistry>,
     license_state: LicenseState,
     sandbox_service_manager: Option<Arc<neovex::SandboxServiceManager>>,
+    deploy_admin_token: Option<String>,
 ) -> std::io::Result<()> {
-    match (convex_registry, sandbox_service_manager) {
-        (Some(registry), Some(manager)) => {
-            serve_with_convex_and_license_and_sandbox_service_manager(
-                listener,
-                service,
-                registry,
-                license_state,
-                manager,
-            )
-            .await
-        }
-        (Some(registry), None) => {
-            serve_with_convex_and_license(listener, service, registry, license_state).await
-        }
-        (None, Some(manager)) => {
-            let sandbox_catalog: Arc<dyn SandboxCatalog> = manager;
-            serve_with_license_and_sandbox_catalog(
-                listener,
-                service,
-                license_state,
-                sandbox_catalog,
-            )
-            .await
-        }
-        (None, None) => serve_with_license(listener, service, license_state).await,
+    let mut options = ServeOptions::default().with_license(license_state);
+    if let Some(registry) = convex_registry {
+        options = options.with_convex_registry(registry);
     }
+    if let Some(manager) = sandbox_service_manager {
+        options = options.with_sandbox_service_manager(manager);
+    }
+    if let Some(token) = deploy_admin_token {
+        options = options.with_deploy_admin_token(token);
+    }
+    serve_with_options(listener, service, options).await
 }

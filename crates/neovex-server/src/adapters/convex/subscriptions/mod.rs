@@ -34,8 +34,16 @@ pub(super) fn should_replace_upper_bound(
 pub(super) async fn handle_convex_socket_for_tenant(
     socket: WebSocket,
     state: Arc<AppState>,
+    convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     initial_auth: Option<InvocationAuth>,
 ) {
-    socket::handle_convex_socket_for_tenant(socket, state, tenant_id, initial_auth).await;
+    socket::handle_convex_socket_for_tenant(
+        socket,
+        state,
+        convex_registry,
+        tenant_id,
+        initial_auth,
+    )
+    .await;
 }

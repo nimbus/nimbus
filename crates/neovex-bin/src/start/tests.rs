@@ -1,4 +1,5 @@
 use std::fs;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -8,7 +9,7 @@ use serde_json::json;
 
 use super::config::{
     CliTenantProvider, PersistenceEnv, PersistenceFileConfig, load_runtime_config_file,
-    service_persistence_config_from_sources,
+    persistence_config_from_sources,
 };
 use super::*;
 use crate::codegen::CodegenCommand;
@@ -51,14 +52,14 @@ fn write_test_config(contents: &str) -> PathBuf {
     path
 }
 
-fn parse_serve<I, T>(args: I) -> ServeCommand
+fn parse_start<I, T>(args: I) -> StartCommand
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
     let cli = Cli::parse_from(args);
-    let Command::Serve(command) = cli.command else {
-        panic!("serve subcommand should parse");
+    let Command::Start(command) = cli.command else {
+        panic!("start subcommand should parse");
     };
     *command
 }
@@ -77,8 +78,8 @@ where
 
 #[test]
 fn cli_defaults_to_embedded_sqlite() {
-    let cli = parse_serve(["neovex", "serve"]);
-    let config = service_persistence_config_from_sources(
+    let cli = parse_start(["neovex", "start"]);
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -91,9 +92,16 @@ fn cli_defaults_to_embedded_sqlite() {
 }
 
 #[test]
-fn cli_requires_explicit_serve_subcommand_for_server_flags() {
+fn cli_requires_explicit_start_subcommand_for_server_flags() {
     assert!(Cli::try_parse_from(["neovex"]).is_err());
     assert!(Cli::try_parse_from(["neovex", "--compose-file", "./compose.dev.yaml"]).is_err());
+}
+
+#[test]
+fn legacy_serve_namespace_is_not_supported() {
+    let error = Cli::try_parse_from(["neovex", "serve", "--help"])
+        .expect_err("legacy serve namespace should not parse");
+    assert_eq!(error.kind(), ErrorKind::InvalidSubcommand);
 }
 
 #[test]
@@ -108,47 +116,87 @@ fn cli_supports_top_level_version_flag() {
 }
 
 #[test]
-fn cli_help_describes_codegen_machine_and_service_surface() {
+fn cli_help_describes_codegen_machine_and_compose_surface() {
     let error = Cli::try_parse_from(["neovex", "--help"]).expect_err("help should short-circuit");
     assert_eq!(error.kind(), ErrorKind::DisplayHelp);
     let rendered = error.to_string();
-    assert!(rendered.contains("Reactive document database with machine and service orchestration"));
+    assert!(rendered.contains(
+        "Convex-compatible reactive backend with local development and Compose-backed services"
+    ));
     assert!(rendered.contains("Usage:"));
     assert!(rendered.contains("Available Commands:"));
     assert!(rendered.contains("Examples:"));
-    assert!(rendered.contains("neovex serve"));
+    assert!(rendered.contains("neovex start"));
+    assert!(rendered.contains("neovex dev"));
     assert!(rendered.contains("neovex codegen --app ./demos/convex/html"));
     assert!(rendered.contains("neovex machine start"));
-    assert!(rendered.contains("neovex service up"));
-    assert!(rendered.contains("serve"));
+    assert!(rendered.contains("neovex compose up"));
+    assert!(rendered.contains("start"));
+    assert!(rendered.contains("dev"));
     assert!(rendered.contains("codegen"));
-    assert!(rendered.contains("machine"));
-    assert!(rendered.contains("service"));
+    assert!(rendered.contains("machine     Manage local developer machines"));
+    assert!(rendered.contains("compose"));
 }
 
 #[test]
-fn cli_parses_serve_command_with_optional_compose_file() {
-    let cli = parse_serve(["neovex", "serve", "--compose-file", "./compose.dev.yaml"]);
+fn cli_parses_start_command_with_optional_compose_file() {
+    let cli = parse_start(["neovex", "start", "--compose-file", "./compose.dev.yaml"]);
     assert_eq!(cli.compose_file, Some(PathBuf::from("./compose.dev.yaml")));
 }
 
 #[test]
-fn cli_parses_serve_command_with_app_dir() {
-    let cli = parse_serve(["neovex", "serve", "--app-dir", "./demos/convex/html"]);
+fn cli_parses_start_command_with_app_dir() {
+    let cli = parse_start(["neovex", "start", "--app-dir", "./demos/convex/html"]);
     assert_eq!(cli.app_dir, Some(PathBuf::from("./demos/convex/html")));
 }
 
 #[test]
-fn cli_parses_serve_command_with_skip_codegen() {
-    let cli = parse_serve([
+fn cli_parses_start_command_with_skip_codegen() {
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--app-dir",
         "./demos/convex/html",
         "--skip-codegen",
     ]);
     assert_eq!(cli.app_dir, Some(PathBuf::from("./demos/convex/html")));
     assert!(cli.skip_codegen);
+}
+
+#[test]
+fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
+    let command = StartCommand {
+        port: 0,
+        app_dir: Some(PathBuf::from("./app")),
+        skip_codegen: true,
+        compose_file: Some(PathBuf::from("./compose.yaml")),
+        deploy_admin_token: Some("dev-token".to_string()),
+        ..StartCommand::default()
+    };
+
+    let lines = super::boot::start_startup_summary_lines(
+        &command,
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        true,
+    );
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Neovex server listening at http://localhost:3210/")
+    );
+    assert!(lines.iter().any(|line| line == "app dir: ./app"));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "codegen preflight: skipped by --skip-codegen")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "compose file: ./compose.yaml")
+    );
+    assert!(lines.iter().any(|line| line == "deploy admin API: enabled"));
 }
 
 #[test]
@@ -165,39 +213,39 @@ fn cli_parses_codegen_command_with_explicit_app_dir() {
 
 #[test]
 fn cli_rejects_legacy_convex_app_dir_flag() {
-    let error = Cli::try_parse_from(["neovex", "serve", "--convex-app-dir", "./demo"])
+    let error = Cli::try_parse_from(["neovex", "start", "--convex-app-dir", "./demo"])
         .expect_err("legacy app-dir flag should be removed");
     assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     assert!(error.to_string().contains("--convex-app-dir"));
 }
 
 #[test]
-fn serve_help_shows_app_dir_flag_name() {
+fn start_help_shows_app_dir_flag_name() {
     let error =
-        Cli::try_parse_from(["neovex", "serve", "--help"]).expect_err("help should short-circuit");
+        Cli::try_parse_from(["neovex", "start", "--help"]).expect_err("help should short-circuit");
     assert_eq!(error.kind(), ErrorKind::DisplayHelp);
     let rendered = error.to_string();
     assert!(rendered.contains("--app-dir"));
     assert!(rendered.contains("--skip-codegen"));
-    assert!(rendered.contains("neovex serve --app-dir ./demos/convex/html"));
-    assert!(rendered.contains("neovex serve --app-dir ./demos/convex/html --skip-codegen"));
+    assert!(rendered.contains("neovex start --app-dir ./demos/convex/html"));
+    assert!(rendered.contains("neovex start --app-dir ./demos/convex/html --skip-codegen"));
     assert!(!rendered.contains("--convex-app-dir"));
 }
 
 #[tokio::test]
-async fn serve_missing_functions_manifest_reports_actionable_error() {
+async fn start_missing_functions_manifest_reports_actionable_error() {
     let temp = tempdir_in_repo_target();
     let app_dir = temp.path().to_path_buf();
-    let command = ServeCommand {
+    let command = StartCommand {
         app_dir: Some(app_dir.clone()),
         skip_codegen: true,
         port: 0,
-        ..ServeCommand::default()
+        ..StartCommand::default()
     };
 
-    let error = super::boot::run_serve_command(command)
+    let error = super::boot::run_start_command(command)
         .await
-        .expect_err("missing functions manifest should fail serve startup");
+        .expect_err("missing functions manifest should fail start startup");
     let rendered = error.to_string();
     let functions_path = app_dir
         .join(".neovex")
@@ -242,10 +290,10 @@ fn load_convex_registry_accepts_manifest_only_app_dir_without_bundle() {
     )
     .expect("manifest should write");
 
-    let command = ServeCommand {
+    let command = StartCommand {
         app_dir: Some(temp.path().to_path_buf()),
         skip_codegen: true,
-        ..ServeCommand::default()
+        ..StartCommand::default()
     };
     let registry = super::boot::load_convex_registry(&command, &RuntimeLimits::default())
         .expect("manifest-only app dir should load");
@@ -256,13 +304,13 @@ fn load_convex_registry_accepts_manifest_only_app_dir_without_bundle() {
 }
 
 #[tokio::test]
-async fn serve_codegen_preflight_generates_runtime_artifacts() {
+async fn start_codegen_preflight_generates_runtime_artifacts() {
     let temp = tempdir_in_repo_target();
     write_codegen_source_fixture(temp.path());
 
-    let command = ServeCommand {
+    let command = StartCommand {
         app_dir: Some(temp.path().to_path_buf()),
-        ..ServeCommand::default()
+        ..StartCommand::default()
     };
 
     super::boot::run_codegen_preflight(&command)
@@ -289,14 +337,14 @@ async fn serve_codegen_preflight_generates_runtime_artifacts() {
 }
 
 #[tokio::test]
-async fn serve_codegen_preflight_honors_skip_codegen() {
+async fn start_codegen_preflight_honors_skip_codegen() {
     let temp = tempdir_in_repo_target();
     write_codegen_source_fixture(temp.path());
 
-    let command = ServeCommand {
+    let command = StartCommand {
         app_dir: Some(temp.path().to_path_buf()),
         skip_codegen: true,
-        ..ServeCommand::default()
+        ..StartCommand::default()
     };
 
     super::boot::run_codegen_preflight(&command)
@@ -321,9 +369,9 @@ async fn serve_codegen_preflight_honors_skip_codegen() {
 
 #[test]
 fn cli_builds_postgres_typed_config_with_overrides() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--tenant-provider",
         "postgres",
         "--control-data-dir",
@@ -341,7 +389,7 @@ fn cli_builds_postgres_typed_config_with_overrides() {
         "--postgres-max-connections",
         "8",
     ]);
-    let config = service_persistence_config_from_sources(
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -378,7 +426,7 @@ fn cli_builds_postgres_typed_config_with_overrides() {
 
 #[test]
 fn env_builds_postgres_typed_config_with_generic_resource_name() {
-    let cli = parse_serve(["neovex", "serve"]);
+    let cli = parse_start(["neovex", "start"]);
     let env = PersistenceEnv {
         tenant_provider: Some(CliTenantProvider::Postgres),
         control_data_dir: Some(PathBuf::from("./control-from-env")),
@@ -388,9 +436,8 @@ fn env_builds_postgres_typed_config_with_generic_resource_name() {
         ..PersistenceEnv::default()
     };
 
-    let config =
-        service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
-            .expect("env-backed postgres config should build");
+    let config = persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
+        .expect("env-backed postgres config should build");
 
     assert_eq!(
         config.control_plane,
@@ -408,9 +455,9 @@ fn env_builds_postgres_typed_config_with_generic_resource_name() {
 
 #[test]
 fn cli_builds_libsql_replica_typed_config_with_overrides() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--tenant-provider",
         "libsql-replica",
         "--control-data-dir",
@@ -430,7 +477,7 @@ fn cli_builds_libsql_replica_typed_config_with_overrides() {
         "--libsql-replica-cache-dir",
         "./replica-cache",
     ]);
-    let config = service_persistence_config_from_sources(
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -469,7 +516,7 @@ fn cli_builds_libsql_replica_typed_config_with_overrides() {
 
 #[test]
 fn env_builds_libsql_replica_typed_config_with_generic_resource_name() {
-    let cli = parse_serve(["neovex", "serve"]);
+    let cli = parse_start(["neovex", "start"]);
     let env = PersistenceEnv {
         tenant_provider: Some(CliTenantProvider::LibsqlReplica),
         control_data_dir: Some(PathBuf::from("./control-from-env")),
@@ -479,9 +526,8 @@ fn env_builds_libsql_replica_typed_config_with_generic_resource_name() {
         ..PersistenceEnv::default()
     };
 
-    let config =
-        service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
-            .expect("env-backed libsql replica config should build");
+    let config = persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
+        .expect("env-backed libsql replica config should build");
 
     assert_eq!(
         config.control_plane,
@@ -508,9 +554,9 @@ fn env_builds_libsql_replica_typed_config_with_generic_resource_name() {
 
 #[test]
 fn cli_builds_mysql_typed_config_with_overrides() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--tenant-provider",
         "mysql",
         "--control-data-dir",
@@ -528,7 +574,7 @@ fn cli_builds_mysql_typed_config_with_overrides() {
         "--mysql-max-connections",
         "8",
     ]);
-    let config = service_persistence_config_from_sources(
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -565,7 +611,7 @@ fn cli_builds_mysql_typed_config_with_overrides() {
 
 #[test]
 fn env_builds_mysql_typed_config_with_generic_resource_name() {
-    let cli = parse_serve(["neovex", "serve"]);
+    let cli = parse_start(["neovex", "start"]);
     let env = PersistenceEnv {
         tenant_provider: Some(CliTenantProvider::Mysql),
         control_data_dir: Some(PathBuf::from("./control-from-env")),
@@ -575,9 +621,8 @@ fn env_builds_mysql_typed_config_with_generic_resource_name() {
         ..PersistenceEnv::default()
     };
 
-    let config =
-        service_persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
-            .expect("env-backed mysql config should build");
+    let config = persistence_config_from_sources(&cli, &PersistenceFileConfig::default(), &env)
+        .expect("env-backed mysql config should build");
 
     assert_eq!(
         config.control_plane,
@@ -604,16 +649,13 @@ fn config_file_builds_split_embedded_sqlite_config() {
   }
 }"#,
     );
-    let cli = parse_serve(["neovex", "serve", "--config", path.to_str().unwrap()]);
+    let cli = parse_start(["neovex", "start", "--config", path.to_str().unwrap()]);
     let file_config =
         load_runtime_config_file(Some(path.as_path())).expect("config file should load");
 
-    let config = service_persistence_config_from_sources(
-        &cli,
-        &file_config.persistence,
-        &PersistenceEnv::default(),
-    )
-    .expect("config-backed sqlite config should build");
+    let config =
+        persistence_config_from_sources(&cli, &file_config.persistence, &PersistenceEnv::default())
+            .expect("config-backed sqlite config should build");
 
     assert_eq!(
         config.tenant_provider,
@@ -641,9 +683,9 @@ fn cli_overrides_config_file_postgres_pool_settings() {
   }
 }"#,
     );
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--config",
         path.to_str().unwrap(),
         "--postgres-max-connections",
@@ -652,12 +694,9 @@ fn cli_overrides_config_file_postgres_pool_settings() {
     let file_config =
         load_runtime_config_file(Some(path.as_path())).expect("config file should load");
 
-    let config = service_persistence_config_from_sources(
-        &cli,
-        &file_config.persistence,
-        &PersistenceEnv::default(),
-    )
-    .expect("config + cli postgres config should build");
+    let config =
+        persistence_config_from_sources(&cli, &file_config.persistence, &PersistenceEnv::default())
+            .expect("config + cli postgres config should build");
 
     assert_eq!(config.tenant_provider.pool.min_connections, Some(2));
     assert_eq!(config.tenant_provider.pool.max_connections, Some(8));
@@ -676,7 +715,7 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
 
     let base_dir = env_path("NEOVEX_KRUN_SMOKE_WORKDIR");
     let control_data_dir = base_dir.join("m5-compose-control");
-    let context = crate::service::load_compose_project_context(&compose_path, &control_data_dir)
+    let context = crate::compose::load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
     if let Some(metadata_path) = env::var_os("NEOVEX_KRUN_SMOKE_M5_METADATA_FILE") {
         let metadata_path = PathBuf::from(metadata_path);
@@ -711,7 +750,7 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
     }
 
     let sandbox_service_manager = Arc::new(
-        crate::service::load_sandbox_service_manager(
+        crate::compose::load_sandbox_service_manager(
             &compose_path,
             Arc::new(KrunSandboxBackend::new(config)),
         )
@@ -958,8 +997,8 @@ async fn wait_for_http_response(host_port: u16, timeout: Duration) -> String {
 
 #[test]
 fn cli_defaults_to_encryption_disabled() {
-    let cli = parse_serve(["neovex", "serve"]);
-    let config = service_persistence_config_from_sources(
+    let cli = parse_start(["neovex", "start"]);
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -970,15 +1009,15 @@ fn cli_defaults_to_encryption_disabled() {
 
 #[test]
 fn cli_builds_master_key_file_encryption_config() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--encryption-key-provider",
         "master-key-file",
         "--encryption-master-key-file",
         "/secure/neovex.key",
     ]);
-    let config = service_persistence_config_from_sources(
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -996,15 +1035,15 @@ fn cli_builds_master_key_file_encryption_config() {
 
 #[test]
 fn cli_builds_key_dir_encryption_config() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--encryption-key-provider",
         "key-dir",
         "--encryption-key-dir",
         "/secure/keys",
     ]);
-    let config = service_persistence_config_from_sources(
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -1022,9 +1061,9 @@ fn cli_builds_key_dir_encryption_config() {
 
 #[test]
 fn cli_builds_aws_kms_encryption_config() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--encryption-key-provider",
         "aws-kms",
         "--encryption-aws-kms-key-id",
@@ -1032,7 +1071,7 @@ fn cli_builds_aws_kms_encryption_config() {
         "--encryption-aws-region",
         "us-east-1",
     ]);
-    let config = service_persistence_config_from_sources(
+    let config = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -1048,13 +1087,13 @@ fn cli_builds_aws_kms_encryption_config() {
 
 #[test]
 fn cli_rejects_orphaned_encryption_options() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--encryption-master-key-file",
         "/secure/neovex.key",
     ]);
-    let result = service_persistence_config_from_sources(
+    let result = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -1069,9 +1108,9 @@ fn cli_rejects_orphaned_encryption_options() {
 
 #[test]
 fn cli_rejects_mismatched_encryption_provider_options() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--encryption-key-provider",
         "master-key-file",
         "--encryption-master-key-file",
@@ -1079,7 +1118,7 @@ fn cli_rejects_mismatched_encryption_provider_options() {
         "--encryption-aws-kms-key-id",
         "arn:aws:kms:us-east-1:123456789:key/example-key-id",
     ]);
-    let result = service_persistence_config_from_sources(
+    let result = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -1094,13 +1133,13 @@ fn cli_rejects_mismatched_encryption_provider_options() {
 
 #[test]
 fn cli_requires_master_key_file_path() {
-    let cli = parse_serve([
+    let cli = parse_start([
         "neovex",
-        "serve",
+        "start",
         "--encryption-key-provider",
         "master-key-file",
     ]);
-    let result = service_persistence_config_from_sources(
+    let result = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),
@@ -1115,8 +1154,8 @@ fn cli_requires_master_key_file_path() {
 
 #[test]
 fn cli_requires_aws_kms_key_id() {
-    let cli = parse_serve(["neovex", "serve", "--encryption-key-provider", "aws-kms"]);
-    let result = service_persistence_config_from_sources(
+    let cli = parse_start(["neovex", "start", "--encryption-key-provider", "aws-kms"]);
+    let result = persistence_config_from_sources(
         &cli,
         &PersistenceFileConfig::default(),
         &PersistenceEnv::default(),

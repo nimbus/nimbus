@@ -18,16 +18,16 @@ use neovex_sandbox::backends::container::{
 use serde_json::json;
 use tempfile::TempDir;
 
+use crate::compose::execution::{
+    load_host_backed_project_backend, should_auto_start_default_machine_for_host_loader,
+};
+use crate::compose::lifecycle::{start_service_launch, stop_service_target};
+use crate::compose::logs::{read_log_chunk, resolve_service_ctr_log_path};
+use crate::compose::process::{parse_process_rows, read_pid_file_if_exists};
 use crate::machine::{
     MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
     default_guest_helper_binary_dirs, serve_machine_api,
 };
-use crate::service::execution::{
-    load_host_backed_project_backend, should_auto_start_default_machine_for_host_loader,
-};
-use crate::service::lifecycle::{start_service_launch, stop_service_target};
-use crate::service::logs::{read_log_chunk, resolve_service_ctr_log_path};
-use crate::service::process::{parse_process_rows, read_pid_file_if_exists};
 
 mod forwarded_api;
 mod lifecycle;

@@ -8,7 +8,7 @@ pub(crate) async fn create_tenant(
     let tenant_id = TenantId::new(request.id)?;
     let service = state.service.clone();
     service.create_tenant_async(tenant_id.clone()).await?;
-    if let Some(registry) = state.convex_registry.as_ref() {
+    if let Some(registry) = state.convex_registry.current() {
         registry
             .apply_schema_to_tenant_async(&service, tenant_id.clone())
             .await?;

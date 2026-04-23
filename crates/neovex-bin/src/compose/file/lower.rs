@@ -45,13 +45,13 @@ impl ComposeProjectPlan {
         }
         if !raw.configs.is_empty() {
             warnings.push(format!(
-                "{}: top-level configs: ignored (not yet supported by neovex service config)",
+                "{}: top-level configs: ignored (not yet supported by neovex compose config)",
                 path.display()
             ));
         }
         if !raw.secrets.is_empty() {
             warnings.push(format!(
-                "{}: top-level secrets: ignored (not yet supported by neovex service config)",
+                "{}: top-level secrets: ignored (not yet supported by neovex compose config)",
                 path.display()
             ));
         }
@@ -89,7 +89,7 @@ impl ComposeProjectPlan {
     pub(crate) fn render(&self) -> Result<String, Error> {
         serde_yaml::to_string(self).map_err(|error| {
             Error::InvalidInput(format!(
-                "failed to render resolved service config from {}: {error}",
+                "failed to render resolved compose config from {}: {error}",
                 self.source_file.display()
             ))
         })

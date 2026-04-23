@@ -24,7 +24,8 @@ Reviewed against:
 - [crates/neovex-bin/src/machine/api.rs](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-bin/src/machine/api.rs)
 - [crates/neovex-bin/src/machine/client.rs](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-bin/src/machine/client.rs)
 - [crates/neovex-bin/src/machine/backend.rs](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-bin/src/machine/backend.rs)
-- [crates/neovex-bin/src/service/mod.rs](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-bin/src/service/mod.rs)
+- [crates/neovex-bin/src/start/mod.rs](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-bin/src/start/mod.rs)
+- [crates/neovex-bin/src/compose/mod.rs](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-bin/src/compose/mod.rs)
 - `/Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/package-oci.sh`
 - `/Users/jack/src/github.com/agentstation/neovex-machine-os/scripts/publish.sh`
 
@@ -374,7 +375,7 @@ The repo now owns four checked-in macOS proof collectors for this flow:
   captures guest-image and guest machine-API proof through `neovex machine ssh`
 - `make collect-neovex-machine-service-proof`
   captures host `<machine>-api.sock` health/capabilities, direct forwarded
-  machine-API sandbox listing, host `neovex service up/list/inspect/ps/logs/down`,
+  machine-API sandbox listing, host `neovex compose up/ps/inspect/top/logs/down`,
   and an optional localhost published-port probe
 - `make collect-neovex-homebrew-cask-proof`
   packages the local release binary plus bundled `libexec/gvproxy` into an
@@ -426,13 +427,13 @@ bundle at
 `/tmp/neovex-mac-buildproof.nDZ0P4/service-proof-buildstart-pathfix-teardownfix-refreshfix-stalepidfix-crlffix`
 shows `service config` lowering with `source.kind: build`, a resolved
 `dockerfile_path`, guest machine-API `service-sandboxes.build-start:
-available=true`, successful `service up/list/inspect/ps/logs/down`, and
+available=true`, successful `compose up/ps/inspect/top/logs/down`, and
 localhost `HTTP/1.1 200 OK` on `http://127.0.0.1:18080/healthz`.
 
-The current real-host `serve` auto-start proof bundle at
-`/tmp/neovex-mac-closeout.FNcv0I/serve-proof-d4c-autostart` then closes the
+The current real-host `start` auto-start proof bundle at
+`/tmp/neovex-mac-closeout.FNcv0I/start-proof-d4c-autostart` then closes the
 next host-resident DX seam on the same pinned Podman contract: the machine was
-stopped before startup, `neovex serve` on port `18084` brought it back to
+stopped before startup, `neovex start` on port `18084` brought it back to
 `running`, `/health` returned `200 {"ok":true}`, `services:activate` returned
 `18080`, localhost `http://127.0.0.1:18080/healthz` returned `200 ok`, native
 `/ws?tenant_id=demo-ws` captured an initial empty `subscription_result`
@@ -489,9 +490,9 @@ The repo also owns two checked-in operator drill helpers for the same contract:
 - Both the guest standard-container backend and the krun backend now treat a
   surviving pidfile without a live process as stale state. If shutdown was not
   requested, that state collapses to `failed` instead of lingering in
-  `starting`, which keeps post-restart `service up` from reporting
+  `starting`, which keeps post-restart `compose up` from reporting
   `already_running` for dead sandboxes.
-- The checked-in service-proof collector now waits for `service inspect` to
+- The checked-in service-proof collector now waits for `compose inspect` to
   report `status: ready`, retries the localhost published-port probe, and
   normalizes HTTP CRLF headers before matching the `200 OK` status line. That
   keeps the macOS proof bundle deterministic against real host responses.
@@ -500,10 +501,10 @@ The repo also owns two checked-in operator drill helpers for the same contract:
   `build:`-backed compose service and a `v1alpha2` guest capability payload
   with `service-sandboxes.build-start` available, so regressions in the
   build-backed lane are caught before the next real-host run.
-- When `neovex serve` loads a macOS container-backed Compose project without an
+- When `neovex start` loads a macOS container-backed Compose project without an
   injected machine-API client, it now auto-starts the initialized default
   machine under the existing machine lock before wiring the forwarded guest
-  sandbox backend. That keeps `serve` aligned with the documented "machine
+  sandbox backend. That keeps `start` aligned with the documented "machine
   start is the convergence path" contract instead of requiring a manual
   pre-start step.
 
@@ -537,7 +538,7 @@ If you want the shortest accurate explanation:
    `/run/neovex/neovex.sock`, and starts `neovex.socket`) before validating
    the forwarded machine API, so a fresh Podman-image boot does not get stuck
    on a pre-sync `start-limit-hit`.
-8. On macOS container-backed Compose projects, `neovex serve` now reuses that
+8. On macOS container-backed Compose projects, `neovex start` now reuses that
    same convergence path: if the initialized default machine is stopped, the
    host starts it before it wires the forwarded guest backend.
 9. The host Neovex server talks to the guest machine API through a forwarded

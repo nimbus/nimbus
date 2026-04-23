@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ServiceDownCommand, ServiceUpCommand, load_compose_project_context,
+    ComposeDownCommand, ComposeUpCommand, load_compose_project_context,
     load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
     requested_service_names, resolve_remote_service_down_targets, resolve_service_down_targets,
     resolve_service_execution_surface, validate_forwarded_machine_api_backend,
@@ -80,7 +80,7 @@ impl ServiceLifecycleTarget {
 }
 
 pub(super) async fn service_up_outcomes_for_platform(
-    command: &ServiceUpCommand,
+    command: &ComposeUpCommand,
     control_data_dir: &Path,
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -97,7 +97,7 @@ pub(super) async fn service_up_outcomes_for_platform(
     match resolve_service_execution_surface(
         &context,
         command.service.as_deref(),
-        "service up",
+        "compose up",
         host_platform,
         machine_api_client,
     )? {
@@ -188,7 +188,7 @@ pub(super) async fn service_up_outcomes_for_platform(
 }
 
 pub(super) async fn service_down_outcomes_for_platform(
-    command: &ServiceDownCommand,
+    command: &ComposeDownCommand,
     control_data_dir: &Path,
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -202,7 +202,7 @@ pub(super) async fn service_down_outcomes_for_platform(
     match resolve_service_execution_surface(
         &context,
         command.service.as_deref(),
-        "service down",
+        "compose down",
         host_platform,
         machine_api_client,
     )? {
@@ -238,7 +238,7 @@ pub(super) async fn service_down_outcomes_for_platform(
             validate_forwarded_machine_api_operations(
                 &context,
                 &client,
-                "service down",
+                "compose down",
                 &required_operations,
             )?;
             let targets = resolve_remote_service_down_targets(

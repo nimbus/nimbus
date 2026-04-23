@@ -141,5 +141,17 @@ fn read_schema_manifest(path: &Path) -> Result<Option<Schema>, Error> {
             path.display()
         ))
     })?;
-    manifest.into_schema()
+    let schema = manifest.into_schema()?;
+    if let Some(schema) = &schema {
+        validate_schema_manifest(schema)?;
+    }
+    Ok(schema)
+}
+
+fn validate_schema_manifest(schema: &Schema) -> Result<(), Error> {
+    for table_schema in schema.tables.values() {
+        table_schema.validate_indexes()?;
+        table_schema.validate_access_policy()?;
+    }
+    Ok(())
 }

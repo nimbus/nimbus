@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ServiceHostPlatform, ServicePsCommand, load_compose_project_context,
+    ComposeTopCommand, ServiceHostPlatform, load_compose_project_context,
     lookup_current_remote_service_details, machine_api_operation_error,
     missing_persisted_service_error, render_state_lookup_error,
     require_krun_backend_for_service_operation, resolve_service_execution_surface,
@@ -37,11 +37,11 @@ pub(super) struct ServiceProcessRow {
 }
 
 pub(super) fn resolve_service_process_snapshot(
-    command: &ServicePsCommand,
+    command: &ComposeTopCommand,
     control_data_dir: &Path,
 ) -> Result<ServiceProcessSnapshot, Error> {
     let context = load_compose_project_context(&command.file, control_data_dir)?;
-    require_krun_backend_for_service_operation(&context, Some(&command.service), "service ps")?;
+    require_krun_backend_for_service_operation(&context, Some(&command.service), "compose top")?;
     let state_view =
         KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let tenant = command
@@ -78,7 +78,7 @@ pub(super) fn resolve_service_process_snapshot(
 }
 
 pub(super) fn resolve_service_process_snapshot_for_platform(
-    command: &ServicePsCommand,
+    command: &ComposeTopCommand,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
@@ -91,7 +91,7 @@ pub(super) fn resolve_service_process_snapshot_for_platform(
     match resolve_service_execution_surface(
         &context,
         Some(&command.service),
-        "service ps",
+        "compose top",
         host_platform,
         machine_api_client,
     )? {
@@ -102,7 +102,7 @@ pub(super) fn resolve_service_process_snapshot_for_platform(
             validate_forwarded_machine_api_operations(
                 &context,
                 &client,
-                "service ps",
+                "compose top",
                 &["service-sandboxes.inspect-current", "service-sandboxes.ps"],
             )?;
             let details = lookup_current_remote_service_details(

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use neovex::RuntimeLimits;
 
-use super::ServeCommand;
+use super::StartCommand;
 
 pub(crate) fn default_runtime_heap_mb() -> usize {
     RuntimeLimits::default().max_heap_mb
@@ -28,7 +28,7 @@ pub(crate) fn default_runtime_max_nested_calls() -> usize {
     RuntimeLimits::default().max_nested_runtime_invocations
 }
 
-pub(crate) fn runtime_limits_from_command(command: &ServeCommand) -> RuntimeLimits {
+pub(crate) fn runtime_limits_from_command(command: &StartCommand) -> RuntimeLimits {
     RuntimeLimits {
         max_heap_mb: command.runtime_heap_mb,
         initial_heap_mb: command.runtime_initial_heap_mb,

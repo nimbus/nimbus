@@ -25,7 +25,7 @@ fn resolve_service_ctr_log_path_defaults_to_local_project_tenant_and_honors_over
     );
 
     let default_path = resolve_service_ctr_log_path(
-        &ServiceLogsCommand {
+        &ComposeLogsCommand {
             service: "db".to_owned(),
             file: compose_path.clone(),
             tenant: None,
@@ -37,7 +37,7 @@ fn resolve_service_ctr_log_path_defaults_to_local_project_tenant_and_honors_over
     assert!(default_path.ends_with("containers/db-01aaa/ctr.log"));
 
     let override_path = resolve_service_ctr_log_path(
-        &ServiceLogsCommand {
+        &ComposeLogsCommand {
             service: "db".to_owned(),
             file: compose_path,
             tenant: Some(TenantId::new("tenant-other").expect("tenant should parse")),
@@ -118,7 +118,7 @@ fn parse_process_rows_filters_requested_pids_and_preserves_command_text() {
 }
 
 #[test]
-fn render_service_ps_reads_pidfiles_from_persisted_state() {
+fn render_compose_top_reads_pidfiles_from_persisted_state() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let compose_path = write_compose_fixture(temp_dir.path());
     let control_data_dir = temp_dir.path().join("control");
@@ -138,20 +138,20 @@ fn render_service_ps_reads_pidfiles_from_persisted_state() {
     fs::write(container_dir.join("conmon.pid"), "4294967295\n")
         .expect("conmon pidfile should write");
 
-    let rendered = render_service_ps_for_platform(
-        &ServicePsCommand {
+    let rendered = render_compose_top_for_platform(
+        &ComposeTopCommand {
             service: "db".to_owned(),
             file: compose_path,
             tenant: None,
-            format: ServicePsOutputFormat::Table,
+            format: ComposeTopOutputFormat::Table,
             no_heading: false,
         },
         &control_data_dir,
         ServiceHostPlatform::Linux,
         None,
     )
-    .expect("service ps should render");
-    assert!(rendered.contains("Service process snapshot for db"));
+    .expect("compose top should render");
+    assert!(rendered.contains("Compose top snapshot for db"));
     assert!(rendered.contains("db-01aaa"));
     assert!(rendered.contains("runtime pid: 4294967294"));
     assert!(rendered.contains("conmon pid: 4294967295"));
@@ -159,7 +159,7 @@ fn render_service_ps_reads_pidfiles_from_persisted_state() {
 }
 
 #[test]
-fn render_service_ps_can_omit_process_table_headings() {
+fn render_compose_top_can_omit_process_table_headings() {
     let snapshot = ServiceProcessSnapshot {
         sandbox_id: SandboxId::new("db-01aaa"),
         tenant_id: TenantId::new("tenant-a").expect("tenant should parse"),
@@ -177,10 +177,10 @@ fn render_service_ps_can_omit_process_table_headings() {
     };
 
     let rendered =
-        render_service_process_snapshot_view(&snapshot, ServicePsOutputFormat::Table, true)
+        render_service_process_snapshot_view(&snapshot, ComposeTopOutputFormat::Table, true)
             .expect("table output without headings should render");
 
-    assert!(rendered.contains("Service process snapshot for db"));
+    assert!(rendered.contains("Compose top snapshot for db"));
     assert!(!rendered.contains("PID"));
     assert!(!rendered.contains("PPID"));
     assert!(rendered.contains("/usr/bin/neovex"));
