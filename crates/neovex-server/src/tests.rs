@@ -58,6 +58,44 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
     );
 }
 
+#[tokio::test]
+async fn cors_preflight_only_allows_loopback_browser_origins() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(build_router(fixture.service())).await;
+
+    let allowed = server
+        .client()
+        .request(reqwest::Method::OPTIONS, server.http_url("/api/tenants"))
+        .header("origin", "http://localhost:5173")
+        .header("access-control-request-method", "POST")
+        .send()
+        .await
+        .expect("allowed preflight should send");
+    assert_eq!(
+        allowed
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("http://localhost:5173")
+    );
+
+    let denied = server
+        .client()
+        .request(reqwest::Method::OPTIONS, server.http_url("/api/tenants"))
+        .header("origin", "http://example.com")
+        .header("access-control-request-method", "POST")
+        .send()
+        .await
+        .expect("denied preflight should send");
+    assert!(
+        denied
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "non-loopback origins must not receive a CORS allow-origin header"
+    );
+}
+
 fn convex_registry(functions: serde_json::Value) -> ConvexRegistry {
     convex_registry_with_routes(functions, json!([]))
 }

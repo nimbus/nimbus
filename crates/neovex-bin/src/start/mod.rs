@@ -32,6 +32,10 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = 8080)]
     pub(crate) port: u16,
 
+    /// Host interface to listen on. Defaults to loopback for local safety.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) host: String,
+
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
     #[arg(long)]
@@ -207,6 +211,7 @@ impl Default for StartCommand {
         Self {
             config: None,
             port: 8080,
+            host: "127.0.0.1".to_string(),
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

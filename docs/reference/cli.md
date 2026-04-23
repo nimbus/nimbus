@@ -117,7 +117,7 @@ neovex machine os upgrade [--dry-run] [--restart]
 ```
 
 ```bash
-neovex start [--app-dir ./app] [--skip-codegen] [--compose-file PATH]...
+neovex start [--host 127.0.0.1] [--port 8080] [--app-dir ./app] [--skip-codegen] [--compose-file PATH]...
 ```
 
 For local development from source:
@@ -148,6 +148,7 @@ Current command taxonomy:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
+| `--host` | `127.0.0.1` | host interface to listen on; use an explicit non-loopback value only when intentionally exposing the local server beyond localhost |
 | `--port` | `8080` | port to listen on |
 | `--data-dir` | `./data` | data directory for tenant databases |
 | `--app-dir` | unset | optional app directory whose user source root may be `neovex/` or `convex/`; generated runtime artifacts still live under `.neovex/convex/` |

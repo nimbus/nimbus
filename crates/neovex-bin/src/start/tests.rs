@@ -169,6 +169,15 @@ fn cli_parses_start_command_with_app_dir() {
 }
 
 #[test]
+fn cli_defaults_start_host_to_loopback_and_accepts_explicit_host() {
+    let default_cli = parse_start(["neovex", "start"]);
+    assert_eq!(default_cli.host, "127.0.0.1");
+
+    let explicit_cli = parse_start(["neovex", "start", "--host", "0.0.0.0"]);
+    assert_eq!(explicit_cli.host, "0.0.0.0");
+}
+
+#[test]
 fn cli_parses_start_command_with_skip_codegen() {
     let cli = parse_start([
         "neovex",
@@ -374,6 +383,7 @@ fn start_help_shows_app_dir_flag_name() {
         Cli::try_parse_from(["neovex", "start", "--help"]).expect_err("help should short-circuit");
     assert_eq!(error.kind(), ErrorKind::DisplayHelp);
     let rendered = error.to_string();
+    assert!(rendered.contains("--host"));
     assert!(rendered.contains("--app-dir"));
     assert!(rendered.contains("--skip-codegen"));
     assert!(rendered.contains("neovex start --app-dir ./demos/convex/html"));

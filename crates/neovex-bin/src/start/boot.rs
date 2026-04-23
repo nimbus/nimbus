@@ -42,13 +42,14 @@ pub(crate) async fn run_start_command(
     let scheduler_handle = tokio::spawn(async move {
         run_scheduler(scheduler_service, shutdown_rx).await;
     });
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", command.port)).await?;
+    let listener = tokio::net::TcpListener::bind((command.host.as_str(), command.port)).await?;
     emit_start_startup_summary(
         &command,
         compose_selection.as_ref(),
         listener.local_addr()?,
         deploy_admin_enabled,
     );
+    emit_non_loopback_warning(listener.local_addr()?);
 
     tracing::info!(
         license_kind = ?license_snapshot.kind,
@@ -143,6 +144,21 @@ fn emit_start_info(message: impl AsRef<str>) {
     }
 }
 
+fn emit_start_warning(message: impl AsRef<str>) {
+    if cli_ux::info_output_enabled() {
+        let _ = cli_ux::write_stderr_prefixed_line("warning:", message.as_ref());
+    }
+}
+
+fn emit_non_loopback_warning(listen_addr: SocketAddr) {
+    if !listen_addr.ip().is_loopback() {
+        emit_start_warning(format!(
+            "server is listening on non-loopback address {}; local admin routes are reachable from that interface",
+            listen_addr.ip()
+        ));
+    }
+}
+
 fn emit_start_startup_summary(
     command: &StartCommand,
     compose_selection: Option<&ResolvedComposeSelection>,
@@ -199,6 +215,8 @@ pub(super) fn start_startup_summary_lines(
 fn local_listen_url(addr: SocketAddr) -> String {
     let host = if addr.ip().is_unspecified() {
         "localhost".to_string()
+    } else if addr.ip().is_ipv6() {
+        format!("[{}]", addr.ip())
     } else {
         addr.ip().to_string()
     };
