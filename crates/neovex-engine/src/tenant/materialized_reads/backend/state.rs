@@ -197,8 +197,7 @@ impl MaterializedServingBackend {
 }
 
 pub(super) fn estimate_document_bytes(document: &Document) -> usize {
-    document
-        .to_msgpack()
+    neovex_storage::document_codec::encode_document_msgpack(document)
         .map(|bytes| bytes.len())
         // Sizing is advisory; fall back to a coarse JSON estimate instead of
         // poisoning the materialized-read locks on an unexpected serialization

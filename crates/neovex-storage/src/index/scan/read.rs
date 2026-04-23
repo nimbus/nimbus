@@ -1,13 +1,14 @@
 use neovex_core::{Document, Result, TableName};
 use redb::{ReadTransaction, TableError};
 
+use crate::document_codec::decode_document_msgpack;
 use crate::keys::document_key;
 use crate::store::{DOCUMENTS, INDEXES, map_redb_error};
 
 use super::super::keyspace::doc_id_from_index_key;
 
 pub(super) fn decode_document(bytes: &[u8]) -> Result<Document> {
-    Document::from_msgpack(bytes)
+    decode_document_msgpack(bytes)
         .map_err(|error| neovex_core::Error::Serialization(error.to_string()))
 }
 

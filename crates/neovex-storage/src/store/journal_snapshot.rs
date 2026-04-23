@@ -2,6 +2,7 @@ use neovex_core::{Document, DurableMutationRecord, Error, Result, Schema, Sequen
 use redb::{ReadableTable, TableError};
 use std::time::Instant;
 
+use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 
 #[cfg(test)]
@@ -71,8 +72,7 @@ impl TenantStore {
         {
             let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
             for document in &snapshot.documents {
-                let payload = document
-                    .to_msgpack()
+                let payload = encode_document_msgpack(document)
                     .map_err(|error| Error::Serialization(error.to_string()))?;
                 let key = document_key(&document.table, &document.id);
                 documents
@@ -256,7 +256,7 @@ impl TenantReadSnapshot {
             let (_, value) = item.map_err(map_redb_error)?;
             let decode_started = Instant::now();
             documents.push(
-                Document::from_msgpack(value.value())
+                decode_document_msgpack(value.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?,
             );
             decode_elapsed += decode_started.elapsed();

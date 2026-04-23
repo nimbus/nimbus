@@ -5,13 +5,15 @@ use neovex_core::{
 use redb::{ReadableTable, TableError};
 use std::time::{Duration, Instant};
 
+use crate::document_codec::decode_document_msgpack;
+use crate::keys::{document_key, prefix_end, table_prefix};
+
 use super::journal::decode_u64;
 use super::scan::ScanPushdown;
 use super::{
     APPLIED_SEQUENCE_KEY, DOCUMENTS, JournalProgress, METADATA, NEXT_SEQUENCE_KEY,
     SCHEDULED_JOB_EXECUTIONS, SCHEMAS, TenantReadSnapshot, TenantStore, map_redb_error,
 };
-use crate::keys::{document_key, prefix_end, table_prefix};
 
 impl TenantStore {
     pub fn read_snapshot(&self) -> Result<TenantReadSnapshot> {
@@ -162,7 +164,7 @@ impl TenantReadSnapshot {
         let key = document_key(table, id);
         match table_handle.get(key.as_slice()).map_err(map_redb_error)? {
             Some(value) => Ok(Some(
-                Document::from_msgpack(value.value())
+                decode_document_msgpack(value.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?,
             )),
             None => Ok(None),
@@ -239,7 +241,7 @@ impl TenantReadSnapshot {
                         continue;
                     }
                     self.scan_metrics.record_decoded_row();
-                    let document = Document::from_msgpack(value.value())
+                    let document = decode_document_msgpack(value.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     if include_document(&document)? {
                         documents.push(document);
@@ -264,7 +266,7 @@ impl TenantReadSnapshot {
                         continue;
                     }
                     self.scan_metrics.record_decoded_row();
-                    let document = Document::from_msgpack(value.value())
+                    let document = decode_document_msgpack(value.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     if include_document(&document)? {
                         documents.push(document);

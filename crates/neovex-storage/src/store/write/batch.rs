@@ -1,6 +1,7 @@
 use neovex_core::{CommitEntry, Document, Error, Result, WriteOp, WriteOpType};
 use redb::ReadableTable;
 
+use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::index::index_key_for_document;
 use crate::keys::document_key;
 
@@ -99,8 +100,7 @@ fn apply_insert(
         )));
     }
 
-    let payload = document
-        .to_msgpack()
+    let payload = encode_document_msgpack(document)
         .map_err(|error| Error::Serialization(error.to_string()))?;
     documents
         .insert(key.as_slice(), payload.as_slice())
@@ -139,7 +139,7 @@ fn apply_update(
                 "document {} changed before transaction commit",
                 current.id
             )))?;
-        Document::from_msgpack(existing.value())
+        decode_document_msgpack(existing.value())
             .map_err(|error| Error::Serialization(error.to_string()))?
     };
     if &existing != previous {
@@ -149,8 +149,7 @@ fn apply_update(
         )));
     }
 
-    let payload = current
-        .to_msgpack()
+    let payload = encode_document_msgpack(current)
         .map_err(|error| Error::Serialization(error.to_string()))?;
     documents
         .insert(key.as_slice(), payload.as_slice())
@@ -199,7 +198,7 @@ fn apply_delete(
             "document {} changed before transaction commit",
             previous.id
         )))?;
-    let removed = Document::from_msgpack(removed.value())
+    let removed = decode_document_msgpack(removed.value())
         .map_err(|error| Error::Serialization(error.to_string()))?;
     if &removed != previous {
         return Err(Error::Conflict(format!(
