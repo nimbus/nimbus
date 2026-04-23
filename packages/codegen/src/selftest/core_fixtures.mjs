@@ -23,6 +23,8 @@ async function runCoreFixtures() {
   await testMissingSourceRootFixture();
   await testDuplicateAuthConfigFixture();
   await testUnsupportedFixture();
+  await testTypeAnnotatedExportFixture();
+  await testUnsafeCompileTimeResolverFixture();
 }
 
 async function testSupportedDefineFixture() {
@@ -93,7 +95,7 @@ async function testSupportedServerFixture() {
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
-export const list = query({
+export const list: unknown = query({
   args: {},
   handler: async (_ctx, _args) => ({
     table: "messages",
@@ -103,7 +105,7 @@ export const list = query({
   }),
 });
 
-export const storeInternal = internalMutation({
+export const storeInternal: unknown = internalMutation({
   args: { body: v.string() },
   handler: async (_ctx, { body }) => ({
     type: "insert",
@@ -437,6 +439,51 @@ export const list = () => "not supported";
   assert.match(
     result.stderr,
     /requires Phase 4C runtime execution support/,
+  );
+}
+
+async function testTypeAnnotatedExportFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { query } from "./_generated/server";
+
+export const list: unknown = query({
+  args: {},
+  handler: async (_ctx, _args) => ({
+    table: "messages",
+    filters: [],
+    order: null,
+    limit: 10,
+  }),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions.length, 1);
+  assert.equal(manifest.functions[0].name, "messages:list");
+}
+
+async function testUnsafeCompileTimeResolverFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { query } from "./_generated/server";
+
+export const leak = query({
+  args: {},
+  handler: async () => globalThis.process,
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0, "unsafe resolver fixture should fail");
+  assert.match(
+    result.stderr,
+    /unsafe compile-time resolver reference "globalThis"/,
   );
 }
 
