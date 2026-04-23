@@ -230,20 +230,18 @@ fn start_help_shows_app_dir_flag_name() {
     assert!(!rendered.contains("--convex-app-dir"));
 }
 
-#[tokio::test]
-async fn start_missing_functions_manifest_reports_actionable_error() {
+#[test]
+fn start_missing_functions_manifest_reports_actionable_error() {
     let temp = tempdir_in_repo_target();
     let app_dir = temp.path().to_path_buf();
     let command = StartCommand {
         app_dir: Some(app_dir.clone()),
         skip_codegen: true,
-        port: 0,
         ..StartCommand::default()
     };
 
-    let error = super::boot::run_start_command(command)
-        .await
-        .expect_err("missing functions manifest should fail start startup");
+    let error = super::boot::load_convex_registry(&command, &RuntimeLimits::default())
+        .expect_err("missing functions manifest should fail registry loading");
     let rendered = error.to_string();
     let functions_path = app_dir
         .join(".neovex")
@@ -303,6 +301,13 @@ fn load_convex_registry_accepts_manifest_only_app_dir_without_bundle() {
 
 #[tokio::test]
 async fn start_codegen_preflight_generates_runtime_artifacts() {
+    if !workspace_codegen_dependencies_available() {
+        eprintln!(
+            "skipping codegen preflight integration test; workspace JS dependencies are unavailable"
+        );
+        return;
+    }
+
     let temp = tempdir_in_repo_target();
     write_codegen_source_fixture(temp.path());
 
@@ -840,13 +845,27 @@ services:
 }
 
 fn tempdir_in_repo_target() -> tempfile::TempDir {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("crate manifest dir should have repo root");
+    let repo_root = repo_root();
     let target_dir = repo_root.join("target");
     fs::create_dir_all(&target_dir).expect("repo target dir should exist");
     tempfile::tempdir_in(&target_dir).expect("tempdir in repo target should create")
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate manifest dir should have repo root")
+        .to_path_buf()
+}
+
+fn workspace_codegen_dependencies_available() -> bool {
+    let repo_root = repo_root();
+    repo_root.join("packages/codegen/src/main.mjs").is_file()
+        && (repo_root.join("node_modules/esbuild").is_dir()
+            || repo_root
+                .join("packages/codegen/node_modules/esbuild")
+                .is_dir())
 }
 
 fn write_codegen_source_fixture(app_dir: &Path) {
