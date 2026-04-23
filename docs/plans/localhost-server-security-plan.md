@@ -113,6 +113,45 @@ exists, the CLI may perform an offline atomic rewrite. Rotation bumps
 | Native shell | Reads token file, sends `Authorization: Bearer <token>` | Has filesystem access |
 | Browser tab | POSTs token to `/ui/auth/session` or redeems a short-lived CLI launch ticket, then receives a session cookie | Cannot read filesystem |
 
+### Auth layer model
+
+This plan protects the local server surface. It must not duplicate or replace
+application authentication.
+
+Neovex has two separate auth layers:
+
+1. **Server access auth** proves the caller may use local Neovex control
+   surfaces. Sources are the local admin token, signed `neovex_session`
+   cookie, one-time browser launch tickets, and the deploy-specific token.
+   Server access auth authorizes route families such as native REST,
+   diagnostics, deploy admin, and the desktop/system UI. It never populates
+   Convex `InvocationAuth`, `ctx.auth`, or the engine `PrincipalContext` for a
+   user tenant.
+2. **Application auth** proves the end-user identity for a tenant/app
+   invocation. Today the Convex adapter verifies JWT/OIDC/custom JWT tokens
+   from `convex/auth.config.ts` and normalizes them into `InvocationAuth` plus
+   `PrincipalContext`. Future Neovex-native application auth should reuse the
+   same provider-neutral verifier and identity normalization path, then map to
+   Convex-compatible shapes at the Convex adapter boundary. Do not add a
+   second JWT/OIDC verifier for the local server token/session system.
+
+Tenant scope is explicit:
+
+- the tenant id in the route selects the tenant/app registry before
+  application auth is verified
+- an application identity is scoped to that tenant/app auth configuration
+- a local admin token or UI session is server-wide and is not a user-tenant
+  application identity
+- the reserved `_neovex` system tenant may receive an explicit system
+  principal derived from server access auth for management UI functions, but
+  that projection is limited to `_neovex` and must not bleed into user tenants
+
+Header ownership is also explicit. `Authorization: Bearer ...` on
+Convex-compatible app routes belongs to application auth. Local admin bearer
+tokens are accepted on server-control route families; if a future app route
+also needs server access auth, use the signed cookie or a distinct
+`X-Neovex-Admin-Token` header instead of stealing the application's bearer JWT.
+
 ### Session cookie bootstrap
 
 GET navigation to `/ui/` never mints a session by itself. If a request lacks a
@@ -140,16 +179,17 @@ and extensions that may not preserve fetch metadata headers.
 
 ### Protected route matrix
 
-| Route family | Auth | Origin / CORS | Notes |
-| --- | --- | --- | --- |
-| `GET /health` | none | no credentials, no CORS credentials | Liveness only; must not expose tenant, runtime, license, machine, or path state |
-| `GET /ui/*` | signed session cookie, redirect to `/ui/auth` when missing | same-origin only | LS4 owns minimal bootstrap routes; DU1 later replaces static assets without weakening middleware |
-| `POST /ui/auth/session` | local admin token in POST body or one-time CLI launch ticket | same-origin or no-origin localhost form POST only | Sets `neovex_session`; never accepts query-string credentials |
-| `/api/tenants/*`, `/api/tenants`, `/api/*/documents`, `/api/*/query`, scheduler, cron, journal | bearer token or signed session cookie | localhost allowlist only; credentialed CORS disabled unless explicitly configured | Native admin/data surface |
-| `/debug/*` | bearer token or signed session cookie | localhost allowlist only | Diagnostics can leak local state and provider topology |
-| `POST /api/admin/deploy` | existing deploy token plus local admin auth when bound to loopback; deploy token remains required | localhost allowlist only | `NEOVEX_DEPLOY_TOKEN` remains the deploy-specific capability |
-| `/convex/{tenant}/query`, `/mutation`, `/action`, `/schedule/*`, `/http/*` | local admin auth for localhost server access; app auth still handled by Convex registry when configured | localhost allowlist only | Local server gate is separate from application identity |
-| `/ws`, `/convex/{tenant}/ws` | bearer token or signed session cookie before protocol selection/upgrade | WebSocket `Origin` must be absent or in allowlist | Bad origin must return `403` before token validation |
+| Route family | Server access auth | Application auth | Origin / CORS | Notes |
+| --- | --- | --- | --- | --- |
+| `GET /health` | none | none | no credentials, no CORS credentials | Liveness only; must not expose tenant, runtime, license, machine, or path state |
+| `GET /ui/*` | signed session cookie, redirect to `/ui/auth` when missing | `_neovex` system principal only when a system-tenant function is invoked | same-origin only | LS4 owns minimal bootstrap routes; DU1 later replaces static assets without weakening middleware |
+| `POST /ui/auth/session` | local admin token in POST body or one-time CLI launch ticket | none | same-origin or no-origin localhost form POST only | Sets `neovex_session`; never accepts query-string credentials |
+| `/api/tenants/*`, `/api/tenants`, `/api/*/documents`, `/api/*/query`, scheduler, cron, journal | local admin bearer token or signed session cookie | none unless route explicitly delegates into a tenant app | localhost allowlist only; credentialed CORS disabled unless explicitly configured | Native admin/data surface; local admin token is not a tenant principal |
+| `/debug/*` | local admin bearer token or signed session cookie | none | localhost allowlist only | Diagnostics can leak local state and provider topology |
+| `POST /api/admin/deploy` | existing deploy token plus local admin auth when bound to loopback; deploy token remains required | none | localhost allowlist only | `NEOVEX_DEPLOY_TOKEN` remains the deploy-specific capability |
+| `/convex/{tenant}/query`, `/mutation`, `/action`, `/schedule/*`, `/http/*` | none by default for Convex-compatible app API | tenant/app `Authorization: Bearer <JWT>` verified by the selected Convex registry when configured; otherwise anonymous | localhost allowlist only | Preserves Convex semantics. Local server auth must not consume the app bearer token or populate `ctx.auth`. |
+| `/ws` | local admin bearer token or signed session cookie before protocol selection/upgrade | none | WebSocket `Origin` must be absent or in allowlist | Native server WebSocket surface |
+| `/convex/{tenant}/ws` | none by default for Convex-compatible app API | tenant/app auth follows the Convex WebSocket protocol and selected registry | WebSocket `Origin` must be absent or in allowlist | Bad origin must return `403` before any local or app token validation |
 
 Default allowlist entries are `http://localhost:<port>`,
 `http://127.0.0.1:<port>`, and `http://[::1]:<port>`. Explicit extra origins
@@ -161,7 +201,7 @@ localhost-security closeout shape.
 Request flows through layers in this order (outermost first):
 
 ```
-trace → request_id → origin_allowlist → rate_limit → auth_extract → protocol_select → ws_upgrade
+trace → request_id → origin_allowlist → rate_limit → server_access_extract → route_family_gate → tenant_select → application_auth_extract → protocol_select → ws_upgrade
 ```
 
 - Origin before auth prevents leaking token-validity timing to hostile origins.
@@ -169,7 +209,13 @@ trace → request_id → origin_allowlist → rate_limit → auth_extract → pr
   60 failed auth attempts per minute per remote IP, 120 `/ui/auth/session`
   attempts per minute per process, and a global cap of 512 concurrent
   WebSocket upgrades.
-- Protocol after auth avoids wasting parser work on unauthenticated requests.
+- Server access extraction parses local token/session credentials but only
+  enforces them for route families that require server access auth.
+- Application auth runs after tenant selection so the selected tenant/app
+  registry owns JWT/OIDC verification. It produces `InvocationAuth` and
+  `PrincipalContext`; server access auth does not.
+- Protocol after the relevant auth gate avoids wasting parser work on
+  unauthenticated requests.
 - `/health` is unauthenticated and outside this stack (liveness probe).
 
 ### Content Security Policy
@@ -250,18 +296,25 @@ file is reused across restarts, (e) Windows ACL restricts to current user,
 
 ### LS3 — Origin allowlist and middleware stack
 
-Implement route-family auth and origin policy from the protected route matrix.
-Implement the full middleware ordering: trace → request_id →
-origin_allowlist → rate_limit → auth_extract → protocol_select →
-ws_upgrade. Bind to loopback only by default; non-loopback binding requires an
-explicit `--host` value and must print a startup warning that local admin auth
-is now reachable from that interface.
+Implement route-family server-access policy, application-auth extraction, and
+origin policy from the protected route matrix. Implement the full middleware
+ordering: trace → request_id → origin_allowlist → rate_limit →
+server_access_extract → route_family_gate → tenant_select →
+application_auth_extract → protocol_select → ws_upgrade. Bind to loopback only
+by default; non-loopback binding requires an explicit `--host` value and must
+print a startup warning that local admin auth is now reachable from that
+interface.
 
 **Verification:** (a) non-allowlisted origin → 403, (b) allowlisted origin
-with invalid token → 401, (c) `/health` bypasses auth, (d) ordering
-confirmed via integration test that checks 403 before 401 for bad origin +
-bad token, (e) representative native CRUD, debug, deploy, Convex HTTP, native
-WebSocket, and Convex WebSocket routes reject unauthenticated requests.
+with invalid server-access token on a protected native route → 401,
+(c) `/health` bypasses auth, (d) ordering confirmed via integration test that
+checks 403 before 401 for bad origin + bad token, (e) representative native
+CRUD, debug, deploy, and native WebSocket routes reject missing server access
+auth, (f) Convex-compatible HTTP and WebSocket app routes preserve Convex
+application-auth semantics and do not require or interpret the local admin
+token by default, (g) a local admin token presented to a Convex app route does
+not populate `ctx.auth`, and (h) a tenant-scoped Convex JWT is verified only
+against the selected tenant/app registry.
 
 **Status:** `pending`
 
