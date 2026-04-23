@@ -7,9 +7,17 @@ use std::process::Stdio;
 use clap::Args;
 use tokio::process::Command;
 
+const CODEGEN_PACKAGE_SPECIFIER: &str = "@neovex/codegen";
+const CODEGEN_WORKSPACE_ENTRY: [&str; 4] = ["packages", "codegen", "src", "main.mjs"];
 const CODEGEN_BOOTSTRAP: &str = r#"
-const { runCliFromArgs } = await import("@neovex/codegen");
-await runCliFromArgs(process.argv.slice(1), {
+import { pathToFileURL } from "node:url";
+
+const [codegenEntry, ...cliArgs] = process.argv.slice(1);
+const codegenSpecifier = codegenEntry.startsWith("@")
+  ? codegenEntry
+  : pathToFileURL(codegenEntry).href;
+const { runCliFromArgs } = await import(codegenSpecifier);
+await runCliFromArgs(cliArgs, {
   onInfo(message) {
     console.error(message);
   },
@@ -93,16 +101,90 @@ fn canonicalize_app_dir(app_dir: &Path) -> io::Result<PathBuf> {
 }
 
 fn build_codegen_process(app_dir: &Path) -> Command {
+    let import_target = resolve_codegen_import_target(app_dir);
     let mut command = Command::new("node");
     command.current_dir(app_dir);
     command.arg("--input-type=module");
     command.arg("--eval");
     command.arg(CODEGEN_BOOTSTRAP);
     command.arg("--");
+    command.arg(import_target);
     command.arg("--app");
     command.arg(".");
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
     command
+}
+
+fn resolve_codegen_import_target(app_dir: &Path) -> String {
+    find_workspace_codegen_entry(app_dir)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| CODEGEN_PACKAGE_SPECIFIER.to_string())
+}
+
+fn find_workspace_codegen_entry(app_dir: &Path) -> Option<PathBuf> {
+    let mut search_roots = vec![app_dir.to_path_buf()];
+
+    if let Ok(current_dir) = env::current_dir() {
+        search_roots.push(current_dir);
+    }
+
+    if let Ok(current_exe) = env::current_exe() {
+        search_roots.push(current_exe);
+    }
+
+    search_roots
+        .into_iter()
+        .find_map(|root| find_workspace_codegen_entry_from(&root))
+}
+
+fn find_workspace_codegen_entry_from(start: &Path) -> Option<PathBuf> {
+    let start = if start.is_dir() {
+        start
+    } else {
+        start.parent()?
+    };
+    start.ancestors().find_map(|ancestor| {
+        let candidate = CODEGEN_WORKSPACE_ENTRY
+            .iter()
+            .fold(ancestor.to_path_buf(), |path, segment| path.join(segment));
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("crate manifest dir should have repo root")
+            .to_path_buf()
+    }
+
+    #[test]
+    fn finds_workspace_codegen_entry_from_repo_target_tempdir() {
+        let target_dir = repo_root().join("target");
+        fs::create_dir_all(&target_dir).expect("repo target dir should exist");
+        let temp = tempfile::tempdir_in(&target_dir).expect("tempdir in repo target should create");
+
+        let entry = find_workspace_codegen_entry_from(temp.path())
+            .expect("repo-relative tempdir should resolve workspace codegen entry");
+
+        assert_eq!(entry, repo_root().join("packages/codegen/src/main.mjs"));
+    }
+
+    #[test]
+    fn returns_none_when_no_workspace_codegen_entry_is_present() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let entry = find_workspace_codegen_entry_from(temp.path());
+
+        assert!(
+            entry.is_none(),
+            "non-repo tempdir should not resolve workspace codegen"
+        );
+    }
 }
