@@ -3,6 +3,7 @@ use neovex_core::{
 };
 use redb::ReadableTable;
 
+use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 
 use super::super::{DOCUMENTS, TenantStore, TenantWriteTransaction, map_redb_error};
@@ -14,8 +15,7 @@ fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result
 impl TenantWriteTransaction {
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
-        let payload = document
-            .to_msgpack()
+        let payload = encode_document_msgpack(document)
             .map_err(|error| Error::Serialization(error.to_string()))?;
         {
             let mut documents = self
@@ -59,7 +59,7 @@ impl TenantWriteTransaction {
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
                     .ok_or(Error::DocumentNotFound(*id))?;
-                Document::from_msgpack(existing.value())
+                decode_document_msgpack(existing.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?
             };
             let mut document = existing_document.clone();
@@ -67,8 +67,7 @@ impl TenantWriteTransaction {
                 document.fields.insert(field.clone(), value.clone());
             }
             validate(&existing_document, &document)?;
-            let payload = document
-                .to_msgpack()
+            let payload = encode_document_msgpack(&document)
                 .map_err(|error| Error::Serialization(error.to_string()))?;
             documents
                 .insert(key.as_slice(), payload.as_slice())
@@ -104,7 +103,7 @@ impl TenantWriteTransaction {
             let key = document_key(table, id);
             let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
             let removed = removed.ok_or(Error::DocumentNotFound(*id))?;
-            Document::from_msgpack(removed.value())
+            decode_document_msgpack(removed.value())
                 .map_err(|error| Error::Serialization(error.to_string()))?
         };
         validate(&removed_document)?;

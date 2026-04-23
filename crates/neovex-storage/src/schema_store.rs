@@ -241,7 +241,7 @@ fn collect_rebuilt_index_keys(
             {
                 check_cancel()?;
                 let (_, value) = item.map_err(map_redb_error)?;
-                let document = neovex_core::Document::from_msgpack(value.value())
+                let document = crate::document_codec::decode_document_msgpack(value.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?;
                 push_document_index_keys(&mut keys, &document, table_schema)?;
             }
@@ -256,7 +256,7 @@ fn collect_rebuilt_index_keys(
                 if !key.value().starts_with(&start) {
                     break;
                 }
-                let document = neovex_core::Document::from_msgpack(value.value())
+                let document = crate::document_codec::decode_document_msgpack(value.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?;
                 push_document_index_keys(&mut keys, &document, table_schema)?;
             }

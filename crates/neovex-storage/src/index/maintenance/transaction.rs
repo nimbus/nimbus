@@ -2,6 +2,7 @@ use neovex_core::{Document, DocumentId, IndexDefinition, Result, TableName, Writ
 use redb::ReadableTable;
 use serde_json::Value;
 
+use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 use crate::store::{INDEXES, TenantWriteTransaction, map_redb_error};
 
@@ -53,7 +54,7 @@ impl TenantWriteTransaction {
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
                     .ok_or(neovex_core::Error::DocumentNotFound(*id))?;
-                Document::from_msgpack(existing.value())
+                decode_document_msgpack(existing.value())
                     .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
             };
             let mut new_document = old_document.clone();
@@ -62,8 +63,7 @@ impl TenantWriteTransaction {
             }
             validate(&old_document, &new_document)?;
 
-            let payload = new_document
-                .to_msgpack()
+            let payload = encode_document_msgpack(&new_document)
                 .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?;
             (old_document, new_document, payload)
         };
@@ -133,7 +133,7 @@ impl TenantWriteTransaction {
                 .map_err(map_redb_error)?;
             let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
             let removed = removed.ok_or(neovex_core::Error::DocumentNotFound(*id))?;
-            Document::from_msgpack(removed.value())
+            decode_document_msgpack(removed.value())
                 .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
         };
         validate(&old_document)?;

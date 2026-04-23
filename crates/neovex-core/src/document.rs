@@ -28,16 +28,6 @@ impl Document {
         self.fields.get(name)
     }
 
-    /// Serializes the document as MessagePack.
-    pub fn to_msgpack(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
-        rmp_serde::to_vec(self)
-    }
-
-    /// Deserializes the document from MessagePack.
-    pub fn from_msgpack(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
-        rmp_serde::from_slice(bytes)
-    }
-
     /// Converts the document into the external JSON representation by moving its fields.
     pub fn into_json(self) -> Value {
         let mut map = serde_json::Map::with_capacity(self.fields.len() + 2);

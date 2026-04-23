@@ -2,6 +2,7 @@
 
 pub mod async_storage;
 pub mod commit_log;
+pub mod document_codec;
 pub mod encrypted_redb;
 pub mod encryption;
 pub mod index;

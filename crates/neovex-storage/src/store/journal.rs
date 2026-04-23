@@ -1,9 +1,10 @@
 use neovex_core::{
-    CommitEntry, Document, DurableMutationRecord, Error, Result, SequenceNumber, Timestamp, WriteOp,
+    CommitEntry, DurableMutationRecord, Error, Result, SequenceNumber, Timestamp, WriteOp,
 };
 use redb::{ReadableTable, TableError};
 
 use crate::commit_log::serialize_commit;
+use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 use crate::simulation::{FaultInjector, FaultPoint};
 
@@ -168,7 +169,7 @@ fn apply_durable_record_in_write_txn(
                 let already_applied = {
                     let existing = documents.get(key.as_slice()).map_err(map_redb_error)?;
                     if let Some(existing) = existing {
-                        let existing = Document::from_msgpack(existing.value())
+                        let existing = decode_document_msgpack(existing.value())
                             .map_err(|error| Error::Serialization(error.to_string()))?;
                         if existing != *current {
                             return Err(Error::Conflict(format!(
@@ -182,8 +183,7 @@ fn apply_durable_record_in_write_txn(
                     }
                 };
                 if !already_applied {
-                    let payload = current
-                        .to_msgpack()
+                    let payload = encode_document_msgpack(current)
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     documents
                         .insert(key.as_slice(), payload.as_slice())
@@ -200,7 +200,7 @@ fn apply_durable_record_in_write_txn(
                             "durable journal update replay missing document {}",
                             write.doc_id
                         )))?;
-                    Document::from_msgpack(existing.value())
+                    decode_document_msgpack(existing.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?
                 };
                 if existing == *current {
@@ -212,8 +212,7 @@ fn apply_durable_record_in_write_txn(
                         write.doc_id
                     )));
                 }
-                let payload = current
-                    .to_msgpack()
+                let payload = encode_document_msgpack(current)
                     .map_err(|error| Error::Serialization(error.to_string()))?;
                 documents
                     .insert(key.as_slice(), payload.as_slice())
@@ -223,7 +222,7 @@ fn apply_durable_record_in_write_txn(
                 let key = document_key(&write.table, &write.doc_id);
                 match documents.remove(key.as_slice()).map_err(map_redb_error)? {
                     Some(removed) => {
-                        let removed = Document::from_msgpack(removed.value())
+                        let removed = decode_document_msgpack(removed.value())
                             .map_err(|error| Error::Serialization(error.to_string()))?;
                         if removed != *previous {
                             return Err(Error::Conflict(format!(

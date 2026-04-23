@@ -101,23 +101,6 @@ mod tests {
     }
 
     #[test]
-    fn document_msgpack_roundtrip_preserves_all_fields() {
-        let document = Document::new(
-            TableName::new("tasks").expect("table name should be valid"),
-            serde_json::Map::from_iter([
-                ("title".to_string(), json!("Hello")),
-                ("rank".to_string(), json!(2)),
-                ("active".to_string(), json!(true)),
-            ]),
-        );
-
-        let bytes = document.to_msgpack().expect("document should serialize");
-        let decoded = Document::from_msgpack(&bytes).expect("document should deserialize");
-
-        assert_eq!(decoded, document);
-    }
-
-    #[test]
     fn commit_entry_affected_tables_deduplicates_table_names() {
         let tasks = TableName::new("tasks").expect("table name should be valid");
         let users = TableName::new("users").expect("table name should be valid");
