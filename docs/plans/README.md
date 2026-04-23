@@ -24,6 +24,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
     API: machine/service state persistence as documents, HTTP lifecycle
     endpoints, Convex function bundle with typed query surface, read/write
     path split; prerequisite for the desktop UI plan
+- `docs/plans/runtime-provider-boundary-hardening-plan.md`
+  - canonical execution plan for the architecture-review follow-up on runtime
+    and provider boundaries: async/cancellable service activation outside sync
+    V8 host paths, versioned typed host ABI payloads, and provider-owned
+    capability facades that shrink engine-wide match lattices
 - `docs/plans/desktop-ui-plan.md`
   - canonical execution plan for a Docker Desktop / Podman Desktop-style
     graphical interface: embedded React SPA at `/ui/*` via `rust-embed`,
