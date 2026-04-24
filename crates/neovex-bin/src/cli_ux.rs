@@ -565,7 +565,6 @@ fn output_mode_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-#[cfg(any(unix, test))]
 fn output_mode_flags() -> usize {
     OUTPUT_MODE_FLAGS.load(Ordering::SeqCst)
 }
