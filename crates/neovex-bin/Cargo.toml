@@ -23,6 +23,7 @@ fs2.workspace = true
 indicatif.workspace = true
 libc.workspace = true
 neovex = { path = "../neovex", features = ["aws-kms"] }
+neovex-server = { path = "../neovex-server" }
 neovex-sandbox = { path = "../neovex-sandbox" }
 rand.workspace = true
 reqwest.workspace = true

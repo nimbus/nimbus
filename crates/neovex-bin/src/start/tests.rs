@@ -25,12 +25,11 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(target_os = "linux")]
-use neovex::{
-    ConvexRegistry, RuntimeBundle, SandboxCatalog,
-    build_router_with_convex_and_sandbox_service_manager,
-};
+use neovex::{ConvexRegistry, RuntimeBundle, SandboxCatalog};
 #[cfg(target_os = "linux")]
 use neovex_sandbox::backends::krun::{KrunLaunchMode, KrunSandboxBackend};
+#[cfg(target_os = "linux")]
+use neovex_server::build_router_with_convex_and_sandbox_service_manager;
 #[cfg(target_os = "linux")]
 use neovex_testing::{
     HttpApiFixture, ServerFixture, ServiceFixture, run_to_completion_snapshot_runtime_test_limits,
@@ -128,11 +127,13 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
     assert!(rendered.contains("neovex start"));
     assert!(rendered.contains("neovex dev"));
     assert!(rendered.contains("neovex codegen --app ./demos/convex/html"));
+    assert!(rendered.contains("neovex token rotate"));
     assert!(rendered.contains("neovex machine start"));
     assert!(rendered.contains("neovex compose up"));
     assert!(rendered.contains("start"));
     assert!(rendered.contains("dev"));
     assert!(rendered.contains("codegen"));
+    assert!(rendered.contains("token"));
     assert!(rendered.contains("machine     Manage local developer machines"));
     assert!(rendered.contains("compose"));
 }

@@ -12,6 +12,8 @@ pub(crate) async fn mutation(
     let service = state.service.clone();
     let (registry, auth) = registry_and_auth(
         &state,
+        crate::local_server::LocalServerRouteFamily::ConvexHttp,
+        &tenant_id,
         &headers,
         "convex mutation route requires Convex support state",
     )

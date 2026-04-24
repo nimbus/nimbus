@@ -17,15 +17,22 @@ neovex-sandbox = { path = "../neovex-sandbox" }
 neovex-core = { path = "../neovex-core" }
 neovex-engine = { path = "../neovex-engine", features = ["test-hooks"] }
 futures.workspace = true
+fs2.workspace = true
 http.workspace = true
+libc.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
+time = { workspace = true, features = ["formatting"] }
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 neovex-storage = { path = "../neovex-storage" }

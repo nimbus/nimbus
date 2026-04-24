@@ -39,6 +39,7 @@ Examples:
   neovex dev
   neovex deploy --url http://localhost:3210
   neovex codegen --app ./demos/convex/html
+  neovex token rotate
   neovex machine start
   neovex compose up";
 
@@ -77,6 +78,10 @@ Examples:
   neovex codegen
   neovex codegen --app ./demos/convex/html
   neovex codegen --app ./demos/convex/node";
+
+pub(crate) const TOKEN_ROTATE_HELP_EXAMPLES: &str = "\
+Examples:
+  neovex token rotate";
 
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:

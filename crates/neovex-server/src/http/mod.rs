@@ -20,16 +20,19 @@ use crate::state::{AppError, AppState, RequestCancellationGuard};
 
 mod deploy;
 mod documents;
+mod local_admin;
 mod metadata;
 mod queries;
 mod scheduling;
 mod schema;
 mod tenants;
+mod ui;
 
 pub(crate) use deploy::deploy_app;
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };
+pub(crate) use local_admin::rotate_local_admin_token;
 pub(crate) use metadata::{
     demos_redirect, encryption_status, health, license_status, runtime_diagnostics,
     tenant_consistency_report, tenant_engine_diagnostics,
@@ -43,6 +46,7 @@ pub(crate) use scheduling::{
 };
 pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
+pub(crate) use ui::{create_ui_session, ui_auth, ui_csp_middleware, ui_path, ui_root};
 
 fn parse_document_id(value: &str) -> Result<DocumentId, AppError> {
     value.parse().map_err(|error| {

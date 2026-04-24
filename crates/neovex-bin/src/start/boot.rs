@@ -2,8 +2,10 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use neovex::{
-    ConvexRegistry, Error, LicenseState, ServeOptions, Service, run_scheduler, serve_with_options,
+use neovex::{ConvexRegistry, Error, LicenseState, Service, run_scheduler};
+use neovex_server::{
+    LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryLease,
+    load_or_create_local_admin_token, serve_with_options,
 };
 
 use super::StartCommand;
@@ -34,6 +36,12 @@ pub(crate) async fn run_start_command(
     let compose_selection = resolve_optional_compose_selection(&command)?;
     let sandbox_service_manager =
         load_sandbox_service_manager(compose_selection.as_ref(), &compose_control_data_dir)?;
+    let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
+    let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
+    let local_server_security = Arc::new(LocalServerSecurityState::new(
+        local_server_paths.clone(),
+        local_admin_token,
+    ));
     let service = Arc::new(Service::new_with_persistence_config(persistence_config).await?);
     let shutdown_service = service.clone();
     service.recover_scheduled_work_on_startup_async().await?;
@@ -43,6 +51,8 @@ pub(crate) async fn run_start_command(
         run_scheduler(scheduler_service, shutdown_rx).await;
     });
     let listener = tokio::net::TcpListener::bind((command.host.as_str(), command.port)).await?;
+    let discovery_lease =
+        ServerDiscoveryLease::acquire(&local_server_paths, listener.local_addr()?)?;
     emit_start_startup_summary(
         &command,
         compose_selection.as_ref(),
@@ -69,8 +79,10 @@ pub(crate) async fn run_start_command(
         license_state,
         sandbox_service_manager,
         command.deploy_admin_token,
+        local_server_security,
     )
     .await;
+    drop(discovery_lease);
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;
     shutdown_service.quiesce().await;
@@ -270,6 +282,7 @@ async fn run_server_with_optional_runtime_and_services(
     license_state: LicenseState,
     sandbox_service_manager: Option<Arc<neovex::SandboxServiceManager>>,
     deploy_admin_token: Option<String>,
+    local_server_security: Arc<LocalServerSecurityState>,
 ) -> std::io::Result<()> {
     let mut options = ServeOptions::default().with_license(license_state);
     if let Some(registry) = convex_registry {
@@ -281,5 +294,6 @@ async fn run_server_with_optional_runtime_and_services(
     if let Some(token) = deploy_admin_token {
         options = options.with_deploy_admin_token(token);
     }
+    options = options.with_local_server_security(local_server_security);
     serve_with_options(listener, service, options).await
 }

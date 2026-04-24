@@ -10,6 +10,7 @@ mod machine;
 mod start;
 #[cfg(test)]
 mod test_support;
+mod token;
 
 use crate::codegen::{CodegenCommand, run_codegen_command};
 use crate::compose::{ComposeCommand, run_compose_command};
@@ -18,6 +19,7 @@ use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
+use crate::token::{TokenCommand, run_token_command};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -43,6 +45,9 @@ enum Command {
     Deploy(DeployCommand),
     /// Generate app artifacts from neovex/ or convex/ source code.
     Codegen(CodegenCommand),
+    /// Local admin token management commands.
+    #[command(subcommand)]
+    Token(TokenCommand),
     /// Manage local developer machines.
     Machine(MachineCommand),
     /// Compose-backed local service lifecycle commands.
@@ -62,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Dev(command) => run_dev_command(*command).await?,
         Command::Deploy(command) => run_deploy_command(command).await?,
         Command::Codegen(command) => run_codegen_command(command).await?,
+        Command::Token(command) => run_token_command(command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
         }
