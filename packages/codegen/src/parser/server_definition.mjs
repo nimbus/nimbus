@@ -1,4 +1,5 @@
 import { convexValidators, sanitizeValidator } from "../schema.mjs";
+import { evaluateCompileTimeExpressionSource } from "../compile_time_interpreter.mjs";
 import {
   findTopLevelColon,
   splitTopLevel,
@@ -70,18 +71,15 @@ function parseReturnsSchema(returnsExpression, filePath, compileBindings) {
 }
 
 function evaluateValidatorExpression(expression, filePath, compileBindings, label) {
-  const bindings = {
-    v: convexValidators,
-    ...compileBindings,
-  };
-  const bindingNames = Object.keys(bindings);
-  const bindingValues = bindingNames.map((name) => bindings[name]);
-
-  try {
-    return new Function(...bindingNames, `return (${expression});`)(...bindingValues);
-  } catch (error) {
-    throw unsupportedError(filePath, `${label} parsing (${error.message})`);
-  }
+  return evaluateCompileTimeExpressionSource(
+    expression,
+    {
+      v: convexValidators,
+      ...compileBindings,
+    },
+    filePath,
+    label,
+  );
 }
 
 export { parseServerDefinition };

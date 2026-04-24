@@ -20,10 +20,10 @@ function createRequestProxy(filePath) {
         });
       },
     },
-    async json() {
+    json() {
       return createRequestJsonProxy();
     },
-    async text() {
+    text() {
       return createRequestMarker({ source: "text" });
     },
   };
