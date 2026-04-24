@@ -270,7 +270,6 @@ pub(crate) fn stderr_is_tty() -> bool {
     io::stderr().is_terminal()
 }
 
-#[cfg(any(unix, test))]
 pub(crate) fn info_output_enabled() -> bool {
     output_mode_flags() & SUPPRESS_INFO_OUTPUT == 0
 }
