@@ -15,6 +15,7 @@ import {
 async function runCoreFixtures() {
   await testSupportedDefineFixture();
   await testSupportedServerFixture();
+  await testBlockBodyServerFixture();
   await testSchemaFixture();
   await testAuthConfigFixture();
   await testNeovexAuthConfigFixture();
@@ -152,6 +153,39 @@ export const storeInternal: unknown = internalMutation({
   assert.equal(manifest.functions[1].schedulable, true);
   assert.deepEqual(manifest.functions[1].plan.fields, {
     body: { $arg: "body" },
+  });
+}
+
+async function testBlockBodyServerFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const byAuthor = query({
+  args: { author: v.string() },
+  handler: async (_ctx, { author }) => {
+    const filters = [{ field: "author", op: "eq", value: author }];
+    return {
+      table: "messages",
+      filters,
+      order: null,
+      limit: 10,
+    };
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.deepEqual(manifest.functions[0].plan, {
+    table: "messages",
+    filters: [{ field: "author", op: "eq", value: { $arg: "author" } }],
+    order: null,
+    limit: 10,
   });
 }
 

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { evaluateCompileTimeExpressionSource } from "./compile_time_interpreter.mjs";
 import { unsupportedError } from "./errors.mjs";
 import { extractCallExpression } from "./syntax.mjs";
 
@@ -30,16 +31,16 @@ function parseSchemaSource(source, filePath) {
 }
 
 function evaluateSchemaExpression(callExpression, filePath) {
-  try {
-    return new Function(
-      "defineSchema",
-      "defineTable",
-      "v",
-      `return (${callExpression});`,
-    )(defineConvexSchema, defineConvexTable, convexValidators);
-  } catch (error) {
-    throw unsupportedError(filePath, `schema parsing (${error.message})`);
-  }
+  return evaluateCompileTimeExpressionSource(
+    callExpression,
+    {
+      defineSchema: defineConvexSchema,
+      defineTable: defineConvexTable,
+      v: convexValidators,
+    },
+    filePath,
+    "schema",
+  );
 }
 
 function defineConvexSchema(tables) {

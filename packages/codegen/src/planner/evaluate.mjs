@@ -14,6 +14,7 @@ import {
   sanitizeHttpActionPlan,
   sanitizeTemplate,
 } from "./templates.mjs";
+import { createInterpretedResolver } from "../compile_time_interpreter.mjs";
 
 async function evaluateResolverPlan(
   resolverText,
@@ -95,15 +96,13 @@ async function evaluateResolverPlan(
 }
 
 function compileResolver(resolverText, filePath, compileBindings = {}) {
-  validateResolverForCompileTimeEvaluation(resolverText, filePath);
-  try {
-    const bindingNames = Object.keys(compileBindings);
-    return new Function(...bindingNames, `return (${resolverText});`)(
-      ...bindingNames.map((name) => compileBindings[name]),
-    );
-  } catch (error) {
-    throw unsupportedError(filePath, `resolver parsing (${error.message})`);
-  }
+  const sourceFile = parseResolverSource(resolverText, filePath);
+  validateResolverForCompileTimeEvaluation(sourceFile, filePath);
+  return createInterpretedResolver(
+    extractResolverExpression(sourceFile, filePath),
+    compileBindings,
+    filePath,
+  );
 }
 
 const FORBIDDEN_COMPILE_TIME_IDENTIFIERS = new Set([
@@ -132,7 +131,14 @@ const FORBIDDEN_COMPILE_TIME_PROPERTIES = new Set([
   "prototype",
 ]);
 
-function validateResolverForCompileTimeEvaluation(resolverText, filePath) {
+function validateResolverForCompileTimeEvaluation(sourceFile, filePath) {
+  const rejection = findUnsafeCompileTimeExpression(sourceFile);
+  if (rejection) {
+    throw unsupportedError(filePath, rejection);
+  }
+}
+
+function parseResolverSource(resolverText, filePath) {
   const sourceFile = ts.createSourceFile(
     `${filePath}.resolver.ts`,
     `const __neovexResolver = ${resolverText};`,
@@ -149,10 +155,25 @@ function validateResolverForCompileTimeEvaluation(resolverText, filePath) {
     );
   }
 
-  const rejection = findUnsafeCompileTimeExpression(sourceFile);
-  if (rejection) {
-    throw unsupportedError(filePath, rejection);
+  return sourceFile;
+}
+
+function extractResolverExpression(sourceFile, filePath) {
+  const statement = sourceFile.statements[0];
+  if (
+    !statement
+    || !ts.isVariableStatement(statement)
+    || statement.declarationList.declarations.length !== 1
+  ) {
+    throw unsupportedError(filePath, "non-arrow resolver");
   }
+
+  const initializer = statement.declarationList.declarations[0].initializer;
+  if (!initializer || !ts.isArrowFunction(initializer)) {
+    throw unsupportedError(filePath, "non-arrow resolver");
+  }
+
+  return initializer;
 }
 
 function findUnsafeCompileTimeExpression(sourceFile) {
