@@ -11,8 +11,13 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const tscPath = fileURLToPath(
   new URL("../../../node_modules/typescript/bin/tsc", import.meta.url),
 );
+const typecheckOnly = process.argv.includes("--typecheck-only");
 
 async function main() {
+  if (typecheckOnly) {
+    await typecheckNeovexAuthExtension();
+    return;
+  }
   await bundleModule("browser.ts", "browser");
   await bundleModule("react.ts", "browser");
   await bundleModule("server.ts", "neutral");

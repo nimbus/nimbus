@@ -21,8 +21,13 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const tscPath = fileURLToPath(
   new URL("../../../node_modules/typescript/bin/tsc", import.meta.url),
 );
+const typecheckOnly = process.argv.includes("--typecheck-only");
 
 async function main() {
+  if (typecheckOnly) {
+    await typecheckConvexSurface();
+    return;
+  }
   await testConvexCliCodegenSmoke();
   await typecheckConvexSurface();
   await testDifferentialSurfaceGuardrails();

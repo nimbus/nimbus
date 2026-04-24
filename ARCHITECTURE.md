@@ -160,9 +160,11 @@ The Convex surface also depends on a build-time pipeline: `packages/codegen`
 (`bundle.sha256`). The server loads these at startup; the runtime verifies the
 hash before every invocation.
 
-The **neovex** facade crate re-exports the public surface of all workspace
-crates so embedders depend on a single crate. The **neovex-bin** crate is the
-CLI entry point.
+The **neovex** facade crate re-exports the stable, embedder-oriented surface of
+the workspace so embedders can usually depend on a single crate. Low-level
+server-construction helpers such as localhost security internals, discovery or
+token lifecycle records, and router-builder overloads remain owned by
+**neovex-server** directly. The **neovex-bin** crate is the CLI entry point.
 
 ---
 
@@ -661,12 +663,22 @@ worker-local beneath that seam.
   `build_router*` overloads are now thin wrappers over one internal
   `RouterBuildConfig` path that normalizes `LicenseState`, optional Convex
   support, and runtime-service-registry wiring before building the axum
+  router. The landed localhost hardening path also lives here: loopback-first
+  bind defaults, route-family origin allowlists, local server-access auth, the
+  `/ui/*` bootstrap fixture, and the separation between server-access auth and
+  tenant/application auth.
 - `service_registry.rs` / `service_manager.rs` — runtime service-binding seam.
   Snapshot reads and activation are now split intentionally: the sync runtime
   path only sees already-ready in-memory bindings, while async `ctx.services.get`
   calls can start and wait for declared services through cancellable sandbox
   activation plus readiness polling.
 - `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
+- `local_server/` — Server-owned localhost security boundary. Owns platform
+  path resolution, `server.json` discovery, local admin token lifecycle and
+  rotation, signed UI sessions, origin and route-family gate helpers, and the
+  append-only security audit log. These credentials authorize server access
+  only and never populate Convex `InvocationAuth`, `ctx.auth`, or tenant
+  `PrincipalContext`.
 - `ws.rs` / `ws/socket.rs` — Neovex-native WebSocket upgrade and session
   composition. `ws/socket/transport.rs` owns socket reader, writer, and
   subscription-forwarder tasks, `ws/socket/pending.rs` owns pending bootstrap
@@ -723,7 +735,7 @@ worker-local beneath that seam.
   handles without coupling `neovex-sandbox` directly into request handlers.
 - `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, `LicenseState`, and the injected `SandboxCatalog`. `AppError` maps `Error` variants to HTTP status codes.
 
-**`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-sandbox`, `neovex-server`, and `neovex-storage` so downstream consumers depend on a single crate.
+**`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-sandbox`, `neovex-server`, and `neovex-storage` so downstream consumers can usually depend on one crate. Low-level localhost-security records, discovery helpers, and router-construction overloads stay on `neovex-server` so the facade does not become an implementation-detail bucket.
 
 **`neovex-bin`** — CLI entry point. `main.rs` is the thin command root, while
 `serve/` owns the serve-command composition seam: JSON config and env loading,
