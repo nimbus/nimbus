@@ -34,7 +34,7 @@ Reviewed against:
 The current macOS architecture is a hybrid control plane:
 
 - the macOS host owns the main Neovex server, runtime, storage, and
-  `ctx.services.*` activation path
+  the `ctx.services` snapshot plus activation path
 - the Linux guest owns a narrow machine API and standard-container execution
   lane for service workloads
 - the current bring-up image comes from Podman's published machine-image
@@ -141,7 +141,8 @@ Current implementation note:
   immutable Podman digest above
 - the full start-time convergence contract has now been proved end to end,
   including guest-binary sync, forwarded machine-API readiness, host service
-  control, runtime `ctx.services.<name>.port`, and the supported recreate
+  control, runtime `ctx.services.<name>.port` snapshot reads,
+  `await ctx.services.get("<name>")` activation, and the supported recreate
   drill on isolated roots
 
 ### Important Packaging Contract
@@ -298,7 +299,7 @@ The host control path uses:
 ```mermaid
 flowchart TD
     A["developer or runtime code on macOS host"] --> B["host neovex server"]
-    B --> C["ctx.services.db.port access"]
+    B --> C["await ctx.services.get(\"db\")"]
     C --> D["SandboxServiceManager on host"]
     D --> E["ForwardedMachineApiSandboxBackend"]
     E --> F["MachineApiClient"]
@@ -320,7 +321,7 @@ Host:
 - main Neovex API
 - runtime execution
 - storage
-- `ctx.services.*` activation
+- `ctx.services` snapshot plus `ctx.services.get(...)` activation
 - service catalog and manager orchestration
 
 Guest:
@@ -343,7 +344,7 @@ flowchart TD
     C --> D["conmon -> crun -> libkrun or KVM path"]
     D --> E["per-service microVM"]
     E --> F["published endpoint"]
-    F --> G["ctx.services.<name>.port"]
+    F --> G["ctx.services.<name>.port snapshot"]
 ```
 
 macOS is different:

@@ -13,7 +13,6 @@ use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::Service;
-use crate::persistence::TenantPersistence;
 use crate::tenant::{
     QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
 };
@@ -273,16 +272,7 @@ fn process_queued_mutation_batch(
         .check_fault(neovex_storage::FaultPoint::JournalDurableAppendBeforeApply)?;
 
     let applied_head = match runtime.store.apply_durable_records_batch(&records) {
-        Ok(()) => {
-            if matches!(&runtime.store, TenantPersistence::LibsqlReplica(_)) {
-                records
-                    .last()
-                    .expect("non-empty durable batch should have a last record")
-                    .sequence
-            } else {
-                runtime.store.applied_sequence()?
-            }
-        }
+        Ok(()) => runtime.store.applied_head_after_durable_apply(&records)?,
         Err(_) => {
             let progress = runtime.store.recover_durable_journal()?;
             progress.applied_head

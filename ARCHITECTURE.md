@@ -306,14 +306,18 @@ metering.
   that turns provider selection, routing, pool settings, and control-plane
   paths into one canonical service-start input.
 - `persistence.rs` — Provider-facade composition root. `provider.rs` owns the
-  tenant-provider registry plus opened-tenant mapping, `control.rs` owns the
-  redb-backed control-plane usage facade, `tenant.rs` is now a thin
-  composition root over `tenant/reads.rs`, `tenant/writes.rs`,
-  `tenant/journal.rs`, `tenant/scheduler.rs`, and `tenant/schema.rs`,
-  `executor.rs` owns async read or write execution, `snapshot.rs` owns the
-  snapshot read facade, `query.rs` owns `QueryReadStore` delegation for stores
-  and snapshots, and `write_ops.rs` owns the write-transaction capability
-  trait shared by the scheduler and async journal paths.
+  tenant-provider registry, background-task selection, and opened-tenant
+  mapping, `control.rs` owns the redb-backed control-plane usage facade,
+  `tenant.rs` is now a thin composition root over `tenant/reads.rs`,
+  `tenant/writes.rs`, `tenant/journal.rs`, `tenant/scheduler.rs`,
+  `tenant/schema.rs`, and `tenant/provider_state.rs`, where async schema load,
+  journal progress/recovery, scheduled-work checks, refresh planning, and
+  provider-specific apply semantics now live behind the tenant persistence
+  facade instead of in service-layer matches. `executor.rs` owns async read or
+  write execution, `snapshot.rs` owns the snapshot read facade, `query.rs`
+  owns `QueryReadStore` delegation for stores and snapshots, and `write_ops.rs`
+  owns the write-transaction capability trait shared by the scheduler and async
+  journal paths.
 - `service/mutations.rs` — Composition root for the write path. Public
   `apply_mutation` behavior still flows through the same single durable contract
   while the implementation is split across
@@ -458,6 +462,9 @@ storage types directly.
   `runtime/helpers.rs`, invocation/auth types to `runtime/invocation.rs`,
   bundle identity and integrity handling to `runtime/bundle.rs`, and the
   current V8-backed bootstrap layer to the `runtime/bootstrap/` module tree.
+  Service bindings now follow a split contract there: `ctx.services.<name>`
+  reads only the invocation snapshot, while `await ctx.services.get("name")`
+  resolves missing bindings through the async cancellable host path.
 - `runtime/invocation.rs` — `InvocationKind`, `InvocationRequest`, `InvocationAuth`, `RuntimeUserIdentity`, and `VerifiedUserIdentity`: the public invocation and auth payload surface for runtime calls.
 - `runtime/bundle.rs` — `RuntimeBundle`: bundle path identity, canonicalization, and per-invocation SHA-256 integrity verification.
 - `backends/mod.rs` — worker-local `RuntimeBackendFactory` /
@@ -506,12 +513,14 @@ storage types directly.
 - `worker_loop/mod.rs` — `WorkerLoopFactory`, `WorkerLoop`, and execution-model routing for runtime workers.
 - `worker_loop/cooperative.rs` — composition root for the cooperative worker loop (the default execution model). Delegates admission and completion flow to `cooperative/execution.rs`, slot-state and parked/runnable scheduling to `cooperative/scheduler.rs`, warm-pool return plus deferred-drop ownership to `cooperative/retention.rs`, and the main worker run/shutdown loop to `cooperative/run.rs`.
 - `worker_loop/run_to_completion.rs` — run-to-completion worker-loop implementation, available as an explicit per-bundle execution model option for bundles that need guaranteed fresh-per-invocation isolation.
-- `host.rs` — `HostBridge` trait plus `HostCallRequest` /
-  `HostCallOperation`: the generic runtime-side contract between V8 guest code
-  and Rust host operations (db queries, mutations, scheduler commands,
-  `ctx.run*` delegation). Adapter-specific wire names such as Convex
-  `convex.*` labels now live at the server adapter boundary rather than in the
-  runtime crate.
+- `host.rs` — `HostBridge` trait plus the versioned `HostCallRequest` /
+  `HostCallEnvelope` / `HostCallPayload` family: the generic runtime-side
+  contract between V8 guest code and Rust host operations (db queries,
+  mutations, scheduler commands, `ctx.run*` delegation). The runtime now owns
+  the backend-neutral payload family and rejects operation/payload mismatches
+  before adapter dispatch. Adapter-specific wire names such as Convex
+  `convex.*` labels still live at the server adapter boundary rather than in
+  the runtime crate.
 - `context.rs` — `RuntimeInvocationContext`: per-request metadata (invocation ID, function name, kind, auth identity) threaded through the runtime and host bridge.
 - `limits.rs` — `RuntimeLimits` (heap, timeout, max runtime instances, worker
   threads, per-tenant active/in-flight/queued caps, max nested calls) and
@@ -652,7 +661,11 @@ worker-local beneath that seam.
   `build_router*` overloads are now thin wrappers over one internal
   `RouterBuildConfig` path that normalizes `LicenseState`, optional Convex
   support, and runtime-service-registry wiring before building the axum
-  router.
+- `service_registry.rs` / `service_manager.rs` — runtime service-binding seam.
+  Snapshot reads and activation are now split intentionally: the sync runtime
+  path only sees already-ready in-memory bindings, while async `ctx.services.get`
+  calls can start and wait for declared services through cancellable sandbox
+  activation plus readiness polling.
 - `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
 - `ws.rs` / `ws/socket.rs` — Neovex-native WebSocket upgrade and session
   composition. `ws/socket/transport.rs` owns socket reader, writer, and
@@ -668,14 +681,15 @@ worker-local beneath that seam.
 - `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex
   engine operations into the contract the runtime expects. Async host-call
   routes now await real engine or storage futures directly; only inherently
-  synchronous host-side setup stays on the sync bridge path. The async bridge
-  now parses serialized host `operation` strings once into a typed internal
-  `ConvexHostOperation` dispatcher so sync, cancellable, and async entrypoints
-  share one operation registry without changing the external runtime contract.
-  `bridge.rs` now separates durable bridge scope from per-call invocation
-  metadata through `ConvexHostBridgeScope` and `ConvexHostBridgeInvocation`,
-  which keeps host-bridge construction narrow across runtime-backed call sites.
-  The direct ctx-op surface now keeps
+  synchronous host-side setup stays on the sync bridge path. The server-side
+  bridge now consumes a runtime-owned typed host envelope before any
+  Convex-specific lowering, so ABI version checks plus top-level
+  operation/payload validation happen before the adapter routes into query,
+  document, scheduler, or nested-runtime handlers. `bridge.rs` now separates
+  durable bridge scope from per-call invocation metadata through
+  `ConvexHostBridgeScope` and `ConvexHostBridgeInvocation`, which keeps
+  host-bridge construction narrow across runtime-backed call sites. The direct
+  ctx-op surface now keeps
   `function_ops/ctx_ops/direct/execution.rs` as the canonical home for direct
   execution-context dispatch and execution-unit short-circuiting, while
   `function_ops/ctx_ops/direct/invocation.rs` owns runtime payload
@@ -1225,7 +1239,9 @@ host executor layer.
 workspace dependencies so it can be tested, fuzzed, and evolved independently.
 The `HostBridge` trait is the only contract between V8 guest code and the host.
 The server provides the implementation. This means changes to the engine's
-internals never require changes to the runtime, and vice versa.
+internals never require changes to the runtime, and vice versa. The host-call
+ABI is versioned and payload-typed at that boundary so adapter changes cannot
+silently reinterpret an incompatible top-level payload shape.
 
 **Why a separate usage database?** MAU tracking is global (not per-tenant),
 so it lives in a dedicated `neovex-control.db` redb file managed by

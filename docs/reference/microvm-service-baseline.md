@@ -42,7 +42,8 @@ Linux request path:
 compose.yaml / image / build context
   -> neovex-bin validates and lowers service intent
   -> neovex-server owns declared services and activation
-  -> ctx.services.<name> triggers ensure_service_binding(...)
+  -> runtime snapshots ready bindings for ctx.services.<name>
+  -> await ctx.services.get("<name>") triggers cancellable activation when needed
   -> neovex-sandbox krun backend materializes OCI bundle + state
   -> conmon -> patched /usr/libexec/neovex/crun -> libkrun VM
   -> guest service answers via TSI-mapped host port
@@ -115,8 +116,10 @@ Preferred probe hierarchy by platform:
 - `neovex-sandbox` must expose generic sandbox nouns, not krun-specific public
   API.
 - The server owns the service registry and activation lifecycle.
-- `ctx.services.<name>` exposes bindings such as `.port`; protocol-specific
-  clients remain the application's responsibility.
+- `ctx.services.<name>` exposes only bindings that were already resolved before
+  invocation; `await ctx.services.get("<name>")` is the activation path for
+  missing declared services. Protocol-specific clients remain the application's
+  responsibility.
 - The guest service is not treated as ready just because OCI/crun reports
   `"running"`; readiness is gated on actual service reachability.
 - Host-side krun bundles stay root for `/dev/kvm`; image `USER` is preserved
@@ -166,7 +169,8 @@ developer machines:
 
 - `neovex start --compose-file ./compose.yaml`
   starts the server with a declared service catalog available for
-  request-time activation through `ctx.services.*`
+  snapshot projection through `ctx.services.<name>` and request-time activation
+  through `ctx.services.get(...)`
 - `neovex compose ...`
   manages those services explicitly through the same backend-owned state model
 - `neovex machine ...`

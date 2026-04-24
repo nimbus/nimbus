@@ -6,8 +6,10 @@ use neovex_storage::{
     LibsqlReplicaProvider, MySqlProvider, OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant,
     OpenedLibsqlReplicaTenant, OpenedMySqlTenant, OpenedPostgresTenant, PostgresProvider,
 };
+use tokio_util::sync::CancellationToken;
 
 use super::{TenantPersistence, TenantPersistenceExecutor};
+use crate::service::Service;
 
 #[derive(Clone)]
 pub(crate) enum PersistenceProvider {
@@ -15,6 +17,13 @@ pub(crate) enum PersistenceProvider {
     Sqlite(Arc<EmbeddedSqliteProvider>),
     LibsqlReplica(Arc<LibsqlReplicaProvider>),
     Postgres(Arc<PostgresProvider>),
+    MySql(Arc<MySqlProvider>),
+}
+
+#[derive(Clone)]
+pub(crate) enum ProviderBackgroundTask {
+    Postgres(Arc<PostgresProvider>),
+    LibsqlReplica(Arc<LibsqlReplicaProvider>),
     MySql(Arc<MySqlProvider>),
 }
 
@@ -35,6 +44,17 @@ trait OpenedTenantProvider {
 }
 
 impl PersistenceProvider {
+    pub(crate) fn background_task(&self) -> Option<ProviderBackgroundTask> {
+        match self {
+            Self::Postgres(provider) => Some(ProviderBackgroundTask::Postgres(provider.clone())),
+            Self::LibsqlReplica(provider) => {
+                Some(ProviderBackgroundTask::LibsqlReplica(provider.clone()))
+            }
+            Self::MySql(provider) => Some(ProviderBackgroundTask::MySql(provider.clone())),
+            Self::Redb(_) | Self::Sqlite(_) => None,
+        }
+    }
+
     pub(crate) async fn list_tenants(&self) -> Result<Vec<TenantId>> {
         match_persistence_provider!(self, |provider| provider.list_tenants().await)
     }
@@ -70,6 +90,36 @@ impl PersistenceProvider {
         store: TenantPersistence,
     ) -> Result<TenantPersistenceExecutor> {
         store.read_storage_for_provider(self)
+    }
+}
+
+impl ProviderBackgroundTask {
+    pub(crate) fn task_name(&self) -> &'static str {
+        match self {
+            Self::Postgres(_) => "postgres_provider_hints",
+            Self::LibsqlReplica(_) => "libsql_replica_provider_poll",
+            Self::MySql(_) => "mysql_provider_poll",
+        }
+    }
+
+    pub(crate) async fn run(self, service: Arc<Service>, shutdown: CancellationToken) {
+        match self {
+            Self::Postgres(provider) => {
+                service
+                    .run_postgres_provider_hint_worker(provider, shutdown)
+                    .await;
+            }
+            Self::LibsqlReplica(provider) => {
+                service
+                    .run_libsql_replica_provider_poll_worker(provider, shutdown)
+                    .await;
+            }
+            Self::MySql(provider) => {
+                service
+                    .run_mysql_provider_poll_worker(provider, shutdown)
+                    .await;
+            }
+        }
     }
 }
 

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use neovex_core::{Error, Result, TenantId, Timestamp};
 
-use crate::persistence::TenantPersistence;
 use crate::tenant::TenantRuntime;
 
 use super::super::Service;
@@ -133,18 +132,10 @@ impl Service {
         let now = self.now();
         if let Some(runtime) = self.loaded_runtime_for_scheduler(&tenant_id) {
             let _operation = runtime.enter_operation(&tenant_id)?;
-            let has_scheduled_work = match &runtime.store {
-                TenantPersistence::Postgres(store) => store.has_scheduled_work_async().await?,
-                TenantPersistence::Redb(_)
-                | TenantPersistence::Sqlite(_)
-                | TenantPersistence::LibsqlReplica(_)
-                | TenantPersistence::MySql(_) => {
-                    runtime
-                        .read_storage
-                        .execute(|store| store.has_scheduled_work())
-                        .await?
-                }
-            };
+            let has_scheduled_work = runtime
+                .store
+                .has_scheduled_work_async(&runtime.read_storage)
+                .await?;
             if !has_scheduled_work {
                 return Ok(false);
             }
@@ -154,18 +145,10 @@ impl Service {
         let _tenant_load_guard = self.tenant_load_gate.lock().await;
         if let Some(runtime) = self.loaded_runtime_for_scheduler(&tenant_id) {
             let _operation = runtime.enter_operation(&tenant_id)?;
-            let has_scheduled_work = match &runtime.store {
-                TenantPersistence::Postgres(store) => store.has_scheduled_work_async().await?,
-                TenantPersistence::Redb(_)
-                | TenantPersistence::Sqlite(_)
-                | TenantPersistence::LibsqlReplica(_)
-                | TenantPersistence::MySql(_) => {
-                    runtime
-                        .read_storage
-                        .execute(|store| store.has_scheduled_work())
-                        .await?
-                }
-            };
+            let has_scheduled_work = runtime
+                .store
+                .has_scheduled_work_async(&runtime.read_storage)
+                .await?;
             if !has_scheduled_work {
                 return Ok(false);
             }
@@ -179,18 +162,10 @@ impl Service {
         else {
             return Ok(false);
         };
-        let has_scheduled_work = match &opened.persistence {
-            TenantPersistence::Postgres(store) => store.has_scheduled_work_async().await?,
-            TenantPersistence::Redb(_)
-            | TenantPersistence::Sqlite(_)
-            | TenantPersistence::LibsqlReplica(_)
-            | TenantPersistence::MySql(_) => {
-                opened
-                    .executor
-                    .execute(|store| store.has_scheduled_work())
-                    .await?
-            }
-        };
+        let has_scheduled_work = opened
+            .persistence
+            .has_scheduled_work_async(&opened.executor)
+            .await?;
         if !has_scheduled_work {
             return Ok(false);
         }
@@ -199,18 +174,10 @@ impl Service {
         let runtime = Arc::new(
             TenantRuntime::from_parts_async(opened.persistence.clone(), opened_executor).await?,
         );
-        let progress = match &opened.persistence {
-            TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
-            TenantPersistence::Redb(_)
-            | TenantPersistence::Sqlite(_)
-            | TenantPersistence::LibsqlReplica(_)
-            | TenantPersistence::MySql(_) => {
-                opened
-                    .executor
-                    .execute(|store| store.recover_durable_journal())
-                    .await?
-            }
-        };
+        let progress = opened
+            .persistence
+            .recover_durable_journal_async(&opened.executor)
+            .await?;
         runtime.sync_mutation_journal_progress(progress);
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(runtime.clone(), &tenant_id, true, true)

@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use neovex_core::{Error, Result, TenantId};
 
-use crate::persistence::TenantPersistence;
 use crate::tenant::TenantRuntime;
 
 use super::Service;
@@ -262,18 +261,10 @@ impl Service {
         let runtime_init_elapsed = runtime_init_started.elapsed();
         let recover_started = Instant::now();
         let progress = if runtime.applied_head().0 < runtime.durable_head().0 {
-            match &opened.persistence {
-                TenantPersistence::Postgres(store) => store.recover_durable_journal_async().await?,
-                TenantPersistence::Redb(_)
-                | TenantPersistence::Sqlite(_)
-                | TenantPersistence::LibsqlReplica(_)
-                | TenantPersistence::MySql(_) => {
-                    opened
-                        .executor
-                        .execute(|store| store.recover_durable_journal())
-                        .await?
-                }
-            }
+            opened
+                .persistence
+                .recover_durable_journal_async(&opened.executor)
+                .await?
         } else {
             neovex_storage::JournalProgress {
                 durable_head: runtime.durable_head(),
