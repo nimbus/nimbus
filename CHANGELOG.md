@@ -5,15 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.21] - 2026-04-23
-
 ## [0.1.22] - 2026-04-24
 
-### Security
+### Codegen
 
-- Harden codegen compile-time evaluation by moving unsafe-expression checks
-  into the shared interpreter, adding adversarial fixtures, and documenting
-  the remaining runtime bundle boundary by @jackspirou
+- Replace compile-time new Function paths by @jackspirou
+
+### Engine
+
+- Move provider behavior behind capability methods by @jackspirou
+
+### Runtime
+
+- Make service activation async and type the host ABI by @jackspirou
+
+### Server
+
+- Harden localhost access surface by @jackspirou
+
+### Workspace
+
+- Curate facade and JS verification contract by @jackspirou
 
 
 
@@ -23,13 +35,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Land Docker/Podman-style compose discovery, explicit multi-file Compose
-  selections, and `COMPOSE_FILE` support by @jackspirou
+- Support native neovex source roots by @jackspirou
+
+### Build
+
+- Refresh Cargo.lock for v0.1.21 by @jackspirou
+- Patch rustls-webpki and stabilize runtime coverage by @jackspirou
+- Refresh vite and typescript toolchain by @jackspirou
+
+### CI/CD
+
+- Refresh GitHub Actions versions by @jackspirou
 
 ### Documentation
 
-- Archive completed compose plans and simplify `AGENTS.md` to point at active
-  plans plus stable reference docs by @jackspirou
+- Promote maintainability control plan by @jackspirou
+- Update CHANGELOG.md for v0.1.20 by @github-actions[bot]
+
+### Testing
+
+- Serialize Postgres provider fixtures by @jackspirou
+
+### Release
+
+- V0.1.21 by @jackspirou
 
 
 
