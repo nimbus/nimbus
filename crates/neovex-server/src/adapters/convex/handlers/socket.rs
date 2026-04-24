@@ -14,6 +14,8 @@ pub(crate) async fn ws(
     service.ensure_tenant_exists_async(tenant_check).await?;
     let (registry, auth) = registry_and_auth(
         &state,
+        crate::local_server::LocalServerRouteFamily::ConvexWebSocket,
+        &tenant_id,
         &headers,
         "convex websocket route requires Convex support state",
     )

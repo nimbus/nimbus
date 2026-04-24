@@ -87,6 +87,7 @@ async fn cors_preflight_only_allows_loopback_browser_origins() {
         .send()
         .await
         .expect("denied preflight should send");
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
     assert!(
         denied
             .headers()
@@ -256,6 +257,14 @@ mod convex_runtime;
 mod core_http;
 #[path = "tests/deploy.rs"]
 mod deploy;
+#[path = "tests/local_admin.rs"]
+mod local_admin;
+#[path = "tests/local_audit.rs"]
+mod local_audit;
+#[path = "tests/local_server_security.rs"]
+mod local_server_security;
+#[path = "tests/local_ui.rs"]
+mod local_ui;
 #[path = "tests/registry_and_license/mod.rs"]
 mod registry_and_license;
 #[path = "tests/scheduling.rs"]

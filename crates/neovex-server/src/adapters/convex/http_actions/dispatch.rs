@@ -10,9 +10,43 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         .convex_registry
         .current()
         .ok_or_else(|| AppError::not_found("convex http route requires Convex support state"))?;
-    let request_auth = registry
+    let request_auth = match registry
         .verify_authorization_header(&route_request.headers)
-        .await?;
+        .await
+    {
+        Ok(auth) => {
+            state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
+                route_family: crate::local_server::LocalServerRouteFamily::ConvexHttp,
+                tenant_id: Some(tenant_id.to_string()),
+                auth_scope: "application",
+                auth_method: Some(if auth.is_some() {
+                    "application_bearer"
+                } else {
+                    "anonymous"
+                }),
+                success: true,
+                origin: crate::local_server::origin_from_headers(&route_request.headers),
+                reason: if auth.is_some() {
+                    "application.authenticated".to_string()
+                } else {
+                    "application.anonymous".to_string()
+                },
+            });
+            auth
+        }
+        Err(error) => {
+            state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
+                route_family: crate::local_server::LocalServerRouteFamily::ConvexHttp,
+                tenant_id: Some(tenant_id.to_string()),
+                auth_scope: "application",
+                auth_method: Some("application_bearer"),
+                success: false,
+                origin: crate::local_server::origin_from_headers(&route_request.headers),
+                reason: error.to_string(),
+            });
+            return Err(error);
+        }
+    };
     crate::state::record_authenticated_usage(&state, request_auth.as_ref()).await;
     let route = registry
         .resolve_http_route(&route_request.method, &route_request.request_path)

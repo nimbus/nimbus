@@ -4,6 +4,7 @@ mod adapters;
 mod execution;
 mod http;
 mod license;
+mod local_server;
 mod owned_tasks;
 mod protocol;
 mod router;
@@ -22,6 +23,12 @@ pub use license::{
     DEFAULT_LICENSE_PATH, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
     LicenseStatus, LicenseUsageSnapshot,
+};
+pub use local_server::{
+    LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord, LocalServerPaths, LocalServerPlatform,
+    LocalServerSecurityState, SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease,
+    ServerDiscoveryRecord, load_local_admin_token, load_or_create_local_admin_token,
+    read_live_server_discovery, rotate_local_admin_token_offline,
 };
 use router::RouterBuildConfig;
 pub use router::{
@@ -45,6 +52,7 @@ pub struct ServeOptions {
     sandbox_catalog: Option<Arc<dyn SandboxCatalog>>,
     sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
     deploy_admin_token: Option<String>,
+    local_server_security: Option<Arc<LocalServerSecurityState>>,
 }
 
 impl Default for ServeOptions {
@@ -55,6 +63,7 @@ impl Default for ServeOptions {
             sandbox_catalog: None,
             sandbox_service_manager: None,
             deploy_admin_token: None,
+            local_server_security: None,
         }
     }
 }
@@ -89,13 +98,22 @@ impl ServeOptions {
         self.deploy_admin_token = Some(token.into());
         self
     }
+
+    pub fn with_local_server_security(
+        mut self,
+        local_server_security: Arc<LocalServerSecurityState>,
+    ) -> Self {
+        self.local_server_security = Some(local_server_security);
+        self
+    }
 }
 
 async fn serve_with_router_config(
     listener: tokio::net::TcpListener,
     config: RouterBuildConfig,
 ) -> std::io::Result<()> {
-    axum::serve(listener, config.build()).await
+    let listen_addr = listener.local_addr()?;
+    axum::serve(listener, config.with_listen_addr(listen_addr).build()).await
 }
 
 /// Runs the Neovex HTTP/WebSocket server on an existing listener.
@@ -149,6 +167,9 @@ pub async fn serve_with_options(
     }
     if let Some(deploy_admin_token) = options.deploy_admin_token {
         config = config.with_deploy_admin_token(deploy_admin_token);
+    }
+    if let Some(local_server_security) = options.local_server_security {
+        config = config.with_local_server_security(local_server_security);
     }
     if let Some(sandbox_service_manager) = options.sandbox_service_manager {
         config = config.with_sandbox_service_manager(sandbox_service_manager);

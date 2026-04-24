@@ -12,6 +12,8 @@ pub(crate) async fn schedule_after(
     let service = state.service.clone();
     let (registry, _) = registry_and_auth(
         &state,
+        crate::local_server::LocalServerRouteFamily::ConvexHttp,
+        &tenant_id,
         &headers,
         "convex schedule-after route requires Convex support state",
     )
@@ -50,6 +52,8 @@ pub(crate) async fn schedule_at(
     let service = state.service.clone();
     let (registry, _) = registry_and_auth(
         &state,
+        crate::local_server::LocalServerRouteFamily::ConvexHttp,
+        &tenant_id,
         &headers,
         "convex schedule-at route requires Convex support state",
     )
@@ -90,6 +94,8 @@ pub(crate) async fn cancel_scheduled_job(
     let service = state.service.clone();
     let _ = registry_and_auth(
         &state,
+        crate::local_server::LocalServerRouteFamily::ConvexHttp,
+        &tenant_id,
         &headers,
         "convex scheduled job cancel route requires Convex support state",
     )

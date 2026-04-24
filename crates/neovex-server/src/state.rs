@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use axum::Json;
@@ -11,6 +12,7 @@ use tracing::warn;
 
 use crate::adapters::convex::ConvexRegistry;
 use crate::license::LicenseState;
+use crate::local_server::{LocalServerAuditEvent, LocalServerSecurityState};
 use crate::service_registry::RuntimeServiceRegistry;
 
 pub(crate) struct AppStateConfig {
@@ -19,6 +21,8 @@ pub(crate) struct AppStateConfig {
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(crate) deploy_admin_token: Option<String>,
+    pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
+    pub(crate) listen_addr: Option<SocketAddr>,
 }
 
 /// Shared application state.
@@ -28,6 +32,8 @@ pub(crate) struct AppState {
     pub(crate) license_state: Arc<LicenseState>,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(crate) deploy_admin_token: Option<String>,
+    pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
+    pub(crate) listen_addr: Option<SocketAddr>,
 }
 
 impl AppState {
@@ -38,6 +44,8 @@ impl AppState {
             license_state,
             runtime_service_registry,
             deploy_admin_token,
+            local_server_security,
+            listen_addr,
         } = config;
         Self {
             service,
@@ -45,11 +53,26 @@ impl AppState {
             license_state: Arc::new(license_state),
             runtime_service_registry,
             deploy_admin_token,
+            local_server_security,
+            listen_addr,
         }
     }
 
     pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.runtime_service_registry.clone()
+    }
+
+    pub(crate) fn record_local_server_audit(&self, event: LocalServerAuditEvent) {
+        let Some(local_server_security) = self.local_server_security.as_ref() else {
+            return;
+        };
+        if let Err(error) = local_server_security.record_audit_event(event) {
+            warn!(
+                audit_log_path = %local_server_security.paths().audit_log_path.display(),
+                error = %error,
+                "failed to append local server audit log"
+            );
+        }
     }
 }
 
@@ -115,6 +138,7 @@ impl ActiveConvexRegistry {
 pub(crate) enum AppError {
     Core(Error),
     Unauthorized(String),
+    Forbidden(String),
     NotFound(String),
 }
 
@@ -157,6 +181,9 @@ impl IntoResponse for AppError {
             Self::Unauthorized(message) => {
                 (StatusCode::UNAUTHORIZED, Json(json!({ "error": message }))).into_response()
             }
+            Self::Forbidden(message) => {
+                (StatusCode::FORBIDDEN, Json(json!({ "error": message }))).into_response()
+            }
             Self::NotFound(message) => {
                 (StatusCode::NOT_FOUND, Json(json!({ "error": message }))).into_response()
             }
@@ -169,6 +196,10 @@ impl AppError {
         Self::Unauthorized(message.into())
     }
 
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
+        Self::Forbidden(message.into())
+    }
+
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self::NotFound(message.into())
     }
@@ -179,6 +210,7 @@ impl std::fmt::Display for AppError {
         match self {
             Self::Core(error) => write!(f, "{error}"),
             Self::Unauthorized(message) => write!(f, "{message}"),
+            Self::Forbidden(message) => write!(f, "{message}"),
             Self::NotFound(message) => write!(f, "{message}"),
         }
     }

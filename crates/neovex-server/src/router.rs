@@ -1,7 +1,9 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{HeaderName, HeaderValue, Method, header};
+use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use neovex_engine::Service;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -9,6 +11,10 @@ use tower_http::services::ServeDir;
 
 use crate::adapters::convex::{self, ConvexRegistry};
 use crate::license::LicenseState;
+use crate::local_server::{
+    LocalServerAccessPolicy, LocalServerSecurityState, origin_allowlist_middleware,
+    route_family_gate_middleware, server_access_extract_middleware,
+};
 use crate::sandbox::{EmptySandboxCatalog, SandboxCatalog};
 use crate::service_manager::SandboxServiceManager;
 use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
@@ -43,6 +49,8 @@ pub(crate) struct RouterBuildConfig {
     license_state: LicenseState,
     runtime_service_source: RuntimeServiceSource,
     deploy_admin_token: Option<String>,
+    local_server_security: Option<Arc<LocalServerSecurityState>>,
+    listen_addr: Option<SocketAddr>,
 }
 
 impl RouterBuildConfig {
@@ -55,6 +63,8 @@ impl RouterBuildConfig {
                 EmptySandboxCatalog,
             )),
             deploy_admin_token: std::env::var("NEOVEX_DEPLOY_TOKEN").ok(),
+            local_server_security: None,
+            listen_addr: None,
         }
     }
 
@@ -75,6 +85,19 @@ impl RouterBuildConfig {
 
     pub(crate) fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
         self.deploy_admin_token = Some(token.into());
+        self
+    }
+
+    pub(crate) fn with_local_server_security(
+        mut self,
+        local_server_security: Arc<LocalServerSecurityState>,
+    ) -> Self {
+        self.local_server_security = Some(local_server_security);
+        self
+    }
+
+    pub(crate) fn with_listen_addr(mut self, listen_addr: SocketAddr) -> Self {
+        self.listen_addr = Some(listen_addr);
         self
     }
 
@@ -110,11 +133,43 @@ impl RouterBuildConfig {
             license_state: self.license_state,
             runtime_service_registry: self.runtime_service_source.into_runtime_service_registry(),
             deploy_admin_token: self.deploy_admin_token,
+            local_server_security: self.local_server_security,
+            listen_addr: self.listen_addr,
         }));
 
-        build_core_router()
+        let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
+        let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
+
+        build_public_router()
+            .merge(build_ui_router().route_layer(middleware::from_fn(http::ui_csp_middleware)))
+            .merge(
+                build_local_admin_router()
+                    .route_layer(middleware::from_fn_with_state(
+                        local_admin_policy.clone(),
+                        route_family_gate_middleware,
+                    ))
+                    .route_layer(middleware::from_fn_with_state(
+                        local_admin_policy,
+                        server_access_extract_middleware,
+                    )),
+            )
+            .merge(
+                build_deploy_router()
+                    .route_layer(middleware::from_fn_with_state(
+                        deploy_admin_policy.clone(),
+                        route_family_gate_middleware,
+                    ))
+                    .route_layer(middleware::from_fn_with_state(
+                        deploy_admin_policy,
+                        server_access_extract_middleware,
+                    )),
+            )
             .merge(build_convex_router())
             .layer(build_cors_layer())
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                origin_allowlist_middleware,
+            ))
             .with_state(state)
     }
 }
@@ -243,7 +298,12 @@ fn build_cors_layer() -> CorsLayer {
         .allow_origin(AllowOrigin::predicate(|origin, _request_head| {
             is_allowed_local_cors_origin(origin)
         }))
-        .allow_headers([header::ACCEPT, header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-neovex-admin-token"),
+        ])
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -270,14 +330,33 @@ fn is_allowed_local_cors_origin(origin: &HeaderValue) -> bool {
         || authority.starts_with("[::1]:")
 }
 
-fn build_core_router() -> Router<Arc<AppState>> {
+fn build_public_router() -> Router<Arc<AppState>> {
     let demos = ServeDir::new(DEMOS_DIR).append_index_html_on_directories(true);
 
     Router::new()
         .route("/health", get(http::health))
+        .route("/demos", get(http::demos_redirect))
+        .nest_service("/demos/", demos)
+}
+
+fn build_ui_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/ui", get(http::ui_root))
+        .route("/ui/", get(http::ui_root))
+        .route("/ui/auth", get(http::ui_auth))
+        .route("/ui/auth/session", post(http::create_ui_session))
+        .route("/ui/{*path}", get(http::ui_path))
+}
+
+fn build_local_admin_router() -> Router<Arc<AppState>> {
+    Router::new()
         .route("/debug/license/status", get(http::license_status))
         .route("/debug/encryption/status", get(http::encryption_status))
-        .route("/api/admin/deploy", post(http::deploy_app))
+        .route(
+            "/api/admin/token/rotate",
+            post(http::rotate_local_admin_token),
+        )
+        .route("/debug/runtime/metrics", get(http::runtime_diagnostics))
         .route(
             "/debug/tenants/{tenant_id}/consistency",
             get(http::tenant_consistency_report),
@@ -286,8 +365,6 @@ fn build_core_router() -> Router<Arc<AppState>> {
             "/debug/tenants/{tenant_id}/engine/metrics",
             get(http::tenant_engine_diagnostics),
         )
-        .route("/demos", get(http::demos_redirect))
-        .nest_service("/demos/", demos)
         .route(
             "/api/tenants",
             post(http::create_tenant).get(http::list_tenants),
@@ -350,9 +427,12 @@ fn build_core_router() -> Router<Arc<AppState>> {
         .route("/ws", get(ws::ws_handler))
 }
 
+fn build_deploy_router() -> Router<Arc<AppState>> {
+    Router::new().route("/api/admin/deploy", post(http::deploy_app))
+}
+
 fn build_convex_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/debug/runtime/metrics", get(http::runtime_diagnostics))
         .route("/convex/{tenant_id}/query", post(convex::query))
         .route(
             "/convex/{tenant_id}/query/paginated",

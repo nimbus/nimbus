@@ -23,7 +23,7 @@ Reviewed against:
 
 ## Status
 
-- **Status:** `active`
+- **Status:** `completed`
 - **Primary owner:** this plan
 - **Activation gate:** prerequisite for `docs/plans/desktop-ui-plan.md`
 - **Related plans:**
@@ -31,6 +31,27 @@ Reviewed against:
     the protocol negotiation layer from that plan
   - `docs/plans/desktop-ui-plan.md` — the UI consumes token-gate, session
     cookie, and CSP; depends on this plan completing first
+
+### Roadmap Status Ledger
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| LS1 | `done` | Landed server-owned platform path resolver plus `server.json` lifecycle and stale-file recovery |
+| LS2 | `done` | Landed local admin token storage, in-memory security state, live/offline rotation, and `neovex token rotate` |
+| LS3 | `done` | Landed loopback-only origin enforcement, route-family local-admin gates, distinct deploy header handling, and Convex app auth separation coverage |
+| LS4 | `done` | Landed minimal `/ui/*` bootstrap routes, signed session cookies, and CSP enforcement |
+| LS5 | `done` | Security audit log |
+
+### Implementation Checkpoints
+
+| Checkpoint | State |
+| --- | --- |
+| Control plan ledger and execution owner are present in this file | `done` |
+| LS1 ownership, implementation, and verification are recorded | `done` |
+| LS2 ownership, implementation, and verification are recorded | `done` |
+| LS3 ownership, implementation, and verification are recorded | `done` |
+| LS4 ownership, implementation, and verification are recorded | `done` |
+| LS5 ownership, implementation, and verification are recorded | `done` |
 
 ## Current Assessed State
 
@@ -40,10 +61,19 @@ Reviewed against:
   expose it beyond localhost.
 - The WebSocket upgrade handler checks tenant existence but not caller
   identity.
-- No token file, no origin allowlist, no session cookie, no CSP header, no
-  audit log, no server discovery file exist today.
-- The machine manager already uses XDG paths correctly — this plan extends
-  that convention to auth, run state, and logs.
+- `server.json` discovery plus stale-file cleanup now exist, and the server
+  creates and reuses a versioned local admin token file with live/offline
+  rotation semantics.
+- Loopback origin enforcement now rejects bad HTTP and WebSocket origins before
+  local-admin auth, native/admin/debug/deploy routes are gated by local server
+  access policy, and Convex-compatible app routes keep application-auth
+  ownership of `Authorization: Bearer ...`.
+- The localhost hardening bundle is now landed end-to-end: loopback default
+  binding with explicit host override, secure token lifecycle, signed UI
+  sessions, route-family origin and local-admin gates, CSP headers, server
+  discovery, and append-only audit logging.
+- The machine manager already uses XDG paths correctly — this plan now extends
+  that convention to auth, run state, and logs for the local server surface.
 - `ring` 0.17 is already a workspace dependency (ECDSA/Ed25519 in test auth).
 
 ## Control Plan Rules
@@ -241,12 +271,15 @@ No `'unsafe-eval'` in production. Gate dev-mode relaxation behind
   "address": "127.0.0.1:6789",
   "startedAt": "2026-04-18T12:34:56Z",
   "version": "0.2.3",
-  "protocolVersions": ["neovex.v1", "neovex.v2"]
+  "protocolVersions": ["neovex.v1"]
 }
 ```
 
 Written on bind with a `RemoveOnDrop` guard. On startup, validate PID
-liveness to handle stale files from `SIGKILL`.
+liveness to handle stale files from `SIGKILL`. `protocolVersions` should
+advertise only currently implemented WebSocket protocol families; widen this
+list when `docs/plans/websocket-protocol-plan.md` lands newer negotiated
+versions.
 
 ### Defense-in-depth layers
 
@@ -272,7 +305,7 @@ liveness check on startup for stale file recovery.
 next startup, (d) paths respect `$XDG_DATA_HOME`, `$XDG_RUNTIME_DIR`,
 `$XDG_STATE_HOME` when set.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### LS2 — Token file lifecycle and CLI subcommand
 
@@ -292,7 +325,7 @@ file is reused across restarts, (e) Windows ACL restricts to current user,
 (f) live-server rotation invalidates an existing cookie without restart,
 (g) offline rotation refuses to race a live server.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### LS3 — Origin allowlist and middleware stack
 
@@ -316,7 +349,7 @@ token by default, (g) a local admin token presented to a Convex app route does
 not populate `ctx.auth`, and (h) a tenant-scoped Convex JWT is verified only
 against the selected tenant/app registry.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### LS4 — Session cookie bootstrap and CSP
 
@@ -334,20 +367,40 @@ upgrade succeeds with cookie, (e) invalid or revoked generation returns 401,
 (f) CSP header present on `/ui/*` responses, (g) `'unsafe-eval'` absent in
 release builds.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### LS5 — Audit log
 
-Write `{ts, origin, client_kind, user_agent, session_id}` to
-`$XDG_STATE_HOME/neovex/logs/access.jsonl` on every WebSocket connection.
+Write append-only JSONL audit records to
+`$XDG_STATE_HOME/neovex/logs/access.jsonl` for security-relevant localhost
+server events. Record route family, tenant id when applicable, auth scope
+(`server_access` versus `application`), coarse auth method, success or
+failure, origin, and a coarse reason string. Do not log tokens, cookie values,
+session ids, HMACs, or other secrets. Log write failures through structured
+warnings without weakening unrelated request handling.
 
-**Verification:** (a) log entry written on connection, (b) file created
-with correct permissions, (c) log is append-only JSONL.
+Cover at least: successful and failed local admin auth, bad-origin rejection,
+token rotation, session creation, rotation-driven session invalidation, and
+tenant/app route auth outcomes that include the selected tenant id without
+confusing local server auth with Convex/application auth.
 
-**Status:** `pending`
+**Verification:** (a) successful local admin auth is logged, (b) failed local
+admin auth is logged, (c) bad origin is logged without token material, (d)
+rotation is logged, (e) session creation and invalidation are logged without
+secret material, (f) tenant/app audit entries include tenant id and
+application-auth ownership, (g) file is append-only JSONL with secure parent
+directory posture.
+
+**Status:** `done`
 
 ## Execution Log
 
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-04-18 | Plan authored | — | Extracted from desktop-ui-plan.md as prerequisite |
+| 2026-04-23 | LS1 | `done` | Added a server-owned `local_server` path/discovery module in `neovex-server`, re-exported it through the facade, and wired `neovex start` to write `server.json` on bind, replace stale discovery files after dead-PID cleanup, and remove the file on clean shutdown while preserving later overwrites from newer processes. Platform path resolution now covers Linux/XDG, macOS `TMPDIR` or Application Support plus Logs, and Windows `LOCALAPPDATA` with `USERPROFILE` fallback. Verification: `cargo test -p neovex-server local_server -- --nocapture`; `cargo test -p neovex-bin start -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS2 token lifecycle, secure token storage, and live/offline rotation semantics. |
+| 2026-04-23 | LS2 | `done` | Added server-owned token storage and in-memory security state, generated and reused a versioned 256-bit local admin token on `neovex start`, exposed authenticated live rotation at `POST /api/admin/token/rotate`, and added `neovex token rotate` with live-server and offline-refusal behavior plus constant-time token verification. Verification: `cargo test -p neovex-server local_server -- --nocapture`; `cargo test -p neovex-server local_admin -- --nocapture`; `cargo test -p neovex-bin token -- --nocapture`; `cargo test -p neovex-bin start -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS3 origin allowlists, route-family middleware, and server-access gating without disturbing Convex application auth. |
+| 2026-04-23 | LS3 | `done` | Split the router into public, local-admin, deploy-admin, and Convex app route families; added loopback-only origin middleware ahead of CORS/auth; enforced local-admin access on native CRUD, debug, deploy, and native WebSocket routes; required `X-Neovex-Admin-Token` alongside the deploy bearer on `/api/admin/deploy`; and kept Convex app HTTP/WebSocket routes on tenant-selected application auth. Verification: `cargo test -p neovex-server local_server_security -- --nocapture`; `cargo test -p neovex-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS4 minimal `/ui/*` bootstrap routes, signed session cookies, and CSP headers. |
+| 2026-04-23 | LS4 | `done` | Added minimal server-owned `/ui/`, `/ui/auth`, and `POST /ui/auth/session` routes; bootstrapped signed `neovex_session` cookies from a local admin token or single-use launch ticket; allowed local UI and native WebSocket access through the signed session cookie; and applied a release-safe CSP header across `/ui/*` without introducing `unsafe-eval`. Verification: `cargo test -p neovex-server local_ui -- --nocapture`; `cargo test -p neovex-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS5 audit logging for origin, local-admin, session, rotation, and tenant-app auth events. |
+| 2026-04-23 | LS5 | `done` | Added a server-owned append-only JSONL audit log for security-relevant localhost events; recorded origin rejections, local-admin auth successes and failures, UI session bootstrap, rotation-driven session invalidation, and tenant-scoped Convex application-auth outcomes without logging tokens, cookies, or session identifiers. Verification: `cargo test -p neovex-server local_audit -- --nocapture`; `cargo test -p neovex-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: close the control plan and leave the landed security contract as baseline input for the desktop UI plan. |
+| 2026-04-23 | Closeout | `done` | Completed the localhost/server security workstream end to end and retired this plan from active-control-plane status. Final workspace verification: `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `make ci`. Next: treat this document as the settled localhost security contract and use it as baseline input for follow-on desktop UI work. |
