@@ -18,6 +18,10 @@ neovex codegen [--app PATH]
 ```
 
 ```bash
+neovex token rotate
+```
+
+```bash
 neovex start [flags]
 ```
 
@@ -137,6 +141,10 @@ Current command taxonomy:
   activating generated app artifacts on a running server
 - `neovex codegen`
   shipped first-party code generation for `neovex/` or `convex/` source roots
+- `neovex token rotate`
+  shipped local admin token lifecycle command for rotating the localhost server
+  access token using live-server semantics when a server is discoverable and
+  offline semantics otherwise
 - `neovex start`
   shipped explicit server-start verb
 - `neovex compose ...`
@@ -328,6 +336,16 @@ Equivalent entrypoints:
 The shared pipeline still expects generated files to be checked into version
 control for stable typechecking and frontend workflows. The start-side
 preflight described below is a startup convenience, not a watched `dev` loop.
+
+From the repo root, the canonical JS verification entrypoints are now:
+
+- `npm run typecheck`
+- `npm run test`
+- `npm run build`
+
+Those commands fan out to workspace-owned package scripts where present, so the
+root command surface stays stable even when individual package internals
+change.
 
 ## Deploy Command
 

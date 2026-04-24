@@ -5,7 +5,8 @@
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
-    "test": "node ./src/selftest.mjs"
+    "test": "node ./src/selftest.mjs",
+    "typecheck": "node ./src/selftest.mjs --typecheck-only"
   },
   "exports": {
     "./react": "./src/react.ts",

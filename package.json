@@ -12,10 +12,14 @@
     "demos/convex/http"
   ],
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "convex:codegen": "convex codegen --app demos/convex/html",
     "convex:codegen:node": "convex codegen --app demos/convex/node",
-    "convex:build": "npm run build --workspaces --if-present",
-    "convex:test": "npm run test --workspaces --if-present",
+    "convex:build": "npm run build",
+    "convex:test": "npm run test",
+    "convex:typecheck": "npm run typecheck",
     "convex:server:node": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/node",
     "convex:server:html": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/html",
     "convex:server:http": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/http",

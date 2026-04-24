@@ -60,11 +60,12 @@ Use the repo docs for architecture and behavior details:
   manager seams, start with `docs/reference/microvm-service-baseline.md`,
   `docs/reference/macos-machine-flow.md` when relevant, and the active platform
   plan from `docs/plans/README.md`.
-- **For localhost/server security work:** `docs/plans/localhost-server-security-plan.md`
-  is the active control plane. Use it for local bind/auth/session/origin/CORS,
-  token lifecycle, server discovery, route-family gating, audit logging,
-  `/ui/*` bootstrap security, and the server-access versus application-auth
-  boundary.
+- **For localhost/server security work:** start with the completed contract in
+  `docs/plans/localhost-server-security-plan.md` for local
+  bind/auth/session/origin/CORS, token lifecycle, server discovery,
+  route-family gating, audit logging, `/ui/*` bootstrap security, and the
+  server-access versus application-auth boundary. Promote a new active plan
+  before landing another security wave that materially changes that contract.
 - **For install script work (Channel 1):** `docs/plans/install-script-plan.md`
   is the active control plan for the `curl | sh` quick-start bootstrapper. Its
   parent is `docs/plans/distribution-plan.md` (Channel 1 section). Start I1
@@ -77,7 +78,9 @@ Use the repo docs for architecture and behavior details:
   `docs/convex/compatibility.md` for `packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
   contract. Promote a new active plan before landing another CLI/codegen
-  workflow wave unless one already owns the slice.
+  workflow wave unless one already owns the slice. Use
+  `docs/plans/archive/codegen-and-facade-hardening-plan.md` only for the
+  completed cleanup wave's execution record.
 
 ## Context Window Discipline
 
@@ -107,14 +110,16 @@ Use the repo docs for architecture and behavior details:
   then the active platform plan from `docs/plans/README.md`.
 - For localhost/server security work, open
   `docs/plans/localhost-server-security-plan.md` after the three top-level
-  docs and treat it as the owning active plan. Keep local server-access auth
-  separate from tenant/application auth unless that plan explicitly says
-  otherwise.
+  docs and treat it as the settled contract unless a newer active plan owns
+  the slice. Keep local server-access auth separate from tenant/application
+  auth unless an active plan explicitly says otherwise.
 - For Convex or Neovex CLI/codegen workflow work, open
   `docs/reference/convex-ai-guidelines.md`, `docs/reference/cli.md`, and
-  `docs/convex/compatibility.md` after the three top-level docs. Promote a new
-  active plan before landing another CLI/codegen workflow wave unless one
-  already owns the slice.
+  `docs/convex/compatibility.md` after the three top-level docs. Promote a
+  new active plan before landing another CLI/codegen workflow wave unless one
+  already owns the slice. Use
+  `docs/plans/archive/codegen-and-facade-hardening-plan.md` only when you
+  need the completed cleanup wave's execution record.
 - Treat the current git worktree plus the owning active plan, when there is
   one, as progress state. Do not rely on chat history to remember where work
   stopped.
@@ -214,8 +219,9 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **Harness focused lanes:** `make verify-harness` or `make verify-harness SURFACE=runtime`
 - **Harness nightly lanes:** `make verify-harness-nightly` or `make verify-harness-nightly SURFACE=server`
 - **Harness repro:** `make verify-harness-repro SURFACE=runtime MODE=pr CASE=<case-id>`
-- **JS tests:** `npm run test --workspaces --if-present`
-- **JS build:** `npm run build --workspaces --if-present`
+- **JS typecheck:** `npm run typecheck`
+- **JS tests:** `npm run test`
+- **JS build:** `npm run build`
 - **All at once:** `make ci`
 
 Prefer the `make` entrypoints above for long-running workspace-wide verification:

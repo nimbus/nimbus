@@ -41,6 +41,15 @@ Generated files should still be checked into version control. That keeps
 frontend typechecking and CI stable even when a developer has not run the CLI
 yet.
 
+For repo-owned JS verification, use the root workspace entrypoints:
+
+- `npm run typecheck`
+- `npm run test`
+- `npm run build`
+
+Those commands fan out to package-owned scripts across `@neovex/codegen`,
+`convex`, and `neovex`.
+
 `neovex start --app-dir ./my-app` now runs one codegen preflight pass before
 startup unless `--skip-codegen` is set, but this is intentionally not a
 replacement for Convex's watched `dev` loop. After the server starts, Neovex

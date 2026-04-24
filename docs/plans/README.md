@@ -14,11 +14,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     handshake, structured error types with code taxonomy, reference
     documents (`websocket-protocol.md`, `errors.md`); prerequisite for the
     desktop UI plan
-- `docs/plans/localhost-server-security-plan.md`
-  - canonical execution plan for localhost server security hardening:
-    XDG-compliant token file lifecycle, origin allowlist middleware, session
-    cookie bootstrap, CSP headers, server discovery file, audit log, `neovex
-    token rotate` CLI subcommand; prerequisite for the desktop UI plan
 - `docs/plans/system-tenant-api-plan.md`
   - canonical execution plan for the `_neovex` system tenant and management
     API: machine/service state persistence as documents, HTTP lifecycle
@@ -30,6 +25,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
     dark mode, a11y, optional Electron shell (Phase 2); depends on the three
     prerequisite plans above
+- `docs/plans/install-script-plan.md`
+  - canonical execution plan for the neovex install script (Channel 1):
+    `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
+    macOS (Apple Silicon). Covers platform detection, dependency
+    installation, binary download, checksum verification, post-install
+    verification helper, and the libkrun gap on Debian/Ubuntu.
 
 ## Stable implementation baselines
 
@@ -41,18 +42,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - concise current reference for the settled macOS developer-machine contract:
     pinned Podman image digest, host-managed guest binary sync, forwarded
     machine API, host-resident `neovex start`, and proof-helper entrypoints
+- `docs/plans/localhost-server-security-plan.md`
+  - completed localhost server security contract for the landed loopback
+    bind/auth/session/origin/CORS, server discovery, CSP, audit log, and
+    server-access versus application-auth boundary; remains the baseline input
+    for the desktop UI plan until a shorter reference doc is extracted
 - `docs/plans/runtime-provider-boundary-hardening-plan.md`
   - completed architecture-review follow-up for runtime and provider
     boundaries: async/cancellable service activation outside sync V8 host
     paths, versioned typed host ABI payloads, and provider-owned capability
     methods that keep provider behavior out of engine service switchboards
-
-- `docs/plans/install-script-plan.md`
-  - canonical execution plan for the neovex install script (Channel 1):
-    `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
-    macOS (Apple Silicon). Covers platform detection, dependency
-    installation, binary download, checksum verification, post-install
-    verification helper, and the libkrun gap on Debian/Ubuntu.
 
 ## Pending plans
 
@@ -123,6 +122,12 @@ completed plans unless explicitly asked to review historical work.
   - completed first-party CLI/codegen integration plan; records the `neovex
     codegen` command, the `--app-dir` serve contract, one-shot preflight
     codegen, and the manifest-loading UX closeout
+- `docs/plans/archive/codegen-and-facade-hardening-plan.md`
+  - completed architecture-review follow-up for `packages/codegen`, the
+    `crates/neovex` facade, and the canonical JS workspace verification
+    contract; records the AST-owned compile-time evaluator, the narrowed
+    embedder facade boundary, and the settled root `npm run typecheck` /
+    `npm run test` / `npm run build` entrypoints
 - `docs/plans/archive/mysql-storage-provider-plan.md`
   - completed MySQL tenant persistence provider plan; records the
     `mysql_async`-based provider implementation, benchmark/RTT gate, reconnect
@@ -310,12 +315,14 @@ completed plans unless explicitly asked to review historical work.
 - For Convex or Neovex CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
   contract), start with `docs/reference/convex-ai-guidelines.md`,
-  `docs/reference/cli.md`, and `docs/convex/compatibility.md`. Use
+  `docs/reference/cli.md`, and `docs/convex/compatibility.md`. Promote a new
+  active plan before another CLI/codegen/facade architecture wave unless one
+  already owns the slice. Use `archive/codegen-and-facade-hardening-plan.md`
+  for the most recent cleanup wave's execution record, use
   `archive/codegen-cli-plan.md` only for the completed CLI/codegen rollout's
-  execution record or exact verification bundle, and use the archived
+  execution record or exact verification bundle, and use
   `archive/neovex-source-root-plan.md` only for historical source-root
-  context. Promote a new active plan before landing another CLI/codegen
-  workflow wave.
+  context.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - For Compose-backed service lifecycle follow-on work, start with
   `docs/reference/microvm-service-baseline.md`, then promote or author a new
