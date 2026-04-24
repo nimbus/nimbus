@@ -57,13 +57,13 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
     cancellation.cancel();
 
     let result = bridge.dispatch_host_call_cancellable(
-        HostCallRequest {
-            operation: HostCallOperation::CtxDbGet,
-            payload: json!({
+        HostCallRequest::new(
+            HostCallOperation::CtxDbGet,
+            json!({
                 "table": "messages",
                 "id": document_id.to_string(),
             }),
-        },
+        ),
         &cancellation,
     );
 
@@ -77,9 +77,9 @@ fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
     cancellation.cancel();
 
     let result = bridge.dispatch_host_call_cancellable(
-        HostCallRequest {
-            operation: HostCallOperation::HttpRoute,
-            payload: json!({
+        HostCallRequest::new(
+            HostCallOperation::HttpRoute,
+            json!({
                 "request": {
                     "kind": "action",
                     "function_name": "messages:send",
@@ -117,7 +117,7 @@ fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
                     }
                 }
             }),
-        },
+        ),
         &cancellation,
     );
 

@@ -1,6 +1,10 @@
-use neovex_runtime::{HostCallOperation, HostCallRequest};
+use neovex_runtime::{HOST_CALL_ABI_VERSION, HostCallOperation, HostCallRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+const fn default_convex_host_call_abi_version() -> u16 {
+    HOST_CALL_ABI_VERSION
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(in crate::adapters::convex) enum ConvexHostCallOperation {
@@ -58,6 +62,7 @@ pub(in crate::adapters::convex) enum ConvexHostCallOperation {
     CtxRuntimeEnterNestedCall,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(in crate::adapters::convex) enum ConvexHostCallFamily {
     Function,
@@ -68,6 +73,7 @@ pub(in crate::adapters::convex) enum ConvexHostCallFamily {
 }
 
 impl ConvexHostCallOperation {
+    #[cfg(test)]
     pub(in crate::adapters::convex) const fn family(self) -> ConvexHostCallFamily {
         match self {
             Self::HttpRoute
@@ -198,6 +204,8 @@ impl From<ConvexHostCallOperation> for HostCallOperation {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(in crate::adapters::convex) struct ConvexHostCallRequest {
+    #[serde(default = "default_convex_host_call_abi_version")]
+    pub(in crate::adapters::convex) abi_version: u16,
     pub(in crate::adapters::convex) operation: ConvexHostCallOperation,
     #[serde(default)]
     pub(in crate::adapters::convex) payload: Value,
@@ -206,6 +214,7 @@ pub(in crate::adapters::convex) struct ConvexHostCallRequest {
 impl From<HostCallRequest> for ConvexHostCallRequest {
     fn from(request: HostCallRequest) -> Self {
         Self {
+            abi_version: request.abi_version,
             operation: request.operation.into(),
             payload: request.payload,
         }
@@ -215,6 +224,7 @@ impl From<HostCallRequest> for ConvexHostCallRequest {
 impl From<ConvexHostCallRequest> for HostCallRequest {
     fn from(request: ConvexHostCallRequest) -> Self {
         Self {
+            abi_version: request.abi_version,
             operation: request.operation.into(),
             payload: request.payload,
         }

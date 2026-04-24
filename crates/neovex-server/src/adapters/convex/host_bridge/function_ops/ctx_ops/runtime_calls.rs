@@ -1,6 +1,28 @@
 use super::*;
 
 impl ConvexHostBridge {
+    pub(in crate::adapters::convex) async fn invoke_ctx_service_lookup_async_cancellable(
+        &self,
+        payload: Value,
+        cancellation: &HostCallCancellation,
+    ) -> std::result::Result<Value, NeovexRuntimeError> {
+        let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
+        self.validate_session(payload.session_id.as_deref())?;
+        let response = self
+            .runtime_service_registry
+            .ensure_service_binding_async(
+                &self.tenant_id,
+                &payload.service_name,
+                cancellation.clone(),
+            )
+            .await
+            .and_then(|binding| {
+                serde_json::to_value(binding)
+                    .map_err(|error| Error::Serialization(error.to_string()))
+            });
+        encode_runtime_core_result(response)
+    }
+
     pub(in crate::adapters::convex) fn invoke_ctx_service_lookup(
         &self,
         payload: Value,
@@ -9,7 +31,7 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         let response = self
             .runtime_service_registry
-            .ensure_service_binding(&self.tenant_id, &payload.service_name)
+            .resolve_service_binding(&self.tenant_id, &payload.service_name)
             .and_then(|binding| {
                 serde_json::to_value(binding)
                     .map_err(|error| Error::Serialization(error.to_string()))

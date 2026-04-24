@@ -309,33 +309,56 @@ function __neovexCreateServiceBindings(services) {
   return clonedServices;
 }
 
-function __neovexCreateServiceRegistry(guardStale, syncHostValue, services) {
+function __neovexCreateServiceRegistry(guardStale, asyncHostValue, services) {
   const cache = __neovexCreateServiceBindings(services);
   const hasOwn = (property) =>
     Object.prototype.hasOwnProperty.call(cache, property);
+  const target = Object.create(null);
 
-  return new Proxy(Object.create(null), {
-    get(_target, property) {
+  Object.defineProperty(target, "get", {
+    enumerable: false,
+    configurable: false,
+    writable: false,
+    value: async (serviceName) => {
       guardStale();
+      if (typeof serviceName !== "string" || serviceName.length === 0) {
+        return undefined;
+      }
+      if (hasOwn(serviceName)) {
+        return cache[serviceName];
+      }
+      const lookedUpBinding = __neovexCloneServiceBinding(
+        await asyncHostValue("op_neovex_ctx_service_lookup", {
+          service_name: serviceName,
+        }),
+      );
+      if (lookedUpBinding !== null) {
+        cache[serviceName] = lookedUpBinding;
+        return lookedUpBinding;
+      }
+      return undefined;
+    },
+  });
+
+  return new Proxy(target, {
+    get(target, property) {
+      guardStale();
+      if (property === "get") {
+        return target.get;
+      }
       if (typeof property !== "string") {
         return undefined;
       }
       if (hasOwn(property)) {
         return cache[property];
       }
-      const lookedUpBinding = __neovexCloneServiceBinding(
-        syncHostValue("op_neovex_ctx_service_lookup", {
-          service_name: property,
-        }),
-      );
-      if (lookedUpBinding !== null) {
-        cache[property] = lookedUpBinding;
-        return lookedUpBinding;
-      }
       return undefined;
     },
-    has(_target, property) {
+    has(target, property) {
       guardStale();
+      if (property === "get") {
+        return true;
+      }
       if (typeof property !== "string") {
         return false;
       }
@@ -343,10 +366,13 @@ function __neovexCreateServiceRegistry(guardStale, syncHostValue, services) {
     },
     ownKeys() {
       guardStale();
-      return Reflect.ownKeys(cache);
+      return [...Reflect.ownKeys(target), ...Reflect.ownKeys(cache)];
     },
-    getOwnPropertyDescriptor(_target, property) {
+    getOwnPropertyDescriptor(target, property) {
       guardStale();
+      if (property === "get") {
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      }
       if (typeof property !== "string" || !hasOwn(property)) {
         return undefined;
       }
@@ -462,7 +488,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
         return cloneAuthIdentityOrThrow(verifiedAuthIdentity);
       },
     }),
-    services: __neovexCreateServiceRegistry(guardStale, syncHostValue, services),
+    services: __neovexCreateServiceRegistry(guardStale, asyncHostValue, services),
     db: {
       async get(tableOrId, maybeId) {
         guardStale();

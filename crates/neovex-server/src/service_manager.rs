@@ -1,15 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use neovex_core::{Error, TenantId};
-use neovex_runtime::{InvocationServiceBinding, InvocationServices};
+use neovex_runtime::{HostCallCancellation, InvocationServiceBinding, InvocationServices};
 use neovex_sandbox::{SandboxBackend, SandboxError, SandboxHandle, SandboxStatus};
+use tokio::sync::Notify;
+use tokio::time::sleep;
 
 use crate::sandbox::{SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch};
-use crate::service_registry::{RuntimeServiceRegistry, service_binding_from_handle};
+use crate::service_registry::{
+    RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
+};
 
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -41,7 +44,7 @@ pub struct SandboxServiceManager {
     activation_timeout: Duration,
     activation_poll_interval: Duration,
     state: Mutex<SandboxServiceManagerState>,
-    activation_cv: Condvar,
+    activation_notify: Notify,
 }
 
 impl SandboxServiceManager {
@@ -55,7 +58,7 @@ impl SandboxServiceManager {
             activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
             activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
             state: Mutex::new(SandboxServiceManagerState::default()),
-            activation_cv: Condvar::new(),
+            activation_notify: Notify::new(),
         }
     }
 
@@ -107,22 +110,57 @@ impl SandboxServiceManager {
         }
     }
 
-    fn claim_activation(&self, key: &TenantServiceKey) -> ActivationClaim {
+    async fn refresh_handle_async(
+        &self,
+        key: &TenantServiceKey,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let Some(handle) = self.current_handle(key) else {
+            return Ok(None);
+        };
+        let inspected = self
+            .sandbox_backend
+            .inspect(&handle.id)
+            .await
+            .map_err(|error| sandbox_backend_error(key, "inspect", &error))?;
         let mut state = self
             .state
             .lock()
             .expect("manager lock should not be poisoned");
+        match inspected {
+            Some(handle) => {
+                if matches!(
+                    handle.status,
+                    SandboxStatus::Stopped | SandboxStatus::Failed
+                ) {
+                    state.handles.remove(key);
+                } else {
+                    state.handles.insert(key.clone(), handle.clone());
+                }
+                Ok(Some(handle))
+            }
+            None => {
+                state.handles.remove(key);
+                Ok(None)
+            }
+        }
+    }
+
+    async fn claim_activation(&self, key: &TenantServiceKey) -> ActivationClaim {
         loop {
-            if state.handles.contains_key(key) {
-                return ActivationClaim::AlreadyActive;
+            let notified = self.activation_notify.notified();
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .expect("manager lock should not be poisoned");
+                if state.handles.contains_key(key) {
+                    return ActivationClaim::AlreadyActive;
+                }
+                if state.activations_in_progress.insert(key.clone()) {
+                    return ActivationClaim::Claimed;
+                }
             }
-            if state.activations_in_progress.insert(key.clone()) {
-                return ActivationClaim::Claimed;
-            }
-            state = self
-                .activation_cv
-                .wait(state)
-                .expect("manager lock should not be poisoned");
+            notified.await;
         }
     }
 
@@ -132,10 +170,10 @@ impl SandboxServiceManager {
             .lock()
             .expect("manager lock should not be poisoned");
         state.activations_in_progress.remove(key);
-        self.activation_cv.notify_all();
+        self.activation_notify.notify_waiters();
     }
 
-    fn start_launch(
+    async fn start_launch_async(
         &self,
         key: &TenantServiceKey,
         launch: SandboxServiceLaunch,
@@ -165,10 +203,10 @@ impl SandboxServiceManager {
 
         let handle = match launch {
             SandboxServiceLaunch::Image(launch) => {
-                block_on(self.sandbox_backend.start_from_image(launch))
+                self.sandbox_backend.start_from_image(launch).await
             }
             SandboxServiceLaunch::Build(launch) => {
-                block_on(self.sandbox_backend.start_from_build(launch))
+                self.sandbox_backend.start_from_build(launch).await
             }
         }
         .map_err(|error| sandbox_backend_error(key, "start", &error))?;
@@ -181,13 +219,17 @@ impl SandboxServiceManager {
         Ok(handle)
     }
 
-    fn wait_for_binding(
+    async fn wait_for_binding_async(
         &self,
         key: &TenantServiceKey,
+        cancellation: &HostCallCancellation,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
         let deadline = Instant::now() + self.activation_timeout;
         loop {
-            let Some(handle) = self.refresh_handle(key)? else {
+            if cancellation.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let Some(handle) = self.refresh_handle_async(key).await? else {
                 return Ok(None);
             };
             if let Some(binding) = service_binding_from_handle(&handle) {
@@ -205,7 +247,10 @@ impl SandboxServiceManager {
                     key.service_name, key.tenant_id, self.activation_timeout
                 )));
             }
-            thread::sleep(self.activation_poll_interval);
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                _ = sleep(self.activation_poll_interval) => {}
+            }
         }
     }
 
@@ -268,36 +313,41 @@ impl RuntimeServiceRegistry for SandboxServiceManager {
     ) -> Result<Option<InvocationServiceBinding>, Error> {
         let key = TenantServiceKey::new(tenant_id, service_name);
         Ok(self
-            .refresh_handle(&key)?
+            .current_handle(&key)
             .and_then(|handle| service_binding_from_handle(&handle)))
     }
 
-    fn ensure_service_binding(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-    ) -> Result<Option<InvocationServiceBinding>, Error> {
-        if let Some(binding) = self.resolve_service_binding(tenant_id, service_name)? {
-            return Ok(Some(binding));
-        }
-
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        match self.claim_activation(&key) {
-            ActivationClaim::AlreadyActive => self.wait_for_binding(&key),
-            ActivationClaim::Claimed => {
-                let Some(launch) = self
-                    .service_catalog
-                    .sandbox_service_for_tenant(tenant_id, service_name)
-                else {
-                    self.release_activation(&key);
-                    return Ok(None);
-                };
-                let start_result = self.start_launch(&key, launch);
-                self.release_activation(&key);
-                start_result?;
-                self.wait_for_binding(&key)
+    fn ensure_service_binding_async<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        service_name: &'a str,
+        cancellation: HostCallCancellation,
+    ) -> RuntimeServiceBindingFuture<'a> {
+        Box::pin(async move {
+            if let Some(binding) = self.resolve_service_binding(tenant_id, service_name)? {
+                return Ok(Some(binding));
             }
-        }
+
+            let key = TenantServiceKey::new(tenant_id, service_name);
+            match self.claim_activation(&key).await {
+                ActivationClaim::AlreadyActive => {
+                    self.wait_for_binding_async(&key, &cancellation).await
+                }
+                ActivationClaim::Claimed => {
+                    let Some(launch) = self
+                        .service_catalog
+                        .sandbox_service_for_tenant(tenant_id, service_name)
+                    else {
+                        self.release_activation(&key);
+                        return Ok(None);
+                    };
+                    let start_result = self.start_launch_async(&key, launch).await;
+                    self.release_activation(&key);
+                    start_result?;
+                    self.wait_for_binding_async(&key, &cancellation).await
+                }
+            }
+        })
     }
 
     fn teardown_tenant(&self, tenant_id: &TenantId) -> Result<(), Error> {
@@ -315,7 +365,7 @@ impl RuntimeServiceRegistry for SandboxServiceManager {
             state.handles.remove(&key);
             state.activations_in_progress.remove(&key);
         }
-        self.activation_cv.notify_all();
+        self.activation_notify.notify_waiters();
         Ok(())
     }
 }
@@ -470,8 +520,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn ensure_service_binding_starts_declared_image_service_once() {
+    #[tokio::test]
+    async fn ensure_service_binding_async_starts_declared_image_service_once() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(2));
         let manager = SandboxServiceManager::new(
@@ -490,7 +540,8 @@ mod tests {
         .with_activation_timeout(Duration::from_secs(1));
 
         let binding = manager
-            .ensure_service_binding(&tenant_id, "db")
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
             .expect("image-backed service activation should succeed")
             .expect("db binding should exist");
 
@@ -500,7 +551,8 @@ mod tests {
         assert_eq!(backend.build_starts.load(Ordering::SeqCst), 0);
 
         let second = manager
-            .ensure_service_binding(&tenant_id, "db")
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
             .expect("cached service activation should succeed")
             .expect("db binding should still exist");
         assert_eq!(second.port, 15432);
@@ -520,8 +572,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ensure_service_binding_uses_build_launch_for_build_backed_service() {
+    #[tokio::test]
+    async fn ensure_service_binding_async_uses_build_launch_for_build_backed_service() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
         let manager = SandboxServiceManager::new(
@@ -542,7 +594,8 @@ mod tests {
         .with_activation_timeout(Duration::from_secs(1));
 
         let binding = manager
-            .ensure_service_binding(&tenant_id, "api")
+            .ensure_service_binding_async(&tenant_id, "api", HostCallCancellation::default())
+            .await
             .expect("build-backed service activation should succeed")
             .expect("api binding should exist");
 
@@ -551,8 +604,81 @@ mod tests {
         assert_eq!(backend.build_starts.load(Ordering::SeqCst), 1);
     }
 
-    #[test]
-    fn teardown_tenant_stops_tracked_sandboxes_and_clears_snapshot() {
+    #[tokio::test]
+    async fn ensure_service_binding_sync_lookup_stays_snapshot_only_for_missing_service() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        );
+
+        let binding = manager
+            .resolve_service_binding(&tenant_id, "db")
+            .expect("sync lookup should not fail");
+        assert!(
+            binding.is_none(),
+            "missing in-memory bindings stay unresolved"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "sync lookup should not trigger sandbox activation"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_service_binding_async_can_be_cancelled_while_waiting_for_readiness() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(5))
+        .with_activation_timeout(Duration::from_secs(1));
+        let cancellation = HostCallCancellation::default();
+        let cancellation_handle = cancellation.clone();
+
+        let task = tokio::spawn(async move {
+            manager
+                .ensure_service_binding_async(&tenant_id, "db", cancellation)
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancellation_handle.cancel();
+
+        let result = task
+            .await
+            .expect("cancellation task should join")
+            .expect_err("cancellation should interrupt activation");
+        assert!(matches!(result, Error::Cancelled));
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            1,
+            "activation should still start before the readiness wait is canceled"
+        );
+    }
+
+    #[tokio::test]
+    async fn teardown_tenant_stops_tracked_sandboxes_and_clears_snapshot() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let backend = Arc::new(StubSandboxBackend::new(1));
         let manager = SandboxServiceManager::new(
@@ -571,7 +697,8 @@ mod tests {
         .with_activation_timeout(Duration::from_secs(1));
 
         manager
-            .ensure_service_binding(&tenant_id, "db")
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
             .expect("service activation should succeed")
             .expect("db binding should exist");
         assert!(manager.snapshot_for_tenant(&tenant_id).contains_key("db"));
