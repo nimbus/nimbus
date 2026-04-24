@@ -67,10 +67,7 @@ where
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
     let host_call = host_bridge
         .call_async(
-            HostCallRequest {
-                operation,
-                payload: payload_value,
-            },
+            HostCallRequest::new(operation, payload_value),
             cancellation_signal.clone(),
         )
         .or_cancel(cancel_handle.clone());
@@ -112,10 +109,7 @@ where
     let payload_value =
         serde_json::to_value(payload).map_err(|error| JsErrorBox::generic(error.to_string()))?;
     let value = host_bridge
-        .call(HostCallRequest {
-            operation,
-            payload: payload_value,
-        })
+        .call(HostCallRequest::new(operation, payload_value))
         .map_err(|error| JsErrorBox::generic(error.to_string()))?;
     normalize_host_call_value(value)
 }

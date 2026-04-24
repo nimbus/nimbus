@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use neovex_core::TenantId;
 use neovex_runtime::{
-    InvocationServiceBinding, InvocationServiceEndpoint, InvocationServiceProtocol,
-    InvocationServices,
+    HostCallCancellation, InvocationServiceBinding, InvocationServiceEndpoint,
+    InvocationServiceProtocol, InvocationServices,
 };
 use neovex_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
@@ -21,7 +21,7 @@ use neovex_sandbox::{
 use serde_json::json;
 
 use super::*;
-use crate::service_registry::RuntimeServiceRegistry;
+use crate::service_registry::{RuntimeServiceBindingFuture, RuntimeServiceRegistry};
 use crate::{SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch, SandboxServiceManager};
 
 struct StubSandboxCatalog {
@@ -79,14 +79,21 @@ impl RuntimeServiceRegistry for ActivatingRuntimeServiceRegistry {
         Ok(None)
     }
 
-    fn ensure_service_binding(
-        &self,
-        _tenant_id: &TenantId,
-        service_name: &str,
-    ) -> Result<Option<InvocationServiceBinding>, neovex_core::Error> {
+    fn ensure_service_binding_async<'a>(
+        &'a self,
+        _tenant_id: &'a TenantId,
+        service_name: &'a str,
+        cancellation: HostCallCancellation,
+    ) -> RuntimeServiceBindingFuture<'a> {
         self.ensure_calls.fetch_add(1, Ordering::SeqCst);
-        std::thread::sleep(self.delay);
-        Ok((service_name == "db").then(|| self.binding.clone()))
+        let binding = self.binding.clone();
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::select! {
+                _ = cancellation.cancelled() => Err(neovex_core::Error::Cancelled),
+                _ = tokio::time::sleep(delay) => Ok((service_name == "db").then_some(binding)),
+            }
+        })
     }
 }
 
@@ -335,14 +342,14 @@ export {};
 }
 
 #[tokio::test]
-async fn convex_runtime_query_lazily_resolves_missing_service_bindings() {
+async fn convex_runtime_query_resolves_missing_service_bindings_via_services_get() {
     let registry = convex_registry_with_routes_and_bundle(
         json!([
             {
                 "name": "services:lazy",
                 "kind": "query",
                 "plan": null,
-                "runtime_handler": "async (ctx) => ({ namesBefore: Object.keys(ctx.services).sort(), binding: ctx.services.db, namesAfter: Object.keys(ctx.services).sort() })"
+                "runtime_handler": "async (ctx) => ({ namesBefore: Object.keys(ctx.services).sort(), binding: await ctx.services.get(\"db\"), namesAfter: Object.keys(ctx.services).sort() })"
             }
         ]),
         json!([]),
@@ -352,7 +359,7 @@ const definitions = new Map([
   ["services:lazy", {
     name: "services:lazy",
     kind: "query",
-    runtime_handler: "async (ctx) => ({ namesBefore: Object.keys(ctx.services).sort(), binding: ctx.services.db, namesAfter: Object.keys(ctx.services).sort() })",
+    runtime_handler: "async (ctx) => ({ namesBefore: Object.keys(ctx.services).sort(), binding: await ctx.services.get(\"db\"), namesAfter: Object.keys(ctx.services).sort() })",
   }],
 ]);
 
@@ -462,14 +469,14 @@ export {};
 }
 
 #[tokio::test]
-async fn convex_runtime_query_waits_for_activation_capable_service_lookup_once() {
+async fn convex_runtime_query_waits_for_activation_capable_services_get_once() {
     let registry = convex_registry_with_routes_and_bundle(
         json!([
             {
                 "name": "services:activate",
                 "kind": "query",
                 "plan": null,
-                "runtime_handler": "async (ctx) => ({ first: ctx.services.db.port, second: ctx.services.db.port })"
+                "runtime_handler": "async (ctx) => { const first = await ctx.services.get(\"db\"); return ({ first: first.port, second: ctx.services.db.port }); }"
             }
         ]),
         json!([]),
@@ -479,7 +486,7 @@ const definitions = new Map([
   ["services:activate", {
     name: "services:activate",
     kind: "query",
-    runtime_handler: "async (ctx) => ({ first: ctx.services.db.port, second: ctx.services.db.port })",
+    runtime_handler: "async (ctx) => { const first = await ctx.services.get(\"db\"); return ({ first: first.port, second: ctx.services.db.port }); }",
   }],
 ]);
 
@@ -575,14 +582,14 @@ export {};
 }
 
 #[tokio::test]
-async fn convex_runtime_query_starts_declared_service_on_first_reference() {
+async fn convex_runtime_query_starts_declared_service_on_first_services_get() {
     let registry = convex_registry_with_routes_and_bundle(
         json!([
             {
                 "name": "services:activate",
                 "kind": "query",
                 "plan": null,
-                "runtime_handler": "async (ctx) => ({ first: ctx.services.db.port, second: ctx.services.db.port })"
+                "runtime_handler": "async (ctx) => { const first = await ctx.services.get(\"db\"); return ({ first: first.port, second: ctx.services.db.port }); }"
             }
         ]),
         json!([]),
@@ -592,7 +599,7 @@ const definitions = new Map([
   ["services:activate", {
     name: "services:activate",
     kind: "query",
-    runtime_handler: "async (ctx) => ({ first: ctx.services.db.port, second: ctx.services.db.port })",
+    runtime_handler: "async (ctx) => { const first = await ctx.services.get(\"db\"); return ({ first: first.port, second: ctx.services.db.port }); }",
   }],
 ]);
 
@@ -726,7 +733,7 @@ async fn delete_tenant_stops_manager_owned_sandbox_services() {
                 "name": "services:activate",
                 "kind": "query",
                 "plan": null,
-                "runtime_handler": "async (ctx) => ctx.services.db.port"
+                "runtime_handler": "async (ctx) => (await ctx.services.get(\"db\")).port"
             }
         ]),
         json!([]),
@@ -736,7 +743,7 @@ const definitions = new Map([
   ["services:activate", {
     name: "services:activate",
     kind: "query",
-    runtime_handler: "async (ctx) => ctx.services.db.port",
+    runtime_handler: "async (ctx) => (await ctx.services.get(\"db\")).port",
   }],
 ]);
 
@@ -852,7 +859,7 @@ async fn convex_runtime_query_starts_real_krun_service_under_manager_and_tears_i
                 "name": "services:activate",
                 "kind": "query",
                 "plan": null,
-                "runtime_handler": "async (ctx) => ctx.services.db.port"
+                "runtime_handler": "async (ctx) => (await ctx.services.get(\"db\")).port"
             }
         ]),
         json!([]),
@@ -862,7 +869,7 @@ const definitions = new Map([
   ["services:activate", {
     name: "services:activate",
     kind: "query",
-    runtime_handler: "async (ctx) => ctx.services.db.port",
+    runtime_handler: "async (ctx) => (await ctx.services.get(\"db\")).port",
   }],
 ]);
 

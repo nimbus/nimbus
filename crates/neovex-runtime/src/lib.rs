@@ -17,8 +17,17 @@ pub use context::RuntimeInvocationContext;
 pub use error::{NeovexRuntimeError, Result};
 pub use executor::RuntimeExecutor;
 pub use host::{
-    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallCancellationCause,
-    HostCallOperation, HostCallRequest,
+    HOST_CALL_ABI_VERSION, HostBridge, HostBridgeFuture, HostCallCancellation,
+    HostCallCancellationCause, HostCallEnvelope, HostCallOperation, HostCallPayload,
+    HostCallRequest, RuntimeAsyncActionPayload, RuntimeAsyncDbDeletePayload,
+    RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload, RuntimeAsyncDbPatchPayload,
+    RuntimeAsyncFunctionCallPayload, RuntimeAsyncHttpRoutePayload, RuntimeAsyncMutationPayload,
+    RuntimeAsyncPaginatedQueryPayload, RuntimeAsyncQueryPaginatePayload, RuntimeAsyncQueryPayload,
+    RuntimeAsyncQueryTakePayload, RuntimeAsyncQueryTerminalPayload,
+    RuntimeAsyncSchedulerCancelPayload, RuntimeAsyncSchedulerRunAfterPayload,
+    RuntimeAsyncSchedulerRunAtPayload, RuntimeAsyncServiceLookupPayload,
+    RuntimeSyncNestedCallPayload, RuntimeSyncQueryFilterPayload, RuntimeSyncQueryOrderPayload,
+    RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
 };
 pub use limits::{
     RuntimeBackendKind, RuntimeExecutionModel, RuntimeLimits, RuntimeModuleStateSemantics,

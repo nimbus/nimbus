@@ -1,3 +1,5 @@
+use crate::HostBridgeFuture;
+
 use super::*;
 
 #[tokio::test]
@@ -267,20 +269,36 @@ export {};
 }
 
 #[tokio::test]
-async fn runtime_lazily_looks_up_missing_service_bindings_and_caches_them() {
+async fn runtime_service_property_lookup_stays_snapshot_only_for_missing_binding() {
     #[derive(Default)]
-    struct LazyServiceLookupHost {
-        calls: std::sync::Mutex<Vec<HostCallRequest>>,
+    struct ServiceLookupHost {
+        sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
     }
 
-    impl HostBridge for LazyServiceLookupHost {
+    impl HostBridge for ServiceLookupHost {
         fn call(&self, request: HostCallRequest) -> Result<Value> {
-            self.calls
+            self.sync_calls
                 .lock()
-                .expect("lazy service lookup host lock should not be poisoned")
+                .expect("service lookup sync host lock should not be poisoned")
                 .push(request.clone());
-            match request.operation {
-                HostCallOperation::CtxServiceLookup => Ok(serde_json::json!({
+            Err(NeovexRuntimeError::Contract(format!(
+                "unexpected sync host op during snapshot-only service lookup test: {}",
+                request.operation
+            )))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.async_calls
+                .lock()
+                .expect("service lookup async host lock should not be poisoned")
+                .push(request);
+            Box::pin(async move {
+                Ok(serde_json::json!({
                     "status": "ok",
                     "value": {
                         "host": "127.0.0.1",
@@ -294,11 +312,8 @@ async fn runtime_lazily_looks_up_missing_service_bindings_and_caches_them() {
                             }
                         }
                     },
-                })),
-                other => Err(NeovexRuntimeError::Contract(format!(
-                    "unexpected sync host op during lazy service lookup test: {other}"
-                ))),
-            }
+                }))
+            })
         }
     }
 
@@ -309,14 +324,11 @@ async fn runtime_lazily_looks_up_missing_service_bindings_and_caches_them() {
         r#"
 globalThis.__neovexInvoke = async function (request) {
   const ctx = globalThis.__neovexCreateContext({ request });
-  const namesBefore = Object.keys(ctx.services).sort();
-  const first = ctx.services.db;
-  const second = ctx.services.db;
   return {
-    namesBefore,
+    hasGet: typeof ctx.services.get === "function",
+    namesBefore: Object.keys(ctx.services).sort(),
+    missing: ctx.services.db ?? null,
     namesAfter: Object.keys(ctx.services).sort(),
-    sameReference: first === second,
-    db: second,
   };
 };
 
@@ -325,7 +337,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let host = Arc::new(LazyServiceLookupHost::default());
+    let host = Arc::new(ServiceLookupHost::default());
     let runtime = NeovexRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
@@ -349,6 +361,126 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
+            "hasGet": true,
+            "namesBefore": [],
+            "missing": null,
+            "namesAfter": [],
+        })
+    );
+
+    assert!(
+        host.sync_calls
+            .lock()
+            .expect("service lookup sync host lock should not be poisoned")
+            .is_empty(),
+        "snapshot-only property reads should not use the sync host path"
+    );
+    assert!(
+        host.async_calls
+            .lock()
+            .expect("service lookup async host lock should not be poisoned")
+            .is_empty(),
+        "snapshot-only property reads should not trigger async activation"
+    );
+}
+
+#[tokio::test]
+async fn runtime_services_get_uses_async_host_bridge_and_caches_binding() {
+    #[derive(Default)]
+    struct ServiceLookupHost {
+        sync_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl HostBridge for ServiceLookupHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            self.sync_calls
+                .lock()
+                .expect("service lookup sync host lock should not be poisoned")
+                .push(request.clone());
+            Err(NeovexRuntimeError::Contract(format!(
+                "unexpected sync host op during async service lookup test: {}",
+                request.operation
+            )))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.async_calls
+                .lock()
+                .expect("service lookup async host lock should not be poisoned")
+                .push(request.clone());
+            Box::pin(async move {
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "value": {
+                        "host": "127.0.0.1",
+                        "port": 15432,
+                        "protocol": "tcp",
+                        "endpoints": {
+                            "postgres": {
+                                "host": "127.0.0.1",
+                                "port": 15432,
+                                "protocol": "tcp"
+                            }
+                        }
+                    },
+                }))
+            })
+        }
+    }
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  const namesBefore = Object.keys(ctx.services).sort();
+  const first = await ctx.services.get("db");
+  const second = ctx.services.db;
+  const third = await ctx.services.get("db");
+  return {
+    namesBefore,
+    namesAfter: Object.keys(ctx.services).sort(),
+    sameReference: first === second && second === third,
+    db: third,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(ServiceLookupHost::default());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "services:get".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("runtime should resolve service bindings through ctx.services.get");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
             "namesBefore": [],
             "namesAfter": ["db"],
             "sameReference": true,
@@ -367,10 +499,17 @@ export {};
         })
     );
 
+    assert!(
+        host.sync_calls
+            .lock()
+            .expect("service lookup sync host lock should not be poisoned")
+            .is_empty(),
+        "ctx.services.get should not use the sync host path"
+    );
     let calls = host
-        .calls
+        .async_calls
         .lock()
-        .expect("lazy service lookup host lock should not be poisoned")
+        .expect("service lookup async host lock should not be poisoned")
         .clone();
     assert_eq!(calls.len(), 1, "missing service should be resolved once");
     assert_eq!(calls[0].operation, HostCallOperation::CtxServiceLookup);

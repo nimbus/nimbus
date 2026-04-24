@@ -76,14 +76,14 @@ export {};
         .clone();
     assert_eq!(
         calls,
-        vec![HostCallRequest {
-            operation: HostCallOperation::CtxDbGet,
-            payload: serde_json::json!({
+        vec![HostCallRequest::new(
+            HostCallOperation::CtxDbGet,
+            serde_json::json!({
                 "table": "messages",
                 "id": "doc-1",
                 "session_id": "query:messages:list",
             }),
-        }]
+        )]
     );
 }
 

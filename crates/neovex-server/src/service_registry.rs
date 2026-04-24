@@ -1,14 +1,19 @@
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use neovex_core::{Error, TenantId};
 use neovex_runtime::{
-    InvocationServiceBinding, InvocationServiceEndpoint, InvocationServiceProtocol,
-    InvocationServices,
+    HostCallCancellation, InvocationServiceBinding, InvocationServiceEndpoint,
+    InvocationServiceProtocol, InvocationServices,
 };
 use neovex_sandbox::{PublishedEndpoint, PublishedEndpointProtocol, SandboxHandle, SandboxStatus};
 
 use crate::sandbox::SandboxCatalog;
+
+pub(crate) type RuntimeServiceBindingFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<InvocationServiceBinding>, Error>> + Send + 'a>>;
 
 pub(crate) trait RuntimeServiceRegistry: Send + Sync + 'static {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices;
@@ -19,12 +24,18 @@ pub(crate) trait RuntimeServiceRegistry: Send + Sync + 'static {
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error>;
 
-    fn ensure_service_binding(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-    ) -> Result<Option<InvocationServiceBinding>, Error> {
-        self.resolve_service_binding(tenant_id, service_name)
+    fn ensure_service_binding_async<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        service_name: &'a str,
+        cancellation: HostCallCancellation,
+    ) -> RuntimeServiceBindingFuture<'a> {
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            self.resolve_service_binding(tenant_id, service_name)
+        })
     }
 
     fn teardown_tenant(&self, _tenant_id: &TenantId) -> Result<(), Error> {
