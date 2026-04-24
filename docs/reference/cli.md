@@ -345,7 +345,9 @@ From the repo root, the canonical JS verification entrypoints are now:
 
 Those commands fan out to workspace-owned package scripts where present, so the
 root command surface stays stable even when individual package internals
-change.
+change. The `@neovex/codegen` typecheck lane is a JS parser and
+codegen-boundary guardrail check because the package is implemented as `.mjs`
+rather than TypeScript.
 
 ## Deploy Command
 

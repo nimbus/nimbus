@@ -158,7 +158,11 @@ The Convex surface also depends on a build-time pipeline: `packages/codegen`
 (Node.js) reads application source and emits a function manifest
 (`functions.json`), a runtime ESM bundle (`bundle.mjs`), and an integrity hash
 (`bundle.sha256`). The server loads these at startup; the runtime verifies the
-hash before every invocation.
+hash before every invocation. Compile-time planning is AST-owned and does not
+execute user source through Node's `new Function`; the generated runtime bundle
+still materializes runtime-only handlers with `new Function` inside the Neovex
+V8 runtime so unsupported Convex-compatible code runs behind the runtime
+`HostBridge` capability boundary rather than in the codegen process.
 
 The **neovex** facade crate re-exports the stable, embedder-oriented surface of
 the workspace so embedders can usually depend on a single crate. Low-level
