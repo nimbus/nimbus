@@ -26,6 +26,9 @@ async function runCoreFixtures() {
   await testUnsupportedFixture();
   await testTypeAnnotatedExportFixture();
   await testUnsafeCompileTimeResolverFixture();
+  await testUnsafeCompileTimeSchemaFixture();
+  await testUnsafeCompileTimeArgsFixture();
+  await testUnsafeCompileTimeReturnsFixture();
 }
 
 async function testSupportedDefineFixture() {
@@ -518,6 +521,73 @@ export const leak = query({
   assert.match(
     result.stderr,
     /unsafe compile-time resolver reference "globalThis"/,
+  );
+}
+
+async function testUnsafeCompileTimeSchemaFixture() {
+  const appDir = await createAppFixture({
+    "schema.ts": `
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  messages: defineTable({
+    leaked: v.literal(({}).constructor.constructor("return process")()),
+  }),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0, "unsafe schema fixture should fail");
+  assert.match(
+    result.stderr,
+    /unsafe compile-time schema property "constructor"/,
+  );
+}
+
+async function testUnsafeCompileTimeArgsFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const leak = query({
+  args: {
+    leaked: v.literal(({})["con" + "structor"]["constructor"]("return process")()),
+  },
+  handler: async () => null,
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0, "unsafe args fixture should fail");
+  assert.match(
+    result.stderr,
+    /unsafe compile-time args property "constructor"/,
+  );
+}
+
+async function testUnsafeCompileTimeReturnsFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const leak = query({
+  args: {},
+  returns: v.literal(({}).constructor.constructor("return process")()),
+  handler: async () => null,
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0, "unsafe returns fixture should fail");
+  assert.match(
+    result.stderr,
+    /unsafe compile-time returns property "constructor"/,
   );
 }
 

@@ -26,6 +26,20 @@ first-party native JS surface under `packages/neovex`; native apps may use a
 - starting Neovex with `--app-dir` enables the Convex HTTP, WebSocket,
   scheduler, and runtime diagnostics routes
 
+## Codegen Security Boundary
+
+Codegen-time schema, server-definition, and resolver planning are handled by a
+shared TypeScript AST interpreter with an explicit supported subset. That
+compile-time path rejects unsafe global references and prototype-constructor
+property access rather than executing user source in the Node.js codegen
+process.
+
+The generated runtime bundle still uses `new Function` to materialize
+runtime-only handlers from the manifest. That use belongs to runtime execution:
+the bundle is SHA-256 checked before invocation and runs inside the Neovex V8
+runtime behind the `HostBridge` capability boundary. It is not part of
+compile-time schema or planner extraction.
+
 ## Codegen And Migration Taste
 
 For Convex-style projects, the shipped codegen entrypoints are now:
@@ -48,7 +62,9 @@ For repo-owned JS verification, use the root workspace entrypoints:
 - `npm run build`
 
 Those commands fan out to package-owned scripts across `@neovex/codegen`,
-`convex`, and `neovex`.
+`convex`, and `neovex`. The `@neovex/codegen` typecheck lane is a JS syntax and
+codegen-boundary guardrail check because that package is implemented as `.mjs`
+rather than TypeScript.
 
 `neovex start --app-dir ./my-app` now runs one codegen preflight pass before
 startup unless `--skip-codegen` is set, but this is intentionally not a

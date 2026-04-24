@@ -8,14 +8,13 @@ function evaluateCompileTimeExpressionSource(
   filePath,
   label = "expression",
 ) {
-  return evaluateExpression(
-    parseCompileTimeExpressionSource(expressionText, filePath, label),
-    createRootScope(compileBindings),
-    filePath,
-  );
+  const expression = parseCompileTimeExpressionSource(expressionText, filePath, label);
+  validateCompileTimeEvaluation(expression, filePath, label);
+  return evaluateExpression(expression, createRootScope(compileBindings), filePath);
 }
 
 function createInterpretedResolver(resolverNode, compileBindings, filePath) {
+  validateCompileTimeEvaluation(resolverNode, filePath, "resolver");
   const rootScope = createRootScope(compileBindings);
   return (...args) => invokeArrowFunction(resolverNode, args, rootScope, filePath);
 }
@@ -26,6 +25,118 @@ function createRootScope(compileBindings) {
     rootScope.define(name, value);
   }
   return rootScope;
+}
+
+const FORBIDDEN_COMPILE_TIME_IDENTIFIERS = new Set([
+  "Bun",
+  "Deno",
+  "Function",
+  "WebSocket",
+  "XMLHttpRequest",
+  "document",
+  "eval",
+  "exports",
+  "fetch",
+  "globalThis",
+  "importScripts",
+  "localStorage",
+  "module",
+  "process",
+  "require",
+  "sessionStorage",
+  "window",
+]);
+
+const FORBIDDEN_COMPILE_TIME_PROPERTIES = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+function validateCompileTimeEvaluation(node, filePath, label) {
+  const rejection = findUnsafeCompileTimeExpression(node, label);
+  if (rejection) {
+    throw unsupportedError(filePath, rejection);
+  }
+}
+
+function findUnsafeCompileTimeExpression(root, label) {
+  let rejection = null;
+  const reject = (message) => {
+    rejection ??= message;
+  };
+
+  const visit = (node) => {
+    if (rejection) {
+      return;
+    }
+
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      reject(`unsafe compile-time ${label} reference "this"`);
+      return;
+    }
+
+    if (
+      ts.isIdentifier(node) &&
+      FORBIDDEN_COMPILE_TIME_IDENTIFIERS.has(node.text)
+    ) {
+      reject(`unsafe compile-time ${label} reference "${node.text}"`);
+      return;
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      reject(`unsafe compile-time ${label} dynamic import`);
+      return;
+    }
+
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node)) &&
+      FORBIDDEN_COMPILE_TIME_PROPERTIES.has(node.name.text)
+    ) {
+      reject(`unsafe compile-time ${label} property "${node.name.text}"`);
+      return;
+    }
+
+    if (ts.isElementAccessExpression(node) || ts.isElementAccessChain(node)) {
+      const key = staticStringValue(node.argumentExpression);
+      if (key !== null && FORBIDDEN_COMPILE_TIME_PROPERTIES.has(key)) {
+        reject(`unsafe compile-time ${label} property "${key}"`);
+        return;
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(root);
+  return rejection;
+}
+
+function staticStringValue(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
+  }
+  if (ts.isParenthesizedExpression(node)) {
+    return staticStringValue(node.expression);
+  }
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = staticStringValue(node.left);
+    const right = staticStringValue(node.right);
+    return left === null || right === null ? null : left + right;
+  }
+  return null;
+}
+
+function assertSafeCompileTimeProperty(key, filePath) {
+  if (FORBIDDEN_COMPILE_TIME_PROPERTIES.has(String(key))) {
+    throw unsupportedError(filePath, `unsafe compile-time property "${String(key)}"`);
+  }
 }
 
 function parseCompileTimeExpressionSource(expressionText, filePath, label) {
@@ -239,16 +350,20 @@ function evaluateObjectLiteral(node, scope, filePath) {
 
   for (const property of node.properties) {
     if (ts.isPropertyAssignment(property)) {
-      objectValue[propertyName(property.name, scope, filePath)] = evaluateExpression(
-        property.initializer,
-        scope,
-        filePath,
+      defineObjectLiteralProperty(
+        objectValue,
+        propertyName(property.name, scope, filePath),
+        evaluateExpression(property.initializer, scope, filePath),
       );
       continue;
     }
 
     if (ts.isShorthandPropertyAssignment(property)) {
-      objectValue[property.name.text] = scope.lookup(property.name.text);
+      defineObjectLiteralProperty(
+        objectValue,
+        property.name.text,
+        scope.lookup(property.name.text),
+      );
       continue;
     }
 
@@ -266,7 +381,7 @@ function evaluatePropertyAccess(node, scope, filePath) {
   if (node.questionDotToken && target == null) {
     return undefined;
   }
-  return target[node.name.text];
+  return readCompileTimeProperty(target, node.name.text, filePath);
 }
 
 function evaluateElementAccess(node, scope, filePath) {
@@ -275,7 +390,7 @@ function evaluateElementAccess(node, scope, filePath) {
     return undefined;
   }
   const key = evaluateExpression(node.argumentExpression, scope, filePath);
-  return target[key];
+  return readCompileTimeProperty(target, key, filePath);
 }
 
 function evaluateCallExpression(node, scope, filePath) {
@@ -391,7 +506,7 @@ function resolveCallee(expression, scope, filePath) {
     return {
       shortCircuit: false,
       thisArg: target,
-      value: target[expression.name.text],
+      value: readCompileTimeProperty(target, expression.name.text, filePath),
     };
   }
 
@@ -404,7 +519,7 @@ function resolveCallee(expression, scope, filePath) {
     return {
       shortCircuit: false,
       thisArg: target,
-      value: target[key],
+      value: readCompileTimeProperty(target, key, filePath),
     };
   }
 
@@ -484,6 +599,20 @@ function propertyName(name, scope, filePath) {
     return String(evaluateExpression(name.expression, scope, filePath));
   }
   throw unsupportedError(filePath, "unsupported compile-time property name");
+}
+
+function defineObjectLiteralProperty(objectValue, key, value) {
+  Object.defineProperty(objectValue, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function readCompileTimeProperty(target, key, filePath) {
+  assertSafeCompileTimeProperty(key, filePath);
+  return target[key];
 }
 
 function isTruthy(value) {
