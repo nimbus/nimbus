@@ -186,7 +186,7 @@ fn pid_is_live(pid: u32) -> bool {
         return false;
     }
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle == 0 {
+    if handle.is_null() {
         return false;
     }
     unsafe {
