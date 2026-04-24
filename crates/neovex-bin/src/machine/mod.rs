@@ -57,10 +57,11 @@ use self::command::MachineApiCommand;
 use self::files::write_json_file;
 #[cfg(test)]
 use self::record::MachineImageFormat;
+#[cfg(any(unix, test))]
+use self::record::MachineBootstrapMode;
 use self::record::{
-    MachineBootstrapMode, MachineConfigRecord, MachineImageSource, MachineLifecycle,
-    MachineManagerState, MachinePaths, MachineProvider, MachineRootLayout, MachineStateRecord,
-    MachineVolume,
+    MachineConfigRecord, MachineImageSource, MachineLifecycle, MachineManagerState, MachinePaths,
+    MachineProvider, MachineRootLayout, MachineStateRecord, MachineVolume,
 };
 
 #[cfg(test)]
