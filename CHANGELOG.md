@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.21] - 2026-04-23
 
+## [0.1.22] - 2026-04-24
+
+### Security
+
+- Harden codegen compile-time evaluation by moving unsafe-expression checks
+  into the shared interpreter, adding adversarial fixtures, and documenting
+  the remaining runtime bundle boundary by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.21...v0.1.22
+
+## [0.1.21] - 2026-04-23
+
 ### Added
 
 - Land Docker/Podman-style compose discovery, explicit multi-file Compose
