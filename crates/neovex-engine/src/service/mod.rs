@@ -22,8 +22,8 @@ use std::sync::atomic::AtomicBool;
 
 use neovex_core::{Document, Error, Result, TenantId, Timestamp};
 use neovex_storage::{
-    Clock, EmbeddedProviderKind, FaultInjector, LibsqlReplicaProvider, MySqlProvider,
-    NoopFaultInjector, PostgresProvider, SqliteTenantStore, SystemClock, TenantStore,
+    Clock, EmbeddedProviderKind, FaultInjector, NoopFaultInjector, SqliteTenantStore, SystemClock,
+    TenantStore,
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinHandle;
@@ -195,36 +195,6 @@ impl Service {
     pub(crate) fn provider_background_ready(&self) -> bool {
         self.provider_hint_listener_ready
             .load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    pub(crate) fn postgres_provider(&self) -> Option<Arc<PostgresProvider>> {
-        match &self.persistence_provider {
-            PersistenceProvider::Postgres(provider) => Some(provider.clone()),
-            PersistenceProvider::Redb(_)
-            | PersistenceProvider::Sqlite(_)
-            | PersistenceProvider::LibsqlReplica(_)
-            | PersistenceProvider::MySql(_) => None,
-        }
-    }
-
-    pub(crate) fn libsql_replica_provider(&self) -> Option<Arc<LibsqlReplicaProvider>> {
-        match &self.persistence_provider {
-            PersistenceProvider::LibsqlReplica(provider) => Some(provider.clone()),
-            PersistenceProvider::Redb(_)
-            | PersistenceProvider::Sqlite(_)
-            | PersistenceProvider::Postgres(_)
-            | PersistenceProvider::MySql(_) => None,
-        }
-    }
-
-    pub(crate) fn mysql_provider(&self) -> Option<Arc<MySqlProvider>> {
-        match &self.persistence_provider {
-            PersistenceProvider::MySql(provider) => Some(provider.clone()),
-            PersistenceProvider::Redb(_)
-            | PersistenceProvider::Sqlite(_)
-            | PersistenceProvider::LibsqlReplica(_)
-            | PersistenceProvider::Postgres(_) => None,
-        }
     }
 
     pub(crate) fn spawn_background<F>(&self, name: &'static str, future: F) -> JoinHandle<()>

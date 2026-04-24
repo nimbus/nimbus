@@ -59,6 +59,7 @@ impl TenantPersistence {
 }
 
 mod journal;
+mod provider_state;
 mod reads;
 mod scheduler;
 mod schema;

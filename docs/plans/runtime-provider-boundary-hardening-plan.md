@@ -1,6 +1,6 @@
 # Runtime And Provider Boundary Hardening Plan
 
-Status: active
+Status: completed
 
 This plan owns the architectural follow-up from the April 2026 codebase review
 around runtime service activation, runtime host ABI typing, and persistence
@@ -33,6 +33,22 @@ implementation quirks.
 - `neovex-engine` still coordinates provider behavior through parallel enum
   matches and macros. That is acceptable for a closed set, but it spreads each
   provider addition or capability change across engine surfaces.
+
+## Roadmap Status Ledger
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| RPB1 | `done` | Landed snapshot-only `ctx.services.<name>` reads plus async cancellable `ctx.services.get("name")` activation outside the sync V8 host path |
+| RPB2 | `done` | Runtime now owns the versioned host envelope plus typed payload family, and the Convex server adapter validates ABI/version compatibility before lowering to adapter-specific semantics |
+| RPB3 | `done` | Provider-owned background-task selection plus tenant-state capability methods now carry catch-up, scheduled-work, refresh-planning, and provider-specific apply semantics out of the service layer |
+
+## Implementation Checkpoints
+
+| Checkpoint | Status |
+| --- | --- |
+| RPB1 ownership, implementation, and verification are recorded | `done` |
+| RPB2 ownership, implementation, and verification are recorded | `done` |
+| RPB3 ownership, implementation, and verification are recorded | `done` |
 
 ## RPB1: Async Service Activation Contract
 
@@ -110,3 +126,10 @@ Verification:
 - `cargo fmt --all --check`, `make check`, `make clippy`, and focused runtime,
   server, and engine tests pass for the touched surfaces
 
+## Execution Log
+
+| Date | Item | Status | Notes |
+| --- | --- | --- | --- |
+| 2026-04-23 | RPB1 | `done` | Resumed the active runtime/provider boundary hardening plan from the live worktree, added a roadmap ledger plus checkpoints, and landed the async service-activation contract. `ctx.services.<name>` is now snapshot-only, missing bindings resolve through async `ctx.services.get("name")`, sync runtime lookup no longer starts sandboxes, and service-manager readiness polling now honors `HostCallCancellation`. Verification: `cargo test -p neovex-runtime host_bridge -- --nocapture`; `cargo test -p neovex-server services -- --nocapture`; `cargo test -p neovex-server service_manager -- --nocapture`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-runtime -p neovex-server`; `cargo clippy -p neovex-runtime -p neovex-server --all-targets -- -D warnings`. Next: introduce the versioned typed host ABI in RPB2. |
+| 2026-04-23 | RPB2 | `done` | Landed the versioned typed host ABI. `neovex-runtime` now owns `HOST_CALL_ABI_VERSION`, runtime-owned payload structs, `HostCallPayload`, and `HostCallEnvelope`, and `HostCallRequest` now carries an ABI version plus a constructor. The Convex host bridge converts requests through the typed envelope before dispatch, consumes typed payload variants by route family, and only then lowers into Convex-specific payload parsing. Added runtime and server regression tests for ABI version rejection, operation/payload mismatch rejection, adapter-wire roundtrips, and typed dispatch acceptance. Verification: `cargo check -p neovex-runtime -p neovex-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p neovex-runtime host -- --nocapture`; `cargo test -p neovex-server adapters::convex::tests -- --nocapture`; `cargo clippy -p neovex-runtime -p neovex-server --all-targets -- -D warnings`. Next: start RPB3 and replace the provider match lattice with provider-owned capability facades. |
+| 2026-04-23 | RPB3 | `done` | Landed the provider-owned capability facade for the behavior-heavy provider seam. `PersistenceProvider` now owns background-task selection for Postgres notifications versus MySQL/libsql polling, and `TenantPersistence` now owns async schema load, journal progress/recovery, commit-log tail reads, scheduled-work checks, loaded-runtime refresh planning, and the libsql replica applied-head exception after durable batch apply. The engine service layer now coordinates tenant semantics through those capability methods instead of matching provider families directly in tenant load, scheduler recovery, schema refresh, provider polling, and mutation-journal apply flow. Verification: `cargo check -p neovex-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p neovex-engine mysql_background_poll -- --nocapture`; `cargo test -p neovex-engine libsql_replica_background_poll -- --nocapture`; `cargo test -p neovex-engine postgres_listener_reconnect -- --nocapture`; `cargo test -p neovex-engine embedded_replica_catch_up -- --nocapture`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`. External-provider integration tests self-skipped where no explicit provider URLs were configured and Docker was unavailable (`/var/run/docker.sock` missing). Next: this plan is complete; promote a new active plan before another provider-boundary cleanup wave. |

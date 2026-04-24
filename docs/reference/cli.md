@@ -396,10 +396,12 @@ startup, it:
 When a Compose selection is present, Neovex validates it through the same
 adapter used by `neovex compose config`, lowers it into a typed
 declared-service catalog, and wires that catalog into the server-owned sandbox
-manager. With `--app-dir`, `ctx.services.*` can activate those declared
-services on first use. The app directory may use `neovex/` as the native user
-source root or `convex/` as the compatibility root; in both cases the runtime
-registry still loads the generated manifests from `.neovex/convex/`. The
+manager. With `--app-dir`, ready declared-service bindings appear in
+`ctx.services.<name>`, and missing bindings can be activated explicitly through
+`await ctx.services.get("<name>")`. The app directory may use `neovex/` as the
+native user source root or `convex/` as the compatibility root; in both cases
+the runtime registry still loads the generated manifests from
+`.neovex/convex/`. The
 explicit `neovex compose up/down/...` commands share that same Compose
 discovery, lowering, deterministic project identity, and project-scoped
 backend root instead of inventing a second lifecycle control plane.
@@ -415,7 +417,8 @@ now starts the machine first and only then wires the forwarded guest manager.
 This is why `start` and `compose` are not the same concept:
 
 - server startup owns the Neovex API surface itself: HTTP, WebSocket,
-  Convex-compatible routes, runtime execution, and `ctx.services.*` activation
+  Convex-compatible routes, runtime execution, and the `ctx.services` snapshot
+  plus activation surface
 - `compose` commands manage declared backing workloads that Neovex may start,
   stop, inspect, or log
 

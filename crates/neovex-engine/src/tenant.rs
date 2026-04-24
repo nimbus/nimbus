@@ -148,33 +148,12 @@ impl TenantRuntime {
         read_storage: &TenantPersistenceExecutor,
     ) -> Result<(TenantRuntimeInitialState, TenantRuntimeInitialStateProfile)> {
         let total_started = Instant::now();
-        let (schema, progress, schema_load, journal_progress) = match store {
-            TenantPersistence::Postgres(store) => {
-                let schema_started = Instant::now();
-                let schema = store.load_schema_async().await?;
-                let schema_load = schema_started.elapsed();
-                let progress_started = Instant::now();
-                let progress = store.journal_progress_async().await?;
-                let journal_progress = progress_started.elapsed();
-                (schema, progress, schema_load, journal_progress)
-            }
-            TenantPersistence::Redb(_)
-            | TenantPersistence::Sqlite(_)
-            | TenantPersistence::LibsqlReplica(_)
-            | TenantPersistence::MySql(_) => {
-                read_storage
-                    .execute(|store| {
-                        let schema_started = Instant::now();
-                        let schema = store.load_schema()?;
-                        let schema_load = schema_started.elapsed();
-                        let progress_started = Instant::now();
-                        let progress = store.journal_progress()?;
-                        let journal_progress = progress_started.elapsed();
-                        Ok((schema, progress, schema_load, journal_progress))
-                    })
-                    .await?
-            }
-        };
+        let schema_started = Instant::now();
+        let schema = store.load_schema_async(read_storage).await?;
+        let schema_load = schema_started.elapsed();
+        let progress_started = Instant::now();
+        let progress = store.journal_progress_async(read_storage).await?;
+        let journal_progress = progress_started.elapsed();
         Ok((
             TenantRuntimeInitialState { schema, progress },
             TenantRuntimeInitialStateProfile {

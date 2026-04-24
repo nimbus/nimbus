@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use neovex_core::{Error, Result, Schema, TableName, TableSchema, TenantId, policy_revision_id};
 
-use crate::persistence::TenantPersistence;
 use crate::tenant::TenantRuntime;
 
 use super::Service;
@@ -189,18 +188,10 @@ impl Service {
         &self,
         runtime: &Arc<TenantRuntime>,
     ) -> Result<()> {
-        let next_schema = match &runtime.store {
-            TenantPersistence::Postgres(store) => store.load_schema_async().await?,
-            TenantPersistence::Redb(_)
-            | TenantPersistence::Sqlite(_)
-            | TenantPersistence::LibsqlReplica(_)
-            | TenantPersistence::MySql(_) => {
-                runtime
-                    .read_storage
-                    .execute(|store| store.load_schema())
-                    .await?
-            }
-        };
+        let next_schema = runtime
+            .store
+            .load_schema_async(&runtime.read_storage)
+            .await?;
         apply_loaded_schema_snapshot(runtime, next_schema)
     }
 }

@@ -9,7 +9,6 @@ use neovex_storage::{
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::persistence::TenantPersistence;
 use crate::tenant::TenantRuntime;
 
 use super::Service;
@@ -25,7 +24,7 @@ const POLLING_PROVIDER_INTERVAL: Duration = Duration::from_millis(500);
 
 impl Service {
     pub(crate) fn ensure_provider_background_tasks_started(self: &Arc<Self>) {
-        let Some(background) = self.provider_background_task() else {
+        let Some(background) = self.persistence_provider.background_task() else {
             return;
         };
         if self
@@ -43,17 +42,7 @@ impl Service {
         });
     }
 
-    fn provider_background_task(&self) -> Option<ProviderBackgroundTask> {
-        if let Some(provider) = self.postgres_provider() {
-            return Some(ProviderBackgroundTask::Postgres(provider));
-        }
-        if let Some(provider) = self.libsql_replica_provider() {
-            return Some(ProviderBackgroundTask::LibsqlReplica(provider));
-        }
-        self.mysql_provider().map(ProviderBackgroundTask::MySql)
-    }
-
-    async fn run_postgres_provider_hint_worker(
+    pub(crate) async fn run_postgres_provider_hint_worker(
         self: Arc<Self>,
         provider: Arc<PostgresProvider>,
         shutdown: CancellationToken,
@@ -177,34 +166,10 @@ impl Service {
 
         if refresh_journal {
             let next_sequence = SequenceNumber(runtime.applied_head().0.saturating_add(1));
-            let (progress, commits) = match &runtime.store {
-                TenantPersistence::Postgres(store) => {
-                    let progress = store.recover_durable_journal_async().await?;
-                    let commits = if progress.applied_head.0 >= next_sequence.0 {
-                        store.read_commit_log_from_async(next_sequence).await?
-                    } else {
-                        Vec::new()
-                    };
-                    (progress, commits)
-                }
-                TenantPersistence::Redb(_)
-                | TenantPersistence::Sqlite(_)
-                | TenantPersistence::LibsqlReplica(_)
-                | TenantPersistence::MySql(_) => {
-                    runtime
-                        .read_storage
-                        .execute(move |store| {
-                            let progress = store.recover_durable_journal()?;
-                            let commits = if progress.applied_head.0 >= next_sequence.0 {
-                                store.read_commit_log_from(next_sequence)?
-                            } else {
-                                Vec::new()
-                            };
-                            Ok((progress, commits))
-                        })
-                        .await?
-                }
-            };
+            let (progress, commits) = runtime
+                .store
+                .recover_journal_tail_async(&runtime.read_storage, next_sequence)
+                .await?;
             if !commits.is_empty() {
                 runtime.invalidate_document_cache_for_commits(commits.iter());
             }
@@ -241,7 +206,7 @@ impl Service {
         Ok(())
     }
 
-    async fn run_mysql_provider_poll_worker(
+    pub(crate) async fn run_mysql_provider_poll_worker(
         self: Arc<Self>,
         _provider: Arc<MySqlProvider>,
         shutdown: CancellationToken,
@@ -263,7 +228,7 @@ impl Service {
         }
     }
 
-    async fn run_libsql_replica_provider_poll_worker(
+    pub(crate) async fn run_libsql_replica_provider_poll_worker(
         self: Arc<Self>,
         _provider: Arc<LibsqlReplicaProvider>,
         shutdown: CancellationToken,
@@ -301,16 +266,17 @@ impl Service {
             .collect::<Vec<_>>();
 
         for (tenant_id, runtime) in &loaded {
-            if matches!(&runtime.store, TenantPersistence::MySql(_)) {
-                runtime.store.invalidate_schema_cache();
-            }
-            let (store_schema, store_progress) = runtime
-                .read_storage
-                .execute(|store| Ok((store.load_schema()?, store.journal_progress()?)))
+            let refresh_plan = runtime
+                .store
+                .plan_loaded_runtime_refresh_async(
+                    &runtime.read_storage,
+                    runtime.schema().as_ref(),
+                    runtime.durable_head(),
+                    runtime.applied_head(),
+                )
                 .await?;
-            let refresh_schema = store_schema != *runtime.schema();
-            let refresh_journal = store_progress.durable_head.0 > runtime.durable_head().0
-                || store_progress.applied_head.0 > runtime.applied_head().0;
+            let refresh_schema = refresh_plan.refresh_schema;
+            let refresh_journal = refresh_plan.refresh_journal;
             if refresh_schema || refresh_journal {
                 self.catch_up_loaded_provider_tenant_async(
                     runtime.clone(),
@@ -341,42 +307,6 @@ impl Service {
             self.wake_scheduler();
         }
         Ok(next_due)
-    }
-}
-
-enum ProviderBackgroundTask {
-    Postgres(Arc<PostgresProvider>),
-    LibsqlReplica(Arc<LibsqlReplicaProvider>),
-    MySql(Arc<MySqlProvider>),
-}
-
-impl ProviderBackgroundTask {
-    fn task_name(&self) -> &'static str {
-        match self {
-            Self::Postgres(_) => "postgres_provider_hints",
-            Self::LibsqlReplica(_) => "libsql_replica_provider_poll",
-            Self::MySql(_) => "mysql_provider_poll",
-        }
-    }
-
-    async fn run(self, service: Arc<Service>, shutdown: CancellationToken) {
-        match self {
-            Self::Postgres(provider) => {
-                service
-                    .run_postgres_provider_hint_worker(provider, shutdown)
-                    .await;
-            }
-            Self::LibsqlReplica(provider) => {
-                service
-                    .run_libsql_replica_provider_poll_worker(provider, shutdown)
-                    .await;
-            }
-            Self::MySql(provider) => {
-                service
-                    .run_mysql_provider_poll_worker(provider, shutdown)
-                    .await;
-            }
-        }
     }
 }
 

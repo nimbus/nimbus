@@ -24,11 +24,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     API: machine/service state persistence as documents, HTTP lifecycle
     endpoints, Convex function bundle with typed query surface, read/write
     path split; prerequisite for the desktop UI plan
-- `docs/plans/runtime-provider-boundary-hardening-plan.md`
-  - canonical execution plan for the architecture-review follow-up on runtime
-    and provider boundaries: async/cancellable service activation outside sync
-    V8 host paths, versioned typed host ABI payloads, and provider-owned
-    capability facades that shrink engine-wide match lattices
 - `docs/plans/desktop-ui-plan.md`
   - canonical execution plan for a Docker Desktop / Podman Desktop-style
     graphical interface: embedded React SPA at `/ui/*` via `rust-embed`,
@@ -46,6 +41,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - concise current reference for the settled macOS developer-machine contract:
     pinned Podman image digest, host-managed guest binary sync, forwarded
     machine API, host-resident `neovex start`, and proof-helper entrypoints
+- `docs/plans/runtime-provider-boundary-hardening-plan.md`
+  - completed architecture-review follow-up for runtime and provider
+    boundaries: async/cancellable service activation outside sync V8 host
+    paths, versioned typed host ABI payloads, and provider-owned capability
+    methods that keep provider behavior out of engine service switchboards
 
 - `docs/plans/install-script-plan.md`
   - canonical execution plan for the neovex install script (Channel 1):
