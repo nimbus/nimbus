@@ -1,4 +1,6 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
+#[cfg(any(test, unix))]
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
