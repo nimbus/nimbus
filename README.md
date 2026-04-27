@@ -19,6 +19,11 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 
 ---
 
+> [!WARNING]
+> Neovex is in **beta**. APIs, storage formats, and configuration flags are changing quickly and will break between releases. Do not run production workloads against it yet. If you're evaluating Neovex or building on it early, [open an issue](https://github.com/agentstation/neovex/issues) or [start a discussion](https://github.com/agentstation/neovex/discussions) -- we're working with a small group of design partners and want to hear what matters to you.
+
+Neovex packages the three backend primitives -- storage, compute, and networking -- into a single binary you run on your own infrastructure. It gives you the developer experience of a managed BaaS -- document storage, server-side JavaScript, real-time subscriptions, durable scheduling -- without the cloud lock-in
+
 ```
                                             ┌───────────────┐
                                             │ Apps & Agents │
@@ -57,12 +62,7 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
                    └───────────────────────────────────────────────────────────────────┘
 ```
 
-Neovex packages the three backend primitives -- storage, compute, and networking -- into a single binary you run on your own infrastructure. It gives you the developer experience of a managed BaaS -- document storage, server-side JavaScript, real-time subscriptions, durable scheduling -- without the SaaS lock-in, the per-request billing, or the *"this is a dev tool, don't run it in production"* disclaimer that comes with most self-hosted alternatives.
-
 It's built for teams and agents that need to run their full application stack on their own hardware: regulated industries, air-gapped environments, customers with data residency requirements, AI agent infrastructure, and any team whose SaaS bill has stopped making sense.
-
-> [!WARNING]
-> Neovex is in **beta**. APIs, storage formats, and configuration flags are changing quickly and will break between releases. Do not run production workloads against it yet. If you're evaluating Neovex or building on it early, [open an issue](https://github.com/agentstation/neovex/issues) or [start a discussion](https://github.com/agentstation/neovex/discussions) -- we're working with a small group of design partners and want to hear what matters to you.
 
 ## Why Neovex
 
