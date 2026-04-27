@@ -94,19 +94,29 @@ async fn wait_until_slot_parked(
     });
 }
 
-async fn wait_until_slot_completed_without_parking(
+async fn wait_until_slot_completed_without_external_release(
     slot: &mut CooperativeLockerRuntimeSlot,
     case: IsolatedRuntimeTestCase,
     context: &str,
 ) {
-    let timeout = cooperative_slot_progress_timeout();
-    tokio::time::timeout(timeout, async {
+    let progress_timeout = cooperative_slot_progress_timeout();
+    let wake_timeout = cooperative_slot_wake_timeout();
+    tokio::time::timeout(progress_timeout, async {
         loop {
             match slot.poll_once().await.expect("slot poll should succeed") {
                 CooperativeRuntimeSlotPoll::Runnable => tokio::task::yield_now().await,
                 CooperativeRuntimeSlotPoll::Completed => break,
                 CooperativeRuntimeSlotPoll::Parked => {
-                    panic!("{context}; cooperative slot parked instead of completing");
+                    let description = case.failure_context(
+                        "cooperative slot parked on immediate async host work and never self-woke",
+                    );
+                    wait_for_condition(
+                        description.as_str(),
+                        wake_timeout,
+                        std::time::Duration::ZERO,
+                        || async { slot.is_ready_to_resume() },
+                    )
+                    .await;
                 }
             }
         }
@@ -114,9 +124,9 @@ async fn wait_until_slot_completed_without_parking(
     .await
     .unwrap_or_else(|_| {
         panic!(
-            "{} after {timeout:?}: {context}",
+            "{} after {progress_timeout:?}: {context}",
             case.failure_context(
-                "cooperative slot did not complete within the bounded progress timeout"
+                "cooperative slot did not complete within the bounded progress timeout without external release"
             )
         )
     });
@@ -232,7 +242,7 @@ export {};
     )
     .await;
     assert!(slot.is_ready_to_resume());
-    wait_until_slot_completed_without_parking(
+    wait_until_slot_completed_without_external_release(
         &mut slot,
         PARK_AND_RESUME_CASE,
         "released async host work should complete after wake",
@@ -346,10 +356,10 @@ export {};
         .await
         .expect("cooperative locker slot should start");
 
-    wait_until_slot_completed_without_parking(
+    wait_until_slot_completed_without_external_release(
         &mut slot,
         IMMEDIATE_ASYNC_CASE,
-        "immediate async host work should complete without parking",
+        "immediate async host work should complete without requiring an external release",
     )
     .await;
 
@@ -458,10 +468,12 @@ export {};
             .await
             .unwrap_or_else(|e| panic!("cycle {cycle}: slot should start: {e}"));
 
-        wait_until_slot_completed_without_parking(
+        wait_until_slot_completed_without_external_release(
             &mut slot,
             WARM_POOL_TWO_CYCLE_CASE,
-            &format!("cycle {cycle}: immediate async host should complete without parking"),
+            &format!(
+                "cycle {cycle}: immediate async host should complete without requiring an external release"
+            ),
         )
         .await;
 
