@@ -15,10 +15,10 @@ async fn repeated_get_document_calls_record_document_cache_hits() {
         .expect("insert should succeed");
 
     let first = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("first get should succeed");
     let second = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("second get should succeed");
 
     assert_eq!(first.fields.get("title"), Some(&json!("Cached")));
@@ -54,7 +54,7 @@ async fn document_cache_evicts_least_recently_used_entries_when_capacity_is_exce
 
     for document_id in &document_ids {
         service
-            .get_document(&tenant_id, &tasks_table(), *document_id)
+            .get_document(&tenant_id, &tasks_table(), document_id.clone())
             .expect("get should succeed");
     }
 
@@ -67,15 +67,16 @@ async fn document_cache_evicts_least_recently_used_entries_when_capacity_is_exce
     assert_eq!(stats.evictions, 1);
 
     service
-        .get_document(&tenant_id, &tasks_table(), document_ids[0])
+        .get_document(&tenant_id, &tasks_table(), document_ids[0].clone())
         .expect("evicted document should still load from storage");
     service
         .get_document(
             &tenant_id,
             &tasks_table(),
-            *document_ids
+            document_ids
                 .last()
-                .expect("cache population should include a last document"),
+                .expect("cache population should include a last document")
+                .clone(),
         )
         .expect("most recent document should stay cached");
 
@@ -112,7 +113,7 @@ async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation
     assert_eq!(documents.len(), 1);
 
     let cached = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("cached get should succeed");
     assert_eq!(cached.fields.get("title"), Some(&json!("Before")));
 
@@ -126,13 +127,13 @@ async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
         )
         .expect("update should succeed");
 
     let refreshed = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("post-update get should succeed");
     assert_eq!(refreshed.fields.get("title"), Some(&json!("After")));
 
@@ -143,7 +144,7 @@ async fn query_cache_entries_are_invalidated_before_the_next_read_after_mutation
     assert_eq!(stats.misses, 1);
 
     let cached_again = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("second post-update get should succeed");
     assert_eq!(cached_again.fields.get("title"), Some(&json!("After")));
 
@@ -175,7 +176,8 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
 
     let initial = rx.recv().await.expect("initial update should arrive");
     match initial {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("Before"));
         }
@@ -183,7 +185,7 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
     }
 
     let cached = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("cached get should succeed");
     assert_eq!(cached.fields.get("title"), Some(&json!("Before")));
 
@@ -197,14 +199,15 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
         )
         .expect("update should succeed");
 
     let update = rx.recv().await.expect("subscription update should arrive");
     match update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("After"));
         }
@@ -212,7 +215,7 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
     }
 
     let refreshed = service
-        .get_document(&tenant_id, &tasks_table(), document_id)
+        .get_document(&tenant_id, &tasks_table(), document_id.clone())
         .expect("refreshed get should succeed");
     assert_eq!(refreshed.fields.get("title"), Some(&json!("After")));
 

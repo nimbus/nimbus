@@ -24,7 +24,7 @@ impl RuntimeReadSet {
             dependencies.record_table(table);
         }
         for (table, document_id) in &self.documents {
-            dependencies.record_document(table, *document_id);
+            dependencies.record_document(table, document_id.clone());
         }
         for read in &self.index_ranges {
             dependencies.record_index_range(IndexRangeDependency {
@@ -49,9 +49,9 @@ impl RuntimeReadSet {
                 filters: read.filters.clone(),
                 order: read.order.clone(),
                 start_sort_values: read.start_sort_values.clone(),
-                start_doc_id: read.start_doc_id,
+                start_doc_id: read.start_doc_id.clone(),
                 end_sort_values: read.end_sort_values.clone(),
-                end_doc_id: read.end_doc_id,
+                end_doc_id: read.end_doc_id.clone(),
                 result_count: read.result_count,
                 page_size: read.page_size,
             });
@@ -64,7 +64,7 @@ impl RuntimeReadSet {
     }
 
     pub(crate) fn record_document(&mut self, table: &TableName, document_id: &DocumentId) {
-        self.documents.insert((table.clone(), *document_id));
+        self.documents.insert((table.clone(), document_id.clone()));
     }
 
     pub(crate) fn record_index_range(&mut self, read: RuntimeIndexRangeRead) {

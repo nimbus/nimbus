@@ -36,7 +36,8 @@ impl Service {
             )));
         }
 
-        let runtime = self.build_loaded_tenant_runtime(self.open_tenant_store(&path)?)?;
+        let runtime =
+            self.build_loaded_tenant_runtime(&tenant_id, self.open_tenant_store(&path)?)?;
         tenants.insert(tenant_id, runtime);
         Ok(())
     }
@@ -57,12 +58,22 @@ impl Service {
         }
 
         let opened = self.persistence_provider.create_tenant(&tenant_id).await?;
-        let runtime =
-            Arc::new(TenantRuntime::from_parts_async(opened.persistence, opened.executor).await?);
+        let runtime = Arc::new(
+            TenantRuntime::from_parts_async(tenant_id.clone(), opened.persistence, opened.executor)
+                .await?,
+        );
         if !self.provider_background_ready() {
-            self.catch_up_loaded_provider_tenant_async(runtime.clone(), &tenant_id, true, true)
-                .await?;
+            self.catch_up_loaded_provider_tenant_async(
+                runtime.clone(),
+                &tenant_id,
+                true,
+                true,
+                false,
+            )
+            .await?;
         }
+        self.bootstrap_trigger_candidate_feed(runtime.clone())?;
+        self.bootstrap_trigger_execution(runtime.clone())?;
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")
@@ -112,6 +123,8 @@ impl Service {
         };
         if let Some(runtime) = runtime {
             let _deletion = runtime.begin_delete();
+            runtime.shutdown_trigger_candidates();
+            runtime.shutdown_trigger_execution();
             runtime.shutdown_subscription_delivery();
             runtime
                 .subscriptions
@@ -136,6 +149,8 @@ impl Service {
         }
         if let Some(runtime) = runtime {
             let _deletion = runtime.begin_delete_async().await;
+            runtime.shutdown_trigger_candidates();
+            runtime.shutdown_trigger_execution();
             runtime.shutdown_subscription_delivery();
             runtime
                 .subscriptions
@@ -184,7 +199,8 @@ impl Service {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         }
 
-        let runtime = self.build_loaded_tenant_runtime(self.open_tenant_store(&path)?)?;
+        let runtime =
+            self.build_loaded_tenant_runtime(tenant_id, self.open_tenant_store(&path)?)?;
         tenants.insert(tenant_id.clone(), runtime.clone());
         Ok(runtime)
     }
@@ -254,6 +270,7 @@ impl Service {
         let (initial_state, runtime_profile) =
             TenantRuntime::load_initial_state_async(&opened.persistence, &opened_executor).await?;
         let runtime = Arc::new(TenantRuntime::from_loaded_state(
+            tenant_id.clone(),
             opened.persistence.clone(),
             opened_executor,
             initial_state,
@@ -275,9 +292,17 @@ impl Service {
         runtime.sync_mutation_journal_progress(progress);
         let catch_up_started = Instant::now();
         if !self.provider_background_ready() {
-            self.catch_up_loaded_provider_tenant_async(runtime.clone(), tenant_id, true, true)
-                .await?;
+            self.catch_up_loaded_provider_tenant_async(
+                runtime.clone(),
+                tenant_id,
+                true,
+                true,
+                false,
+            )
+            .await?;
         }
+        self.bootstrap_trigger_candidate_feed(runtime.clone())?;
+        self.bootstrap_trigger_execution(runtime.clone())?;
         let catch_up_elapsed = catch_up_started.elapsed();
         self.tenants
             .write()

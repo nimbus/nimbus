@@ -1,4 +1,5 @@
 use super::*;
+use crate::ws::NegotiatedWebSocketProtocol;
 
 pub(super) async fn unsubscribe_active_subscriptions(
     service: &Arc<neovex_engine::Service>,
@@ -16,10 +17,10 @@ pub(super) async fn unsubscribe_active_subscriptions(
                 .await;
             if emit_errors && let Err(error) = result {
                 let _ = outbound_tx
-                    .send(ServerMessage::Error {
-                        request_id: None,
-                        message: error.to_string(),
-                    })
+                    .send(ServerMessage::session_error(
+                        "session.unsubscribe_failed",
+                        error.to_string(),
+                    ))
                     .await;
             }
         }
@@ -44,9 +45,8 @@ pub(super) async fn run_subscription_forwarder(
             SubscriptionUpdate::Result {
                 subscription_id,
                 request_id,
-                commit,
-                deleted_documents,
-                data,
+                snapshot,
+                commit_hint,
             } => {
                 let request_id_for_transform = request_id.clone();
                 match apply_subscription_transform(
@@ -60,11 +60,11 @@ pub(super) async fn run_subscription_forwarder(
                         ConvexSubscriptionEvent {
                             subscription_id,
                             request_id: request_id_for_transform.as_deref(),
-                            commit: commit.as_ref(),
-                            deleted_documents: &deleted_documents,
+                            commit: commit_hint.as_ref(),
+                            deleted_documents: &snapshot.deleted_documents,
                         },
                     ),
-                    data,
+                    snapshot.to_json_documents(),
                 )
                 .await
                 {
@@ -74,9 +74,11 @@ pub(super) async fn run_subscription_forwarder(
                         data,
                     },
                     Ok(None) => continue,
-                    Err(message) => ServerMessage::Error {
-                        request_id,
-                        message,
+                    Err(message) => match request_id {
+                        Some(request_id) => {
+                            ServerMessage::request_error(request_id, "op.failed", message)
+                        }
+                        None => ServerMessage::session_error("session.transform_failed", message),
                     },
                 }
             }
@@ -84,9 +86,9 @@ pub(super) async fn run_subscription_forwarder(
                 request_id,
                 message,
                 ..
-            } => ServerMessage::Error {
-                request_id,
-                message,
+            } => match request_id {
+                Some(request_id) => ServerMessage::request_error(request_id, "op.failed", message),
+                None => ServerMessage::session_error("session.subscription_error", message),
             },
         };
         if outbound_tx.send(message).await.is_err() {
@@ -98,9 +100,10 @@ pub(super) async fn run_subscription_forwarder(
 pub(super) async fn run_socket_sender(
     mut socket_tx: futures::stream::SplitSink<WebSocket, Message>,
     mut outbound_rx: mpsc::Receiver<ServerMessage>,
+    protocol: NegotiatedWebSocketProtocol,
 ) {
     while let Some(message) = outbound_rx.recv().await {
-        let Ok(text) = serde_json::to_string(&message) else {
+        let Ok(text) = message.to_text(protocol) else {
             break;
         };
         if socket_tx.send(Message::Text(text.into())).await.is_err() {

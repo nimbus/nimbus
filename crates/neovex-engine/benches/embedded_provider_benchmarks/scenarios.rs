@@ -22,7 +22,7 @@ pub(super) async fn exercise_crud_sample(
                 .await?,
         );
     }
-    for (rank, id) in ids.iter().copied().enumerate() {
+    for (rank, id) in ids.iter().cloned().enumerate() {
         let _ = service
             .update_document_async(
                 tenant_id.clone(),
@@ -46,7 +46,7 @@ pub(super) async fn exercise_point_read_sample(
     ids: &[DocumentId],
 ) -> BenchResult<()> {
     for step in 0..POINT_READ_BATCH_SIZE {
-        let id = ids[(step * 17) % ids.len()];
+        let id = ids[(step * 17) % ids.len()].clone();
         let document = service
             .get_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
@@ -190,7 +190,7 @@ pub(super) async fn exercise_mixed_load_sample(
                 limit: Some(25),
             };
             for step in 0..MIXED_LOAD_OPS_PER_TENANT {
-                let id = state.ids[step % state.ids.len()];
+                let id = state.ids[step % state.ids.len()].clone();
                 match step % 4 {
                     0 => {
                         let document = service

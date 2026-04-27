@@ -193,7 +193,7 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         .await
         .expect("fairness rejection response should parse");
     assert!(
-        body["error"]
+        body["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("tenant queue limit exceeded for demo")),
         "expected queue-limit rejection message, got {body}"
@@ -284,10 +284,10 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         .await;
 
     let message = socket.next_json().await;
-    assert_eq!(message["type"], json!("error"));
-    assert_eq!(message["request_id"], json!("tenant-fairness"));
+    assert_eq!(message["type"], json!("op.error"));
+    assert_eq!(message["id"], json!("tenant-fairness"));
     assert!(
-        message["message"]
+        message["error"]["message"]
             .as_str()
             .is_some_and(|text| text.contains("tenant queue limit exceeded for demo")),
         "expected queue-limit websocket error, got {message}"

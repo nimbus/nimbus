@@ -26,6 +26,7 @@ export const maybeByAuthor = query({
   returns: v.array(v.object({
     _id: v.id("messages"),
     _creationTime: v.number(),
+    _updateTime: v.number(),
     author: v.string(),
     body: v.string(),
   })),
@@ -77,6 +78,7 @@ export const listPage = paginatedQuery({
   returns: v.object({
     _id: v.id("messages"),
     _creationTime: v.number(),
+    _updateTime: v.number(),
     author: v.string(),
     body: v.string(),
   }),

@@ -4,7 +4,6 @@ use reqwest::Client;
 
 use super::config::{ConvexAuthConfig, ConvexAuthProvider};
 
-mod headers;
 mod identity;
 mod metadata;
 

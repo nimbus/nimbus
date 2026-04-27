@@ -2,8 +2,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use neovex_core::{CommitEntry, Document, PrincipalContext, Query, SequenceNumber};
-use serde_json::Value;
+use neovex_core::{
+    CommitEntry, PrincipalContext, Query, SequenceNumber, SubscriptionResultSnapshot,
+};
 use tokio::sync::mpsc;
 
 use crate::service::evaluate_with_index_cancellable_for_principal;
@@ -18,9 +19,10 @@ pub enum SubscriptionUpdate {
     Result {
         subscription_id: u64,
         request_id: Option<String>,
-        commit: Option<CommitEntry>,
-        deleted_documents: Vec<Document>,
-        data: Vec<Value>,
+        snapshot: SubscriptionResultSnapshot,
+        // Keep the exact commit payload available for in-process optimizations.
+        // Adapter-facing code should consume `snapshot` instead.
+        commit_hint: Option<CommitEntry>,
     },
     Error {
         subscription_id: u64,
@@ -103,12 +105,17 @@ pub(crate) fn dispatch_subscription_work(
         match result {
             Ok(documents) => {
                 let dependencies = subscription_dependencies(&subscription.query, &documents);
+                let snapshot = SubscriptionResultSnapshot::from_delivery(
+                    work.delivery_sequence,
+                    work.commit.as_ref(),
+                    documents,
+                    work.deleted_documents.clone(),
+                );
                 let update = SubscriptionUpdate::Result {
                     subscription_id: subscription.id,
                     request_id: None,
-                    commit: work.commit.clone(),
-                    deleted_documents: work.deleted_documents.clone(),
-                    data: documents.into_iter().map(Document::into_json).collect(),
+                    snapshot,
+                    commit_hint: work.commit.clone(),
                 };
                 if subscription.sender.try_send(update).is_ok() {
                     runtime

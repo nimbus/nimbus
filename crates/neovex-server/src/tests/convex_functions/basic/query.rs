@@ -41,4 +41,5 @@ async fn convex_query_returns_documents_as_plain_json() {
     assert_eq!(body[0]["title"], json!("Hello"));
     assert!(body[0]["_id"].is_string());
     assert!(body[0]["_creationTime"].is_u64());
+    assert!(body[0]["_updateTime"].is_u64());
 }

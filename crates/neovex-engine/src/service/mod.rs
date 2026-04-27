@@ -10,6 +10,7 @@ mod scheduler;
 mod schema;
 mod subscriptions;
 mod tenants;
+mod transactions;
 mod usage;
 
 use std::collections::HashMap;
@@ -20,7 +21,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
-use neovex_core::{Document, Error, Result, TenantId, Timestamp};
+use neovex_core::{Error, Result, TenantId, Timestamp};
 use neovex_storage::{
     Clock, EmbeddedProviderKind, FaultInjector, NoopFaultInjector, SqliteTenantStore, SystemClock,
     TenantStore,
@@ -31,7 +32,9 @@ use tokio::task::JoinHandle;
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
 use crate::persistence_config::ServicePersistenceConfig;
 use crate::tenant::TenantRuntime;
+use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
+use transactions::TransactionSessionRegistry;
 
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
@@ -49,6 +52,7 @@ pub use subscriptions::SubscriptionBootstrapCancellation;
 pub struct Service {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
+    transaction_sessions: RwLock<TransactionSessionRegistry>,
     tenant_load_gate: AsyncMutex<()>,
     embedded_provider_kind: Option<EmbeddedProviderKind>,
     persistence_provider: PersistenceProvider,
@@ -58,6 +62,8 @@ pub struct Service {
     scheduler_wakeup: Notify,
     provider_hint_worker_started: AtomicBool,
     provider_hint_listener_ready: AtomicBool,
+    trigger_invocation_executor: RwLock<Option<SharedTriggerInvocationExecutor>>,
+    trigger_registrations: RwLock<Vec<TriggerRegistration>>,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
@@ -160,6 +166,7 @@ impl Service {
         Self {
             data_dir: parts.data_dir,
             tenants: RwLock::new(HashMap::new()),
+            transaction_sessions: RwLock::new(TransactionSessionRegistry::default()),
             tenant_load_gate: AsyncMutex::new(()),
             embedded_provider_kind: parts.embedded_provider_kind,
             persistence_provider: parts.persistence_provider,
@@ -169,6 +176,8 @@ impl Service {
             scheduler_wakeup: Notify::new(),
             provider_hint_worker_started: AtomicBool::new(false),
             provider_hint_listener_ready: AtomicBool::new(false),
+            trigger_invocation_executor: RwLock::new(None),
+            trigger_registrations: RwLock::new(Vec::new()),
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
@@ -253,15 +262,83 @@ impl Service {
 
     pub(crate) fn build_loaded_tenant_runtime(
         &self,
+        tenant_id: &TenantId,
         store: TenantPersistence,
     ) -> Result<Arc<TenantRuntime>> {
         let read_storage = self
             .persistence_provider
             .read_storage_for_store(store.clone())?;
-        let runtime = Arc::new(TenantRuntime::from_parts(store.clone(), read_storage)?);
+        let runtime = Arc::new(TenantRuntime::from_parts(
+            tenant_id.clone(),
+            store.clone(),
+            read_storage,
+        )?);
+        runtime.replace_trigger_registrations(
+            self.trigger_registrations
+                .read()
+                .expect("trigger registrations lock should not be poisoned")
+                .clone(),
+        )?;
         let progress = store.recover_durable_journal()?;
         runtime.sync_mutation_journal_progress(progress);
+        self.bootstrap_trigger_candidate_feed(runtime.clone())?;
+        self.bootstrap_trigger_execution(runtime.clone())?;
         Ok(runtime)
+    }
+
+    pub(crate) fn trigger_invocation_executor(&self) -> Option<SharedTriggerInvocationExecutor> {
+        self.trigger_invocation_executor
+            .read()
+            .expect("trigger invocation executor lock should not be poisoned")
+            .clone()
+    }
+
+    pub fn install_trigger_invocation_executor(
+        self: &Arc<Self>,
+        executor: Arc<dyn crate::triggers::TriggerInvocationExecutor>,
+    ) -> Result<()> {
+        {
+            let mut slot = self
+                .trigger_invocation_executor
+                .write()
+                .expect("trigger invocation executor lock should not be poisoned");
+            *slot = Some(executor);
+        }
+        let runtimes = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for runtime in runtimes {
+            self.bootstrap_trigger_execution(runtime)?;
+        }
+        Ok(())
+    }
+
+    pub fn install_trigger_registrations(
+        self: &Arc<Self>,
+        registrations: Vec<TriggerRegistration>,
+    ) -> Result<()> {
+        {
+            let mut slot = self
+                .trigger_registrations
+                .write()
+                .expect("trigger registrations lock should not be poisoned");
+            *slot = registrations.clone();
+        }
+        let runtimes = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for runtime in runtimes {
+            runtime.replace_trigger_registrations(registrations.clone())?;
+        }
+        Ok(())
     }
 
     pub(crate) fn require_embedded_provider_kind(&self) -> Result<EmbeddedProviderKind> {
@@ -271,8 +348,4 @@ impl Service {
             )
         })
     }
-}
-
-fn documents_to_json(documents: Vec<Document>) -> Vec<serde_json::Value> {
-    documents.into_iter().map(Document::into_json).collect()
 }

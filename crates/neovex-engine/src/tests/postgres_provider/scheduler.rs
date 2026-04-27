@@ -36,6 +36,7 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                         run_after_ms: 0,
                         mutation: Mutation::Insert {
                             table: tasks_table(),
+                            id: None,
                             fields: serde_json::Map::from_iter([(
                                 "title".to_string(),
                                 json!("Scheduled externally"),
@@ -118,6 +119,7 @@ async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
                     run_after_ms: 0,
                     mutation: Mutation::Insert {
                         table: tasks_table(),
+                        id: None,
                         fields: serde_json::Map::from_iter([(
                             "title".to_string(),
                             json!("Recovered after restart"),
@@ -182,7 +184,8 @@ async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
         assert_eq!(
             tokio::time::timeout(
                 Duration::from_secs(5),
-                reopened.get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id),
+                reopened
+                    .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id.clone()),
             )
             .await
             .expect("scheduled job result should finish after restart recovery")

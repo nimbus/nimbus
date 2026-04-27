@@ -1,6 +1,7 @@
 use crate::execution::subscriptions::RuntimeSubscriptionHandle;
 
 use super::*;
+use crate::application_auth::normalize_principal_context;
 
 struct RuntimeSubscriptionPublishContext<'a> {
     outbound_tx: &'a mpsc::Sender<ServerMessage>,
@@ -120,7 +121,7 @@ mod tests {
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
 
-    use neovex_core::{CommitEntry, SequenceNumber, Timestamp};
+    use neovex_core::{CommitEntry, SequenceNumber, SubscriptionResultSnapshot, Timestamp};
     use serde_json::json;
     use tokio::time::timeout;
 
@@ -133,10 +134,8 @@ mod tests {
             mpsc::channel(neovex_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let transforms = Arc::new(RwLock::new(ConvexSubscriptionTransforms::default()));
         let mut active_subscriptions = ActiveSubscriptions::new();
-        let blocked_message = ServerMessage::Error {
-            request_id: None,
-            message: "block-initial-send".to_string(),
-        };
+        let blocked_message =
+            ServerMessage::session_error("session.test_blocked_send", "block-initial-send");
         outbound_tx
             .send(blocked_message)
             .await
@@ -147,14 +146,25 @@ mod tests {
         pending_tx
             .send(SubscriptionUpdate::Result {
                 subscription_id: 7,
-                request_id: Some("internal".to_string()),
-                commit: Some(CommitEntry {
+                request_id: None,
+                snapshot: SubscriptionResultSnapshot::from_delivery(
+                    SequenceNumber(11),
+                    Some(&CommitEntry {
+                        sequence: SequenceNumber(11),
+                        timestamp: Timestamp(110),
+                        writes: Vec::new(),
+                    }),
+                    vec![neovex_core::Document::new(
+                        neovex_core::TableName::new("tasks").expect("table should be valid"),
+                        serde_json::Map::from_iter([("body".to_string(), json!("buffered"))]),
+                    )],
+                    Vec::new(),
+                ),
+                commit_hint: Some(CommitEntry {
                     sequence: SequenceNumber(11),
                     timestamp: Timestamp(110),
                     writes: Vec::new(),
                 }),
-                deleted_documents: Vec::new(),
-                data: vec![json!({"body": "buffered"})],
             })
             .await
             .expect("buffered catch-up update should send");
@@ -199,15 +209,11 @@ mod tests {
             .recv()
             .await
             .expect("prefilled outbound message should be readable");
-        let ServerMessage::Error {
-            request_id,
-            message,
-        } = unblocked
-        else {
+        let ServerMessage::Error { request_id, error } = unblocked else {
             panic!("expected the prefilled outbound error message");
         };
         assert_eq!(request_id, None);
-        assert_eq!(message, "block-initial-send");
+        assert_eq!(error.message(), "block-initial-send");
 
         let (published, mut active_subscriptions) = publish
             .await
@@ -237,15 +243,17 @@ mod tests {
         let SubscriptionUpdate::Result {
             subscription_id,
             request_id,
-            data,
+            snapshot,
             ..
         } = buffered_catch_up
         else {
             panic!("expected a forwarded buffered result");
         };
+        let data = snapshot.to_json_documents();
         assert_eq!(subscription_id, 42);
         assert_eq!(request_id, None);
-        assert_eq!(data, vec![json!({"body": "buffered"})]);
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["body"], json!("buffered"));
 
         let active_subscription = active_subscriptions
             .remove(&42)

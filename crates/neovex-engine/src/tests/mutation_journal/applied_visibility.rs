@@ -32,7 +32,7 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
     let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
-        .map(|write| write.doc_id)
+        .map(|write| write.doc_id.clone())
         .expect("durable commit should include the inserted document id");
     faults.release();
     let completed_id = timeout(Duration::from_secs(1), handle)
@@ -468,7 +468,7 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
     let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
-        .map(|write| write.doc_id)
+        .map(|write| write.doc_id.clone())
         .expect("durable commit should include the inserted document id");
 
     let (get_tx, mut get_rx) = mpsc::unbounded_channel();
@@ -476,7 +476,8 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
         let service = service.clone();
         let tenant_id = tenant_id.clone();
         move || {
-            let _ = get_tx.send(service.get_document(&tenant_id, &tasks_table(), document_id));
+            let _ =
+                get_tx.send(service.get_document(&tenant_id, &tasks_table(), document_id.clone()));
         }
     });
 

@@ -189,28 +189,34 @@ fn sqlite_store_round_trips_schema_get_and_index_scans() {
         id: DocumentId::new(),
         table: table.clone(),
         creation_time: Timestamp(1),
+        update_time: Timestamp(1),
         fields: serde_json::Map::from_iter([
             ("status".to_string(), json!("open")),
             ("rank".to_string(), json!(1)),
         ]),
+        typed_fields: Default::default(),
     };
     let open_three = Document {
         id: DocumentId::new(),
         table: table.clone(),
         creation_time: Timestamp(2),
+        update_time: Timestamp(2),
         fields: serde_json::Map::from_iter([
             ("status".to_string(), json!("open")),
             ("rank".to_string(), json!(3)),
         ]),
+        typed_fields: Default::default(),
     };
     let closed_two = Document {
         id: DocumentId::new(),
         table: table.clone(),
         creation_time: Timestamp(3),
+        update_time: Timestamp(3),
         fields: serde_json::Map::from_iter([
             ("status".to_string(), json!("closed")),
             ("rank".to_string(), json!(2)),
         ]),
+        typed_fields: Default::default(),
     };
     for document in [&open_one, &open_three, &closed_two] {
         store
@@ -268,7 +274,7 @@ fn sqlite_index_query_plan_builders_match_runtime_sql_shape() {
         .expect("single-field indexed query SQL should build");
     assert_eq!(
         exact,
-        "SELECT id, creation_time, data_json
+        "SELECT id, creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_name = ?1 AND json_extract(data_json, '$.\"status\"') = ?2
          ORDER BY id"
@@ -285,7 +291,7 @@ fn sqlite_index_query_plan_builders_match_runtime_sql_shape() {
     .expect("composite indexed query SQL should build");
     assert_eq!(
         composite,
-        "SELECT id, creation_time, data_json
+        "SELECT id, creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_name = ?1 AND json_extract(data_json, '$.\"team\"') = ?2 AND json_extract(data_json, '$.\"status\"') = ?3 AND json_extract(data_json, '$.\"rank\"') >= ?4 AND json_extract(data_json, '$.\"rank\"') < ?5
          ORDER BY json_extract(data_json, '$.\"rank\"'), id"

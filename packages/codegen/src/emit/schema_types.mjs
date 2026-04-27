@@ -10,6 +10,7 @@ function renderDocumentType(tableName, fields, depth) {
   const lines = [
     `${indent}_id: Id<${JSON.stringify(tableName)}>;`,
     `${indent}_creationTime: number;`,
+    `${indent}_updateTime: number;`,
   ];
   for (const [fieldName, validator] of Object.entries(fields)) {
     lines.push(`${indent}${JSON.stringify(fieldName)}: ${renderValidatorType(validator)};`);

@@ -5,9 +5,11 @@ import {
   collectModuleFiles,
   resolveAppDirectory,
   resolveSourceRoot,
+  tryResolveSourceRoot,
   sha256Hex,
 } from "./app.mjs";
 import { loadAuthConfig } from "./auth_config.mjs";
+import { generateCloudFunctionsArtifacts } from "./cloud_functions.mjs";
 import { generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
 import { generateRuntimeBundle } from "./emit/runtime_bundle.mjs";
 import { parseHttpRoutes, parseModule } from "./parser.mjs";
@@ -116,13 +118,21 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
 
 async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   const appDir = resolveAppDirectory(args);
-  const sourceRoot = await resolveSourceRoot(appDir);
+  const sourceRoot = await tryResolveSourceRoot(appDir);
+  const cloudFunctions = await generateCloudFunctionsArtifacts({ appDir, onInfo });
 
-  if (sourceRoot.detectedBothRoots) {
+  if (sourceRoot?.detectedBothRoots) {
     onInfo?.(`Detected both neovex/ and convex/ in ${appDir}; using neovex/.`);
   }
 
-  return generateConvexArtifacts({ appDir, sourceRoot });
+  if (sourceRoot === null && cloudFunctions === null) {
+    await resolveSourceRoot(appDir);
+  }
+
+  const convex = sourceRoot
+    ? await generateConvexArtifacts({ appDir, sourceRoot })
+    : null;
+  return { appDir, cloudFunctions, convex };
 }
 
 export { generateConvexArtifacts, runCliFromArgs };

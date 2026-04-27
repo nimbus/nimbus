@@ -1,6 +1,8 @@
-use axum::http::HeaderValue;
+use axum::http::{HeaderMap, HeaderValue, header};
 
 pub(crate) const LOCAL_ADMIN_HEADER_NAME: &str = "x-neovex-admin-token";
+const FIRESTORE_GRPC_SERVICE_PATH_PREFIX: &str = "/google.firestore.v1.Firestore/";
+const FIRESTORE_LISTEN_METHOD_PATH: &str = "/google.firestore.v1.Firestore/Listen";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalServerRouteFamily {
@@ -14,6 +16,10 @@ pub(crate) enum LocalServerRouteFamily {
     NativeWebSocket,
     ConvexHttp,
     ConvexWebSocket,
+    FirebaseRest,
+    FirebaseGrpc,
+    FirebaseGrpcWeb,
+    FirebaseWebSocket,
     Unknown,
 }
 
@@ -43,6 +49,12 @@ impl LocalServerRouteFamily {
             }
             return Self::ConvexHttp;
         }
+        if path.starts_with("/v1/projects/") {
+            return Self::FirebaseRest;
+        }
+        if path.starts_with(FIRESTORE_GRPC_SERVICE_PATH_PREFIX) {
+            return Self::FirebaseGrpc;
+        }
         if path.starts_with("/debug/") {
             return Self::Debug;
         }
@@ -50,6 +62,23 @@ impl LocalServerRouteFamily {
             return Self::NativeApi;
         }
         Self::Unknown
+    }
+
+    // Firebase transport families share one local-security policy boundary, but
+    // gRPC-Web and the future Listen WebSocket path are header-sensitive and
+    // cannot be recovered from a path-only classifier later in the stack.
+    pub(crate) fn classify_request(path: &str, headers: &HeaderMap) -> Self {
+        let family = Self::classify(path);
+        if family != Self::FirebaseGrpc {
+            return family;
+        }
+        if is_firebase_listen_websocket_request(path, headers) {
+            return Self::FirebaseWebSocket;
+        }
+        if is_firebase_grpc_web_request(headers) {
+            return Self::FirebaseGrpcWeb;
+        }
+        family
     }
 
     pub(crate) fn requires_origin_allowlist(self) -> bool {
@@ -68,9 +97,40 @@ impl LocalServerRouteFamily {
             Self::NativeWebSocket => "native_websocket",
             Self::ConvexHttp => "convex_http",
             Self::ConvexWebSocket => "convex_websocket",
+            Self::FirebaseRest => "firebase_rest",
+            Self::FirebaseGrpc => "firebase_grpc",
+            Self::FirebaseGrpcWeb => "firebase_grpc_web",
+            Self::FirebaseWebSocket => "firebase_websocket",
             Self::Unknown => "unknown",
         }
     }
+}
+
+fn is_firebase_grpc_web_request(headers: &HeaderMap) -> bool {
+    headers.contains_key("x-grpc-web")
+        || headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("application/grpc-web"))
+}
+
+fn is_firebase_listen_websocket_request(path: &str, headers: &HeaderMap) -> bool {
+    path == FIRESTORE_LISTEN_METHOD_PATH && is_websocket_upgrade(headers)
+}
+
+fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+        && headers
+            .get(header::CONNECTION)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|segment| segment.trim().eq_ignore_ascii_case("upgrade"))
+            })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,6 +190,8 @@ pub(crate) fn is_loopback_origin(origin: ParsedOrigin<'_>, port: Option<u16>) ->
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{HeaderMap, HeaderValue, header};
+
     use super::*;
 
     #[test]
@@ -161,6 +223,44 @@ mod tests {
         assert_eq!(
             LocalServerRouteFamily::classify("/convex/demo/ws"),
             LocalServerRouteFamily::ConvexWebSocket
+        );
+        assert_eq!(
+            LocalServerRouteFamily::classify(
+                "/v1/projects/demo/databases/(default)/documents:commit"
+            ),
+            LocalServerRouteFamily::FirebaseRest
+        );
+        assert_eq!(
+            LocalServerRouteFamily::classify("/google.firestore.v1.Firestore/Commit"),
+            LocalServerRouteFamily::FirebaseGrpc
+        );
+    }
+
+    #[test]
+    fn route_family_distinguishes_firebase_grpc_web_and_websocket_requests() {
+        let mut grpc_web_headers = HeaderMap::new();
+        grpc_web_headers.insert("x-grpc-web", HeaderValue::from_static("1"));
+        grpc_web_headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/grpc-web+proto"),
+        );
+        assert_eq!(
+            LocalServerRouteFamily::classify_request(
+                "/google.firestore.v1.Firestore/Commit",
+                &grpc_web_headers,
+            ),
+            LocalServerRouteFamily::FirebaseGrpcWeb
+        );
+
+        let mut websocket_headers = HeaderMap::new();
+        websocket_headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        websocket_headers.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
+        assert_eq!(
+            LocalServerRouteFamily::classify_request(
+                "/google.firestore.v1.Firestore/Listen",
+                &websocket_headers,
+            ),
+            LocalServerRouteFamily::FirebaseWebSocket
         );
     }
 

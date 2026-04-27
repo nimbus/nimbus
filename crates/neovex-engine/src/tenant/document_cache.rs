@@ -54,7 +54,7 @@ impl TenantDocumentCacheState {
     }
 
     fn insert(&mut self, document: Document) {
-        let key = (document.table.clone(), document.id);
+        let key = (document.table.clone(), document.id.clone());
         let stamp = self.next_access_stamp();
         self.documents.insert(
             key.clone(),
@@ -95,8 +95,8 @@ impl TenantDocumentCache {
         }
     }
 
-    pub(super) fn get(&self, table: &TableName, document_id: DocumentId) -> Option<Document> {
-        let key = (table.clone(), document_id);
+    pub(super) fn get(&self, table: &TableName, document_id: &DocumentId) -> Option<Document> {
+        let key = (table.clone(), document_id.clone());
         let mut state = self
             .state
             .lock()
@@ -150,7 +150,9 @@ impl TenantDocumentCache {
             .lock()
             .expect("document cache lock should not be poisoned");
         for write in &commit.writes {
-            state.documents.remove(&(write.table.clone(), write.doc_id));
+            state
+                .documents
+                .remove(&(write.table.clone(), write.doc_id.clone()));
         }
     }
 
@@ -164,7 +166,9 @@ impl TenantDocumentCache {
             .expect("document cache lock should not be poisoned");
         for commit in commits {
             for write in &commit.writes {
-                state.documents.remove(&(write.table.clone(), write.doc_id));
+                state
+                    .documents
+                    .remove(&(write.table.clone(), write.doc_id.clone()));
             }
         }
     }

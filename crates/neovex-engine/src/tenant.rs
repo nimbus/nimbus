@@ -2,12 +2,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use neovex_core::{Result, Schema, TenantId};
+use neovex_core::{Result, Schema, TenantId, Timestamp};
 use neovex_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 
 use crate::persistence::{TenantPersistence, TenantPersistenceExecutor};
 use crate::subscriptions::SubscriptionRegistry;
+use crate::triggers::TriggerRegistration;
+use crate::triggers::TriggerRegistry;
+use crate::triggers::execution::SharedTriggerInvocationExecutor;
+use neovex_storage::Clock;
 
 mod document_cache;
 mod document_cache_facade;
@@ -20,6 +24,8 @@ mod query_planning;
 mod query_planning_facade;
 mod subscription_delivery;
 mod subscription_delivery_facade;
+mod trigger_candidates;
+mod trigger_execution;
 
 #[cfg(test)]
 pub(crate) use self::document_cache::DOCUMENT_CACHE_CAPACITY;
@@ -54,9 +60,14 @@ pub(crate) use self::subscription_delivery::DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPA
 pub(crate) use self::subscription_delivery::SubscriptionDeliveryPauseHandle;
 use self::subscription_delivery::SubscriptionDeliveryQueue;
 pub use self::subscription_delivery::SubscriptionDeliveryStats;
+use self::trigger_candidates::TriggerCandidateFeed;
+#[cfg(test)]
+pub(crate) use self::trigger_candidates::TriggerCandidatePauseHandle;
+use self::trigger_execution::TriggerExecutionQueue;
 
 /// Runtime state for a loaded tenant.
 pub struct TenantRuntime {
+    tenant_id: TenantId,
     pub store: TenantPersistence,
     pub read_storage: TenantPersistenceExecutor,
     pub subscriptions: SubscriptionRegistry,
@@ -65,6 +76,9 @@ pub struct TenantRuntime {
     materialized_reads: TenantMaterializedReadSurface,
     query_planning: QueryPlanningMetrics,
     subscription_delivery: SubscriptionDeliveryQueue,
+    trigger_candidates: TriggerCandidateFeed,
+    trigger_execution: TriggerExecutionQueue,
+    trigger_registry: TriggerRegistry,
     lifecycle: Arc<TenantLifecycle>,
     mutation_admission: Arc<MutationAdmissionGate>,
     mutation_journal: Arc<MutationJournalState>,
@@ -108,12 +122,14 @@ impl Drop for TenantOperationGuard {
 
 impl TenantRuntime {
     fn from_initialized_parts(
+        tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         schema: Schema,
         progress: neovex_storage::JournalProgress,
     ) -> Self {
         Self {
+            tenant_id,
             store,
             read_storage,
             subscriptions: SubscriptionRegistry::new(),
@@ -122,6 +138,9 @@ impl TenantRuntime {
             materialized_reads: TenantMaterializedReadSurface::new(),
             query_planning: QueryPlanningMetrics::new(),
             subscription_delivery: SubscriptionDeliveryQueue::new(),
+            trigger_candidates: TriggerCandidateFeed::new(),
+            trigger_execution: TriggerExecutionQueue::new(),
+            trigger_registry: TriggerRegistry::new(),
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
@@ -131,11 +150,13 @@ impl TenantRuntime {
     }
 
     pub(crate) fn from_loaded_state(
+        tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
     ) -> Self {
         Self::from_initialized_parts(
+            tenant_id,
             store,
             read_storage,
             initial_state.schema,
@@ -166,12 +187,14 @@ impl TenantRuntime {
 
     /// Creates a tenant runtime from a store.
     pub fn from_parts(
+        tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
     ) -> Result<Self> {
         let schema = store.load_schema()?;
         let progress = store.journal_progress()?;
         Ok(Self::from_initialized_parts(
+            tenant_id,
             store,
             read_storage,
             schema,
@@ -181,16 +204,26 @@ impl TenantRuntime {
 
     /// Creates a tenant runtime asynchronously from a store.
     pub async fn from_parts_async(
+        tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
     ) -> Result<Self> {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
-        Ok(Self::from_loaded_state(store, read_storage, initial_state))
+        Ok(Self::from_loaded_state(
+            tenant_id,
+            store,
+            read_storage,
+            initial_state,
+        ))
     }
 
     /// Returns the current schema snapshot.
     pub fn schema(&self) -> Arc<Schema> {
         self.schema.load_full()
+    }
+
+    pub(crate) fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
     }
 
     /// Enters a tenant operation, preventing deletion while the operation is active.
@@ -211,6 +244,43 @@ impl TenantRuntime {
     pub async fn begin_delete_async(&self) -> TenantDeletionGuard {
         self.lifecycle.begin_delete_async().await;
         TenantDeletionGuard
+    }
+
+    pub(crate) fn trigger_registry(&self) -> &TriggerRegistry {
+        &self.trigger_registry
+    }
+
+    pub(crate) fn ensure_trigger_execution_worker_started(
+        self: &Arc<Self>,
+        clock: Arc<dyn Clock>,
+        executor: SharedTriggerInvocationExecutor,
+    ) {
+        self.trigger_execution.start_worker(self, clock, executor);
+    }
+
+    pub(crate) fn enqueue_trigger_invocation_keys(
+        &self,
+        keys: Vec<neovex_core::TriggerInvocationKey>,
+    ) {
+        self.trigger_execution.enqueue(keys);
+    }
+
+    pub(crate) fn enqueue_trigger_invocation_scheduled(
+        &self,
+        entries: Vec<(neovex_core::TriggerInvocationKey, Timestamp)>,
+    ) {
+        self.trigger_execution.enqueue_scheduled(entries);
+    }
+
+    pub(crate) fn shutdown_trigger_execution(&self) {
+        self.trigger_execution.shutdown();
+    }
+
+    pub(crate) fn replace_trigger_registrations(
+        &self,
+        registrations: Vec<TriggerRegistration>,
+    ) -> Result<()> {
+        self.trigger_registry.replace(registrations)
     }
 
     pub(crate) fn engine_diagnostics_snapshot(&self) -> TenantEngineDiagnosticsSnapshot {

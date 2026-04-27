@@ -73,7 +73,9 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
                 table_name VARCHAR(191) NOT NULL,\
                 id VARCHAR(191) NOT NULL,\
                 data_json LONGTEXT NOT NULL,\
+                typed_fields_json LONGTEXT NOT NULL DEFAULT '{{}}',\
                 creation_time BIGINT UNSIGNED NOT NULL,\
+                update_time BIGINT UNSIGNED NOT NULL,\
                 PRIMARY KEY (table_name, id)\
             ) ENGINE=InnoDB",
             qualified_table(database_name, "documents")
@@ -84,6 +86,22 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
                 schema_json LONGTEXT NOT NULL\
             ) ENGINE=InnoDB",
             qualified_table(database_name, "schemas")
+        ),
+        // Firestore path keys can exceed InnoDB's practical indexed-byte
+        // budget, so MySQL indexes fixed SHA-256 digests while the
+        // authoritative raw keys and binding payload remain in blobs.
+        format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                locator_hash BINARY(32) PRIMARY KEY,\
+                locator_key LONGBLOB NOT NULL,\
+                document_path_hash BINARY(32) NOT NULL UNIQUE,\
+                document_path_key LONGBLOB NOT NULL,\
+                collection_group_hash BINARY(32) NOT NULL,\
+                binding_blob LONGBLOB NOT NULL,\
+                locator_blob LONGBLOB NOT NULL,\
+                KEY idx_resource_path_bindings_collection_group_hash (collection_group_hash)\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "resource_path_bindings")
         ),
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
@@ -112,6 +130,15 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
                 data_json LONGTEXT NOT NULL\
             ) ENGINE=InnoDB",
             qualified_table(database_name, "scheduled_job_results")
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                registration_id VARCHAR(255) NOT NULL,\
+                event_id VARCHAR(255) NOT NULL,\
+                data_blob LONGBLOB NOT NULL,\
+                PRIMARY KEY (registration_id, event_id)\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "trigger_invocations")
         ),
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
@@ -294,7 +321,7 @@ where
     let (query, params_table) = if let Some(table) = table {
         (
             format!(
-                "SELECT table_name, id, creation_time, data_json \
+                "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
                  FROM {} WHERE table_name = ? ORDER BY id",
                 qualified_table(database_name, "documents")
             ),
@@ -303,7 +330,7 @@ where
     } else {
         (
             format!(
-                "SELECT table_name, id, creation_time, data_json \
+                "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
                  FROM {} ORDER BY table_name, id",
                 qualified_table(database_name, "documents")
             ),
@@ -320,14 +347,25 @@ where
     };
     rows.into_iter()
         .map(|row| {
-            let (table_name, id, creation_time, data_json): (String, String, u64, String) =
-                mysql_async::from_row(row);
-            let mut document =
-                Document::new(TableName::new(table_name)?, deserialize_json(&data_json)?);
-            document.id = DocumentId::from_str(&id)
+            let (table_name, id, creation_time, update_time, data_json, typed_fields_json): (
+                String,
+                String,
+                u64,
+                u64,
+                String,
+                String,
+            ) = mysql_async::from_row(row);
+            let table = TableName::new(table_name)?;
+            let id = DocumentId::from_str(&id)
                 .map_err(|error| Error::Serialization(error.to_string()))?;
-            document.creation_time = Timestamp(creation_time);
-            Ok(document)
+            row_to_document(
+                &table,
+                &id,
+                creation_time,
+                update_time,
+                data_json,
+                typed_fields_json,
+            )
         })
         .collect()
 }
@@ -384,7 +422,7 @@ where
     C: Queryable,
 {
     let query = format!(
-        "SELECT creation_time, data_json FROM {} WHERE table_name = ? AND id = ?",
+        "SELECT creation_time, update_time, data_json, typed_fields_json FROM {} WHERE table_name = ? AND id = ?",
         qualified_table(database_name, "documents")
     );
     session
@@ -392,8 +430,20 @@ where
         .await
         .map_err(map_mysql_error)?
         .map(|row| {
-            let (creation_time, data_json): (u64, String) = mysql_async::from_row(row);
-            row_to_document(table, id, creation_time, data_json)
+            let (creation_time, update_time, data_json, typed_fields_json): (
+                u64,
+                u64,
+                String,
+                String,
+            ) = mysql_async::from_row(row);
+            row_to_document(
+                table,
+                id,
+                creation_time,
+                update_time,
+                data_json,
+                typed_fields_json,
+            )
         })
         .transpose()
 }
@@ -485,7 +535,7 @@ where
     }
 
     let sql = format!(
-        "SELECT table_name, id, creation_time, data_json \
+        "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
          FROM {} \
          WHERE {} \
          ORDER BY id",
@@ -498,12 +548,25 @@ where
         .map_err(map_mysql_error)?;
     rows.into_iter()
         .map(|row| {
-            let (table_name, id, creation_time, data_json): (String, String, u64, String) =
-                mysql_async::from_row(row);
+            let (table_name, id, creation_time, update_time, data_json, typed_fields_json): (
+                String,
+                String,
+                u64,
+                u64,
+                String,
+                String,
+            ) = mysql_async::from_row(row);
             let table = TableName::new(table_name)?;
             let id = DocumentId::from_str(&id)
                 .map_err(|error| Error::Serialization(error.to_string()))?;
-            row_to_document(&table, &id, creation_time, data_json)
+            row_to_document(
+                &table,
+                &id,
+                creation_time,
+                update_time,
+                data_json,
+                typed_fields_json,
+            )
         })
         .collect()
 }
@@ -643,7 +706,7 @@ where
                     }
                     None => {
                         let query = format!(
-                            "INSERT INTO {} (table_name, id, data_json, creation_time) VALUES (?, ?, ?, ?)",
+                            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time) VALUES (?, ?, ?, ?, ?)",
                             qualified_table(database_name, "documents")
                         );
                         session
@@ -653,6 +716,7 @@ where
                                     write.table.as_str(),
                                     write.doc_id.to_string(),
                                     serialize_document_fields(current)?,
+                                    serialize_document_typed_fields(current)?,
                                     current.creation_time.0,
                                 ),
                             )
@@ -679,7 +743,7 @@ where
                     )));
                 }
                 let query = format!(
-                    "UPDATE {} SET data_json = ?, creation_time = ? WHERE table_name = ? AND id = ?",
+                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_name = ? AND id = ?",
                     qualified_table(database_name, "documents")
                 );
                 session
@@ -687,7 +751,9 @@ where
                         query,
                         (
                             serialize_document_fields(current)?,
+                            serialize_document_typed_fields(current)?,
                             current.creation_time.0,
+                            current.update_time.0,
                             write.table.as_str(),
                             write.doc_id.to_string(),
                         ),
@@ -889,7 +955,7 @@ pub(super) fn apply_schedule_ops_in_transaction(
             ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
             ResolvedScheduleOp::Cancel { job_id } => {
                 if !transaction.cancel_scheduled_job(job_id)? {
-                    return Err(Error::ScheduledJobNotFound(*job_id));
+                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
                 }
             }
         }
@@ -1169,15 +1235,25 @@ pub(super) fn row_to_document(
     table: &TableName,
     id: &DocumentId,
     creation_time: u64,
+    update_time: u64,
     data_json: String,
+    typed_fields_json: String,
 ) -> Result<Document> {
     Ok(Document {
-        id: *id,
+        id: id.clone(),
         table: table.clone(),
         creation_time: Timestamp(creation_time),
+        update_time: Timestamp(update_time),
         fields: serde_json::from_str(&data_json)
             .map_err(|error| Error::Serialization(error.to_string()))?,
+        typed_fields: serde_json::from_str(&typed_fields_json)
+            .map_err(|error| Error::Serialization(error.to_string()))?,
     })
+}
+
+pub(super) fn serialize_document_typed_fields(document: &Document) -> Result<String> {
+    serde_json::to_string(&document.typed_fields)
+        .map_err(|error| Error::Serialization(error.to_string()))
 }
 
 pub(super) fn claim_due_jobs_upper_bound(timestamp: Timestamp) -> u64 {

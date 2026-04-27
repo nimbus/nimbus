@@ -3,8 +3,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
+use crate::trigger::TriggerWriteOrigin;
 use crate::types::{DocumentId, SequenceNumber, TableName, Timestamp};
-use crate::{Document, Error, Result};
+use crate::{Document, Error, ResourcePathBinding, Result};
 
 /// A mutation request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -12,6 +13,8 @@ use crate::{Document, Error, Result};
 pub enum Mutation {
     Insert {
         table: TableName,
+        #[serde(default)]
+        id: Option<DocumentId>,
         fields: serde_json::Map<String, Value>,
     },
     Update {
@@ -40,6 +43,10 @@ pub struct WriteOp {
     pub table: TableName,
     pub op_type: WriteOpType,
     pub doc_id: DocumentId,
+    #[serde(default)]
+    pub resource_path_binding: Option<ResourcePathBinding>,
+    #[serde(default)]
+    pub trigger_write_origin: Option<TriggerWriteOrigin>,
     #[serde(default)]
     pub previous: Option<Document>,
     #[serde(default)]

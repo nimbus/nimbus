@@ -112,7 +112,7 @@ impl ShadowMaterializer {
             .documents
             .iter()
             .cloned()
-            .map(|document| (document.id, document))
+            .map(|document| (document.id.clone(), document))
             .collect::<BTreeMap<_, _>>();
         let scheduled_execution_ids = checkpoint
             .scheduled_execution_ids
@@ -238,7 +238,7 @@ impl ShadowMaterializer {
                     ))),
                     Some(_) => Ok(()),
                     None => {
-                        self.documents.insert(current.id, current.clone());
+                        self.documents.insert(current.id.clone(), current.clone());
                         Ok(())
                     }
                 },
@@ -264,7 +264,7 @@ impl ShadowMaterializer {
                             write.doc_id, record.sequence.0
                         )));
                     }
-                    self.documents.insert(current.id, current.clone());
+                    self.documents.insert(current.id.clone(), current.clone());
                     Ok(())
                 }
                 _ => Err(Error::InvalidInput(format!(

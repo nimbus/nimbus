@@ -25,9 +25,7 @@ mod payloads;
 mod read_tracking;
 mod responses;
 
-pub(in crate::adapters::convex) use bridge::{
-    ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope,
-};
+pub(crate) use bridge::{ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope};
 #[cfg(test)]
 pub(in crate::adapters::convex) use contract::ConvexHostCallRequest;
 pub(in crate::adapters::convex) use contract::convex_host_operation_name;
@@ -35,7 +33,7 @@ pub(in crate::adapters::convex) use contract::convex_host_operation_name;
 pub(in crate::adapters::convex) use contract::{ConvexHostCallFamily, ConvexHostCallOperation};
 pub(in crate::adapters::convex) use pagination::synthesize_runtime_paginate_cursor;
 pub(in crate::adapters::convex) use payloads::*;
-pub(in crate::adapters::convex) use responses::*;
+pub(crate) use responses::*;
 
 pub(in crate::adapters::convex) fn runtime_host_payload_value<T>(
     payload: T,

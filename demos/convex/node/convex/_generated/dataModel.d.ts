@@ -11,6 +11,7 @@ type DocumentByTable = {
   "messages": {
     _id: Id<"messages">;
     _creationTime: number;
+    _updateTime: number;
     "author": string;
     "body": string;
   };

@@ -41,6 +41,7 @@ async fn bad_origin_returns_forbidden_before_local_admin_auth() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
+            .with_firebase(FirebaseConfig::new())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -66,6 +67,7 @@ async fn native_api_and_debug_routes_require_local_admin_auth() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
+            .with_firebase(FirebaseConfig::new())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -123,8 +125,10 @@ async fn deploy_admin_requires_local_admin_header_even_with_deploy_bearer() {
 
     let request = json!({
         "artifacts": {
-            "functions_json": { "functions": [] },
-            "http_routes_json": { "routes": [] }
+            "convex": {
+                "functions_json": { "functions": [] },
+                "http_routes_json": { "routes": [] }
+            }
         }
     });
 
@@ -178,6 +182,115 @@ async fn native_websocket_requires_local_admin_auth() {
         other => panic!("unexpected websocket error: {other}"),
     };
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn firebase_routes_remain_application_surfaces_without_local_admin_auth() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_firebase(FirebaseConfig::new())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let rest_response = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body("{}")
+        .send()
+        .await
+        .expect("firebase rest request should send");
+    assert_ne!(rest_response.status(), StatusCode::UNAUTHORIZED);
+    assert_ne!(rest_response.status(), StatusCode::FORBIDDEN);
+    assert_ne!(rest_response.status(), StatusCode::NOT_FOUND);
+
+    let grpc_web_response = server
+        .client()
+        .post(server.http_url("/google.firestore.v1.Firestore/Commit"))
+        .header("x-grpc-web", "1")
+        .header(header::CONTENT_TYPE, "application/grpc-web+proto")
+        .header(
+            "google-cloud-resource-prefix",
+            "projects/demo/databases/(default)",
+        )
+        .body(Vec::new())
+        .send()
+        .await
+        .expect("firebase grpc-web request should send");
+    assert_ne!(grpc_web_response.status(), StatusCode::UNAUTHORIZED);
+    assert_ne!(grpc_web_response.status(), StatusCode::FORBIDDEN);
+    assert_ne!(grpc_web_response.status(), StatusCode::NOT_FOUND);
+
+    let mut websocket_request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("firebase websocket request should build");
+    websocket_request.headers_mut().insert(
+        header::ORIGIN,
+        HeaderValue::from_static("http://localhost:5173"),
+    );
+    websocket_request.headers_mut().insert(
+        "google-cloud-resource-prefix",
+        HeaderValue::from_static("projects/demo/databases/(default)"),
+    );
+    websocket_request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        HeaderValue::from_static("neovex.firebase.listen.v1, neovex.firebase.auth.dW5pdC10b2tlbg"),
+    );
+
+    let (_socket, response) = connect_async(websocket_request)
+        .await
+        .expect("firebase websocket request should not require local admin auth");
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    assert_eq!(
+        response.headers().get(header::SEC_WEBSOCKET_PROTOCOL),
+        Some(&HeaderValue::from_static("neovex.firebase.listen.v1"))
+    );
+}
+
+#[tokio::test]
+async fn firebase_websocket_bad_origin_is_rejected_before_auth() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_firebase(FirebaseConfig::new())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let mut request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("firebase websocket request should build");
+    request.headers_mut().insert(
+        header::ORIGIN,
+        HeaderValue::from_static("http://example.com"),
+    );
+    request.headers_mut().insert(
+        "google-cloud-resource-prefix",
+        HeaderValue::from_static("projects/demo/databases/(default)"),
+    );
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        HeaderValue::from_static("neovex.firebase.listen.v1, neovex.firebase.auth.dW5pdC10b2tlbg"),
+    );
+
+    let error = connect_async(request)
+        .await
+        .expect_err("bad origin should reject firebase websocket");
+    let response = match error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => response,
+        other => panic!("unexpected websocket error: {other}"),
+    };
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

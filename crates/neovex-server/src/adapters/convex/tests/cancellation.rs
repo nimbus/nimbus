@@ -22,6 +22,7 @@ fn execute_convex_action_cancellable_short_circuits_before_mutation_dispatch() {
         ConvexExecutableAction::Action(ConvexAction::Mutation {
             mutation: Mutation::Insert {
                 table: TableName::new("messages").expect("table should build"),
+                id: None,
                 fields: serde_json::Map::from_iter([("body".to_string(), json!("hello"))]),
             },
         }),

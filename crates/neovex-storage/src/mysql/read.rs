@@ -1,3 +1,4 @@
+use super::resource_paths::load_resource_path_bindings_from_session;
 use super::*;
 
 impl MySqlTenantStore {
@@ -60,6 +61,8 @@ impl MySqlTenantStore {
                 load_journal_progress_from_session(&mut transaction, &database_name).await?;
             let documents =
                 load_documents_from_session(&mut transaction, &database_name, None).await?;
+            let resource_path_bindings =
+                load_resource_path_bindings_from_session(&mut transaction, &database_name).await?;
             let scheduled_execution_ids =
                 load_scheduled_execution_ids_from_session(&mut transaction, &database_name).await?;
             transaction.commit().await.map_err(map_mysql_error)?;
@@ -67,6 +70,7 @@ impl MySqlTenantStore {
                 schema,
                 progress,
                 documents,
+                resource_path_bindings,
                 scheduled_execution_ids,
             })
         })
@@ -76,7 +80,7 @@ impl MySqlTenantStore {
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         self.block_on(async move {
             let mut conn = provider.conn().await?;
             load_document_from_session(&mut conn, &database_name, &table, &id).await

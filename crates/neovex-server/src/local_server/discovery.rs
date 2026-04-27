@@ -11,7 +11,7 @@ use time::format_description::well_known::Rfc3339;
 
 use super::paths::LocalServerPaths;
 
-pub const SERVER_DISCOVERY_PROTOCOL_VERSIONS: &[&str] = &["neovex.v1"];
+pub const SERVER_DISCOVERY_PROTOCOL_VERSIONS: &[&str] = &["neovex.v2"];
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -256,7 +256,7 @@ mod tests {
             address: "127.0.0.1:1111".to_string(),
             started_at: "2026-04-18T00:00:00Z".to_string(),
             version: "0.1.0".to_string(),
-            protocol_versions: vec!["neovex.v1".to_string()],
+            protocol_versions: vec!["neovex.v2".to_string()],
         };
         write_json_atomically(&paths.server_discovery_path, &stale)
             .expect("stale discovery file should write");
@@ -287,7 +287,7 @@ mod tests {
             address: "127.0.0.1:1111".to_string(),
             started_at: "2026-04-18T00:00:00Z".to_string(),
             version: "0.1.0".to_string(),
-            protocol_versions: vec!["neovex.v1".to_string()],
+            protocol_versions: vec!["neovex.v2".to_string()],
         };
         write_json_atomically(&paths.server_discovery_path, &stale)
             .expect("stale discovery file should write");

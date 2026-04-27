@@ -4,7 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use neovex_core::{Mutation, ScheduleRequest, ScheduledJobOutcome};
+use neovex_core::{
+    AtomicWrite, AtomicWriteBatch, CollectionName, DocumentId, DocumentLocator, DocumentPath,
+    FieldReference, Mutation, PrincipalContext, QueryDirection, ResourcePathBinding,
+    ScheduleRequest, ScheduledJobOutcome, StructuredCursor, StructuredOrder, StructuredQuery,
+    WriteKey, WritePrecondition, WriteSetMode,
+};
 use neovex_storage::{MySqlProvider, MySqlProviderConfig};
 use testcontainers_modules::{
     mysql,
@@ -145,6 +150,7 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
                     run_after_ms: 5_000,
                     mutation: Mutation::Insert {
                         table: tasks_table(),
+                        id: None,
                         fields: serde_json::Map::from_iter([(
                             "title".to_string(),
                             json!("Scheduled"),
@@ -172,7 +178,7 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .record_scheduled_job_result_async(
                 tenant_id.clone(),
                 neovex_core::ScheduledJobResult {
-                    id: scheduled_job_id,
+                    id: scheduled_job_id.clone(),
                     run_at: claimed[0].run_at,
                     finished_at: Timestamp(claimed[0].run_at.0.saturating_add(1)),
                     mutation: claimed[0].mutation.clone(),
@@ -183,12 +189,12 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .await
             .expect("scheduled result should persist");
         service
-            .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id)
+            .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id.clone())
             .await
             .expect("scheduled completion should persist");
         assert_eq!(
             service
-                .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id)
+                .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id.clone())
                 .await
                 .expect("scheduled result should load")
                 .outcome,
@@ -214,6 +220,119 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .expect("bootstrap should export");
         assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(2));
         assert_eq!(bootstrap.resume_after, SequenceNumber(2));
+
+        service.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(mysql_provider)]
+async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata() {
+    with_mysql_service_config(|service_config, _provider_config| async move {
+        let tenant_id = TenantId::new("mysql-collection-group").expect("tenant id should build");
+        let service = Arc::new(
+            Service::new_with_persistence_config(service_config)
+                .await
+                .expect("mysql-backed service should create"),
+        );
+        service
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+
+        let direct_table = TableName::new("landmarks_direct").expect("table name should build");
+        let nested_table = TableName::new("landmarks_nested").expect("table name should build");
+        let other_table = TableName::new("landmarks_other").expect("table name should build");
+        for table in [&direct_table, &nested_table, &other_table] {
+            service
+                .set_table_schema_async(
+                    tenant_id.clone(),
+                    TableSchema {
+                        table: table.clone(),
+                        fields: vec![FieldSchema {
+                            name: "rank".to_string(),
+                            field_type: FieldType::Number,
+                            required: false,
+                        }],
+                        indexes: vec![IndexDefinition {
+                            name: "by_rank".to_string(),
+                            fields: vec!["rank".to_string()],
+                        }],
+                        access_policy: None,
+                    },
+                )
+                .await
+                .expect("landmarks schema should persist");
+        }
+
+        seed_bound_collection_group_document(
+            &service,
+            &tenant_id,
+            direct_table.clone(),
+            "aa-top",
+            &["cities", "SF", "landmarks", "aa-top"],
+            [("rank", json!(1))],
+        );
+        seed_bound_collection_group_document(
+            &service,
+            &tenant_id,
+            direct_table,
+            "bb-top",
+            &["cities", "SF", "landmarks", "bb-top"],
+            [("rank", json!(2))],
+        );
+        seed_bound_collection_group_document(
+            &service,
+            &tenant_id,
+            nested_table,
+            "zz-top",
+            &["cities", "SF", "districts", "1", "landmarks", "zz-top"],
+            [("rank", json!(3))],
+        );
+        seed_bound_collection_group_document(
+            &service,
+            &tenant_id,
+            other_table,
+            "cc-top",
+            &["cities", "LA", "landmarks", "cc-top"],
+            [("rank", json!(4))],
+        );
+
+        let rows = service
+            .query_collection_group_documents_structured_with_principal_cancellable(
+                &tenant_id,
+                &CollectionName::new("landmarks").expect("collection group should parse"),
+                Some(
+                    &DocumentPath::from_segments(["cities", "SF"])
+                        .expect("ancestor path should parse"),
+                ),
+                &StructuredQuery {
+                    order_by: vec![StructuredOrder {
+                        field: FieldReference::new("__name__"),
+                        direction: QueryDirection::Ascending,
+                    }],
+                    start_at: Some(StructuredCursor {
+                        values: vec![json!("cities/SF/landmarks/aa-top")],
+                        before: true,
+                    }),
+                    ..StructuredQuery::default()
+                },
+                &PrincipalContext::anonymous(),
+                &mut || Ok(()),
+            )
+            .expect("collection-group query should succeed on mysql providers");
+
+        assert_eq!(
+            rows.into_iter()
+                .map(|(path, document)| (path.to_string(), document.get_field("rank").cloned()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("cities/SF/landmarks/aa-top".to_string(), Some(json!(1))),
+                ("cities/SF/landmarks/bb-top".to_string(), Some(json!(2))),
+            ],
+            "mysql collection-group queries should use the persisted path bindings and full document-path cursors"
+        );
 
         service.quiesce().await;
     })
@@ -350,6 +469,7 @@ async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
                         run_after_ms: 0,
                         mutation: Mutation::Insert {
                             table: tasks_table(),
+                            id: None,
                             fields: serde_json::Map::from_iter([(
                                 "title".to_string(),
                                 json!("Scheduled externally"),
@@ -550,6 +670,39 @@ fn unique_suffix() -> String {
         .as_nanos();
     let counter = TEST_SUFFIX_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{counter:08x}{:x}{timestamp:x}", std::process::id())
+}
+
+fn seed_bound_collection_group_document(
+    service: &Arc<Service>,
+    tenant_id: &TenantId,
+    table: TableName,
+    document_id: &str,
+    document_path: &[&str],
+    fields: impl IntoIterator<Item = (&'static str, serde_json::Value)>,
+) {
+    let document_id = DocumentId::from_key(document_id).expect("document id should parse");
+    let document_path = DocumentPath::from_segments(document_path.iter().copied())
+        .expect("document path should parse");
+    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
+        key: WriteKey::from(ResourcePathBinding::new(
+            DocumentLocator::new(table, document_id),
+            document_path,
+        )),
+        document: serde_json::Map::from_iter(
+            fields
+                .into_iter()
+                .map(|(field, value)| (field.to_string(), value)),
+        ),
+        mode: WriteSetMode::Overwrite,
+        precondition: WritePrecondition::default(),
+        transforms: Vec::new(),
+    }])
+    .expect("seed write batch should build");
+    service
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("seed execution unit should begin")
+        .execute_atomic_write_batch(batch)
+        .expect("seed write batch should commit");
 }
 
 fn tasks_schema() -> TableSchema {

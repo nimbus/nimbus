@@ -48,6 +48,190 @@ async fn query_uses_index_for_equality_filter() {
 }
 
 #[tokio::test]
+async fn structured_query_executes_supported_subset() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![
+                    FieldSchema {
+                        name: "status".to_string(),
+                        field_type: FieldType::String,
+                        required: false,
+                    },
+                    FieldSchema {
+                        name: "rank".to_string(),
+                        field_type: FieldType::Number,
+                        required: false,
+                    },
+                ],
+                indexes: vec![neovex_core::IndexDefinition {
+                    name: "by_status_rank".to_string(),
+                    fields: vec!["status".to_string(), "rank".to_string()],
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("compound structured-query schema should save");
+
+    for (status, rank) in [("active", 3), ("inactive", 2), ("active", 1)] {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!(status)),
+                    ("rank".to_string(), json!(rank)),
+                ]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let documents = service
+        .query_documents_structured(
+            &tenant_id,
+            &tasks_table(),
+            &neovex_core::StructuredQuery {
+                from: vec![neovex_core::CollectionSelector::collection(
+                    neovex_core::CollectionName::new("tasks").expect("collection id should parse"),
+                )],
+                where_filter: Some(neovex_core::QueryFilter::FieldFilter(
+                    neovex_core::FieldFilter {
+                        field: neovex_core::FieldReference::new("status"),
+                        op: neovex_core::FieldFilterOperator::Equal,
+                        value: json!("active"),
+                    },
+                )),
+                order_by: vec![neovex_core::StructuredOrder {
+                    field: neovex_core::FieldReference::new("rank"),
+                    direction: neovex_core::QueryDirection::Ascending,
+                }],
+                limit: Some(2),
+                ..neovex_core::StructuredQuery::default()
+            },
+        )
+        .expect("structured query should succeed");
+
+    assert_eq!(documents.len(), 2);
+    assert_eq!(documents[0].get_field("rank"), Some(&json!(1)));
+    assert_eq!(documents[1].get_field("rank"), Some(&json!(3)));
+    assert!(
+        documents
+            .iter()
+            .all(|document| document.get_field("status") == Some(&json!("active")))
+    );
+}
+
+#[tokio::test]
+async fn structured_query_supports_repeated_order_cursor_offset_and_projection() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![
+                    FieldSchema {
+                        name: "title".to_string(),
+                        field_type: FieldType::String,
+                        required: false,
+                    },
+                    FieldSchema {
+                        name: "rank".to_string(),
+                        field_type: FieldType::Number,
+                        required: false,
+                    },
+                ],
+                indexes: vec![neovex_core::IndexDefinition {
+                    name: "by_rank_title".to_string(),
+                    fields: vec!["rank".to_string(), "title".to_string()],
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("repeated-order structured-query schema should save");
+
+    for (title, rank) in [
+        ("alpha", 5),
+        ("bravo", 4),
+        ("charlie", 4),
+        ("delta", 2),
+        ("echo", 1),
+    ] {
+        service
+            .insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([
+                    ("title".to_string(), json!(title)),
+                    ("rank".to_string(), json!(rank)),
+                    ("status".to_string(), json!("active")),
+                ]),
+            )
+            .expect("insert should succeed");
+    }
+
+    let documents = service
+        .query_documents_structured(
+            &tenant_id,
+            &tasks_table(),
+            &neovex_core::StructuredQuery {
+                from: vec![neovex_core::CollectionSelector::collection(
+                    neovex_core::CollectionName::new("tasks").expect("collection id should parse"),
+                )],
+                order_by: vec![
+                    neovex_core::StructuredOrder {
+                        field: neovex_core::FieldReference::new("rank"),
+                        direction: neovex_core::QueryDirection::Descending,
+                    },
+                    neovex_core::StructuredOrder {
+                        field: neovex_core::FieldReference::new("title"),
+                        direction: neovex_core::QueryDirection::Ascending,
+                    },
+                ],
+                start_at: Some(neovex_core::StructuredCursor {
+                    values: vec![json!(4), json!("bravo")],
+                    before: false,
+                }),
+                end_at: Some(neovex_core::StructuredCursor {
+                    values: vec![json!(1)],
+                    before: false,
+                }),
+                offset: Some(1),
+                limit: Some(2),
+                select: Some(neovex_core::Projection {
+                    fields: vec![
+                        neovex_core::FieldReference::new("__name__"),
+                        neovex_core::FieldReference::new("title"),
+                    ],
+                }),
+                ..neovex_core::StructuredQuery::default()
+            },
+        )
+        .expect("structured query should succeed");
+
+    assert_eq!(documents.len(), 2);
+    assert_eq!(documents[0].get_field("title"), Some(&json!("delta")));
+    assert_eq!(documents[1].get_field("title"), Some(&json!("echo")));
+    assert!(
+        documents
+            .iter()
+            .all(|document| !document.fields.contains_key("status"))
+    );
+    assert!(
+        documents
+            .iter()
+            .all(|document| document.fields.contains_key("title"))
+    );
+}
+
+#[tokio::test]
 async fn subscription_initial_evaluation_uses_indexed_query_path() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -100,9 +284,10 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert_eq!(request_id.as_deref(), Some("sub-index-1"));
             assert_eq!(data.len(), 2);
@@ -140,9 +325,10 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
         SubscriptionUpdate::Result {
             subscription_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(subscription_id, subscription.id());
             assert_eq!(request_id.as_deref(), Some("sub-fullscan-sync"));
             assert_eq!(data.len(), 1);
@@ -195,9 +381,10 @@ async fn subscription_async_initial_evaluation_uses_materialized_serving_path_fo
         SubscriptionUpdate::Result {
             subscription_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(subscription_id, subscription.id());
             assert_eq!(request_id.as_deref(), Some("sub-fullscan-async"));
             assert_eq!(data.len(), 1);
@@ -437,7 +624,8 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
         .expect("active insert should succeed");
     let active_update = rx.recv().await.expect("active update should arrive");
     match active_update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 2);
             assert!(
                 data.iter()
@@ -502,7 +690,8 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
 
     let update = rx.recv().await.expect("subscription update should arrive");
     match update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 2);
         }
         other => panic!("unexpected subscription event: {other:?}"),

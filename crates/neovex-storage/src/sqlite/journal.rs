@@ -71,13 +71,15 @@ impl SqliteTenantStore {
         }
         for document in &snapshot.documents {
             conn.execute(
-                "INSERT INTO documents (table_name, id, data_json, creation_time)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     document.table.as_str(),
                     document.id.to_string(),
                     serialize_document_fields(document)?,
+                    serialize_document_typed_fields(document)?,
                     document.creation_time.0,
+                    document.update_time.0,
                 ],
             )
             .map_err(map_sqlite_error)?;
@@ -300,13 +302,15 @@ pub(super) fn apply_durable_record_in_conn(
                     }
                     None => {
                         conn.execute(
-                            "INSERT INTO documents (table_name, id, data_json, creation_time)
-                             VALUES (?1, ?2, ?3, ?4)",
+                            "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                             params![
                                 write.table.as_str(),
                                 write.doc_id.to_string(),
                                 serialize_document_fields(current)?,
+                                serialize_document_typed_fields(current)?,
                                 current.creation_time.0,
+                                current.update_time.0,
                             ],
                         )
                         .map_err(map_sqlite_error)?;
@@ -331,13 +335,15 @@ pub(super) fn apply_durable_record_in_conn(
                 }
                 conn.execute(
                     "UPDATE documents
-                     SET data_json = ?3, creation_time = ?4
+                     SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
                      WHERE table_name = ?1 AND id = ?2",
                     params![
                         write.table.as_str(),
                         write.doc_id.to_string(),
                         serialize_document_fields(current)?,
+                        serialize_document_typed_fields(current)?,
                         current.creation_time.0,
+                        current.update_time.0,
                     ],
                 )
                 .map_err(map_sqlite_error)?;

@@ -198,7 +198,7 @@ pub(super) fn apply_write_to_materialized_documents(
     match &write.current {
         Some(document) => {
             let next_size = estimate_document_bytes(document);
-            match documents.insert(write.doc_id, document.clone()) {
+            match documents.insert(write.doc_id.clone(), document.clone()) {
                 Some(previous) => {
                     *estimated_bytes = estimated_bytes
                         .saturating_sub(estimate_document_bytes(&previous))

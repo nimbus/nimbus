@@ -44,6 +44,9 @@ Why this directory exists:
 Current demos:
 
 - `neovex/html/`: single-page browser playground for tenant setup, schema install, document inserts, scheduled inserts, and live subscriptions
+- `firebase/html/`: browser demo using `@neovex/firebase` against a local Neovex server
+  - exercises `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`, `writeBatch`, `runTransaction`, `deleteDoc`, and the supported `FieldValue` sentinels
+  - unary calls can switch between REST and gRPC-Web, while live query updates use the documented WebSocket `Listen` bridge
 - `convex/node/`: Convex-style Node demo using generated refs, an injected Node WebSocket implementation, point-in-time reads, and live subscriptions
 - `convex/html/`: Convex-style React demo using `convex/react`, generated `_generated/api.ts`, and Neovex's convex transport
   - the demo now authors functions through `convex/_generated/server`, `convex/values`, and `convex/schema.ts`
@@ -68,7 +71,13 @@ Planned next demos:
 Run the Neovex server:
 
 ```bash
-cargo run -p neovex-bin -- serve --port 8080
+cargo run -p neovex-bin -- start --port 8080
+```
+
+Run the Firebase HTML demo:
+
+```bash
+npm run firebase:demo:html
 ```
 
 Run the Convex support server for the React demo:
@@ -93,6 +102,7 @@ Then open:
 
 - <http://localhost:8080/demos/>
 - <http://localhost:8080/demos/neovex/html/>
+- <http://127.0.0.1:5176/> for the Firebase HTML demo
 
 For the React convex demo, in a second terminal run:
 

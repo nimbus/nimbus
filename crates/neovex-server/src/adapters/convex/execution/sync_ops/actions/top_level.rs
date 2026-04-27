@@ -1,4 +1,5 @@
 use super::*;
+use crate::application_auth::normalize_principal_context;
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn execute_named_action_request_direct(

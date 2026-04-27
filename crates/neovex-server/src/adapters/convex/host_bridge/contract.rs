@@ -60,6 +60,8 @@ pub(in crate::adapters::convex) enum ConvexHostCallOperation {
     CtxServiceLookup,
     #[serde(rename = "convex.ctx.runtime.enter_nested_call")]
     CtxRuntimeEnterNestedCall,
+    #[serde(rename = "adapter.runtime_extension_call")]
+    RuntimeExtensionCall,
 }
 
 #[cfg(test)]
@@ -70,6 +72,7 @@ pub(in crate::adapters::convex) enum ConvexHostCallFamily {
     QueryRead,
     Document,
     Scheduler,
+    AdapterExtension,
 }
 
 impl ConvexHostCallOperation {
@@ -101,6 +104,7 @@ impl ConvexHostCallOperation {
             Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
                 ConvexHostCallFamily::Scheduler
             }
+            Self::RuntimeExtensionCall => ConvexHostCallFamily::AdapterExtension,
         }
     }
 
@@ -132,6 +136,7 @@ impl ConvexHostCallOperation {
             Self::CtxSchedulerCancel => "convex.ctx.scheduler.cancel",
             Self::CtxServiceLookup => "convex.ctx.service.lookup",
             Self::CtxRuntimeEnterNestedCall => "convex.ctx.runtime.enter_nested_call",
+            Self::RuntimeExtensionCall => "adapter.runtime_extension_call",
         }
     }
 }
@@ -165,6 +170,7 @@ impl From<HostCallOperation> for ConvexHostCallOperation {
             HostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
             HostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             HostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
+            HostCallOperation::RuntimeExtensionCall => Self::RuntimeExtensionCall,
         }
     }
 }
@@ -198,6 +204,7 @@ impl From<ConvexHostCallOperation> for HostCallOperation {
             ConvexHostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
             ConvexHostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             ConvexHostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
+            ConvexHostCallOperation::RuntimeExtensionCall => Self::RuntimeExtensionCall,
         }
     }
 }

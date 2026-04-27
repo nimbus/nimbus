@@ -1,6 +1,6 @@
 use super::*;
 use crate::adapters::convex::execution::RuntimeInvocationContext;
-use crate::adapters::convex::normalize_principal_context;
+use crate::application_auth::normalize_principal_context;
 
 pub(crate) async fn query(
     State(state): State<Arc<AppState>>,

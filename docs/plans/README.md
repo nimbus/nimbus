@@ -3,17 +3,10 @@
 This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
-
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
     redb, the retained redb control plane, and local libsql replica caches
-- `docs/plans/websocket-protocol-plan.md`
-  - canonical execution plan for versioned WebSocket protocol negotiation and
-    unified error schema: subprotocol negotiation, hello/client_hello
-    handshake, structured error types with code taxonomy, reference
-    documents (`websocket-protocol.md`, `errors.md`); prerequisite for the
-    desktop UI plan
 - `docs/plans/system-tenant-api-plan.md`
   - canonical execution plan for the `_neovex` system tenant and management
     API: machine/service state persistence as documents, HTTP lifecycle
@@ -31,7 +24,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
-
 ## Stable implementation baselines
 
 - `docs/reference/microvm-service-baseline.md`
@@ -44,14 +36,44 @@ This directory prefers a small-number-of-plans model with clear ownership.
     machine API, host-resident `neovex start`, and proof-helper entrypoints
 - `docs/plans/localhost-server-security-plan.md`
   - completed localhost server security contract for the landed loopback
-    bind/auth/session/origin/CORS, server discovery, CSP, audit log, and
-    server-access versus application-auth boundary; remains the baseline input
-    for the desktop UI plan until a shorter reference doc is extracted
+  bind/auth/session/origin/CORS, server discovery, CSP, audit log, and
+  server-access versus application-auth boundary; remains the baseline input
+  for the desktop UI plan until a shorter reference doc is extracted
+- `docs/plans/websocket-protocol-plan.md`
+  - completed WebSocket protocol baseline for versioned subprotocol
+    negotiation, `hello`/`client_hello` handshake, structured HTTP and
+    WebSocket error envelopes, and the published `websocket-protocol.md` /
+    `errors.md` reference docs; remains a prerequisite baseline for the
+    desktop UI plan and native transport follow-on work
 - `docs/plans/runtime-provider-boundary-hardening-plan.md`
   - completed architecture-review follow-up for runtime and provider
     boundaries: async/cancellable service activation outside sync V8 host
     paths, versioned typed host ABI payloads, and provider-owned capability
     methods that keep provider behavior out of engine service switchboards
+- `docs/plans/runtime-capability-adapter-boundary-plan.md`
+  - completed adapter/runtime ownership baseline that corrected the
+    post-Firebase extraction seam: provider-specific runtime shims stay in
+    adapters, `runtime_host/*` is provider-neutral capability code, and
+    Convex host-bridge types no longer leak into the shared runtime-host path
+- `docs/plans/adapter-runtime-trust-hardening-plan.md`
+  - completed post-Firebase / post-Cloud Functions trust and canonicalization
+    baseline: server-owned application auth, fail-closed callable auth,
+    shared Firestore-family seams without adapter-to-adapter imports,
+    truthful lifecycle metadata, shared runtime bootstrap ownership,
+    clearer capability-versus-ABI layering, and the focused idiomatic-Rust
+    cleanup required before any native transport activation
+- `docs/plans/server-runtime-canonicalization-plan.md`
+  - completed server/runtime canonicalization baseline for the next
+    post-trust cleanup layer: explicit auth-lifecycle ownership, typed
+    runtime shims without JSON bounce, truly async runtime writes, canonical
+    durable document lifecycle metadata, composition-root decomposition, and
+    narrowed Convex host-call dispatch before any native transport activation
+- `docs/plans/repo-architecture-and-seam-hardening-plan.md`
+  - completed repo-wide architecture and seam hardening baseline for the
+    final prelaunch follow-on: explicit Firebase emulator-auth gating, true
+    async Firestore-admin writes, provider-neutral runtime ABI extension
+    cleanup, canonical `_updateTime` read exposure, structured-query engine
+    decomposition, and Cloud Functions codegen/runtime-root decomposition
 
 ## Pending plans
 
@@ -76,6 +98,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `neovex.exe` with WSL2 machine provider, win-sshproxy named-pipe API
     forwarding, shell-script bootstrap (not ignition), WSL2-native networking
     (not gvproxy); activation gate is macOS MAC5+ stabilization
+- `docs/plans/mongodb-adapter-plan.md`
+  - canonical execution plan for the MongoDB wire-protocol compatibility
+    adapter: TCP listener with OP_MSG framing, BSON serialization, MongoDB
+    command dispatch, CRUD/index/aggregation/transaction/change-stream support,
+    `@neovex/mongodb` JS package, and spec test integration against the
+    official `mongodb/specifications` corpus; activation gate is core CRUD
+    adapter pattern stabilization from the completed Firebase adapter
 
 ## Deferred design and experiment plans
 
@@ -104,11 +133,45 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `neovex:agent` WIT package, `AgentOsProvider` trait, capability-based tenant
     admission, and agent-os sidecar integration; activates after the wasmtime
     backend plan W3 completes
+- `docs/plans/native-transport-evolution-plan.md`
+  - proposed follow-on plan for Neovex-native transport evolution: shared
+    session and codec seams, benchmark-driven optional binary codec work, and
+    optional WebTransport evaluation without re-owning the active WebSocket
+    protocol plan or Firebase transport work. Historical activation gates are
+    met, including the completed adapter/runtime ownership baseline:
+    `websocket-protocol-plan.md`,
+    `archive/firebase-adapter-plan.md`, and
+    `archive/firebase-cloud-functions-plan.md`, and
+    `runtime-capability-adapter-boundary-plan.md`, and
+    `multi-adapter-boundary-hardening-plan.md` are `done`
 
 ## Archived completed plans
 
 Completed plans usually live in `docs/plans/archive/`. Do not resume
 completed plans unless explicitly asked to review historical work.
+
+- `docs/plans/multi-adapter-boundary-hardening-plan.md`
+  - completed post-Firebase/post-Cloud-Functions architecture hardening wave;
+    records Firebase principal propagation, shared runtime-host seam promotion
+    out of Convex-only namespaces, stock-compatibility truth alignment,
+    prelaunch WebSocket legacy cleanup, and the ownership-based decomposition
+    of the largest new adapter and proof roots that now form the baseline
+    before any further adapter-boundary or native-transport work
+- `docs/plans/archive/firebase-adapter-plan.md`
+  - completed control-plane execution record for the Firebase/Firestore
+    compatibility adapter and the required Neovex primitive hardening that
+    keeps database semantics out of compatibility adapters. Covers explicit
+    document keys, resource paths, atomic write batches, query AST expansion,
+    transaction sessions, subscription snapshot/diff support, Firestore v1
+    REST/gRPC/streaming transport, `@neovex/firebase`, compatibility tests,
+    demo, and migration docs
+- `docs/plans/archive/firebase-cloud-functions-plan.md`
+  - completed control-plane execution record for Cloud Functions-compatible
+    compute on Neovex. Covers the shared trigger registry, durable journal-
+    backed delivery, CloudEvent event model, generalized `.neovex/firebase/`
+    artifact/deploy contract, exact-source-compatible Firebase v2 plus
+    standalone Functions Framework authoring surfaces, HTTP/callable support,
+    reliability coverage, and migration/compatibility docs
 
 - `docs/plans/archive/pluggable-storage-backend-plan.md`
   - completed SQLite storage migration control plan; records the cutover to

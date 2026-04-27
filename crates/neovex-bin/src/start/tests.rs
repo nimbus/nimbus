@@ -204,6 +204,9 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
 
     let lines = super::boot::start_startup_summary_lines(
         &command,
+        Some(&super::boot::ResolvedStartAppDir::Explicit(PathBuf::from(
+            "./app",
+        ))),
         Some(
             &crate::compose::discovery::ResolvedComposeSelection::explicit(PathBuf::from(
                 "./compose.yaml",
@@ -250,6 +253,7 @@ fn start_startup_summary_reports_auto_discovered_override_companion() {
 
     let lines = super::boot::start_startup_summary_lines(
         &command,
+        None,
         Some(&selection),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         false,
@@ -258,6 +262,26 @@ fn start_startup_summary_reports_auto_discovered_override_companion() {
     assert!(lines.iter().any(|line| {
         line == "compose file: auto-discovered /workspace/compose.yaml (+ compose.override.yaml)"
     }));
+}
+
+#[test]
+fn start_startup_summary_reports_auto_detected_app_dir() {
+    let command = StartCommand::default();
+    let lines = super::boot::start_startup_summary_lines(
+        &command,
+        Some(&super::boot::ResolvedStartAppDir::AutoDetected(
+            PathBuf::from("/workspace/functions"),
+        )),
+        None,
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
+        false,
+    );
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "app dir: auto-detected /workspace/functions")
+    );
 }
 
 #[test]
@@ -278,6 +302,7 @@ fn start_startup_summary_reports_compose_file_environment_selection() {
 
     let lines = super::boot::start_startup_summary_lines(
         &command,
+        None,
         Some(&selection),
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         false,
@@ -403,8 +428,14 @@ fn start_missing_functions_manifest_reports_actionable_error() {
         ..StartCommand::default()
     };
 
-    let error = super::boot::load_convex_registry(&command, &RuntimeLimits::default())
-        .expect_err("missing functions manifest should fail registry loading");
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    let error = super::boot::load_convex_registry(
+        &command,
+        resolved_app_dir.as_ref(),
+        &RuntimeLimits::default(),
+    )
+    .expect_err("missing functions manifest should fail registry loading");
     let rendered = error.to_string();
     let functions_path = app_dir
         .join(".neovex")
@@ -454,11 +485,128 @@ fn load_convex_registry_accepts_manifest_only_app_dir_without_bundle() {
         skip_codegen: true,
         ..StartCommand::default()
     };
-    let registry = super::boot::load_convex_registry(&command, &RuntimeLimits::default())
-        .expect("manifest-only app dir should load");
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    let registry = super::boot::load_convex_registry(
+        &command,
+        resolved_app_dir.as_ref(),
+        &RuntimeLimits::default(),
+    )
+    .expect("manifest-only app dir should load");
     assert!(
         registry.is_some(),
         "manifest-only app dir should still load a registry without bundle.mjs"
+    );
+}
+
+#[test]
+fn load_cloud_functions_registry_accepts_generated_app_dir() {
+    let temp = tempdir_in_repo_target();
+    write_generated_cloud_functions_artifacts(temp.path());
+
+    let command = StartCommand {
+        app_dir: Some(temp.path().to_path_buf()),
+        skip_codegen: true,
+        ..StartCommand::default()
+    };
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    let registry = super::boot::load_cloud_functions_registry(
+        &command,
+        resolved_app_dir.as_ref(),
+        &RuntimeLimits::default(),
+    )
+    .expect("generated cloud functions app dir should load");
+    assert!(
+        registry.is_some(),
+        "generated cloud functions app dir should load a registry"
+    );
+}
+
+#[test]
+fn resolve_start_app_dir_auto_detects_firebase_project_root_from_nested_child() {
+    let temp = tempdir_in_repo_target();
+    write_firebase_cloud_functions_fixture(temp.path());
+    let nested_child = temp.path().join("functions").join("src");
+
+    let resolved = with_current_dir(&nested_child, || {
+        super::boot::resolve_start_app_dir(&StartCommand::default())
+    })
+    .expect("start app dir should resolve")
+    .expect("start app dir should auto-detect");
+
+    assert_eq!(
+        resolved,
+        super::boot::ResolvedStartAppDir::AutoDetected(
+            temp.path()
+                .canonicalize()
+                .expect("tempdir should canonicalize")
+        )
+    );
+}
+
+#[test]
+fn load_cloud_functions_registry_auto_detects_generated_app_dir_from_nested_child() {
+    let temp = tempdir_in_repo_target();
+    write_firebase_cloud_functions_fixture(temp.path());
+    write_generated_cloud_functions_artifacts(temp.path());
+    let nested_child = temp.path().join("functions").join("src");
+
+    let registry = with_current_dir(&nested_child, || {
+        let command = StartCommand {
+            skip_codegen: true,
+            ..StartCommand::default()
+        };
+        let resolved = super::boot::resolve_start_app_dir(&command)
+            .expect("start app dir should resolve")
+            .expect("start app dir should auto-detect");
+        super::boot::load_cloud_functions_registry(
+            &command,
+            Some(&resolved),
+            &RuntimeLimits::default(),
+        )
+        .expect("generated cloud functions app dir should load")
+    });
+
+    assert!(registry.is_some(), "auto-detected Firebase app should load");
+}
+
+#[test]
+fn load_cloud_functions_registry_honors_explicit_override_for_nested_framework_package() {
+    let temp = tempdir_in_repo_target();
+    write_firebase_cloud_functions_fixture(temp.path());
+    write_generated_cloud_functions_artifacts(temp.path());
+
+    let nested_framework = temp.path().join("packages").join("functions");
+    fs::create_dir_all(&nested_framework).expect("nested framework dir should create");
+    write_framework_cloud_functions_fixture(&nested_framework);
+    write_generated_cloud_functions_artifacts(&nested_framework);
+
+    let registry = with_current_dir(temp.path(), || {
+        let command = StartCommand {
+            app_dir: Some(nested_framework.clone()),
+            skip_codegen: true,
+            ..StartCommand::default()
+        };
+        let resolved = super::boot::resolve_start_app_dir(&command)
+            .expect("explicit app dir should resolve")
+            .expect("explicit app dir should persist");
+        super::boot::load_cloud_functions_registry(
+            &command,
+            Some(&resolved),
+            &RuntimeLimits::default(),
+        )
+        .expect("explicit framework app dir should load")
+        .expect("explicit framework app dir should produce a registry")
+    });
+
+    assert_eq!(
+        registry.artifact_dir(),
+        nested_framework
+            .join(".neovex")
+            .join("firebase")
+            .canonicalize()
+            .expect("framework artifact dir should canonicalize")
     );
 }
 
@@ -479,7 +627,9 @@ async fn start_codegen_preflight_generates_runtime_artifacts() {
         ..StartCommand::default()
     };
 
-    super::boot::run_codegen_preflight(&command)
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    super::boot::run_codegen_preflight(&command, resolved_app_dir.as_ref())
         .await
         .expect("codegen preflight should succeed");
 
@@ -503,6 +653,82 @@ async fn start_codegen_preflight_generates_runtime_artifacts() {
 }
 
 #[tokio::test]
+async fn start_codegen_preflight_generates_cloud_functions_artifacts() {
+    if !workspace_codegen_dependencies_available() {
+        eprintln!(
+            "skipping cloud functions codegen preflight integration test; workspace JS dependencies are unavailable"
+        );
+        return;
+    }
+
+    let temp = tempdir_in_repo_target();
+    write_firebase_cloud_functions_fixture(temp.path());
+
+    let command = StartCommand {
+        app_dir: Some(temp.path().to_path_buf()),
+        ..StartCommand::default()
+    };
+
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    super::boot::run_codegen_preflight(&command, resolved_app_dir.as_ref())
+        .await
+        .expect("cloud functions codegen preflight should succeed");
+
+    let firebase_dir = temp.path().join(".neovex").join("firebase");
+    assert!(
+        firebase_dir.join("artifact.json").is_file(),
+        "cloud functions artifact manifest should be generated"
+    );
+    assert!(
+        firebase_dir.join("targets.json").is_file(),
+        "cloud functions targets manifest should be generated"
+    );
+    assert!(
+        firebase_dir.join("bundle.mjs").is_file(),
+        "cloud functions runtime bundle should be generated"
+    );
+}
+
+#[tokio::test]
+async fn start_codegen_preflight_generates_framework_cloud_functions_artifacts() {
+    if !workspace_codegen_dependencies_available() {
+        eprintln!(
+            "skipping framework cloud functions codegen preflight integration test; workspace JS dependencies are unavailable"
+        );
+        return;
+    }
+
+    let temp = tempdir_in_repo_target();
+    write_framework_cloud_functions_fixture(temp.path());
+
+    let command = StartCommand {
+        app_dir: Some(temp.path().to_path_buf()),
+        ..StartCommand::default()
+    };
+
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    super::boot::run_codegen_preflight(&command, resolved_app_dir.as_ref())
+        .await
+        .expect("framework cloud functions codegen preflight should succeed");
+
+    let firebase_dir = temp.path().join(".neovex").join("firebase");
+    assert!(
+        firebase_dir.join("artifact.json").is_file(),
+        "cloud functions artifact manifest should be generated"
+    );
+    assert!(
+        firebase_dir.join("targets.json").is_file(),
+        "framework targets manifest should be preserved and normalized"
+    );
+    assert!(
+        firebase_dir.join("bundle.mjs").is_file(),
+        "cloud functions runtime bundle should be generated"
+    );
+}
+
+#[tokio::test]
 async fn start_codegen_preflight_honors_skip_codegen() {
     let temp = tempdir_in_repo_target();
     write_codegen_source_fixture(temp.path());
@@ -513,7 +739,9 @@ async fn start_codegen_preflight_honors_skip_codegen() {
         ..StartCommand::default()
     };
 
-    super::boot::run_codegen_preflight(&command)
+    let resolved_app_dir =
+        super::boot::resolve_start_app_dir(&command).expect("app dir should resolve");
+    super::boot::run_codegen_preflight(&command, resolved_app_dir.as_ref())
         .await
         .expect("skip-codegen should bypass preflight");
 
@@ -1046,6 +1274,105 @@ export const list = query({
 "#,
     )
     .expect("convex source fixture should write");
+}
+
+fn write_firebase_cloud_functions_fixture(app_dir: &Path) {
+    let functions_dir = app_dir.join("functions");
+    let source_dir = functions_dir.join("src");
+    fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
+    fs::write(
+        app_dir.join("firebase.json"),
+        r#"{
+  "functions": { "source": "functions" }
+}
+"#,
+    )
+    .expect("firebase.json should write");
+    fs::write(
+        functions_dir.join("package.json"),
+        r#"{
+  "main": "lib/index.js"
+}
+"#,
+    )
+    .expect("functions package.json should write");
+    fs::write(
+        source_dir.join("index.ts"),
+        r#"
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+
+export const syncUser = onDocumentCreated("users/{userId}", async (event) => event);
+"#,
+    )
+    .expect("firebase source fixture should write");
+}
+
+fn write_generated_cloud_functions_artifacts(app_dir: &Path) {
+    let firebase_dir = app_dir.join(".neovex").join("firebase");
+    fs::create_dir_all(&firebase_dir).expect("firebase manifest directory should build");
+    fs::write(
+        firebase_dir.join("artifact.json"),
+        r#"{"version":1,"family":"cloud_functions","runtime_bundle":{"entry_file":"bundle.mjs","sha256_file":"bundle.sha256"},"targets_manifest":"targets.json","import_resolution":{"strategy":"deploy_alias_layer","covered_specifiers":["@google-cloud/functions-framework","firebase-admin/app","firebase-admin/firestore","firebase-functions/v2","firebase-functions/v2/firestore","firebase-functions/v2/https"]}}"#,
+    )
+    .expect("artifact manifest should write");
+    fs::write(
+        firebase_dir.join("targets.json"),
+        r#"{"version":1,"targets":[]}"#,
+    )
+    .expect("targets should write");
+    fs::write(firebase_dir.join("bundle.mjs"), "export const value = 1;\n")
+        .expect("bundle should write");
+    fs::write(firebase_dir.join("bundle.sha256"), "a".repeat(64)).expect("bundle sha should write");
+}
+
+fn write_framework_cloud_functions_fixture(app_dir: &Path) {
+    let source_dir = app_dir.join("src");
+    let generated_dir = app_dir.join(".neovex").join("firebase");
+    fs::create_dir_all(&source_dir).expect("framework source dir should create");
+    fs::create_dir_all(&generated_dir).expect("framework generated dir should create");
+    fs::write(
+        app_dir.join("package.json"),
+        r#"{
+  "main": "dist/index.js",
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.5"
+  }
+}
+"#,
+    )
+    .expect("framework package.json should write");
+    fs::write(
+        generated_dir.join("targets.json"),
+        r#"{
+  "version": 1,
+  "targets": [
+    {
+      "name": "syncUser",
+      "entrypoint": "registry.syncUser",
+      "authoring_surface": "functions_framework",
+      "signature_type": "cloud_event",
+      "binding": {
+        "binding_kind": "firestore_document",
+        "event_type": "google.cloud.firestore.document.v1.written",
+        "database": "(default)",
+        "document": "users/{userId}",
+        "execution": "service"
+      }
+    }
+  ]
+}
+"#,
+    )
+    .expect("framework targets manifest should write");
+    fs::write(
+        source_dir.join("index.ts"),
+        r#"
+import functions from "@google-cloud/functions-framework";
+
+functions.cloudEvent("syncUser", async (event) => event);
+"#,
+    )
+    .expect("framework source fixture should write");
 }
 
 #[cfg(target_os = "linux")]

@@ -78,6 +78,7 @@ async fn convex_named_query_and_mutation_resolve_from_manifest() {
         body,
         json!([{
             "_creationTime": body[0]["_creationTime"].clone(),
+            "_updateTime": body[0]["_updateTime"].clone(),
             "_id": body[0]["_id"].clone(),
             "author": "Ada",
             "body": "Hello"

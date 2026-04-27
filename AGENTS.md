@@ -44,8 +44,26 @@ Use the repo docs for architecture and behavior details:
   canonical naming, or god-file cleanup work, open
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` after the three docs above.
-  Promote a new active plan before landing another repo-wide maintainability
-  or reliability-hardening wave unless an active plan already owns the slice.
+  Then open `docs/plans/repo-architecture-and-seam-hardening-plan.md` when the
+  work touches repo-wide server/runtime/engine/codegen seams. Treat it as the
+  latest completed baseline for the last repo-wide architecture wave, and
+  promote a new active plan before landing another broad seam-hardening pass.
+- For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
+  compatibility-truth reconciliation, runtime-host seam promotion, auth
+  ownership cleanup, provider-family seam cleanup, or runtime trust
+  hardening, open `docs/reference/runtime-adapter-boundary.md`,
+  `docs/reference/server-auth-runtime-trust.md`, and
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` after the three
+  docs above plus the reliability references. Use it as the latest completed
+  repo-wide seam-hardening baseline, not an active owner. Promote a new active
+  plan before another cross-cutting runtime/auth/boundary wave. Use
+  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
+  canonicalization baseline and execution record, use
+  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed trust
+  baseline, use `docs/plans/runtime-capability-adapter-boundary-plan.md` as
+  the completed adapter/runtime ownership baseline, and use
+  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  completed historical hardening wave.
 - For the landed krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` after the three docs above.
 - For current macOS developer-machine behavior, open
@@ -73,6 +91,44 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/distribution-plan.md` open for the macOS Homebrew contract and
   Linux dependency context, but treat the install-script plan as the execution
   owner.
+- **For Firebase/Firestore compatibility work:** start with
+  `docs/reference/firebase-compatibility.md` and
+  `docs/reference/firebase-migration-guide.md` and
+  `docs/reference/firebase-auth-contract.md`, then use
+  `docs/reference/runtime-adapter-boundary.md` and
+  `docs/reference/server-auth-runtime-trust.md` plus
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed repo-wide auth/runtime/modularity baseline. Promote a new active
+  plan before another broad Firebase-driven seam-hardening wave. Use
+  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
+  latest canonicalization baseline for historical context. Use
+  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed auth,
+  trust, and boundary baseline, use
+  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
+  completed adapter/runtime boundary baseline, and use
+  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the completed
+  historical auth, compatibility-truth, and boundary-hardening wave. Use
+  `docs/plans/archive/firebase-adapter-plan.md` only as the completed
+  historical execution record for the adapter and primitive-hardening wave.
+- **For Cloud Functions compute or HTTP handler work:** start with
+  `docs/reference/cloud-functions-compatibility.md` and
+  `docs/reference/cloud-functions-migration-guide.md`, then use
+  `docs/reference/runtime-adapter-boundary.md` and
+  `docs/reference/server-auth-runtime-trust.md` plus
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed repo-wide runtime/auth/modularity baseline. Promote a new active
+  plan before another broad Cloud Functions seam-hardening wave. Use
+  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
+  latest runtime/auth/modularity canonicalization baseline. Use
+  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed
+  runtime trust and boundary baseline, use
+  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
+  completed runtime-host and adapter-boundary baseline, and use
+  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  completed cross-adapter wave. Use
+  `docs/plans/archive/firebase-cloud-functions-plan.md` only as the completed
+  historical execution record for Firebase v2 and standalone Functions
+  Framework compatibility.
 - **For Convex or Neovex CLI/codegen workflow work:** after
   `docs/reference/convex-ai-guidelines.md`, open `docs/reference/cli.md` and
   `docs/convex/compatibility.md` for `packages/codegen/`,
@@ -93,9 +149,27 @@ Use the repo docs for architecture and behavior details:
   canonical naming, or readability cleanup work, open
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` immediately after those three
-  docs. Promote a new active plan before landing another repo-wide
-  maintainability or reliability-hardening wave unless another active plan
-  already owns the slice.
+  docs. Then open `docs/plans/repo-architecture-and-seam-hardening-plan.md`
+  when the work touches repo-wide server/runtime/engine/codegen seams. Treat
+  it as the latest completed baseline for the last architecture wave, and
+  promote a new active plan before another repo-wide seam-hardening pass.
+- For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
+  compatibility-truth reconciliation, runtime-host seam promotion, auth
+  ownership cleanup, provider-family seam cleanup, or runtime trust
+  hardening, open `docs/reference/runtime-adapter-boundary.md`,
+  `docs/reference/server-auth-runtime-trust.md`, and
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` immediately after
+  those three docs plus the reliability references. Treat that plan as the
+  latest completed repo-wide seam-hardening baseline, and promote a new active
+  plan before another cross-cutting runtime/auth/boundary wave. Use
+  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
+  canonicalization baseline, use
+  `docs/plans/adapter-runtime-trust-hardening-plan.md` as
+  the completed trust/boundary baseline, use
+  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
+  completed adapter/runtime ownership baseline, and use
+  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  completed wave.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
   docs.
@@ -113,6 +187,43 @@ Use the repo docs for architecture and behavior details:
   docs and treat it as the settled contract unless a newer active plan owns
   the slice. Keep local server-access auth separate from tenant/application
   auth unless an active plan explicitly says otherwise.
+- For Firebase/Firestore compatibility work, open
+  `docs/reference/firebase-compatibility.md` and
+  `docs/reference/firebase-migration-guide.md` and
+  `docs/reference/firebase-auth-contract.md` after the three top-level docs.
+  Use `docs/reference/runtime-adapter-boundary.md`,
+  `docs/reference/server-auth-runtime-trust.md`, and
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed repo-wide canonicalization baseline. Promote a new active plan
+  before another broad Firebase-driven seam-hardening wave. Use
+  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
+  latest canonicalization baseline for historical context. Use
+  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed trust
+  and boundary baseline, use
+  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
+  completed adapter/runtime boundary baseline, and use
+  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the completed
+  historical auth, compatibility-truth, and boundary-hardening wave. Use
+  `docs/plans/archive/firebase-adapter-plan.md` only when you need the
+  completed execution record for the historical adapter wave.
+- For Cloud Functions compute, HTTP handlers, or trigger work (both Firebase
+  and standalone), open `docs/reference/cloud-functions-compatibility.md` and
+  `docs/reference/cloud-functions-migration-guide.md` after the three
+  top-level docs. Use `docs/reference/runtime-adapter-boundary.md`,
+  `docs/reference/server-auth-runtime-trust.md`, and
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed repo-wide canonicalization baseline. Promote a new active plan
+  before another broad Cloud Functions seam-hardening wave. Use
+  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
+  latest canonicalization baseline for historical context. Use
+  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed
+  runtime trust and boundary baseline, use
+  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
+  completed runtime-host and adapter-boundary baseline, and use
+  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  completed cross-adapter wave. Use
+  `docs/plans/archive/firebase-cloud-functions-plan.md` only when you need the
+  completed execution record for the historical compatibility wave.
 - For Convex or Neovex CLI/codegen workflow work, open
   `docs/reference/convex-ai-guidelines.md`, `docs/reference/cli.md`, and
   `docs/convex/compatibility.md` after the three top-level docs. Promote a

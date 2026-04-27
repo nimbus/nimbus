@@ -23,9 +23,10 @@ async fn subscription_updates_publish_only_after_journal_apply() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert_eq!(request_id.as_deref(), Some("journal-sub"));
             assert!(data.is_empty());
@@ -80,9 +81,10 @@ async fn subscription_updates_publish_only_after_journal_apply() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert!(request_id.is_none());
             assert_eq!(data.len(), 1);
@@ -125,8 +127,11 @@ async fn async_subscription_bootstrap_catches_up_writes_committed_before_activat
         .expect("subscription channel should remain open");
     match initial {
         SubscriptionUpdate::Result {
-            request_id, data, ..
+            request_id,
+            snapshot,
+            ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(request_id.as_deref(), Some("bootstrap-gap"));
             assert!(data.is_empty());
         }
@@ -168,8 +173,11 @@ async fn async_subscription_bootstrap_catches_up_writes_committed_before_activat
         .expect("subscription channel should remain open");
     match catch_up {
         SubscriptionUpdate::Result {
-            request_id, data, ..
+            request_id,
+            snapshot,
+            ..
         } => {
+            let data = snapshot.to_json_documents();
             assert!(request_id.is_none());
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("during-bootstrap"));
@@ -225,8 +233,11 @@ async fn async_subscription_bootstrap_cancellation_before_activation_returns_can
         .expect("subscription channel should remain open");
     match initial {
         SubscriptionUpdate::Result {
-            request_id, data, ..
+            request_id,
+            snapshot,
+            ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(request_id.as_deref(), Some("bootstrap-cancel"));
             assert!(data.is_empty());
         }
@@ -321,8 +332,11 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
         .expect("subscription channel should remain open");
     match initial {
         SubscriptionUpdate::Result {
-            request_id, data, ..
+            request_id,
+            snapshot,
+            ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(request_id.as_deref(), Some("sync-lagged"));
             assert!(data.is_empty());
         }
@@ -343,8 +357,11 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
         .expect("subscription channel should remain open");
     match update {
         SubscriptionUpdate::Result {
-            request_id, data, ..
+            request_id,
+            snapshot,
+            ..
         } => {
+            let data = snapshot.to_json_documents();
             assert!(request_id.is_none());
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("lagged-sync"));

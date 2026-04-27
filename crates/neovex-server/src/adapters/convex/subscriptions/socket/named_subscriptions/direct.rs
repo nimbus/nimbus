@@ -1,4 +1,5 @@
 use super::*;
+use crate::application_auth::normalize_principal_context;
 
 pub(super) async fn handle_direct_named_subscription(
     ctx: &SocketSessionCtx<'_>,

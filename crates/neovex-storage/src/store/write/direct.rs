@@ -1,11 +1,13 @@
 use neovex_core::{
-    CommitEntry, Document, DocumentId, Error, Result, TableName, WriteOp, WriteOpType,
+    CommitEntry, Document, DocumentId, DocumentLocator, Error, Result, TableName, WriteOp,
+    WriteOpType,
 };
 use redb::ReadableTable;
 
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 
+use super::super::resource_paths::remove_resource_path_binding_in_write_txn;
 use super::super::{DOCUMENTS, TenantStore, TenantWriteTransaction, map_redb_error};
 
 fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result<CommitEntry> {
@@ -30,7 +32,9 @@ impl TenantWriteTransaction {
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
             op_type: WriteOpType::Insert,
-            doc_id: document.id,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: None,
             current: Some(document.clone()),
         });
@@ -58,7 +62,7 @@ impl TenantWriteTransaction {
                 let existing = documents
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
-                    .ok_or(Error::DocumentNotFound(*id))?;
+                    .ok_or(Error::DocumentNotFound(id.clone()))?;
                 decode_document_msgpack(existing.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?
             };
@@ -78,7 +82,9 @@ impl TenantWriteTransaction {
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Update,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: Some(existing_document),
             current: Some(document),
         });
@@ -102,15 +108,21 @@ impl TenantWriteTransaction {
                 .map_err(map_redb_error)?;
             let key = document_key(table, id);
             let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
-            let removed = removed.ok_or(Error::DocumentNotFound(*id))?;
+            let removed = removed.ok_or(Error::DocumentNotFound(id.clone()))?;
             decode_document_msgpack(removed.value())
                 .map_err(|error| Error::Serialization(error.to_string()))?
         };
         validate(&removed_document)?;
+        let resource_path_binding = remove_resource_path_binding_in_write_txn(
+            self.write_txn()?,
+            &DocumentLocator::new(table.clone(), id.clone()),
+        )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Delete,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding,
+            trigger_write_origin: None,
             previous: Some(removed_document.clone()),
             current: None,
         });

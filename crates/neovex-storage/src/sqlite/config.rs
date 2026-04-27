@@ -150,8 +150,10 @@ impl SqliteTenantStore {
     }
 
     pub fn read_snapshot(&self) -> Result<SqliteReadSnapshot> {
+        let conn = self.acquire_read_connection()?;
+        conn.execute_batch("BEGIN").map_err(map_sqlite_error)?;
         Ok(SqliteReadSnapshot {
-            conn: self.acquire_read_connection()?,
+            conn,
             schema_cache: self.schema_cache.clone(),
         })
     }
@@ -175,6 +177,7 @@ impl SqliteTenantStore {
             clock: self.clock.clone(),
             fault_injector: self.fault_injector.clone(),
             commit_writes: Vec::new(),
+            trigger_write_origin: None,
             check_cancel: Box::new(check_cancel),
             schema_cache: self.schema_cache.clone(),
             schema_cache_dirty: false,
@@ -328,6 +331,7 @@ impl Drop for PooledSqliteConnection {
         let Some(conn) = self.conn.take() else {
             return;
         };
+        let _ = conn.execute_batch("ROLLBACK");
         if let Ok(mut pool) = self.pool.lock() {
             pool.push(conn);
         } else {

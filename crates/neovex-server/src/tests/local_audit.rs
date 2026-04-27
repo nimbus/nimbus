@@ -1,7 +1,8 @@
 use std::fs;
 use std::sync::Arc;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use super::*;
 use crate::local_server::{
@@ -216,6 +217,100 @@ async fn session_creation_and_rotation_are_audited_without_secret_material() {
     assert!(
         !raw.contains(&cookie),
         "audit log must not contain the signed session cookie"
+    );
+}
+
+#[tokio::test]
+async fn firebase_origin_failures_are_audited_with_transport_specific_route_families() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let audit_log_path = local_server_security.paths().audit_log_path.clone();
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let rest_rejected = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .header("Origin", "http://example.com")
+        .header("Content-Type", "text/plain;charset=UTF-8")
+        .body("{}")
+        .send()
+        .await
+        .expect("firebase rest request should send");
+    assert_eq!(rest_rejected.status(), StatusCode::FORBIDDEN);
+
+    let grpc_web_rejected = server
+        .client()
+        .post(server.http_url("/google.firestore.v1.Firestore/Commit"))
+        .header("Origin", "http://example.com")
+        .header("x-grpc-web", "1")
+        .header("Content-Type", "application/grpc-web+proto")
+        .header(
+            "google-cloud-resource-prefix",
+            "projects/demo/databases/(default)",
+        )
+        .body(Vec::new())
+        .send()
+        .await
+        .expect("firebase grpc-web request should send");
+    assert_eq!(grpc_web_rejected.status(), StatusCode::FORBIDDEN);
+
+    let mut websocket_request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("firebase websocket request should build");
+    websocket_request.headers_mut().insert(
+        header::ORIGIN,
+        HeaderValue::from_static("http://example.com"),
+    );
+    websocket_request.headers_mut().insert(
+        "google-cloud-resource-prefix",
+        HeaderValue::from_static("projects/demo/databases/(default)"),
+    );
+    let websocket_error = connect_async(websocket_request)
+        .await
+        .expect_err("firebase websocket request should be rejected");
+    let websocket_response = match websocket_error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => response,
+        other => panic!("unexpected websocket error: {other}"),
+    };
+    assert_eq!(websocket_response.status(), StatusCode::FORBIDDEN);
+
+    let (_raw, records) = read_audit_log(&audit_log_path);
+    assert!(
+        records.iter().any(|record| {
+            record.route_family == "firebase_rest"
+                && record.tenant_id.as_deref() == Some("demo")
+                && record.auth_scope == "origin"
+                && !record.success
+                && record.origin.as_deref() == Some("http://example.com")
+        }),
+        "missing firebase rest origin audit entry: {records:?}"
+    );
+    assert!(
+        records.iter().any(|record| {
+            record.route_family == "firebase_grpc_web"
+                && record.tenant_id.as_deref() == Some("demo")
+                && record.auth_scope == "origin"
+                && !record.success
+                && record.origin.as_deref() == Some("http://example.com")
+        }),
+        "missing firebase grpc-web origin audit entry: {records:?}"
+    );
+    assert!(
+        records.iter().any(|record| {
+            record.route_family == "firebase_websocket"
+                && record.tenant_id.as_deref() == Some("demo")
+                && record.auth_scope == "origin"
+                && !record.success
+                && record.origin.as_deref() == Some("http://example.com")
+        }),
+        "missing firebase websocket origin audit entry: {records:?}"
     );
 }
 

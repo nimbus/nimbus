@@ -97,6 +97,7 @@ mod tests {
             run_after_ms: 5_000,
             mutation: Mutation::Insert {
                 table: TableName::new("tasks").expect("table name should be valid"),
+                id: None,
                 fields: serde_json::Map::from_iter([("title".to_string(), json!("Hello"))]),
             },
         };
@@ -116,6 +117,7 @@ mod tests {
             finished_at: Timestamp(6_000),
             mutation: Mutation::Insert {
                 table: TableName::new("tasks").expect("table name should be valid"),
+                id: None,
                 fields: serde_json::Map::from_iter([("title".to_string(), json!("Hello"))]),
             },
             outcome: ScheduledJobOutcome::Failed,

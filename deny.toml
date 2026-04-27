@@ -43,8 +43,23 @@ expression = "MIT AND ISC AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
-multiple-versions = "warn"
+# Keep duplicate detection active for enterprise-trust visibility. The current
+# workspace still contains a handful of intentional parallel upstream stacks,
+# so we carve those out explicitly below instead of globally allowing all
+# duplicate versions.
+multiple-versions = "deny"
 wildcards = "allow"
+skip-tree = [
+    { crate = "aws-config@1.8.16", reason = "AWS SDK transport crates intentionally carry a parallel HTTP and crypto stack." },
+    { crate = "oci-client@0.16.1", reason = "OCI registry interactions currently pin their own reqwest/rustls lane." },
+    { crate = "libsql@0.9.30", reason = "libsql remote support currently carries an independent HTTP and prost lane." },
+    { crate = "mysql_async@0.36.2", reason = "The MySQL provider stack carries distinct protocol and crypto support crates." },
+    { crate = "tokio-postgres@0.7.17", reason = "The Postgres provider stack carries a distinct protocol and crypto support lane." },
+    { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
+    { crate = "bollard@0.20.2", reason = "The container/buildkit stack carries tonic 0.14 and related transport crates independently from server gRPC." },
+    { crate = "testcontainers@0.27.2", reason = "The dev-only external-provider harness carries additional legacy utility crates." },
+    { crate = "deno_core@0.395.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+]
 
 [sources]
 unknown-git = "deny"
