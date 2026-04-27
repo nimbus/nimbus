@@ -3,6 +3,8 @@
 This directory holds Neovex demo apps split by ownership:
 
 - `demos/neovex/*` for Neovex-native demos
+- `demos/firebase/*` for Firebase/Firestore demos
+- `demos/mongodb/*` for MongoDB wire protocol demos
 - `demos/convex/*` for Convex-surface demos and fixtures
 
 The Convex-side demos still mirror useful shapes from the official Convex demos repository:
@@ -43,7 +45,7 @@ Why this directory exists:
 
 Current demos:
 
-- `neovex/html/`: single-page browser playground for tenant setup, schema install, document inserts, scheduled inserts, and live subscriptions
+- `neovex/html/`: Vite-based browser playground using `neovex/rest` SDK for tenant setup, schema install, document inserts, scheduled inserts, and live WebSocket subscriptions
 - `firebase/html/`: browser demo using `@neovex/firebase` against a local Neovex server
   - exercises `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`, `writeBatch`, `runTransaction`, `deleteDoc`, and the supported `FieldValue` sentinels
   - unary calls can switch between REST and gRPC-Web, while live query updates use the documented WebSocket `Listen` bridge
@@ -52,9 +54,16 @@ Current demos:
   - the demo now authors functions through `convex/_generated/server`, `convex/values`, and `convex/schema.ts`
   - codegen now emits `_generated/dataModel.d.ts` and `_generated/scheduled_functions.ts` for the supported subset
   - the app exercises live `ctx.db.insert(...)`, delayed `ctx.scheduler.runAfter(...)`, `ctx.db.patch(...)`, `ctx.db.delete(...)`, a runtime-only list query, `ctx.db.query(...).first()`, `ctx.db.query(...).unique()`, `ctx.db.get(id)`, `useQueries`, and `usePaginatedQuery` against a runtime-only `paginatedQuery`
+- `mongodb/node/`: MongoDB wire protocol demo using `@neovex/mongodb` for CRUD operations
 - `convex/http/`: Convex-style browser HTTP demo using `convex/browser` and generated refs without React
   - the demo authors queries with a runtime-only filtered list, compiled `ctx.db.query(...).withIndex(...).filter(...).unique()`, `ctx.db.get(id)`, and a runtime-only multi-step mutation that writes immediately and schedules a follow-up write
   - the composer path now goes through a Convex-style action that delegates to an internal mutation via generated refs, it can also schedule that same internal mutation with `ctx.scheduler.runAfter(...)`, and it includes compiled `httpAction` routes for POST and GET flows
+
+Security note:
+
+- several demos call `POST /api/tenants` from frontend code to create tenants on demand
+- this is fine for local development but is a security concern in production
+- in production, pre-provision tenants via the admin API or CLI
 
 Browser note:
 
@@ -80,6 +89,12 @@ Run the Firebase HTML demo:
 npm run firebase:demo:html
 ```
 
+Run the MongoDB Node demo (requires MongoDB wire protocol listener):
+
+```bash
+npm run demo --workspace mongodb-node
+```
+
 Run the Convex support server for the React demo:
 
 ```bash
@@ -98,10 +113,16 @@ Run the Convex support server for the HTTP demo:
 npm run convex:server:http
 ```
 
+Run the Neovex native HTML demo (Vite dev server):
+
+```bash
+npm run neovex:demo:html
+```
+
 Then open:
 
 - <http://localhost:8080/demos/>
-- <http://localhost:8080/demos/neovex/html/>
+- <http://127.0.0.1:5177/> for the Neovex native HTML demo
 - <http://127.0.0.1:5176/> for the Firebase HTML demo
 
 For the React convex demo, in a second terminal run:

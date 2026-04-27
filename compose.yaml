@@ -1,0 +1,51 @@
+# Neovex development backing services.
+#
+# Start backing services:
+#   docker compose up -d
+#
+# Then run Neovex with an external backend:
+#   neovex start --tenant-provider postgres --postgres-url "postgresql://neovex:neovex@localhost:5432/neovex"
+#   neovex start --tenant-provider mysql --mysql-url "mysql://neovex:neovex@localhost:3306/neovex"
+#
+# Or use neovex compose:
+#   neovex compose up
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: neovex
+      POSTGRES_PASSWORD: neovex
+      POSTGRES_DB: neovex
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neovex"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: neovex
+      MYSQL_USER: neovex
+      MYSQL_PASSWORD: neovex
+      MYSQL_DATABASE: neovex
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "neovex", "-pneovex"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  mysqldata:

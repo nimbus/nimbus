@@ -4,6 +4,24 @@ This directory holds Neovex's deeper technical docs. The root
 [README.md](../README.md) stays focused on what Neovex is, how to install it,
 and where to go next.
 
+## Adapter Guides
+
+- [Convex adapter](adapters/convex.md):
+  Convex-compatible queries, mutations, actions, React hooks, scheduling, HTTP routes
+- [Firebase / Firestore adapter](adapters/firebase.md):
+  Firestore-compatible REST, gRPC-Web, and WebSocket Listen surface
+- [Cloud Functions adapter](adapters/cloud-functions.md):
+  Firebase v2 triggers, HTTP handlers, and standalone Functions Framework
+- [MongoDB adapter](adapters/mongodb.md):
+  MongoDB wire protocol compatibility with stock drivers
+- [Native HTTP/WS adapter](adapters/native.md):
+  Direct REST and WebSocket API with the `neovex` SDK
+
+## Operator Guides
+
+- [Storage backends](guides/storage-backends.md):
+  choosing and configuring SQLite, Postgres, MySQL, libSQL, or redb
+
 ## Start Here
 
 - [README.md](../README.md):
@@ -118,6 +136,8 @@ and where to go next.
 
 ## Layout
 
+- `adapters/`: getting-started guides for each compatibility adapter
+- `guides/`: operator-facing configuration guides
 - `architecture/`: stable architecture deep dives that extend
   `ARCHITECTURE.md`
 - `reference/`: stable operator and developer reference docs
