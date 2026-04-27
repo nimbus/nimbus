@@ -20,35 +20,34 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 ---
 
 ```
-                         Apps & Agents
-                               │
-                               ▼
-  ┌─ neovex ─────────────────────────────────────────────┐
-  │                                                       │
-  │  Adapters                                             │
-  │  Native · Convex · Firebase · Functions · MongoDB     │
-  │                                                       │
-  │  ───────────────────────────────────────────────────  │
-  │                                                       │
-  │  Storage         ·    Compute       ·    Networking   │
-  │  SQLite              V8 Runtime          HTTP / WS    │
-  │  libSQL              Scheduling          Real-time    │
-  │                      Cron                Auth         │
-  │                                                       │
-  │  ───────────────────────────────────────────────────  │
-  │                                                       │
-  │  MicroVMs (sandbox)                                   │
-  │  ┌───────────┐   ┌───────────┐   ┌───────────┐       │
-  │  │  Service  │   │  Service  │   │   Agent   │  ···  │
-  │  └───────────┘   └───────────┘   └───────────┘       │
-  │                                                       │
-  └──────────────────┬── single Rust binary ──────────────┘
-                     │
-                     ▼
-          ┌────────────────────┐
-          │ Postgres  ·  MySQL │
-          │  (external storage) │
-          └────────────────────┘
+                        Apps & Agents
+                              │
+                              ▼
+┌─ neovex ──────────────────────────────────────────────────┐
+│                                                            │
+│  ┌─ Adapters ──────────────────────────────────────────┐   │
+│  │ Native · Convex · Firebase · Functions · MongoDB    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                            │
+│  ┌─ Storage ──┐  ┌─ Compute ────┐  ┌─ Networking ────┐    │
+│  │ SQLite     │  │ V8 Runtime   │  │ HTTP / WS       │    │
+│  │ libSQL     │  │ Scheduling   │  │ Real-time       │    │
+│  │            │  │ Cron         │  │ Auth            │    │
+│  └─────┬──────┘  └─────────────┘  └─────────────────┘    │
+│        │                                                   │
+│  ┌─ Sandbox ───────────────────────────────────────────┐   │
+│  │ ┌─────────┐  ┌─────────┐  ┌─────────┐              │   │
+│  │ │ Service │  │ Service │  │  Agent  │  · · ·       │   │
+│  │ │  (μVM)  │  │  (μVM)  │  │  (μVM)  │              │   │
+│  │ └─────────┘  └─────────┘  └─────────┘              │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                            │
+└───────────────────────┬── single Rust binary ──────────────┘
+                        │
+             ┌──────────┴──────────┐
+             │ Postgres  ·  MySQL  │
+             │  (external storage) │
+             └─────────────────────┘
 ```
 
 Neovex packages the three backend primitives -- storage, compute, and networking -- into a single binary you run on your own infrastructure. It gives you the developer experience of a managed BaaS -- document storage, server-side JavaScript, real-time subscriptions, durable scheduling -- without the SaaS lock-in, the per-request billing, or the *"this is a dev tool, don't run it in production"* disclaimer that comes with most self-hosted alternatives.
