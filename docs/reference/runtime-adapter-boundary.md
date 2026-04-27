@@ -76,6 +76,10 @@ provider-observable result shapes.
 
 - Shared modules must use provider-neutral names.
   Good examples: `documents.rs`, `writes.rs`, `session.rs`, `capabilities.rs`.
+- Shared runtime ABI operation names must also stay provider-neutral.
+  The generic document lane now uses `DocumentGet`, `DocumentInsert`,
+  `DocumentPatch`, and `DocumentDelete`; adapter-specific names like
+  `convex.ctx.db.get` stay at adapter-owned wire or contract edges.
 - Provider-specific names such as `firestore`, `firebase_admin`, or `convex`
   belong under adapter-owned modules unless there is a very strong documented
   exception.
@@ -137,12 +141,15 @@ The current corrected layout is:
   - `runtime_host/abi/mod.rs`
   - `runtime_host/responses.rs`
   - `runtime_host/mod.rs`
+  - `runtime_host/abi/document_calls.rs` now dispatches generic
+    `Document*` host-call payloads instead of Convex-branded `CtxDb*` names
 - Cloud Functions-owned runtime compatibility shims under
   `adapters/cloud_functions/*`
   - `adapters/cloud_functions/host_bridge.rs`
   - `adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`
 - Convex-owned runtime compatibility shims under `adapters/convex/*`
-  - Convex `ctx.db.*` dispatch stays adapter-owned and no longer carries
+  - Convex `ctx.db.*` dispatch stays adapter-owned, translates from the
+    generic `Document*` runtime ABI lane, and no longer carries
     `FirebaseAdminFirestore*` host calls
 
 This means the repo no longer treats provider-specific runtime shims as shared

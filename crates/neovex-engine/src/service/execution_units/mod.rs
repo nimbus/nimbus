@@ -36,7 +36,7 @@ impl Service {
         principal: PrincipalContext,
     ) -> Result<Arc<MutationExecutionUnit>> {
         let runtime = self.get_existing_tenant(&tenant_id)?;
-        let snapshot = runtime.store.read_snapshot()?;
+        let snapshot = runtime.store().read_snapshot()?;
         let snapshot_sequence = snapshot.applied_sequence()?;
         let schema_snapshot = runtime.schema();
         Ok(Arc::new(MutationExecutionUnit {

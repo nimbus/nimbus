@@ -66,6 +66,13 @@ pub(crate) use self::trigger_candidates::TriggerCandidatePauseHandle;
 use self::trigger_execution::TriggerExecutionQueue;
 
 /// Runtime state for a loaded tenant.
+///
+/// Ownership is intentionally grouped by subsystem:
+/// - persistence reads/writes go through `store()` / `read_storage()`
+/// - the live schema snapshot goes through `schema()` / `replace_schema_snapshot()`
+/// - subscription coordination goes through `subscription_registry()`
+/// - mutation, materialized-read, and trigger coordination each use their
+///   concept-owned facade modules under `tenant/`
 pub struct TenantRuntime {
     tenant_id: TenantId,
     pub store: TenantPersistence,
@@ -220,6 +227,22 @@ impl TenantRuntime {
     /// Returns the current schema snapshot.
     pub fn schema(&self) -> Arc<Schema> {
         self.schema.load_full()
+    }
+
+    pub(crate) fn store(&self) -> &TenantPersistence {
+        &self.store
+    }
+
+    pub(crate) fn read_storage(&self) -> &TenantPersistenceExecutor {
+        &self.read_storage
+    }
+
+    pub(crate) fn subscription_registry(&self) -> &SubscriptionRegistry {
+        &self.subscriptions
+    }
+
+    pub(crate) fn replace_schema_snapshot(&self, schema: Arc<Schema>) {
+        self.schema.store(schema);
     }
 
     pub(crate) fn tenant_id(&self) -> &TenantId {

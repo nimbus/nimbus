@@ -41,7 +41,6 @@ pub use self::invocation::{
 pub struct NeovexRuntime {
     host: Arc<dyn HostBridge>,
     policy: Arc<RuntimePolicy>,
-    bypass_concurrency_limit: bool,
     owned_executor: Arc<OnceLock<RuntimeExecutor>>,
 }
 

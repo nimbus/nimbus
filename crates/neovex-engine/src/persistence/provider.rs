@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use neovex_core::{Result, TenantId};
+use neovex_storage::async_storage::{OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant};
+use neovex_storage::libsql::OpenedLibsqlReplicaTenant;
+use neovex_storage::mysql::OpenedMySqlTenant;
+use neovex_storage::postgres::OpenedPostgresTenant;
 use neovex_storage::{
     EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
-    LibsqlReplicaProvider, MySqlProvider, OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant,
-    OpenedLibsqlReplicaTenant, OpenedMySqlTenant, OpenedPostgresTenant, PostgresProvider,
+    LibsqlReplicaProvider, MySqlProvider, PostgresProvider,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -42,6 +45,10 @@ trait OpenedTenantProvider {
         tenant_id: &TenantId,
     ) -> Result<Option<Self::OpenedTenant>>;
 }
+
+// Keep provider dispatch typed for now: the engine still needs background-task
+// ownership plus provider-specific opened-tenant shapes without introducing an
+// erased provider object layer that would just rewrap the same enum split.
 
 impl PersistenceProvider {
     pub(crate) fn background_task(&self) -> Option<ProviderBackgroundTask> {

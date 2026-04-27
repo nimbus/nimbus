@@ -9,9 +9,9 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         let response = self
-            .runtime_service_registry
+            .runtime_service_registry()
             .ensure_service_binding_async(
-                &self.tenant_id,
+                self.tenant_id(),
                 &payload.service_name,
                 cancellation.clone(),
             )
@@ -30,8 +30,8 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         let response = self
-            .runtime_service_registry
-            .resolve_service_binding(&self.tenant_id, &payload.service_name)
+            .runtime_service_registry()
+            .resolve_service_binding(self.tenant_id(), &payload.service_name)
             .and_then(|binding| {
                 serde_json::to_value(binding)
                     .map_err(|error| Error::Serialization(error.to_string()))
@@ -95,12 +95,12 @@ impl ConvexHostBridge {
     ) -> std::result::Result<Value, NeovexRuntimeError> {
         let payload: ConvexRuntimeFunctionCallPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
-        self.registry
+        self.registry()
             .runtime_policy()
             .metrics()
             .record_nested_local_dispatch();
         tracing::debug!(
-            tenant = %self.tenant_id,
+            tenant = %self.tenant_id(),
             function = %payload.name,
             visibility = %payload.visibility.unwrap_or(ConvexFunctionVisibility::Public).as_str(),
             "convex runtime entered same-isolate nested local dispatch"

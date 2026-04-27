@@ -59,7 +59,7 @@ export {};
         serde_json::json!({
             "ok": true,
             "host": {
-                "operation": "ctx_db_get",
+                "operation": "document_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -77,7 +77,7 @@ export {};
     assert_eq!(
         calls,
         vec![HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             serde_json::json!({
                 "table": "messages",
                 "id": "doc-1",
@@ -170,7 +170,7 @@ export {};
         serde_json::json!({
             "ok": true,
             "awaited": {
-                "operation": "ctx_db_get",
+                "operation": "document_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",

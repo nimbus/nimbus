@@ -17,7 +17,7 @@ fn convex_host_request_roundtrips_between_adapter_wire_names_and_runtime_types()
     assert_eq!(
         HostCallRequest::from(request.clone()),
         HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             json!({
                 "id": "doc-1",
             }),
@@ -69,15 +69,15 @@ fn convex_host_operations_classify_into_concept_owned_families() {
         ConvexHostCallFamily::Function
     );
     assert_eq!(
-        ConvexHostCallOperation::from(HostCallOperation::CtxDbQueryStart).family(),
+        ConvexHostCallOperation::from(HostCallOperation::QueryBuilderStart).family(),
         ConvexHostCallFamily::QueryBuilder
     );
     assert_eq!(
-        ConvexHostCallOperation::from(HostCallOperation::CtxDbQueryTake).family(),
+        ConvexHostCallOperation::from(HostCallOperation::QueryReadTake).family(),
         ConvexHostCallFamily::QueryRead
     );
     assert_eq!(
-        ConvexHostCallOperation::from(HostCallOperation::CtxDbInsert).family(),
+        ConvexHostCallOperation::from(HostCallOperation::DocumentInsert).family(),
         ConvexHostCallFamily::Document
     );
     assert_eq!(
@@ -93,7 +93,7 @@ fn dispatch_host_call_rejects_unsupported_runtime_host_abi_version() {
     let error = bridge
         .dispatch_host_call(HostCallRequest {
             abi_version: HOST_CALL_ABI_VERSION + 1,
-            operation: HostCallOperation::CtxDbGet,
+            operation: HostCallOperation::DocumentGet,
             payload: json!({
                 "table": "messages",
                 "id": "doc-1",
@@ -114,7 +114,7 @@ fn dispatch_host_call_rejects_operation_payload_mismatches_before_handler_dispat
 
     let error = bridge
         .dispatch_host_call(HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             json!({
                 "mutation": {
                     "table": "messages",

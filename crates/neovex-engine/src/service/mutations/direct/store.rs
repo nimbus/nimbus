@@ -16,7 +16,7 @@ impl Service {
     {
         let commit = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            let commit = mutate(&runtime.store)?;
+            let commit = mutate(runtime.store())?;
             runtime.mark_durable_head(commit.sequence);
             runtime.mark_applied_head(commit.sequence);
             commit
@@ -36,7 +36,7 @@ impl Service {
     {
         let commit = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            let commit = mutate(&runtime.store)?;
+            let commit = mutate(runtime.store())?;
             if let Some(commit) = &commit {
                 runtime.mark_durable_head(commit.sequence);
                 runtime.mark_applied_head(commit.sequence);
@@ -61,7 +61,7 @@ impl Service {
     {
         let (commit, _deleted_document) = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            let (commit, deleted_document) = mutate(&runtime.store)?;
+            let (commit, deleted_document) = mutate(runtime.store())?;
             runtime.mark_durable_head(commit.sequence);
             runtime.mark_applied_head(commit.sequence);
             (commit, deleted_document)
@@ -81,7 +81,7 @@ impl Service {
     {
         let commit = {
             let _sequence_guard = runtime.lock_mutation_sequence();
-            let commit = mutate(&runtime.store)?;
+            let commit = mutate(runtime.store())?;
             if let Some((commit, _deleted_document)) = &commit {
                 runtime.mark_durable_head(commit.sequence);
                 runtime.mark_applied_head(commit.sequence);

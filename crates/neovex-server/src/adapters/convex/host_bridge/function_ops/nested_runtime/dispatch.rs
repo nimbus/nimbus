@@ -33,7 +33,7 @@ impl ConvexHostBridge {
         match kind {
             InvocationKind::Query => {
                 let query = self
-                    .registry
+                    .registry()
                     .resolve_query_for_visibility(name, args, visibility)?;
                 self.execute_query_with_execution_context_async_cancellable(
                     query,
@@ -47,7 +47,7 @@ impl ConvexHostBridge {
             )),
             InvocationKind::Mutation => {
                 let mutation = self
-                    .registry
+                    .registry()
                     .resolve_mutation_for_visibility(name, args, visibility)?;
                 self.dispatch_convex_mutation_with_execution_context_async_cancellable(
                     mutation,
@@ -58,12 +58,12 @@ impl ConvexHostBridge {
             }
             InvocationKind::Action => {
                 let action = self
-                    .registry
+                    .registry()
                     .resolve_action_for_visibility(name, args, visibility)?;
                 execute_convex_action_async(
-                    &self.service,
-                    &self.registry,
-                    &self.tenant_id,
+                    self.service(),
+                    self.registry(),
+                    self.tenant_id(),
                     action,
                     auth.as_ref(),
                     Some(cancellation.clone()),
@@ -98,7 +98,7 @@ impl ConvexHostBridge {
         match kind {
             InvocationKind::Query => {
                 let query = self
-                    .registry
+                    .registry()
                     .resolve_query_for_visibility(name, args, visibility)?;
                 self.execute_query_with_execution_context_cancellable(
                     query,
@@ -111,7 +111,7 @@ impl ConvexHostBridge {
             )),
             InvocationKind::Mutation => {
                 let mutation = self
-                    .registry
+                    .registry()
                     .resolve_mutation_for_visibility(name, args, visibility)?;
                 self.dispatch_convex_mutation_with_execution_context_cancellable(
                     mutation,
@@ -121,12 +121,12 @@ impl ConvexHostBridge {
             }
             InvocationKind::Action => {
                 let action = self
-                    .registry
+                    .registry()
                     .resolve_action_for_visibility(name, args, visibility)?;
                 execute_convex_action_cancellable_with_auth(
-                    &self.service,
-                    &self.registry,
-                    &self.tenant_id,
+                    self.service(),
+                    self.registry(),
+                    self.tenant_id(),
                     action,
                     auth.as_ref(),
                     cancellation,
@@ -147,13 +147,13 @@ impl ConvexHostBridge {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
         let response = invoke_runtime_bundle_on_worker_with_host(
-            &self.registry.runtime_executor(),
-            self.registry.runtime_policy(),
+            &self.registry().runtime_executor(),
+            self.registry().runtime_policy(),
             Arc::new(self.clone()),
             bundle,
             request,
             RuntimeBundleInvocationOptions::bypassing_policy_limit(
-                &self.tenant_id,
+                self.tenant_id(),
                 self.server_request_id(),
                 Some(cancellation.clone()),
             ),
@@ -177,13 +177,13 @@ impl ConvexHostBridge {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
         let response = invoke_runtime_bundle_blocking_with_host(
-            &self.registry.runtime_executor(),
-            self.registry.runtime_policy(),
+            &self.registry().runtime_executor(),
+            self.registry().runtime_policy(),
             Arc::new(self.clone()),
             bundle,
             request,
             RuntimeBundleInvocationOptions::bypassing_policy_limit(
-                &self.tenant_id,
+                self.tenant_id(),
                 self.server_request_id(),
                 Some(cancellation.clone()),
             ),
@@ -203,19 +203,19 @@ impl ConvexHostBridge {
         auth: Option<InvocationAuth>,
     ) -> Result<NestedRuntimeInvocationPlan, Error> {
         self.consume_nested_runtime_invocation_budget()?;
-        self.registry
+        self.registry()
             .runtime_policy()
             .metrics()
             .record_fallback_cross_runtime_dispatch();
         tracing::debug!(
-            tenant = %self.tenant_id,
+            tenant = %self.tenant_id(),
             function = %name,
             kind = kind.as_str(),
             visibility = %visibility.as_str(),
             "convex runtime using cross-isolate fallback dispatch"
         );
         let definition = self
-            .registry
+            .registry()
             .functions
             .get(name)
             .ok_or_else(|| Error::InvalidInput(format!("convex function not found: {name}")))?;
@@ -227,7 +227,7 @@ impl ConvexHostBridge {
             )));
         }
         let bundle = self
-            .registry
+            .registry()
             .runtime_bundle()
             .cloned()
             .ok_or_else(|| Error::Internal("convex runtime bundle not loaded".to_string()))?;
@@ -240,7 +240,7 @@ impl ConvexHostBridge {
                 page_size: None,
                 cursor: None,
                 auth,
-                services: self.services.clone(),
+                services: self.services().clone(),
             },
         })
     }

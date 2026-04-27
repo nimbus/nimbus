@@ -59,7 +59,7 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
 
     let result = bridge.dispatch_host_call_cancellable(
         HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             json!({
                 "table": "messages",
                 "id": document_id.to_string(),

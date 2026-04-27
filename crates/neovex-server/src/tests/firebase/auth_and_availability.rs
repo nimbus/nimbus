@@ -88,6 +88,9 @@ async fn firebase_rest_commit_and_batch_get_respect_bearer_principal() {
     );
     let server = ServerFixture::start(
         RouterBuildConfig::core(service.clone())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_firebase(FirebaseConfig::new())
             .build(),
@@ -208,6 +211,9 @@ async fn firebase_grpc_get_document_respects_bearer_principal() {
     );
     let server = ServerFixture::start(
         RouterBuildConfig::core(service.clone())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_firebase(FirebaseConfig::new())
             .build(),
@@ -277,6 +283,9 @@ async fn firebase_grpc_write_stream_respects_bearer_principal() {
     );
     let server = ServerFixture::start(
         RouterBuildConfig::core(service.clone())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_firebase(FirebaseConfig::new())
             .build(),
@@ -426,6 +435,9 @@ async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
     );
     let server = ServerFixture::start(
         RouterBuildConfig::core(service.clone())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_firebase(FirebaseConfig::new())
             .build(),

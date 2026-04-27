@@ -64,7 +64,7 @@ pub(super) fn evaluate_subscription_bootstrap_cancellable_for_principal(
         result
     } else {
         let schema = runtime.schema();
-        let snapshot = runtime.store.read_snapshot()?;
+        let snapshot = runtime.store().read_snapshot()?;
         let (plan_kind, result) = evaluate_subscription_bootstrap_with_snapshot_for_principal(
             &snapshot,
             query,
@@ -92,7 +92,7 @@ fn evaluate_subscription_bootstrap_with_materialized_surface_cancellable_for_pri
 
     let required_sequence = runtime.applied_head();
     let snapshot = runtime.load_materialized_serving_snapshot_cancellable(
-        &runtime.store,
+        runtime.store(),
         &query.table,
         required_sequence,
         check_cancel,
@@ -149,7 +149,7 @@ where
         let query_for_task = query.clone();
         let principal_for_task = principal.clone();
         let (plan_kind, result) = runtime
-            .read_storage
+            .read_storage()
             .execute_cancellable(
                 cancel_wait,
                 {
@@ -203,7 +203,7 @@ where
         let runtime_for_task = runtime.clone();
         let table_for_task = query.table.clone();
         runtime
-            .read_storage
+            .read_storage()
             .execute_cancellable(
                 cancel_wait,
                 {

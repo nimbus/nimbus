@@ -187,8 +187,8 @@ file links (links go stale; symbol search does not).
 - `types.rs` — `TenantId`, `TableName`, `DocumentId`, `SequenceNumber`, `Timestamp`. All validated on construction (alphanumeric + `_` + `-`, max 128 chars).
 - `document.rs` — `Document` struct. Serializes to JSON for wire, while
   backend-specific persistence codecs live below the engine (`MessagePack` in
-  legacy redb paths, JSON-at-rest in SQLite). System fields `_id` and
-  `_creationTime` are added during JSON serialization.
+  legacy redb paths, JSON-at-rest in SQLite). System fields `_id`,
+  `_creationTime`, and `_updateTime` are added during JSON serialization.
 - `mutation.rs` — `Mutation` enum (`Insert`/`Update`/`Delete`),
   `DurableMutationRecord`, `CommitEntry`, `WriteOp`. The durable journal
   records every mutation; `CommitEntry` is the applied compatibility view used
@@ -1387,8 +1387,8 @@ semantics stay unchanged.
 The follow-on hot-path clone cleanup now tightens two more steady-state seams
 without changing the external contract. Owned Convex execution-unit reads use
 `Document::into_json()` all the way through the remaining direct host-bridge
-path, so staged runtime reads stop cloning full field maps just to add `_id`
-and `_creationTime`. The durable journal path also now keeps only minimal
+path, so staged runtime reads stop cloning full field maps just to add `_id`,
+`_creationTime`, and `_updateTime`. The durable journal path also now keeps only minimal
 queued-request state after planning, borrows one durable-record slice across
 append and apply, and derives subscription deleted-document payloads from
 committed writes instead of carrying duplicate owned vectors through the batch.

@@ -100,14 +100,17 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
         let tenant_id = tenant_id.clone();
         async move {
             service
-                .insert_document_async_cancellable(
+                .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
+                    None,
                     serde_json::Map::from_iter([("title".to_string(), json!("rolled-back"))]),
-                    async move {
-                        cancel_for_wait.notified().await;
-                    },
-                    || Ok(()),
+                    crate::AsyncMutationContext::anonymous(
+                        async move {
+                            cancel_for_wait.notified().await;
+                        },
+                        || Ok(()),
+                    ),
                 )
                 .await
         }
@@ -158,14 +161,17 @@ async fn mutation_async_cancellable_after_commit_returns_committed_result() {
         let tenant_id = tenant_id.clone();
         async move {
             service
-                .insert_document_async_cancellable(
+                .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
+                    None,
                     serde_json::Map::from_iter([("title".to_string(), json!("after-commit"))]),
-                    async move {
-                        cancel_for_wait.notified().await;
-                    },
-                    || Ok(()),
+                    crate::AsyncMutationContext::anonymous(
+                        async move {
+                            cancel_for_wait.notified().await;
+                        },
+                        || Ok(()),
+                    ),
                 )
                 .await
         }
@@ -215,16 +221,18 @@ async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_aft
     let dropped = Arc::new(AtomicBool::new(false));
 
     let document_id = service
-        .insert_document_async_cancellable_with_principal(
+        .insert_document_async_with(
             tenant_id.clone(),
             tasks_table(),
             None,
             serde_json::Map::from_iter([("title".to_string(), json!("drop-cancel-future"))]),
-            PrincipalContext::anonymous(),
-            DropAwarePendingCancellation {
-                dropped: dropped.clone(),
-            },
-            || Ok(()),
+            crate::AsyncMutationContext::with_principal(
+                PrincipalContext::anonymous(),
+                DropAwarePendingCancellation {
+                    dropped: dropped.clone(),
+                },
+                || Ok(()),
+            ),
         )
         .await
         .expect("mutation should succeed");

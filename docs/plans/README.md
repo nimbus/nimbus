@@ -74,6 +74,19 @@ This directory prefers a small-number-of-plans model with clear ownership.
     async Firestore-admin writes, provider-neutral runtime ABI extension
     cleanup, canonical `_updateTime` read exposure, structured-query engine
     decomposition, and Cloud Functions codegen/runtime-root decomposition
+- `docs/plans/deployment-auth-runtime-boundary-plan.md`
+  - completed deploy/auth/runtime boundary canonicalization baseline for the
+  current server/runtime steady state: atomic active-deployment snapshots,
+  explicit server-owned auth activation, generic `Document*` runtime ABI
+  naming, the final Firebase Firestore public-root split, and architecture
+  doc sync
+- `docs/plans/architecture-seam-cleanliness-plan.md`
+  - completed repo-wide architecture/modularity cleanliness baseline for the
+    latest broad maintainability wave: production `test-hooks` gating,
+    runtime invocation/session cleanup, Convex bridge encapsulation, engine
+    mutation-surface narrowing, storage/provider seam tightening, adapter
+    expectation docs, and focused modularity cleanup with explicit accepted
+    harness exceptions
 
 ## Pending plans
 
@@ -89,6 +102,15 @@ This directory prefers a small-number-of-plans model with clear ownership.
     to `nimbus`: GitHub repo transfers, Rust crate renames, JS package renames,
     CI/CD workflow updates, script renames, Makefile updates, config/doc bulk
     replacement, and verification; depends on the satellite repos plan above
+
+## Active hardening plans
+
+- `docs/plans/mongodb-adapter-hardening-plan.md`
+  - canonical execution plan for post-implementation hardening of the MongoDB
+    adapter: configurable auth credentials, random PBKDF2 salt, transaction-aware
+    CRUD routing, CRUD module decomposition, shared tenant resolution, compound
+    sort, connection ID width, count/distinct optimization, checksum validation,
+    and accepted-limitation documentation
 
 ## Deferred plans with defined scope
 

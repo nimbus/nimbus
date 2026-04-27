@@ -372,12 +372,12 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
         let tenant_id = tenant_id.clone();
         async move {
             service
-                .insert_document_async_cancellable(
+                .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
+                    None,
                     serde_json::Map::from_iter([("title".to_string(), json!("first-cancellable"))]),
-                    std::future::pending::<()>(),
-                    || Ok(()),
+                    crate::AsyncMutationContext::anonymous(std::future::pending::<()>(), || Ok(())),
                 )
                 .await
         }
@@ -414,15 +414,15 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
         let tenant_id = tenant_id.clone();
         async move {
             service
-                .insert_document_async_cancellable(
+                .insert_document_async_with(
                     tenant_id,
                     tasks_table(),
+                    None,
                     serde_json::Map::from_iter([(
                         "title".to_string(),
                         json!("second-cancellable"),
                     )]),
-                    std::future::pending::<()>(),
-                    || Ok(()),
+                    crate::AsyncMutationContext::anonymous(std::future::pending::<()>(), || Ok(())),
                 )
                 .await
         }

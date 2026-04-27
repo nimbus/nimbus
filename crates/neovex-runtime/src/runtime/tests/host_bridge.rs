@@ -578,10 +578,10 @@ export {};
             .map(|call| call.operation)
             .collect::<Vec<_>>(),
         vec![
-            HostCallOperation::CtxDbQueryStart,
-            HostCallOperation::CtxDbQueryWithIndex,
-            HostCallOperation::CtxDbQueryFilter,
-            HostCallOperation::CtxDbQueryOrder,
+            HostCallOperation::QueryBuilderStart,
+            HostCallOperation::QueryBuilderWithIndex,
+            HostCallOperation::QueryBuilderFilter,
+            HostCallOperation::QueryBuilderOrder,
         ]
     );
 }
@@ -641,7 +641,7 @@ export {};
         result,
         serde_json::json!({
             "insert": {
-                "operation": "ctx_db_insert",
+                "operation": "document_insert",
                 "payload": {
                     "table": "messages",
                     "fields": { "body": "hello" },
@@ -649,7 +649,7 @@ export {};
                 }
             },
             "patch": {
-                "operation": "ctx_db_patch",
+                "operation": "document_patch",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -658,7 +658,7 @@ export {};
                 }
             },
             "deletion": {
-                "operation": "ctx_db_delete",
+                "operation": "document_delete",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -757,7 +757,10 @@ export {};
         .expect("paginate host sync lock should not be poisoned")
         .clone();
     assert_eq!(sync_calls.len(), 1);
-    assert_eq!(sync_calls[0].operation, HostCallOperation::CtxDbQueryStart);
+    assert_eq!(
+        sync_calls[0].operation,
+        HostCallOperation::QueryBuilderStart
+    );
 
     let async_calls = host
         .async_calls
@@ -767,7 +770,7 @@ export {};
     assert_eq!(async_calls.len(), 1);
     assert_eq!(
         async_calls[0].operation,
-        HostCallOperation::CtxDbQueryPaginate
+        HostCallOperation::QueryReadPaginate
     );
     assert_eq!(
         async_calls[0].payload,

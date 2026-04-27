@@ -12,12 +12,12 @@ impl ConvexHostBridge {
         let request_context: ConvexHttpRequestContext =
             serde_json::from_value(payload.request.args.clone())?;
         let response = prepare_http_action_response_async(
-            &self.service,
-            &self.registry,
-            &self.tenant_id,
+            self.service(),
+            self.registry(),
+            self.tenant_id(),
             &payload.route.plan,
             &request_context,
-            self.auth.as_ref(),
+            self.auth(),
             Some(cancellation.clone()),
         )
         .await
@@ -49,12 +49,12 @@ impl ConvexHostBridge {
         let request_context: ConvexHttpRequestContext =
             serde_json::from_value(payload.request.args.clone())?;
         let response = prepare_http_action_response_cancellable(
-            &self.service,
-            &self.registry,
-            &self.tenant_id,
+            self.service(),
+            self.registry(),
+            self.tenant_id(),
             &payload.route.plan,
             &request_context,
-            self.auth.as_ref(),
+            self.auth(),
             cancellation,
         )
         .and_then(|parts| {

@@ -50,7 +50,7 @@ impl Service {
         let schema = runtime.schema();
         principal.snapshot()?;
         let policy_revision = table_policy_revision(schema.get_table(&query.table))?;
-        Ok(runtime.subscriptions.register(
+        Ok(runtime.subscription_registry().register(
             query.clone(),
             principal.clone(),
             policy_revision,
@@ -78,7 +78,9 @@ impl Service {
             commit_hint: None,
         };
         if let Err(error) = publication.sender.try_send(update) {
-            runtime.subscriptions.remove(publication.subscription_id);
+            runtime
+                .subscription_registry()
+                .remove(publication.subscription_id);
             return Err(subscription_send_failure(error));
         }
         Ok(dependencies)
@@ -91,7 +93,7 @@ impl Service {
         covered_sequence: SequenceNumber,
         dependencies: neovex_core::DependencySet,
     ) {
-        runtime.subscriptions.activate_with_dependencies(
+        runtime.subscription_registry().activate_with_dependencies(
             subscription_id,
             covered_sequence,
             dependencies,
@@ -171,7 +173,7 @@ impl Service {
                 Ok(registration)
             }
             Err(error) => {
-                runtime.subscriptions.remove(subscription_id);
+                runtime.subscription_registry().remove(subscription_id);
                 Err(error)
             }
         }
@@ -278,7 +280,7 @@ impl Service {
         )
         .await?;
         if let Err(error) = (check_cancel.as_ref())() {
-            runtime.subscriptions.remove(subscription_id);
+            runtime.subscription_registry().remove(subscription_id);
             return Err(error);
         }
         let dependencies = self.publish_subscription_bootstrap(
@@ -295,7 +297,7 @@ impl Service {
         #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_if_subscription_bootstrap_pause_armed().await;
         if let Err(error) = (check_cancel.as_ref())() {
-            runtime.subscriptions.remove(subscription_id);
+            runtime.subscription_registry().remove(subscription_id);
             return Err(error);
         }
         self.activate_bootstrapped_subscription(
@@ -311,7 +313,7 @@ impl Service {
     pub fn unsubscribe(&self, tenant_id: &TenantId, subscription_id: u64) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        runtime.subscriptions.remove(subscription_id);
+        runtime.subscription_registry().remove(subscription_id);
         Ok(())
     }
 
@@ -329,7 +331,7 @@ impl Service {
             .cloned()
             .ok_or(Error::TenantNotFound(tenant_id.clone()))?;
         let _operation = runtime.enter_operation(&tenant_id)?;
-        runtime.subscriptions.remove(subscription_id);
+        runtime.subscription_registry().remove(subscription_id);
         Ok(())
     }
 
@@ -338,6 +340,6 @@ impl Service {
     pub fn active_subscription_count(&self, tenant_id: &TenantId) -> Result<usize> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        Ok(runtime.subscriptions.len())
+        Ok(runtime.subscription_registry().len())
     }
 }

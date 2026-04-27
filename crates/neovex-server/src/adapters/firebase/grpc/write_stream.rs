@@ -29,7 +29,7 @@ use super::generated::google::firestore::v1::{
 use super::generated::google::r#type::LatLng;
 use crate::adapters::firebase::resource_names::{self, FirestoreDatabaseName};
 use crate::adapters::firebase::serializer::{
-    FirestoreDouble, FirestoreProtoJsonError, FirestoreValue,
+    FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_typed_scalar,
 };
 use crate::adapters::firebase::{
     firestore_grpc_code, resolve_write_key, resource_name_error_to_core, tenant_id_for_database,
@@ -763,7 +763,12 @@ pub(super) fn encode_document_field_to_grpc(
     value: &JsonValue,
 ) -> Result<Value, Status> {
     match document.typed_field(field_name) {
-        Some(value) => encode_typed_scalar_to_grpc(value),
+        Some(value) => encode_typed_scalar_to_grpc(value).map_err(|status| {
+            Status::internal(format!(
+                "failed to encode Firestore document field `{field_name}`: {}",
+                status.message()
+            ))
+        }),
         None => encode_neovex_value_to_grpc(value),
     }
 }
@@ -900,19 +905,10 @@ fn firestore_double_from_special_double(value: SpecialDouble) -> FirestoreDouble
 }
 
 fn encode_typed_scalar_to_grpc(value: &TypedScalarValue) -> Result<Value, Status> {
-    match value {
-        TypedScalarValue::Timestamp { value } => Ok(Value {
-            value_type: Some(ValueType::TimestampValue(prost_timestamp_from_core(
-                *value,
-            )?)),
-        }),
-        TypedScalarValue::SpecialDouble { value } => firestore_value_to_grpc(
-            FirestoreValue::Double(firestore_double_from_special_double(*value)),
-        ),
-        _ => Ok(Value {
-            value_type: Some(ValueType::StringValue(value.projected_json().to_string())),
-        }),
-    }
+    let firestore_value = firestore_value_from_typed_scalar(value)
+        .map_err(|error| Status::internal(error.to_string()))?;
+    firestore_value_to_grpc(firestore_value)
+        .map_err(|status| Status::internal(status.message().to_string()))
 }
 
 pub(super) fn core_timestamp_from_prost(timestamp: &ProstTimestamp) -> Result<Timestamp, Status> {
@@ -979,4 +975,43 @@ fn firestore_value_status(error: FirestoreProtoJsonError) -> Status {
 
 pub(super) fn firebase_grpc_status(error: Error) -> Status {
     Status::new(firestore_grpc_code(&error), error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neovex_core::{Document, TableName, TypedScalarValue};
+
+    #[test]
+    fn encode_document_field_to_grpc_rejects_foreign_typed_scalars_as_internal() {
+        let mut document = Document::new(
+            TableName::new("cities").expect("table name should parse"),
+            JsonMap::new(),
+        );
+        document.set_typed_field(
+            "mongoId",
+            TypedScalarValue::ObjectId {
+                hex: "507f1f77bcf86cd799439011".to_string(),
+            },
+        );
+
+        let error = encode_document_field_to_grpc(
+            &document,
+            "mongoId",
+            document
+                .get_field("mongoId")
+                .expect("typed scalar projection should populate the JSON field"),
+        )
+        .expect_err("foreign typed scalars should not silently project on Firebase reads");
+
+        assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(
+            error.message().contains("mongoId"),
+            "error should name the rejected field: {error}"
+        );
+        assert!(
+            error.message().contains("typedScalar:ObjectId"),
+            "error should surface the rejected typed scalar kind: {error}"
+        );
+    }
 }

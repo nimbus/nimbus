@@ -113,7 +113,7 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                 self.policy.clone(),
                 job.context.tenant_label.clone(),
                 job.dispatch_handle.clone(),
-                job.runtime.bypasses_concurrency_limit(),
+                job.context.bypasses_concurrency_limit(),
                 job.cancellation.clone(),
             );
 

@@ -247,7 +247,7 @@ export {};
         serde_json::json!({
             "ok": true,
             "host": {
-                "operation": "ctx_db_get",
+                "operation": "document_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",
@@ -359,7 +359,7 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
-            "operation": "ctx_db_get",
+            "operation": "document_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -423,7 +423,7 @@ export {};
     let watchdog = WatchdogTimer::new();
 
     let expected = serde_json::json!({
-        "operation": "ctx_db_get",
+        "operation": "document_get",
         "payload": {
             "table": "messages",
             "id": "doc-1",

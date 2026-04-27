@@ -1,5 +1,57 @@
 use neovex_core::{DocumentId, Error, PrincipalContext, Result, TableName};
 
+#[derive(Clone, Copy, Default)]
+pub enum MutationActor<'a> {
+    #[default]
+    Anonymous,
+    Principal(&'a PrincipalContext),
+}
+
+impl<'a> MutationActor<'a> {
+    pub const fn anonymous() -> Self {
+        Self::Anonymous
+    }
+
+    pub const fn with_principal(principal: &'a PrincipalContext) -> Self {
+        Self::Principal(principal)
+    }
+
+    pub(super) fn resolve(self, anonymous: &'a PrincipalContext) -> &'a PrincipalContext {
+        match self {
+            Self::Anonymous => anonymous,
+            Self::Principal(principal) => principal,
+        }
+    }
+}
+
+pub struct AsyncMutationContext<Fut, Check> {
+    pub(super) principal: PrincipalContext,
+    pub(super) cancel_wait: Fut,
+    pub(super) check_cancel: Check,
+}
+
+impl<Fut, Check> AsyncMutationContext<Fut, Check> {
+    pub fn anonymous(cancel_wait: Fut, check_cancel: Check) -> Self {
+        Self {
+            principal: PrincipalContext::anonymous(),
+            cancel_wait,
+            check_cancel,
+        }
+    }
+
+    pub fn with_principal(
+        principal: PrincipalContext,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Self {
+        Self {
+            principal,
+            cancel_wait,
+            check_cancel,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::service::mutations) enum MutationExecutionMode {
     Immediate,

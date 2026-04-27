@@ -4,6 +4,9 @@ use neovex_core::{
 
 use super::*;
 
+// Trigger-invocation persistence stays provider-owned because row encoding,
+// upsert semantics, and session usage are backend-specific. The shared seam is
+// the engine-level trigger contract, not a synthetic cross-database SQL helper.
 impl PostgresTenantStore {
     pub fn materialize_trigger_invocations(
         &self,

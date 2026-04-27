@@ -265,14 +265,15 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
         .expect("latest sequence should load");
 
     let create_error = service
-        .insert_document_with_principal(
+        .insert_document_with(
             &tenant_id,
             table.clone(),
+            None,
             serde_json::Map::from_iter([
                 ("owner".to_string(), json!("user-123")),
                 ("body".to_string(), json!("Blocked create")),
             ]),
-            &intruder,
+            crate::MutationActor::with_principal(&intruder),
         )
         .expect_err("create should be denied");
     assert!(matches!(create_error, Error::PermissionDenied(_)));
@@ -291,14 +292,15 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     );
 
     let document_id = service
-        .insert_document_with_principal(
+        .insert_document_with(
             &tenant_id,
             table.clone(),
+            None,
             serde_json::Map::from_iter([
                 ("owner".to_string(), json!("user-123")),
                 ("body".to_string(), json!("Allowed")),
             ]),
-            &owner_principal,
+            crate::MutationActor::with_principal(&owner_principal),
         )
         .expect("authorized create should succeed");
     let committed_sequence = service
@@ -306,12 +308,12 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
         .expect("latest sequence should advance after authorized insert");
 
     let update_error = service
-        .update_document_with_principal(
+        .update_document_with(
             &tenant_id,
             table.clone(),
             document_id.clone(),
             serde_json::Map::from_iter([("body".to_string(), json!("Intruder edit"))]),
-            &intruder,
+            crate::MutationActor::with_principal(&intruder),
         )
         .expect_err("update should be denied");
     assert!(matches!(update_error, Error::PermissionDenied(_)));
@@ -331,7 +333,12 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     );
 
     let delete_error = service
-        .delete_document_with_principal(&tenant_id, table.clone(), document_id.clone(), &intruder)
+        .delete_document_with(
+            &tenant_id,
+            table.clone(),
+            document_id.clone(),
+            crate::MutationActor::with_principal(&intruder),
+        )
         .expect_err("delete should be denied");
     assert!(matches!(delete_error, Error::PermissionDenied(_)));
     assert_eq!(

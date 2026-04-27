@@ -1254,6 +1254,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32c"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3380,8 +3389,10 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bson",
+ "crc32c",
  "fs2",
  "futures",
+ "hmac 0.12.1",
  "http 1.4.0",
  "libc",
  "neovex-core",
@@ -3390,6 +3401,7 @@ dependencies = [
  "neovex-sandbox",
  "neovex-storage",
  "neovex-testing",
+ "pbkdf2",
  "prost 0.13.5",
  "prost-types 0.13.5",
  "protoc-bin-vendored",
@@ -3397,6 +3409,8 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "time",
@@ -3796,6 +3810,16 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pbkdf2"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
+dependencies = [
+ "digest 0.10.7",
+ "hmac 0.12.1",
+]
 
 [[package]]
 name = "pem"

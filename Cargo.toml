@@ -38,11 +38,13 @@ comfy-table = "7"
 deadpool-postgres = "0.14"
 deno_core = { version = "0.395", features = ["unsafe_use_unprotected_platform"] }
 deno_error = "0.7"
+crc32c = "0.6"
 crc32fast = "1"
 futures = "0.3"
 fs2 = "0.4"
 hex = "0.4"
 hkdf = "0.12"
+hmac = "0.12"
 indicatif = "0.18"
 hyper = "0.14.32"
 http = "1"
@@ -52,6 +54,7 @@ libc = "0.2"
 mysql_async = "0.36"
 native-tls = { version = "0.2", features = ["vendored"] }
 parking_lot = "0.12"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
 rand = "0.8"
 redb = "2"
 reqwest = { version = "0.12", features = ["blocking", "json", "native-tls-vendored"] }

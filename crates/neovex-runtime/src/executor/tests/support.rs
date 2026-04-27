@@ -22,7 +22,7 @@ pub(super) struct WorkerRuntimeIdHost {
 
 impl HostBridge for WorkerRuntimeIdHost {
     fn call(&self, request: HostCallRequest) -> Result<Value> {
-        assert_eq!(request.operation, HostCallOperation::CtxDbGet);
+        assert_eq!(request.operation, HostCallOperation::DocumentGet);
         Ok(json!({
             "workerRuntimeId": self.test_state.worker_runtime_id_for_current_thread(),
         }))
@@ -341,7 +341,7 @@ impl SlowSyncQueryHost {
 
 impl HostBridge for SlowSyncQueryHost {
     fn call(&self, request: HostCallRequest) -> Result<Value> {
-        assert_eq!(request.operation, HostCallOperation::CtxDbQueryStart);
+        assert_eq!(request.operation, HostCallOperation::QueryBuilderStart);
         self.started.notify_waiters();
         std::thread::sleep(self.delay);
         Ok(json!({

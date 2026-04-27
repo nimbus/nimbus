@@ -58,6 +58,9 @@ and where to go next.
 - [Runtime capability and adapter boundary](reference/runtime-adapter-boundary.md):
   canonical ownership model and landed baseline for adapter-owned runtime
   compatibility shims versus provider-neutral `runtime_host/*` capabilities
+- [Adapter expectations](reference/adapter-expectations.md):
+  shared ownership, dependency, modularity, and verification rules for
+  compatibility adapters across the repo
 - [Server auth and runtime trust](reference/server-auth-runtime-trust.md):
   completed post-Firebase trust baseline for server-owned auth,
   provider-family sharing, runtime bootstrap ownership, and trusted metadata

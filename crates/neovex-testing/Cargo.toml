@@ -13,6 +13,9 @@ workspace = true
 axum.workspace = true
 neovex-core = { path = "../neovex-core" }
 neovex-runtime = { path = "../neovex-runtime" }
+# Shared deterministic harness fixtures intentionally depend on real storage
+# providers so replay/drill lanes can exercise provider-backed tenant stores
+# without pulling engine/server ownership backedges into this crate.
 neovex-storage = { path = "../neovex-storage" }
 futures.workspace = true
 http.workspace = true

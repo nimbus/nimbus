@@ -15,7 +15,7 @@ impl ConvexHostBridge {
         let response = self
             .execute_query_with_execution_context_async_cancellable(
                 query.clone(),
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .await
@@ -42,7 +42,7 @@ impl ConvexHostBridge {
         let response = self
             .execute_query_with_execution_context_cancellable(
                 query.clone(),
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .inspect(|value| self.record_query_result_value(&query, value));
@@ -64,7 +64,7 @@ impl ConvexHostBridge {
                 query.clone(),
                 page_size,
                 after.clone(),
-                &self.principal,
+                self.principal(),
                 cancellation,
             )
             .await
@@ -100,7 +100,7 @@ impl ConvexHostBridge {
                 query.clone(),
                 page_size,
                 after.clone(),
-                &self.principal,
+                self.principal(),
                 cancellation,
             )
             .and_then(|page| {
@@ -119,7 +119,7 @@ impl ConvexHostBridge {
         let response = self
             .dispatch_convex_mutation_with_execution_context_async_cancellable(
                 payload.mutation,
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .await;
@@ -142,7 +142,7 @@ impl ConvexHostBridge {
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = self.dispatch_convex_mutation_with_execution_context_cancellable(
             payload.mutation,
-            self.auth.as_ref(),
+            self.auth(),
             cancellation,
         );
         encode_runtime_core_result(response)
@@ -156,11 +156,11 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload =
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = execute_convex_action_async(
-            &self.service,
-            &self.registry,
-            &self.tenant_id,
+            self.service(),
+            self.registry(),
+            self.tenant_id(),
             payload.action,
-            self.auth.as_ref(),
+            self.auth(),
             Some(cancellation.clone()),
         )
         .await;
@@ -182,11 +182,11 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeActionPayload =
             prepare_direct_ctx_payload(self, payload, cancellation)?;
         let response = execute_convex_action_cancellable_with_auth(
-            &self.service,
-            &self.registry,
-            &self.tenant_id,
+            self.service(),
+            self.registry(),
+            self.tenant_id(),
             payload.action,
-            self.auth.as_ref(),
+            self.auth(),
             cancellation,
         );
         encode_runtime_core_result(response)

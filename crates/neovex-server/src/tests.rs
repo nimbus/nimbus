@@ -1055,6 +1055,8 @@ mod local_audit;
 mod local_server_security;
 #[path = "tests/local_ui.rs"]
 mod local_ui;
+#[path = "tests/mongodb_wire.rs"]
+mod mongodb_wire;
 #[path = "tests/registry_and_license/mod.rs"]
 mod registry_and_license;
 #[path = "tests/scheduling.rs"]

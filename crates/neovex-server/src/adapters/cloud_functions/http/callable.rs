@@ -11,7 +11,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::*;
-use crate::application_auth::verify_optional_application_auth_from_headers;
+use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
+use crate::state::DeploymentState;
 use crate::state::{AppError, AppState, record_authenticated_usage};
 
 const CALLABLE_ALLOWED_HEADERS: &str =
@@ -31,6 +32,7 @@ pub(super) struct CallableHttpRequest<'a> {
 
 pub(super) async fn handle_callable_target(
     state: Arc<AppState>,
+    deployment: Arc<DeploymentState>,
     registry: Arc<CloudFunctionsRegistry>,
     tenant_id: TenantId,
     function_name: String,
@@ -58,7 +60,7 @@ pub(super) async fn handle_callable_target(
         ));
     }
 
-    let auth = match resolve_callable_auth(&state, request.headers).await {
+    let auth = match resolve_callable_auth(deployment.as_ref(), request.headers).await {
         Ok(auth) => auth,
         Err(error) => return Ok(callable_response_for_app_error(request.headers, error)),
     };
@@ -90,10 +92,10 @@ pub(super) async fn handle_callable_target(
 }
 
 async fn resolve_callable_auth(
-    state: &Arc<AppState>,
+    deployment: &DeploymentState,
     headers: &HeaderMap,
 ) -> std::result::Result<Option<InvocationAuth>, AppError> {
-    verify_optional_application_auth_from_headers(state, headers).await
+    verify_optional_application_auth_from_headers_in_deployment(deployment, headers).await
 }
 
 pub(super) fn build_callable_request_args(

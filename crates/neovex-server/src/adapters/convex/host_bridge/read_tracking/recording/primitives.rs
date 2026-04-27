@@ -2,11 +2,11 @@ use super::*;
 
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) fn record_table_read(&self, table: &TableName) {
-        self.state.record_table_read(table);
+        self.host_state().record_table_read(table);
     }
 
     pub(crate) fn record_document_read(&self, table: &TableName, document_id: &DocumentId) {
-        self.state.record_document_read(table, document_id);
+        self.host_state().record_document_read(table, document_id);
     }
 
     pub(in crate::adapters::convex) fn record_result_documents(
@@ -63,7 +63,7 @@ impl ConvexHostBridge {
         after: Option<&Cursor>,
         page: &neovex_core::Page,
     ) {
-        self.state
+        self.host_state()
             .record_paginated_window_read(query, page_size, after, page);
     }
 
@@ -92,7 +92,7 @@ impl ConvexHostBridge {
     }
 
     pub(in crate::adapters::convex) fn record_index_read(&self, read: RuntimeIndexRangeRead) {
-        self.state.record_index_read(read);
+        self.host_state().record_index_read(read);
     }
 
     pub(in crate::adapters::convex) fn record_predicate_read(
@@ -100,6 +100,6 @@ impl ConvexHostBridge {
         table: &TableName,
         filters: &[Filter],
     ) {
-        self.state.record_predicate_read(table, filters);
+        self.host_state().record_predicate_read(table, filters);
     }
 }

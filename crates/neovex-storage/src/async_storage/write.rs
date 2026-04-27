@@ -6,6 +6,7 @@ use neovex_core::{Error, Result};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
+use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
 use crate::{TenantStore, TenantWriteCommit, TenantWriteTransaction};
 
 use super::helpers::{map_join_error, map_permit_error};
@@ -14,13 +15,82 @@ use super::traits::{TenantWriteOutcome, TenantWriteStorage};
 
 const TENANT_WRITE_PARALLELISM: usize = 1;
 
-pub(super) struct BlockingWriteExecutor {
-    store: Arc<TenantStore>,
+pub(super) trait BlockingWriteStore: Send + Sync + 'static {
+    type WriteTransaction;
+
+    fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Self::WriteTransaction) -> Result<T> + Send + 'static;
+
+    fn execute_write_cancellable<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut Self::WriteTransaction) -> Result<T> + Send + 'static;
+}
+
+impl BlockingWriteStore for TenantStore {
+    type WriteTransaction = TenantWriteTransaction;
+
+    fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Self::WriteTransaction) -> Result<T> + Send + 'static,
+    {
+        Self::execute_write(self, task)
+    }
+
+    fn execute_write_cancellable<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut Self::WriteTransaction) -> Result<T> + Send + 'static,
+    {
+        Self::execute_write_cancellable(self, check_cancel, task)
+    }
+}
+
+impl BlockingWriteStore for SqliteTenantStore {
+    type WriteTransaction = SqliteWriteTransaction;
+
+    fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Self::WriteTransaction) -> Result<T> + Send + 'static,
+    {
+        Self::execute_write(self, task)
+    }
+
+    fn execute_write_cancellable<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut Self::WriteTransaction) -> Result<T> + Send + 'static,
+    {
+        Self::execute_write_cancellable(self, check_cancel, task)
+    }
+}
+
+pub(super) struct BlockingWriteExecutor<Store> {
+    store: Arc<Store>,
     permits: Arc<Semaphore>,
     runtime_handle: TokioRuntimeHandle,
 }
 
-impl Clone for BlockingWriteExecutor {
+impl<Store> Clone for BlockingWriteExecutor<Store> {
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
@@ -30,8 +100,11 @@ impl Clone for BlockingWriteExecutor {
     }
 }
 
-impl BlockingWriteExecutor {
-    pub(super) fn new(store: Arc<TenantStore>, runtime_handle: TokioRuntimeHandle) -> Self {
+impl<Store> BlockingWriteExecutor<Store>
+where
+    Store: BlockingWriteStore,
+{
+    pub(super) fn new(store: Arc<Store>, runtime_handle: TokioRuntimeHandle) -> Self {
         Self {
             store,
             permits: Arc::new(Semaphore::new(TENANT_WRITE_PARALLELISM)),
@@ -39,10 +112,10 @@ impl BlockingWriteExecutor {
         }
     }
 
-    async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    pub(super) async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
     where
         T: Send + 'static,
-        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+        F: FnOnce(&mut Store::WriteTransaction) -> Result<T> + Send + 'static,
     {
         let permit = self
             .permits
@@ -60,7 +133,7 @@ impl BlockingWriteExecutor {
             .map_err(map_join_error)?
     }
 
-    async fn execute_write_cancellable<T, Fut, Check, F>(
+    pub(super) async fn execute_write_cancellable<T, Fut, Check, F>(
         &self,
         cancel_wait: Fut,
         check_cancel: Check,
@@ -70,7 +143,7 @@ impl BlockingWriteExecutor {
         T: Send + 'static,
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
-        F: FnOnce(&mut TenantWriteTransaction) -> Result<T> + Send + 'static,
+        F: FnOnce(&mut Store::WriteTransaction) -> Result<T> + Send + 'static,
     {
         tokio::pin!(cancel_wait);
 

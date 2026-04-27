@@ -63,30 +63,27 @@ pub(crate) fn top_level_runtime_invocation_context(
     request: &InvocationRequest,
     tenant_id: &TenantId,
     server_request_id: Option<&str>,
+    concurrency_mode: RuntimeConcurrencyMode,
 ) -> RuntimeInvocationContext {
-    match server_request_id {
+    let context = match server_request_id {
         Some(server_request_id) => RuntimeInvocationContext::top_level_for_tenant_and_request(
             request,
             tenant_id.to_string(),
             server_request_id,
         ),
         None => RuntimeInvocationContext::top_level_for_tenant(request, tenant_id.to_string()),
+    };
+    match concurrency_mode {
+        RuntimeConcurrencyMode::EnforcePolicyLimit => context,
+        RuntimeConcurrencyMode::BypassPolicyLimit => context.with_bypassed_concurrency_limit(),
     }
 }
 
 fn runtime_for_host(
     host_bridge: Arc<dyn HostBridge>,
     runtime_policy: Arc<RuntimePolicy>,
-    concurrency_mode: RuntimeConcurrencyMode,
 ) -> NeovexRuntime {
-    match concurrency_mode {
-        RuntimeConcurrencyMode::EnforcePolicyLimit => {
-            NeovexRuntime::with_policy(host_bridge, runtime_policy)
-        }
-        RuntimeConcurrencyMode::BypassPolicyLimit => {
-            NeovexRuntime::with_policy_bypassing_limit(host_bridge, runtime_policy)
-        }
-    }
+    NeovexRuntime::with_policy(host_bridge, runtime_policy)
 }
 
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host;

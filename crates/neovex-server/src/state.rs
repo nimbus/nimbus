@@ -32,11 +32,7 @@ pub(crate) struct AppStateConfig {
 /// Shared application state.
 pub(crate) struct AppState {
     pub(crate) service: Arc<Service>,
-    pub(crate) convex_registry: Arc<ActiveConvexRegistry>,
-    pub(crate) application_auth_verifier: Arc<ActiveApplicationAuthVerifier>,
-    pub(crate) cloud_functions_registry: Arc<ActiveCloudFunctionsRegistry>,
-    pub(crate) firebase_config: Arc<ActiveFirebaseConfig>,
-    pub(crate) deploy_generation: Arc<ActiveDeployGeneration>,
+    pub(crate) active_deployment: Arc<ActiveDeployment>,
     pub(crate) license_state: Arc<LicenseState>,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(crate) deploy_admin_token: Option<String>,
@@ -61,17 +57,16 @@ impl AppState {
         let convex_registry = convex_registry.map(Arc::new);
         let initial_generation =
             u64::from(convex_registry.is_some() || cloud_functions_registry.is_some());
+        let active_deployment = DeploymentState {
+            generation: initial_generation,
+            convex_registry,
+            application_auth_verifier,
+            cloud_functions_registry: cloud_functions_registry.map(Arc::new),
+            firebase_config: firebase_config.map(Arc::new),
+        };
         Self {
             service,
-            convex_registry: Arc::new(ActiveConvexRegistry::from_arc(convex_registry)),
-            application_auth_verifier: Arc::new(ActiveApplicationAuthVerifier::new(
-                application_auth_verifier,
-            )),
-            cloud_functions_registry: Arc::new(ActiveCloudFunctionsRegistry::new(
-                cloud_functions_registry,
-            )),
-            firebase_config: Arc::new(ActiveFirebaseConfig::new(firebase_config)),
-            deploy_generation: Arc::new(ActiveDeployGeneration::new(initial_generation)),
+            active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
             license_state: Arc::new(license_state),
             runtime_service_registry,
             deploy_admin_token,
@@ -80,8 +75,28 @@ impl AppState {
         }
     }
 
+    pub(crate) fn current_deployment(&self) -> Arc<DeploymentState> {
+        self.active_deployment.current()
+    }
+
     pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.runtime_service_registry.clone()
+    }
+
+    pub(crate) fn install_cloud_functions_runtime_hooks(
+        &self,
+        registry: Arc<CloudFunctionsRegistry>,
+    ) -> std::result::Result<(), AppError> {
+        self.service
+            .install_trigger_registrations(registry.trigger_registrations()?)?;
+        self.service.install_trigger_invocation_executor(Arc::new(
+            crate::adapters::cloud_functions::CloudFunctionsTriggerExecutor::new(
+                self.service.clone(),
+                registry,
+                self.runtime_service_registry(),
+            ),
+        ))?;
+        Ok(())
     }
 
     pub(crate) fn record_local_server_audit(&self, event: LocalServerAuditEvent) {
@@ -98,174 +113,57 @@ impl AppState {
     }
 }
 
-pub(crate) struct ActiveApplicationAuthVerifier {
-    inner: RwLock<Option<Arc<dyn ApplicationAuthVerifier>>>,
+#[derive(Clone)]
+pub(crate) struct DeploymentState {
+    pub(crate) generation: u64,
+    pub(crate) convex_registry: Option<Arc<ConvexRegistry>>,
+    pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
+    pub(crate) cloud_functions_registry: Option<Arc<CloudFunctionsRegistry>>,
+    pub(crate) firebase_config: Option<Arc<FirebaseConfig>>,
 }
 
-impl ActiveApplicationAuthVerifier {
-    fn new(verifier: Option<Arc<dyn ApplicationAuthVerifier>>) -> Self {
+impl DeploymentState {
+    pub(crate) fn convex_registry(&self) -> Option<Arc<ConvexRegistry>> {
+        self.convex_registry.clone()
+    }
+
+    pub(crate) fn application_auth_verifier(&self) -> Option<Arc<dyn ApplicationAuthVerifier>> {
+        self.application_auth_verifier.clone()
+    }
+
+    pub(crate) fn cloud_functions_registry(&self) -> Option<Arc<CloudFunctionsRegistry>> {
+        self.cloud_functions_registry.clone()
+    }
+
+    pub(crate) fn firebase_config(&self) -> Option<Arc<FirebaseConfig>> {
+        self.firebase_config.clone()
+    }
+}
+
+pub(crate) struct ActiveDeployment {
+    inner: RwLock<Arc<DeploymentState>>,
+}
+
+impl ActiveDeployment {
+    fn new(initial: DeploymentState) -> Self {
         Self {
-            inner: RwLock::new(verifier),
+            inner: RwLock::new(Arc::new(initial)),
         }
     }
 
-    pub(crate) fn current(&self) -> Option<Arc<dyn ApplicationAuthVerifier>> {
+    pub(crate) fn current(&self) -> Arc<DeploymentState> {
         self.inner
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
-    pub(crate) fn activate(
-        &self,
-        verifier: Arc<dyn ApplicationAuthVerifier>,
-    ) -> Option<Arc<dyn ApplicationAuthVerifier>> {
-        self.inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .replace(verifier)
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ActiveCloudFunctionsRegistry {
-    inner: RwLock<Option<Arc<CloudFunctionsRegistry>>>,
-}
-
-impl ActiveCloudFunctionsRegistry {
-    fn new(registry: Option<CloudFunctionsRegistry>) -> Self {
-        Self {
-            inner: RwLock::new(registry.map(Arc::new)),
-        }
-    }
-
-    pub(crate) fn current(&self) -> Option<Arc<CloudFunctionsRegistry>> {
-        self.inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    pub(crate) fn activate(
-        &self,
-        registry: CloudFunctionsRegistry,
-    ) -> Option<Arc<CloudFunctionsRegistry>> {
-        self.inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .replace(Arc::new(registry))
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ActiveDeployGeneration {
-    current: RwLock<u64>,
-}
-
-impl ActiveDeployGeneration {
-    fn new(initial_generation: u64) -> Self {
-        Self {
-            current: RwLock::new(initial_generation),
-        }
-    }
-
-    pub(crate) fn current(&self) -> u64 {
-        *self
-            .current
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    pub(crate) fn advance(&self) -> (u64, u64) {
-        let mut generation = self
-            .current
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = *generation;
-        *generation = generation.saturating_add(1);
-        (*generation, previous)
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ActiveFirebaseConfig {
-    inner: RwLock<Option<Arc<FirebaseConfig>>>,
-}
-
-impl ActiveFirebaseConfig {
-    fn new(config: Option<FirebaseConfig>) -> Self {
-        Self {
-            inner: RwLock::new(config.map(Arc::new)),
-        }
-    }
-
-    pub(crate) fn current(&self) -> Option<Arc<FirebaseConfig>> {
-        self.inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ActiveConvexRegistry {
-    inner: RwLock<ActiveConvexRegistryState>,
-}
-
-#[derive(Debug, Default)]
-struct ActiveConvexRegistryState {
-    generation: u64,
-    registry: Option<Arc<ConvexRegistry>>,
-}
-
-impl ActiveConvexRegistry {
-    #[cfg(test)]
-    fn new(registry: Option<ConvexRegistry>) -> Self {
-        Self::from_arc(registry.map(Arc::new))
-    }
-
-    fn from_arc(registry: Option<Arc<ConvexRegistry>>) -> Self {
-        let generation = u64::from(registry.is_some());
-        Self {
-            inner: RwLock::new(ActiveConvexRegistryState {
-                generation,
-                registry,
-            }),
-        }
-    }
-
-    pub(crate) fn current(&self) -> Option<Arc<ConvexRegistry>> {
-        self.inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .registry
-            .clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn activate(&self, registry: ConvexRegistry) -> (u64, Option<Arc<ConvexRegistry>>) {
-        self.activate_shared(Arc::new(registry))
-    }
-
-    pub(crate) fn activate_shared(
-        &self,
-        registry: Arc<ConvexRegistry>,
-    ) -> (u64, Option<Arc<ConvexRegistry>>) {
-        let mut state = self
+    pub(crate) fn activate(&self, deployment: DeploymentState) -> Arc<DeploymentState> {
+        let mut current = self
             .inner
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = state.registry.replace(registry);
-        state.generation = state.generation.saturating_add(1);
-        (state.generation, previous)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn generation(&self) -> u64 {
-        self.inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .generation
+        std::mem::replace(&mut *current, Arc::new(deployment))
     }
 }
 
@@ -338,44 +236,30 @@ mod tests {
     }
 
     #[test]
-    fn active_convex_registry_keeps_previous_generation_arc_alive_after_activation() {
-        let registry = ActiveConvexRegistry::new(Some(ConvexRegistry::empty()));
-        let previous = registry
-            .current()
-            .expect("initial generation should be present");
+    fn active_deployment_keeps_previous_snapshot_arc_alive_after_activation() {
+        let deployment = ActiveDeployment::new(DeploymentState {
+            generation: 1,
+            convex_registry: Some(Arc::new(ConvexRegistry::empty())),
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            firebase_config: Some(Arc::new(FirebaseConfig::new())),
+        });
+        let previous = deployment.current();
         let previous_ptr = Arc::as_ptr(&previous);
 
-        let (generation, replaced) = registry.activate(ConvexRegistry::empty());
-        let current = registry
-            .current()
-            .expect("activated generation should be present");
+        let replaced = deployment.activate(DeploymentState {
+            generation: 2,
+            convex_registry: Some(Arc::new(ConvexRegistry::empty())),
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            firebase_config: previous.firebase_config(),
+        });
+        let current = deployment.current();
 
-        assert_eq!(generation, 2);
-        assert_eq!(registry.generation(), 2);
-        assert_eq!(
-            Arc::as_ptr(&replaced.expect("previous generation should return")),
-            previous_ptr
-        );
+        assert_eq!(current.generation, 2);
+        assert_eq!(Arc::as_ptr(&replaced), previous_ptr);
         assert_ne!(Arc::as_ptr(&current), previous_ptr);
         assert_eq!(Arc::as_ptr(&previous), previous_ptr);
-    }
-
-    #[test]
-    fn active_deploy_generation_advances_from_initial_state() {
-        let generation = ActiveDeployGeneration::new(1);
-
-        assert_eq!(generation.current(), 1);
-        assert_eq!(generation.advance(), (2, 1));
-        assert_eq!(generation.current(), 2);
-    }
-
-    #[test]
-    fn active_firebase_config_returns_current_config_when_present() {
-        let config = ActiveFirebaseConfig::new(Some(FirebaseConfig::new()));
-        assert!(config.current().is_some());
-
-        let missing = ActiveFirebaseConfig::new(None);
-        assert!(missing.current().is_none());
     }
 
     #[test]
@@ -399,7 +283,12 @@ mod tests {
             listen_addr: None,
         });
 
-        assert!(state.application_auth_verifier.current().is_none());
+        assert!(
+            state
+                .current_deployment()
+                .application_auth_verifier()
+                .is_none()
+        );
     }
 }
 

@@ -61,7 +61,7 @@ impl RuntimeExecutor {
             policy.clone(),
             context.tenant_label.clone(),
             None,
-            runtime.bypasses_concurrency_limit(),
+            context.bypasses_concurrency_limit(),
             cancellation.clone(),
         );
         let (result, _ready_jobs) = run_invocation_lifecycle(

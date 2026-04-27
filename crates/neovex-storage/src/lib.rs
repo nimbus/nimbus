@@ -22,9 +22,8 @@ pub mod usage_store;
 
 pub use async_storage::{
     EmbeddedPersistenceProvider, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider,
-    EmbeddedRedbProvider, EmbeddedSqliteProvider, OpenedEmbeddedRedbTenant,
-    OpenedEmbeddedSqliteTenant, RedbTenantStorage, RedbUsageStorage, SqliteTenantStorage,
-    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
+    EmbeddedRedbProvider, EmbeddedSqliteProvider, RedbTenantStorage, RedbUsageStorage,
+    SqliteTenantStorage, TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
 };
 pub use encrypted_redb::{
     ENCRYPTED_FORMAT_VERSION, EncryptedFileBackend, EncryptedMemoryBackend, LOGICAL_PAGE_SIZE,
@@ -43,15 +42,15 @@ pub use libsql::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
     LibsqlReplicaProviderConfig, LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath,
     LibsqlReplicaTenantRegistration, LibsqlReplicaTenantStorage, LibsqlReplicaTenantStore,
-    LibsqlReplicaWriteTransaction, OpenedLibsqlReplicaTenant,
+    LibsqlReplicaWriteTransaction,
 };
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
 pub use mysql::{
     MySqlProvider, MySqlProviderConfig, MySqlReadSnapshot, MySqlTenantRegistration,
-    MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction, OpenedMySqlTenant,
+    MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction,
 };
 pub use postgres::{
-    OpenedPostgresTenant, PostgresNotificationListener, PostgresProvider, PostgresProviderConfig,
+    PostgresNotificationListener, PostgresProvider, PostgresProviderConfig,
     PostgresProviderNotification, PostgresReadSnapshot, PostgresTenantRegistration,
     PostgresTenantStorage, PostgresTenantStore, PostgresWriteTransaction,
 };

@@ -284,12 +284,12 @@ async fn process_cron_jobs_async(
 fn dispatch_mutation(service: &Service, tenant_id: &TenantId, mutation: Mutation) -> Result<()> {
     match mutation {
         Mutation::Insert { table, id, fields } => service
-            .insert_document_with_id_with_principal(
+            .insert_document_with(
                 tenant_id,
                 table,
                 id,
                 fields,
-                &neovex_core::PrincipalContext::anonymous(),
+                crate::MutationActor::anonymous(),
             )
             .map(|_| ()),
         Mutation::Update { table, id, patch } => service
@@ -306,12 +306,12 @@ async fn dispatch_mutation_async(
 ) -> Result<()> {
     match mutation {
         Mutation::Insert { table, id, fields } => service
-            .insert_document_async_with_id_with_principal(
+            .insert_document_async_with(
                 tenant_id,
                 table,
                 id,
                 fields,
-                neovex_core::PrincipalContext::anonymous(),
+                crate::AsyncMutationContext::anonymous(std::future::pending(), || Ok(())),
             )
             .await
             .map(|_| ()),

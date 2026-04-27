@@ -80,7 +80,6 @@ impl RouterBuildConfig {
     }
 
     pub(crate) fn with_convex(mut self, convex_registry: ConvexRegistry) -> Self {
-        self = self.with_application_auth_verifier(Arc::new(convex_registry.clone()));
         self.convex_registry = Some(convex_registry);
         self
     }
@@ -172,25 +171,13 @@ impl RouterBuildConfig {
             local_server_security: self.local_server_security,
             listen_addr: self.listen_addr,
         }));
-        if let Some(registry) = state.cloud_functions_registry.current() {
+        let deployment = state.current_deployment();
+        if let Some(registry) = deployment.cloud_functions_registry() {
             state
-                .service
-                .install_trigger_registrations(registry.trigger_registrations().expect(
-                    "cloud functions trigger registrations should materialize from active registry",
-                ))
-                .expect("cloud functions trigger registrations should install");
-            state
-                .service
-                .install_trigger_invocation_executor(Arc::new(
-                    crate::adapters::cloud_functions::CloudFunctionsTriggerExecutor::new(
-                        state.service.clone(),
-                        registry,
-                        state.runtime_service_registry(),
-                    ),
-                ))
-                .expect("cloud functions trigger executor should install");
+                .install_cloud_functions_runtime_hooks(registry)
+                .expect("cloud functions runtime hooks should install from active deployment");
         }
-        let firebase_enabled = state.firebase_config.current().is_some();
+        let firebase_enabled = deployment.firebase_config().is_some();
 
         let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
         let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
@@ -223,7 +210,7 @@ impl RouterBuildConfig {
         if firebase_enabled {
             router = router.merge(build_firebase_router(state.clone()));
         }
-        if state.cloud_functions_registry.current().is_some() {
+        if deployment.cloud_functions_registry().is_some() {
             router = router.fallback(any(cloud_functions::http_handler));
         }
         router
@@ -234,6 +221,12 @@ impl RouterBuildConfig {
             ))
             .with_state(state)
     }
+}
+
+pub(crate) fn convex_application_auth_verifier(
+    convex_registry: &ConvexRegistry,
+) -> Arc<dyn ApplicationAuthVerifier> {
+    Arc::new(convex_registry.clone())
 }
 
 /// Builds the Neovex HTTP/WebSocket router without Convex support.
@@ -273,6 +266,7 @@ pub fn build_router_with_license_and_sandbox_catalog(
 /// Builds the Neovex HTTP/WebSocket router with Convex support enabled.
 pub fn build_router_with_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .build()
 }
@@ -294,6 +288,7 @@ pub fn build_router_with_convex_and_sandbox_catalog(
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .with_sandbox_catalog(sandbox_catalog)
         .build()
@@ -307,6 +302,7 @@ pub fn build_router_with_convex_and_sandbox_service_manager(
     sandbox_service_manager: Arc<SandboxServiceManager>,
 ) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .with_sandbox_service_manager(sandbox_service_manager)
         .build()
@@ -319,6 +315,7 @@ pub fn build_router_with_convex_and_license(
     license_state: LicenseState,
 ) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .with_license(license_state)
         .build()
@@ -333,6 +330,7 @@ pub fn build_router_with_convex_and_license_and_sandbox_service_manager(
     sandbox_service_manager: Arc<SandboxServiceManager>,
 ) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .with_license(license_state)
         .with_sandbox_service_manager(sandbox_service_manager)
@@ -347,6 +345,7 @@ pub fn build_router_with_convex_and_license_and_sandbox_catalog(
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .with_license(license_state)
         .with_sandbox_catalog(sandbox_catalog)
@@ -360,6 +359,7 @@ pub(crate) fn build_router_with_convex_and_runtime_service_registry(
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
 ) -> Router {
     RouterBuildConfig::core(service)
+        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
         .with_convex(convex_registry)
         .with_runtime_service_registry(runtime_service_registry)
         .build()

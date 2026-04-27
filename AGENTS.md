@@ -44,19 +44,27 @@ Use the repo docs for architecture and behavior details:
   canonical naming, or god-file cleanup work, open
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` after the three docs above.
-  Then open `docs/plans/repo-architecture-and-seam-hardening-plan.md` when the
-  work touches repo-wide server/runtime/engine/codegen seams. Treat it as the
-  latest completed baseline for the last repo-wide architecture wave, and
-  promote a new active plan before landing another broad seam-hardening pass.
+  Use `docs/plans/architecture-seam-cleanliness-plan.md` as the latest
+  completed repo-wide architecture/modularity/seam-cleanliness baseline, and
+  promote a new active plan before another broad architecture cleanup wave.
+  Use `docs/plans/deployment-auth-runtime-boundary-plan.md` as the latest
+  completed baseline when the work specifically touches repo-wide deploy
+  activation, application auth lifecycle, or runtime ABI cleanup. Use
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed baseline for the prior repo-wide architecture wave.
 - For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
   compatibility-truth reconciliation, runtime-host seam promotion, auth
   ownership cleanup, provider-family seam cleanup, or runtime trust
-  hardening, open `docs/reference/runtime-adapter-boundary.md`,
+  hardening, open `docs/reference/adapter-expectations.md`,
+  `docs/reference/runtime-adapter-boundary.md`,
   `docs/reference/server-auth-runtime-trust.md`, and
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` after the three
-  docs above plus the reliability references. Use it as the latest completed
-  repo-wide seam-hardening baseline, not an active owner. Promote a new active
-  plan before another cross-cutting runtime/auth/boundary wave. Use
+  `docs/plans/deployment-auth-runtime-boundary-plan.md` after the three docs
+  above plus the reliability references when the work touches deploy/auth/live
+  runtime seams. Treat it as the latest completed baseline for that
+  cross-cutting wave and promote a new active plan before another broad seam
+  pass. Use
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed repo-wide seam-hardening baseline, not an active owner. Use
   `docs/plans/server-runtime-canonicalization-plan.md` as the completed
   canonicalization baseline and execution record, use
   `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed trust
@@ -149,19 +157,27 @@ Use the repo docs for architecture and behavior details:
   canonical naming, or readability cleanup work, open
   `docs/reference/reliability-posture.md` and
   `docs/reference/ci-failure-investigation.md` immediately after those three
-  docs. Then open `docs/plans/repo-architecture-and-seam-hardening-plan.md`
-  when the work touches repo-wide server/runtime/engine/codegen seams. Treat
-  it as the latest completed baseline for the last architecture wave, and
-  promote a new active plan before another repo-wide seam-hardening pass.
+  docs. Use `docs/plans/architecture-seam-cleanliness-plan.md` as the latest
+  completed repo-wide architecture/modularity/seam-cleanliness baseline, and
+  promote a new active plan before another broad architecture cleanup wave.
+  Use `docs/plans/deployment-auth-runtime-boundary-plan.md` as the latest
+  completed baseline when the work specifically touches repo-wide deploy
+  activation, application auth lifecycle, or runtime ABI cleanup. Use
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed baseline for the prior repo-wide architecture wave.
 - For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
   compatibility-truth reconciliation, runtime-host seam promotion, auth
   ownership cleanup, provider-family seam cleanup, or runtime trust
-  hardening, open `docs/reference/runtime-adapter-boundary.md`,
+  hardening, open `docs/reference/adapter-expectations.md`,
+  `docs/reference/runtime-adapter-boundary.md`,
   `docs/reference/server-auth-runtime-trust.md`, and
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` immediately after
-  those three docs plus the reliability references. Treat that plan as the
-  latest completed repo-wide seam-hardening baseline, and promote a new active
-  plan before another cross-cutting runtime/auth/boundary wave. Use
+  `docs/plans/deployment-auth-runtime-boundary-plan.md` immediately after
+  those three docs plus the reliability references when the work touches
+  deploy/auth/live runtime seams. Treat that plan as the latest completed
+  baseline for the wave and promote a new active plan before another broad
+  seam pass. Use
+  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
+  completed repo-wide seam-hardening baseline. Use
   `docs/plans/server-runtime-canonicalization-plan.md` as the completed
   canonicalization baseline, use
   `docs/plans/adapter-runtime-trust-hardening-plan.md` as
