@@ -1,13 +1,17 @@
 //! Neovex server crate.
 
 mod adapters;
+mod application_auth;
+mod error_envelope;
 mod execution;
 mod http;
 mod license;
 mod local_server;
 mod owned_tasks;
 mod protocol;
+mod provider_family;
 mod router;
+mod runtime_host;
 mod sandbox;
 mod service_manager;
 mod service_registry;
@@ -18,7 +22,10 @@ use std::sync::Arc;
 
 use neovex_engine::Service;
 
+pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::convex::ConvexRegistry;
+pub use adapters::firebase::FirebaseConfig;
+pub use adapters::mongodb::MongoDbConfig;
 pub use license::{
     DEFAULT_LICENSE_PATH, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
@@ -36,8 +43,9 @@ pub use router::{
     build_router_with_convex_and_license_and_sandbox_catalog,
     build_router_with_convex_and_license_and_sandbox_service_manager,
     build_router_with_convex_and_sandbox_catalog,
-    build_router_with_convex_and_sandbox_service_manager, build_router_with_license,
-    build_router_with_license_and_sandbox_catalog, build_router_with_sandbox_catalog,
+    build_router_with_convex_and_sandbox_service_manager, build_router_with_firebase,
+    build_router_with_license, build_router_with_license_and_sandbox_catalog,
+    build_router_with_sandbox_catalog,
 };
 pub use sandbox::{
     EmptySandboxCatalog, EmptySandboxServiceCatalog, SandboxCatalog, SandboxServiceCatalog,
@@ -48,6 +56,9 @@ pub use service_manager::SandboxServiceManager;
 /// Optional server runtime surfaces layered on top of the core service.
 pub struct ServeOptions {
     convex_registry: Option<ConvexRegistry>,
+    cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    firebase_config: Option<FirebaseConfig>,
+    mongodb_config: Option<MongoDbConfig>,
     license_state: LicenseState,
     sandbox_catalog: Option<Arc<dyn SandboxCatalog>>,
     sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
@@ -59,6 +70,9 @@ impl Default for ServeOptions {
     fn default() -> Self {
         Self {
             convex_registry: None,
+            cloud_functions_registry: None,
+            firebase_config: None,
+            mongodb_config: None,
             license_state: LicenseState::community(),
             sandbox_catalog: None,
             sandbox_service_manager: None,
@@ -71,6 +85,24 @@ impl Default for ServeOptions {
 impl ServeOptions {
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
         self.convex_registry = Some(convex_registry);
+        self
+    }
+
+    pub fn with_cloud_functions_registry(
+        mut self,
+        cloud_functions_registry: CloudFunctionsRegistry,
+    ) -> Self {
+        self.cloud_functions_registry = Some(cloud_functions_registry);
+        self
+    }
+
+    pub fn with_firebase_config(mut self, firebase_config: FirebaseConfig) -> Self {
+        self.firebase_config = Some(firebase_config);
+        self
+    }
+
+    pub fn with_mongodb(mut self, mongodb_config: MongoDbConfig) -> Self {
+        self.mongodb_config = Some(mongodb_config);
         self
     }
 
@@ -161,9 +193,16 @@ pub async fn serve_with_options(
     service: Arc<Service>,
     options: ServeOptions,
 ) -> std::io::Result<()> {
-    let mut config = RouterBuildConfig::core(service).with_license(options.license_state);
+    let mut config =
+        RouterBuildConfig::core(Arc::clone(&service)).with_license(options.license_state);
     if let Some(convex_registry) = options.convex_registry {
         config = config.with_convex(convex_registry);
+    }
+    if let Some(cloud_functions_registry) = options.cloud_functions_registry {
+        config = config.with_cloud_functions(cloud_functions_registry);
+    }
+    if let Some(firebase_config) = options.firebase_config {
+        config = config.with_firebase(firebase_config);
     }
     if let Some(deploy_admin_token) = options.deploy_admin_token {
         config = config.with_deploy_admin_token(deploy_admin_token);
@@ -176,6 +215,18 @@ pub async fn serve_with_options(
     } else if let Some(sandbox_catalog) = options.sandbox_catalog {
         config = config.with_sandbox_catalog(sandbox_catalog);
     }
+
+    if let Some(mongodb_config) = options.mongodb_config {
+        let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
+        let mongodb_service = Arc::clone(&service);
+        let mongodb_handle = tokio::spawn(async move {
+            adapters::mongodb::listener::run_listener(mongodb_listener, mongodb_service).await;
+        });
+        let http_result = serve_with_router_config(listener, config).await;
+        mongodb_handle.abort();
+        return http_result;
+    }
+
     serve_with_router_config(listener, config).await
 }
 
@@ -188,6 +239,19 @@ pub async fn serve_with_convex(
     serve_with_router_config(
         listener,
         RouterBuildConfig::core(service).with_convex(convex_registry),
+    )
+    .await
+}
+
+/// Runs the Neovex HTTP/WebSocket server on an existing listener with Firebase REST support.
+pub async fn serve_with_firebase(
+    listener: tokio::net::TcpListener,
+    service: Arc<Service>,
+    firebase_config: FirebaseConfig,
+) -> std::io::Result<()> {
+    serve_with_router_config(
+        listener,
+        RouterBuildConfig::core(service).with_firebase(firebase_config),
     )
     .await
 }

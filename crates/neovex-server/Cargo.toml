@@ -6,12 +6,16 @@ repository.workspace = true
 license-file.workspace = true
 publish.workspace = true
 
+[lib]
+doctest = false
+
 [lints]
 workspace = true
 
 [dependencies]
 axum.workspace = true
 base64.workspace = true
+bson.workspace = true
 neovex-runtime = { path = "../neovex-runtime" }
 neovex-sandbox = { path = "../neovex-sandbox" }
 neovex-core = { path = "../neovex-core" }
@@ -20,19 +24,28 @@ futures.workspace = true
 fs2.workspace = true
 http.workspace = true
 libc.workspace = true
+prost = "0.13.1"
+prost-types = "0.13.1"
 reqwest.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-time = { workspace = true, features = ["formatting"] }
+time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
+tonic = "0.13.0"
+tonic-web = "0.13.0"
+tower = "0.5"
 tower-http.workspace = true
 tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-build = "0.13.0"
 
 [dev-dependencies]
 neovex-storage = { path = "../neovex-storage" }

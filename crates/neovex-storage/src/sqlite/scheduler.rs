@@ -111,7 +111,7 @@ pub(super) fn apply_schedule_ops_in_transaction(
             ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
             ResolvedScheduleOp::Cancel { job_id } => {
                 if !transaction.cancel_scheduled_job(job_id)? {
-                    return Err(Error::ScheduledJobNotFound(*job_id));
+                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
                 }
             }
         }

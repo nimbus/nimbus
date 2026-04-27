@@ -13,7 +13,7 @@ use super::super::execution::execute_query_result_cancellable_with_auth;
 use super::super::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope};
 use super::fixture::host_bridge_fixture;
 use super::*;
-use crate::adapters::convex::normalize_principal_context;
+use crate::application_auth::normalize_principal_context;
 use crate::service_registry::SandboxCatalogRuntimeServiceRegistry;
 
 fn messages_table() -> TableName {
@@ -377,7 +377,7 @@ fn runtime_mutation_bridge_stages_writes_until_commit_and_reads_its_own_writes()
     .expect("staged get should succeed");
     assert_eq!(read_back["body"], json!("Hello from tx"));
     assert!(matches!(
-        service.get_document(&tenant_id, &table, document_id),
+        service.get_document(&tenant_id, &table, document_id.clone()),
         Err(Error::DocumentNotFound(_))
     ));
 
@@ -386,7 +386,7 @@ fn runtime_mutation_bridge_stages_writes_until_commit_and_reads_its_own_writes()
         .expect("commit should persist staged writes");
     assert_eq!(
         service
-            .get_document(&tenant_id, &table, document_id)
+            .get_document(&tenant_id, &table, document_id.clone())
             .expect("committed document should exist")
             .get_field("body"),
         Some(&json!("Hello from tx"))
@@ -511,7 +511,7 @@ fn runtime_mutation_bridge_commit_detects_occ_conflicts() {
         .update_document(
             &tenant_id,
             table.clone(),
-            document_id,
+            document_id.clone(),
             Map::from_iter([("body".to_string(), json!("Outside update"))]),
         )
         .expect("outside update should commit");
@@ -522,7 +522,7 @@ fn runtime_mutation_bridge_commit_detects_occ_conflicts() {
     assert!(matches!(error, Error::Conflict(_)));
     assert_eq!(
         service
-            .get_document(&tenant_id, &table, document_id)
+            .get_document(&tenant_id, &table, document_id.clone())
             .expect("document should remain committed")
             .get_field("body"),
         Some(&json!("Outside update"))

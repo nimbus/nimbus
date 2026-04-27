@@ -5,6 +5,7 @@ use super::queries::execute_query_result_cancellable_with_auth;
 use super::scheduling::execute_schedule_command;
 use super::scheduling::execute_schedule_command_cancellable;
 use super::*;
+use crate::application_auth::normalize_principal_context;
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn dispatch_mutation(
@@ -23,9 +24,9 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
 ) -> Result<Value, Error> {
     let principal = normalize_principal_context(auth);
     match mutation {
-        Mutation::Insert { table, fields } => {
-            let id =
-                service.insert_document_with_principal(tenant_id, table, fields, &principal)?;
+        Mutation::Insert { table, id, fields } => {
+            let id = service
+                .insert_document_with_id_with_principal(tenant_id, table, id, fields, &principal)?;
             Ok(Value::String(id.to_string()))
         }
         Mutation::Update { table, id, patch } => {

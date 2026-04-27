@@ -144,7 +144,7 @@ impl Service {
             return Err(Error::DocumentNotFound(document_id));
         }
 
-        if let Some(document) = runtime.get_cached_document(table, document_id) {
+        if let Some(document) = runtime.get_cached_document(table, &document_id) {
             if !authorization.allows_document(principal, &document)? {
                 return Err(Error::DocumentNotFound(document_id));
             }
@@ -155,7 +155,7 @@ impl Service {
             runtime.materialized_serving_snapshot_for_table(table, required_sequence)
         {
             debug_assert!(snapshot.covered_sequence().0 >= required_sequence.0);
-            if let Some(document) = snapshot.document(table, document_id) {
+            if let Some(document) = snapshot.document(table, &document_id) {
                 if !authorization.allows_document(principal, &document)? {
                     return Err(Error::DocumentNotFound(document_id));
                 }
@@ -168,7 +168,7 @@ impl Service {
         let document = runtime
             .store
             .get(table, &document_id)?
-            .ok_or(Error::DocumentNotFound(document_id))?;
+            .ok_or(Error::DocumentNotFound(document_id.clone()))?;
         if !authorization.allows_document(principal, &document)? {
             return Err(Error::DocumentNotFound(document_id));
         }
@@ -264,7 +264,7 @@ impl Service {
             return Err(Error::DocumentNotFound(document_id));
         }
 
-        if let Some(document) = runtime.get_cached_document(&table, document_id) {
+        if let Some(document) = runtime.get_cached_document(&table, &document_id) {
             if cancel_wait.clone().now_or_never().is_some() {
                 return Err(Error::Cancelled);
             }
@@ -279,7 +279,7 @@ impl Service {
             runtime.materialized_serving_snapshot_for_table(&table, required_sequence)
         {
             debug_assert!(snapshot.covered_sequence().0 >= required_sequence.0);
-            if let Some(document) = snapshot.document(&table, document_id) {
+            if let Some(document) = snapshot.document(&table, &document_id) {
                 if cancel_wait.clone().now_or_never().is_some() {
                     return Err(Error::Cancelled);
                 }
@@ -294,14 +294,15 @@ impl Service {
         }
 
         let table_for_task = table.clone();
+        let document_id_for_task = document_id.clone();
         let document = runtime
             .read_storage
             .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
                 check_cancel()?;
-                store.get(&table_for_task, &document_id)
+                store.get(&table_for_task, &document_id_for_task)
             })
             .await?
-            .ok_or(Error::DocumentNotFound(document_id))?;
+            .ok_or(Error::DocumentNotFound(document_id.clone()))?;
         if !authorization.allows_document(&principal, &document)? {
             return Err(Error::DocumentNotFound(document_id));
         }

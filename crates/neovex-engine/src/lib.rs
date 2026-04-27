@@ -8,6 +8,7 @@ pub mod scheduler;
 mod service;
 mod subscriptions;
 mod tenant;
+mod triggers;
 mod verification;
 
 pub use evaluator::{
@@ -43,6 +44,10 @@ pub use tenant::{
     MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
     MutationJournalStats, QueryPlanningStats, ServingSnapshotManagerStats,
     SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
+};
+pub use triggers::{
+    TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,
+    TriggerRegistry,
 };
 pub use verification::{
     BootstrapFingerprint, ConsistencyMismatch, ConsistencyScope, ConsistencyVerificationReport,

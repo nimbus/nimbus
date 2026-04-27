@@ -1,9 +1,14 @@
 use super::*;
 use crate::execution::host_state::RuntimeHostState;
+use crate::runtime_host::capabilities::RuntimeCapabilityHost;
+use crate::runtime_host::{
+    RuntimeHostBootstrapRequest, build_runtime_host_bootstrap,
+    commit_runtime_mutation_execution_unit,
+};
 use crate::service_registry::RuntimeServiceRegistry;
 
 #[derive(Clone)]
-pub(in crate::adapters::convex) struct ConvexHostBridgeScope {
+pub(crate) struct ConvexHostBridgeScope {
     service: Arc<neovex_engine::Service>,
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
@@ -11,7 +16,7 @@ pub(in crate::adapters::convex) struct ConvexHostBridgeScope {
 }
 
 impl ConvexHostBridgeScope {
-    pub(in crate::adapters::convex) fn new(
+    pub(crate) fn new(
         service: Arc<neovex_engine::Service>,
         registry: Arc<ConvexRegistry>,
         tenant_id: TenantId,
@@ -27,16 +32,17 @@ impl ConvexHostBridgeScope {
 }
 
 #[derive(Clone)]
-pub(in crate::adapters::convex) struct ConvexHostBridgeInvocation {
+pub(crate) struct ConvexHostBridgeInvocation {
     auth: Option<InvocationAuth>,
     services: neovex_runtime::InvocationServices,
     principal: neovex_core::PrincipalContext,
     server_request_id: Option<String>,
     invocation_kind: InvocationKind,
+    trigger_write_origin: Option<neovex_core::TriggerWriteOrigin>,
 }
 
 impl ConvexHostBridgeInvocation {
-    pub(in crate::adapters::convex) fn new(
+    pub(crate) fn new(
         auth: Option<InvocationAuth>,
         services: neovex_runtime::InvocationServices,
         principal: neovex_core::PrincipalContext,
@@ -49,12 +55,13 @@ impl ConvexHostBridgeInvocation {
             principal,
             server_request_id,
             invocation_kind,
+            trigger_write_origin: None,
         }
     }
 }
 
 #[derive(Clone)]
-pub(in crate::adapters::convex) struct ConvexHostBridge {
+pub(crate) struct ConvexHostBridge {
     pub(in crate::adapters::convex) service: Arc<neovex_engine::Service>,
     pub(in crate::adapters::convex) registry: Arc<ConvexRegistry>,
     pub(in crate::adapters::convex) tenant_id: TenantId,
@@ -70,30 +77,31 @@ pub(in crate::adapters::convex) struct ConvexHostBridge {
 
 impl ConvexHostBridge {
     #[cfg(test)]
-    pub(in crate::adapters::convex) fn new(
+    pub(crate) fn new(
         scope: ConvexHostBridgeScope,
         invocation: ConvexHostBridgeInvocation,
     ) -> Self {
         Self::build(scope, invocation).expect("default convex host bridge should build")
     }
 
-    pub(in crate::adapters::convex) fn build(
+    pub(crate) fn build(
         scope: ConvexHostBridgeScope,
         invocation: ConvexHostBridgeInvocation,
     ) -> Result<Self, Error> {
-        let max_nested_runtime_invocations = scope
-            .registry
-            .runtime_policy()
-            .limits()
-            .max_nested_runtime_invocations;
-        let execution_unit = matches!(invocation.invocation_kind, InvocationKind::Mutation)
-            .then(|| {
-                scope.service.begin_mutation_execution_unit(
-                    scope.tenant_id.clone(),
-                    invocation.principal.clone(),
-                )
-            })
-            .transpose()?;
+        let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
+            service: &scope.service,
+            tenant_id: &scope.tenant_id,
+            principal: invocation.principal,
+            server_request_id: invocation.server_request_id,
+            invocation_kind: invocation.invocation_kind,
+            trigger_write_origin: invocation.trigger_write_origin,
+            max_nested_runtime_invocations: scope
+                .registry
+                .runtime_policy()
+                .limits()
+                .max_nested_runtime_invocations,
+            session_prefix: "convex-runtime-session",
+        })?;
         Ok(Self {
             service: scope.service,
             registry: scope.registry,
@@ -101,54 +109,86 @@ impl ConvexHostBridge {
             auth: invocation.auth,
             services: invocation.services,
             runtime_service_registry: scope.runtime_service_registry,
-            principal: invocation.principal,
-            execution_unit,
-            state: Arc::new(RuntimeHostState::new(
-                "convex-runtime-session",
-                invocation.server_request_id,
-                max_nested_runtime_invocations,
-            )),
+            principal: bootstrap.principal,
+            execution_unit: bootstrap.execution_unit,
+            state: bootstrap.state,
             query_builders: Arc::new(Mutex::new(ConvexRuntimeQueryBuilders::default())),
         })
     }
 
-    pub(in crate::adapters::convex) fn server_request_id(&self) -> Option<&str> {
+    pub(crate) fn server_request_id(&self) -> Option<&str> {
         self.state.server_request_id()
     }
 
-    pub(in crate::adapters::convex) fn session_id(&self) -> &str {
+    pub(crate) fn session_id(&self) -> &str {
         self.state.session_id()
     }
 
-    pub(in crate::adapters::convex) fn snapshot_read_set(&self) -> RuntimeReadSet {
+    pub(crate) fn snapshot_read_set(&self) -> RuntimeReadSet {
         self.state.snapshot_read_set()
     }
 
-    pub(in crate::adapters::convex) fn mutation_execution_unit(
+    pub(crate) fn mutation_execution_unit(
         &self,
     ) -> Option<&Arc<neovex_engine::MutationExecutionUnit>> {
         self.execution_unit.as_ref()
     }
 
-    pub(in crate::adapters::convex) fn commit_mutation_execution_unit(&self) -> Result<(), Error> {
-        if let Some(execution_unit) = &self.execution_unit {
-            let _ = execution_unit.commit()?;
-        }
-        Ok(())
+    pub(crate) fn service(&self) -> &Arc<neovex_engine::Service> {
+        &self.service
     }
 
-    pub(in crate::adapters::convex) fn validate_session(
+    pub(crate) fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub(crate) fn principal(&self) -> &neovex_core::PrincipalContext {
+        &self.principal
+    }
+
+    pub(crate) fn commit_mutation_execution_unit(&self) -> Result<(), Error> {
+        commit_runtime_mutation_execution_unit(self.execution_unit.as_ref())
+    }
+
+    pub(crate) fn validate_session(
         &self,
         session_id: Option<&str>,
     ) -> std::result::Result<(), NeovexRuntimeError> {
         self.state.validate_session(&self.tenant_id, session_id)
     }
 
-    pub(in crate::adapters::convex) fn consume_nested_runtime_invocation_budget(
-        &self,
-    ) -> Result<(), Error> {
+    pub(crate) fn consume_nested_runtime_invocation_budget(&self) -> Result<(), Error> {
         self.state
             .consume_nested_runtime_invocation_budget()
             .map_err(runtime_error_to_core)
+    }
+}
+
+impl RuntimeCapabilityHost for ConvexHostBridge {
+    fn validate_session(
+        &self,
+        session_id: Option<&str>,
+    ) -> std::result::Result<(), NeovexRuntimeError> {
+        ConvexHostBridge::validate_session(self, session_id)
+    }
+
+    fn mutation_execution_unit(&self) -> Option<&Arc<neovex_engine::MutationExecutionUnit>> {
+        ConvexHostBridge::mutation_execution_unit(self)
+    }
+
+    fn service(&self) -> &Arc<neovex_engine::Service> {
+        ConvexHostBridge::service(self)
+    }
+
+    fn tenant_id(&self) -> &TenantId {
+        ConvexHostBridge::tenant_id(self)
+    }
+
+    fn principal(&self) -> &neovex_core::PrincipalContext {
+        ConvexHostBridge::principal(self)
+    }
+
+    fn record_document_read(&self, locator: &neovex_core::DocumentLocator) {
+        ConvexHostBridge::record_document_read(self, &locator.table, &locator.id);
     }
 }

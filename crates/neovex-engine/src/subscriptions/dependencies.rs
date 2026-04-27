@@ -17,7 +17,7 @@ pub(crate) fn subscription_dependencies(query: &Query, documents: &[Document]) -
                 query.order.as_ref().map_or_else(Vec::new, |order| {
                     vec![document.get_field(&order.field).cloned()]
                 }),
-                Some(document.id),
+                Some(document.id.clone()),
             )
         })
         .unwrap_or_else(|| (Vec::new(), None));

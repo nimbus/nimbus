@@ -6,9 +6,15 @@ pub mod document;
 pub mod error;
 pub mod mutation;
 pub mod query;
+pub mod resource_path;
 pub mod scheduled;
 pub mod schema;
+pub mod subscription;
+pub mod transaction;
+pub mod trigger;
+pub mod typed_scalar;
 pub mod types;
+pub mod write_batch;
 
 pub use auth::{
     AccessAction, AccessOperator, AccessPredicate, AccessRule, AccessValue, CompiledReadRule,
@@ -22,13 +28,39 @@ pub use dependency::{
 pub use document::Document;
 pub use error::{Error, Result, StorageErrorKind};
 pub use mutation::{CommitEntry, DurableMutationRecord, Mutation, WriteOp, WriteOpType};
-pub use query::{Cursor, Filter, FilterOp, OrderBy, OrderDirection, Page, PaginatedQuery, Query};
+pub use query::{
+    AggregationOperator, CollectionSelector, CompositeFilter, CompositeOperator, CountAggregation,
+    Cursor, DistanceMeasure, FieldFilter, FieldFilterOperator, FieldReference, Filter, FilterOp,
+    FindNearest, OrderBy, OrderDirection, Page, PaginatedQuery, Projection, Query, QueryDirection,
+    QueryFilter, StructuredAggregation, StructuredAggregationQuery, StructuredAggregationResult,
+    StructuredCursor, StructuredOrder, StructuredQuery, UnaryFilter, UnaryFilterOperator,
+};
+pub use resource_path::{
+    CollectionName, CollectionPath, CollectionPathSegment, DocumentLocator, DocumentPath,
+    DocumentTriggerMatch, DocumentTriggerPattern, ResourcePathBinding,
+};
 pub use scheduled::{
     CreateCronRequest, CronJob, CronSchedule, JobId, ScheduleRequest, ScheduledJob,
     ScheduledJobOutcome, ScheduledJobResult,
 };
 pub use schema::{FieldSchema, FieldType, IndexDefinition, Schema, TableSchema};
+pub use subscription::{
+    SubscriptionCommitMetadata, SubscriptionDocumentChange, SubscriptionDocumentChangeKind,
+    SubscriptionResultSnapshot, SubscriptionSnapshotDiff, diff_subscription_snapshots,
+};
+pub use transaction::{TransactionSession, TransactionSessionMode, TransactionSessionToken};
+pub use trigger::{
+    CloudEventSpecVersion, DocumentEventData, DocumentEventDocument, DocumentEventUpdateMask,
+    FirestoreCloudEventType, FirestoreTriggerMetadata, TriggerCloudEvent, TriggerCommitMetadata,
+    TriggerDeliveryCursor, TriggerEvent, TriggerExecutionPrincipal, TriggerInvocationAncestry,
+    TriggerInvocationKey, TriggerInvocationRecord, TriggerInvocationState, TriggerWriteOrigin,
+};
+pub use typed_scalar::{NumericValue, SpecialDouble, StoredValue, TypedFieldMap, TypedScalarValue};
 pub use types::{DocumentId, SequenceNumber, TableName, TenantId, Timestamp};
+pub use write_batch::{
+    AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult, FieldTransform,
+    FieldTransformOperation, WriteKey, WritePrecondition, WriteSetMode,
+};
 
 #[cfg(test)]
 mod tests {
@@ -48,6 +80,48 @@ mod tests {
     }
 
     #[test]
+    fn document_id_accepts_firestore_style_keys() {
+        let numeric = DocumentId::from_str("1").expect("numeric id should parse");
+        let dotted = DocumentId::from_str("alpha.beta").expect("dotted id should parse");
+        let unicode = DocumentId::from_str("東京").expect("unicode id should parse");
+
+        assert_eq!(numeric.to_string(), "1");
+        assert_eq!(dotted.to_string(), "alpha.beta");
+        assert_eq!(unicode.to_string(), "東京");
+    }
+
+    #[test]
+    fn document_id_rejects_invalid_keys() {
+        let empty = DocumentId::from_str("");
+        let nested = DocumentId::from_str("cities/SF");
+        let nul = DocumentId::from_key("fire\u{0000}store".to_string());
+
+        assert!(matches!(empty, Err(crate::Error::InvalidInput(_))));
+        assert!(matches!(nested, Err(crate::Error::InvalidInput(_))));
+        assert!(matches!(nul, Err(crate::Error::InvalidInput(_))));
+    }
+
+    #[test]
+    fn mutation_insert_rejects_invalid_document_key_during_deserialization() {
+        let mutation = serde_json::json!({
+            "op": "insert",
+            "table": "tasks",
+            "id": "cities/SF",
+            "fields": {
+                "title": "Hello"
+            }
+        });
+
+        let error = serde_json::from_value::<crate::Mutation>(mutation)
+            .expect_err("invalid id should fail");
+
+        assert!(matches!(
+            error.classify(),
+            serde_json::error::Category::Data
+        ));
+    }
+
+    #[test]
     fn document_to_json_includes_system_fields() {
         let document = Document::new(
             TableName::new("tasks").expect("table name should be valid"),
@@ -58,6 +132,7 @@ mod tests {
         assert_eq!(value["title"], json!("Hello"));
         assert!(value["_id"].is_string());
         assert!(value["_creationTime"].is_u64());
+        assert!(value["_updateTime"].is_u64());
     }
 
     #[test]
@@ -112,6 +187,8 @@ mod tests {
                     table: tasks.clone(),
                     op_type: WriteOpType::Insert,
                     doc_id: DocumentId::new(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: None,
                 },
@@ -119,6 +196,8 @@ mod tests {
                     table: tasks.clone(),
                     op_type: WriteOpType::Update,
                     doc_id: DocumentId::new(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: None,
                 },
@@ -126,6 +205,8 @@ mod tests {
                     table: users.clone(),
                     op_type: WriteOpType::Delete,
                     doc_id: DocumentId::new(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: None,
                 },
@@ -147,6 +228,8 @@ mod tests {
                 table: TableName::new("tasks").expect("table name should be valid"),
                 op_type: WriteOpType::Insert,
                 doc_id: DocumentId::new(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: None,
                 current: Some(Document::new(
                     TableName::new("tasks").expect("table name should be valid"),
@@ -176,6 +259,8 @@ mod tests {
                 table: TableName::new("tasks").expect("table name should be valid"),
                 op_type: WriteOpType::Update,
                 doc_id: DocumentId::new(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: Some(Document::new(
                     TableName::new("tasks").expect("table name should be valid"),
                     serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),

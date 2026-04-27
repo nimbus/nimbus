@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use neovex_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema, Timestamp,
+    CommitEntry, CronJob, Document, DocumentId, DocumentLocator, DurableMutationRecord,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber,
+    TableName, TableSchema, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
 };
 use neovex_storage::{
     DurableJournalBootstrap, DurableJournalPage, FaultPoint, JournalProgress,
@@ -61,6 +62,9 @@ impl TenantPersistence {
 mod journal;
 mod provider_state;
 mod reads;
+mod resource_paths;
 mod scheduler;
 mod schema;
+mod trigger_delivery;
+mod trigger_invocations;
 mod writes;

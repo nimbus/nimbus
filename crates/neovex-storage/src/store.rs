@@ -2,15 +2,18 @@ mod journal;
 mod journal_snapshot;
 mod journal_stream;
 mod read;
+mod resource_paths;
 mod scan;
 mod schema_rewrite;
+mod trigger_delivery;
+mod trigger_invocations;
 mod write;
 
 use std::sync::Arc;
 
 use neovex_core::{
-    CommitEntry, Document, Error, IndexDefinition, JobId, Result, ScheduledJob, SequenceNumber,
-    WriteOp,
+    CommitEntry, Document, Error, IndexDefinition, JobId, ResourcePathBinding, Result,
+    ScheduledJob, SequenceNumber, WriteOp,
 };
 use redb::{Database, ReadTransaction, TableDefinition};
 
@@ -27,6 +30,12 @@ pub use journal_stream::{
 
 pub(crate) const DOCUMENTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("documents");
 pub(crate) const INDEXES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("indexes");
+pub(crate) const RESOURCE_PATH_BINDINGS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("resource_path_bindings");
+pub(crate) const RESOURCE_PATH_LOOKUP: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("resource_path_lookup");
+pub(crate) const COLLECTION_GROUP_BINDINGS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("collection_group_bindings");
 pub(crate) const SCHEMAS: TableDefinition<&str, &[u8]> = TableDefinition::new("schemas");
 pub(crate) const SCHEDULED_JOBS: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("scheduled_jobs");
@@ -34,6 +43,8 @@ pub(crate) const RUNNING_SCHEDULED_JOBS: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("running_scheduled_jobs");
 pub(crate) const SCHEDULED_JOB_RESULTS: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("scheduled_job_results");
+pub(crate) const TRIGGER_INVOCATIONS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("trigger_invocations");
 pub(crate) const SCHEDULED_JOB_EXECUTIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("scheduled_job_executions");
 pub(crate) const CRON_JOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("cron_jobs");
@@ -41,6 +52,7 @@ pub(crate) const COMMIT_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new(
 pub(crate) const METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 pub(crate) const NEXT_SEQUENCE_KEY: &str = "next_sequence";
 pub(crate) const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
+pub(crate) const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
 pub(crate) const EMPTY_TABLE_VALUE: &[u8] = &[];
 
 /// Authoritative tenant persistence surface during the migration window.
@@ -73,11 +85,13 @@ pub enum ResolvedWrite {
     Insert {
         document: Document,
         indexes: Vec<IndexDefinition>,
+        resource_path_binding: Option<ResourcePathBinding>,
     },
     Update {
         previous: Document,
         current: Document,
         indexes: Vec<IndexDefinition>,
+        resource_path_binding: Option<ResourcePathBinding>,
     },
     Delete {
         previous: Document,

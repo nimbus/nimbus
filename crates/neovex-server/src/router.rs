@@ -1,15 +1,20 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::middleware;
 use axum::routing::{any, delete, get, post};
+use axum::{Extension, Router};
 use neovex_engine::Service;
+use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 
+use crate::adapters::cloud_functions;
+use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::{self, ConvexRegistry};
+use crate::adapters::firebase::{self, FirebaseConfig};
+use crate::application_auth::ApplicationAuthVerifier;
 use crate::license::LicenseState;
 use crate::local_server::{
     LocalServerAccessPolicy, LocalServerSecurityState, origin_allowlist_middleware,
@@ -46,6 +51,9 @@ impl RuntimeServiceSource {
 pub(crate) struct RouterBuildConfig {
     service: Arc<Service>,
     convex_registry: Option<ConvexRegistry>,
+    application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
+    cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    firebase_config: Option<FirebaseConfig>,
     license_state: LicenseState,
     runtime_service_source: RuntimeServiceSource,
     deploy_admin_token: Option<String>,
@@ -58,6 +66,9 @@ impl RouterBuildConfig {
         Self {
             service,
             convex_registry: None,
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_source: RuntimeServiceSource::SandboxCatalog(Arc::new(
                 EmptySandboxCatalog,
@@ -69,7 +80,29 @@ impl RouterBuildConfig {
     }
 
     pub(crate) fn with_convex(mut self, convex_registry: ConvexRegistry) -> Self {
+        self = self.with_application_auth_verifier(Arc::new(convex_registry.clone()));
         self.convex_registry = Some(convex_registry);
+        self
+    }
+
+    pub(crate) fn with_application_auth_verifier(
+        mut self,
+        application_auth_verifier: Arc<dyn ApplicationAuthVerifier>,
+    ) -> Self {
+        self.application_auth_verifier = Some(application_auth_verifier);
+        self
+    }
+
+    pub(crate) fn with_cloud_functions(
+        mut self,
+        cloud_functions_registry: CloudFunctionsRegistry,
+    ) -> Self {
+        self.cloud_functions_registry = Some(cloud_functions_registry);
+        self
+    }
+
+    pub(crate) fn with_firebase(mut self, firebase_config: FirebaseConfig) -> Self {
+        self.firebase_config = Some(firebase_config);
         self
     }
 
@@ -130,17 +163,39 @@ impl RouterBuildConfig {
         let state = Arc::new(AppState::from_config(AppStateConfig {
             service: self.service,
             convex_registry: self.convex_registry,
+            application_auth_verifier: self.application_auth_verifier,
+            cloud_functions_registry: self.cloud_functions_registry,
+            firebase_config: self.firebase_config,
             license_state: self.license_state,
             runtime_service_registry: self.runtime_service_source.into_runtime_service_registry(),
             deploy_admin_token: self.deploy_admin_token,
             local_server_security: self.local_server_security,
             listen_addr: self.listen_addr,
         }));
+        if let Some(registry) = state.cloud_functions_registry.current() {
+            state
+                .service
+                .install_trigger_registrations(registry.trigger_registrations().expect(
+                    "cloud functions trigger registrations should materialize from active registry",
+                ))
+                .expect("cloud functions trigger registrations should install");
+            state
+                .service
+                .install_trigger_invocation_executor(Arc::new(
+                    crate::adapters::cloud_functions::CloudFunctionsTriggerExecutor::new(
+                        state.service.clone(),
+                        registry,
+                        state.runtime_service_registry(),
+                    ),
+                ))
+                .expect("cloud functions trigger executor should install");
+        }
+        let firebase_enabled = state.firebase_config.current().is_some();
 
         let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
         let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
 
-        build_public_router()
+        let mut router = build_public_router()
             .merge(build_ui_router().route_layer(middleware::from_fn(http::ui_csp_middleware)))
             .merge(
                 build_local_admin_router()
@@ -164,7 +219,14 @@ impl RouterBuildConfig {
                         server_access_extract_middleware,
                     )),
             )
-            .merge(build_convex_router())
+            .merge(build_convex_router());
+        if firebase_enabled {
+            router = router.merge(build_firebase_router(state.clone()));
+        }
+        if state.cloud_functions_registry.current().is_some() {
+            router = router.fallback(any(cloud_functions::http_handler));
+        }
+        router
             .layer(build_cors_layer())
             .layer(middleware::from_fn_with_state(
                 state.clone(),
@@ -212,6 +274,16 @@ pub fn build_router_with_license_and_sandbox_catalog(
 pub fn build_router_with_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> Router {
     RouterBuildConfig::core(service)
         .with_convex(convex_registry)
+        .build()
+}
+
+/// Builds the Neovex HTTP/WebSocket router with Firebase REST support enabled.
+pub fn build_router_with_firebase(
+    service: Arc<Service>,
+    firebase_config: FirebaseConfig,
+) -> Router {
+    RouterBuildConfig::core(service)
+        .with_firebase(firebase_config)
         .build()
 }
 
@@ -302,7 +374,21 @@ fn build_cors_layer() -> CorsLayer {
             header::ACCEPT,
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
+            HeaderName::from_static("firebase-instance-id-token"),
             HeaderName::from_static("x-neovex-admin-token"),
+            HeaderName::from_static("google-cloud-resource-prefix"),
+            HeaderName::from_static("x-goog-request-params"),
+            HeaderName::from_static("x-goog-api-client"),
+            HeaderName::from_static("x-goog-api-key"),
+            HeaderName::from_static("x-firebase-gmpid"),
+            HeaderName::from_static("x-firebase-appcheck"),
+            HeaderName::from_static("x-grpc-web"),
+            HeaderName::from_static("grpc-timeout"),
+        ])
+        .expose_headers([
+            HeaderName::from_static("grpc-status"),
+            HeaderName::from_static("grpc-message"),
+            HeaderName::from_static("grpc-status-details-bin"),
         ])
         .allow_methods([
             Method::GET,
@@ -310,6 +396,7 @@ fn build_cors_layer() -> CorsLayer {
             Method::PUT,
             Method::PATCH,
             Method::DELETE,
+            Method::OPTIONS,
         ])
 }
 
@@ -455,4 +542,64 @@ fn build_convex_router() -> Router<Arc<AppState>> {
             delete(convex::cancel_scheduled_job),
         )
         .route("/convex/{tenant_id}/ws", get(convex::ws))
+}
+
+fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
+    // Keep one Firestore service instance so gRPC and WebSocket Listen share
+    // retained target and write-stream state across reconnects.
+    let firestore_service = firebase::grpc::FirestoreGrpcService::from_state(state.clone());
+    let firestore_websocket_service = firestore_service.clone();
+    let firestore_listen_service = ServiceBuilder::new()
+        .layer(tonic_web::GrpcWebLayer::new())
+        .service(firestore_service.clone().into_server());
+    let firestore_grpc_service = ServiceBuilder::new()
+        .layer(tonic_web::GrpcWebLayer::new())
+        .service(firestore_service.into_server());
+    Router::new()
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:commit",
+            post(firebase::commit),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:batchWrite",
+            post(firebase::batch_write),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:batchGet",
+            post(firebase::batch_get_documents),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:beginTransaction",
+            post(firebase::begin_transaction),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:rollback",
+            post(firebase::rollback),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:listCollectionIds",
+            post(firebase::list_collection_ids),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:runQuery",
+            post(firebase::run_query),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents:runAggregationQuery",
+            post(firebase::run_aggregation_query),
+        )
+        .route(
+            "/v1/projects/{project_id}/databases/{database_id}/documents/{*document_request}",
+            post(firebase::run_document_action_under_parent_document),
+        )
+        .route(
+            "/google.firestore.v1.Firestore/Listen",
+            get(firebase::grpc::listen_websocket)
+                .post_service(firestore_listen_service)
+                .layer(Extension(firestore_websocket_service)),
+        )
+        .route_service(
+            "/google.firestore.v1.Firestore/{*grpc_method}",
+            firestore_grpc_service,
+        )
 }

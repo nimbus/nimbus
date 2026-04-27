@@ -237,7 +237,9 @@ pub(super) async fn create_point_read_fixture(
                 let id = DocumentId::new();
                 ids.push(id);
                 seeded_documents.push((
-                    *ids.last().expect("point-read document id should exist"),
+                    ids.last()
+                        .expect("point-read document id should exist")
+                        .clone(),
                     serde_json::Map::from_iter([
                         (
                             "status".to_string(),

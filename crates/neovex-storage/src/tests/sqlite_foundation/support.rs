@@ -36,6 +36,7 @@ pub(super) fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJ
         run_at,
         mutation: Mutation::Insert {
             table: TableName::new("tasks").expect("table name should be valid"),
+            id: None,
             fields: serde_json::Map::from_iter([("title".to_string(), json!(title))]),
         },
         created_at: Timestamp(1_000),

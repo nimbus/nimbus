@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use neovex::{ConvexRegistry, Error, LicenseState, Service, run_scheduler};
 use neovex_server::{
-    LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryLease,
-    load_or_create_local_admin_token, serve_with_options,
+    CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
+    ServerDiscoveryLease, load_or_create_local_admin_token, serve_with_options,
 };
 
 use super::StartCommand;
@@ -19,6 +19,21 @@ use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
 use crate::compose::load_host_backed_sandbox_service_manager_for_selection;
+use crate::deploy::resolve_deploy_app_dir;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ResolvedStartAppDir {
+    Explicit(PathBuf),
+    AutoDetected(PathBuf),
+}
+
+impl ResolvedStartAppDir {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Explicit(path) | Self::AutoDetected(path) => path.as_path(),
+        }
+    }
+}
 
 pub(crate) async fn run_start_command(
     command: StartCommand,
@@ -26,13 +41,17 @@ pub(crate) async fn run_start_command(
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
-    run_codegen_preflight(&command).await?;
+    let resolved_app_dir = resolve_start_app_dir(&command)?;
+    run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
     let license_state = LicenseState::load(command.license_file.as_deref())?;
     let license_snapshot = license_state.snapshot();
     let deploy_admin_enabled =
         command.deploy_admin_token.is_some() || std::env::var_os("NEOVEX_DEPLOY_TOKEN").is_some();
-    let convex_registry = load_convex_registry(&command, &runtime_limits)?;
+    let convex_registry =
+        load_convex_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
+    let cloud_functions_registry =
+        load_cloud_functions_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
     let compose_selection = resolve_optional_compose_selection(&command)?;
     let sandbox_service_manager =
         load_sandbox_service_manager(compose_selection.as_ref(), &compose_control_data_dir)?;
@@ -55,6 +74,7 @@ pub(crate) async fn run_start_command(
         ServerDiscoveryLease::acquire(&local_server_paths, listener.local_addr()?)?;
     emit_start_startup_summary(
         &command,
+        resolved_app_dir.as_ref(),
         compose_selection.as_ref(),
         listener.local_addr()?,
         deploy_admin_enabled,
@@ -72,16 +92,22 @@ pub(crate) async fn run_start_command(
     }
 
     tracing::info!("neovex listening on {}", listener.local_addr()?);
-    let server_result = run_server_with_optional_runtime_and_services(
-        listener,
-        service,
-        convex_registry,
-        license_state,
-        sandbox_service_manager,
-        command.deploy_admin_token,
-        local_server_security,
-    )
-    .await;
+    let mut serve_options = ServeOptions::default().with_license(license_state);
+    if let Some(registry) = convex_registry {
+        serve_options = serve_options.with_convex_registry(registry);
+    }
+    if let Some(registry) = cloud_functions_registry {
+        serve_options = serve_options.with_cloud_functions_registry(registry);
+    }
+    if let Some(manager) = sandbox_service_manager {
+        serve_options = serve_options.with_sandbox_service_manager(manager);
+    }
+    if let Some(token) = command.deploy_admin_token {
+        serve_options = serve_options.with_deploy_admin_token(token);
+    }
+    serve_options = serve_options.with_local_server_security(local_server_security);
+
+    let server_result = serve_with_options(listener, service, serve_options).await;
     drop(discovery_lease);
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;
@@ -92,8 +118,9 @@ pub(crate) async fn run_start_command(
 
 pub(super) async fn run_codegen_preflight(
     command: &StartCommand,
+    resolved_app_dir: Option<&ResolvedStartAppDir>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(app_dir) = command.app_dir.as_deref() else {
+    let Some(app_dir) = resolved_app_dir.map(ResolvedStartAppDir::path) else {
         return Ok(());
     };
     if command.skip_codegen {
@@ -111,17 +138,44 @@ pub(super) async fn run_codegen_preflight(
 
 pub(super) fn load_convex_registry(
     command: &StartCommand,
+    resolved_app_dir: Option<&ResolvedStartAppDir>,
     runtime_limits: &neovex::RuntimeLimits,
 ) -> Result<Option<ConvexRegistry>, Error> {
-    command
-        .app_dir
-        .as_ref()
-        .map(|path| {
-            ensure_required_functions_manifest(path, command.skip_codegen)?;
-            ConvexRegistry::from_app_dir(path)
-                .map(|registry| registry.with_runtime_limits(runtime_limits.clone()))
-        })
-        .transpose()
+    let Some(resolved_app_dir) = resolved_app_dir else {
+        return Ok(None);
+    };
+    let should_load = match resolved_app_dir {
+        ResolvedStartAppDir::Explicit(_) => true,
+        ResolvedStartAppDir::AutoDetected(path) => app_dir_has_convex_surface(path),
+    };
+    if !should_load {
+        return Ok(None);
+    }
+    let path = resolved_app_dir.path();
+    ensure_required_functions_manifest(path, command.skip_codegen)?;
+    ConvexRegistry::from_app_dir(path)
+        .map(|registry| Some(registry.with_runtime_limits(runtime_limits.clone())))
+}
+
+pub(super) fn load_cloud_functions_registry(
+    command: &StartCommand,
+    resolved_app_dir: Option<&ResolvedStartAppDir>,
+    runtime_limits: &neovex::RuntimeLimits,
+) -> Result<Option<CloudFunctionsRegistry>, Error> {
+    let Some(resolved_app_dir) = resolved_app_dir else {
+        return Ok(None);
+    };
+    let should_load = match resolved_app_dir {
+        ResolvedStartAppDir::Explicit(_) => true,
+        ResolvedStartAppDir::AutoDetected(path) => app_dir_has_cloud_functions_surface(path),
+    };
+    if !should_load {
+        return Ok(None);
+    }
+    let path = resolved_app_dir.path();
+    ensure_required_cloud_functions_manifest(path, command.skip_codegen)?;
+    CloudFunctionsRegistry::from_app_dir(path)
+        .map(|registry| Some(registry.with_runtime_limits(runtime_limits.clone())))
 }
 
 pub(crate) fn resolve_optional_compose_selection(
@@ -173,12 +227,14 @@ fn emit_non_loopback_warning(listen_addr: SocketAddr) {
 
 fn emit_start_startup_summary(
     command: &StartCommand,
+    resolved_app_dir: Option<&ResolvedStartAppDir>,
     compose_selection: Option<&ResolvedComposeSelection>,
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) {
     for line in start_startup_summary_lines(
         command,
+        resolved_app_dir,
         compose_selection,
         listen_addr,
         deploy_admin_enabled,
@@ -189,6 +245,7 @@ fn emit_start_startup_summary(
 
 pub(super) fn start_startup_summary_lines(
     command: &StartCommand,
+    resolved_app_dir: Option<&ResolvedStartAppDir>,
     compose_selection: Option<&ResolvedComposeSelection>,
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
@@ -200,9 +257,17 @@ pub(super) fn start_startup_summary_lines(
         ),
         "server process owns HTTP, WebSocket, scheduler, and runtime startup".to_string(),
     ];
-    match command.app_dir.as_deref() {
-        Some(app_dir) => {
+    match resolved_app_dir {
+        Some(ResolvedStartAppDir::Explicit(app_dir)) => {
             lines.push(format!("app dir: {}", app_dir.display()));
+            if command.skip_codegen {
+                lines.push("codegen preflight: skipped by --skip-codegen".to_string());
+            } else {
+                lines.push("codegen preflight: completed before registry load".to_string());
+            }
+        }
+        Some(ResolvedStartAppDir::AutoDetected(app_dir)) => {
+            lines.push(format!("app dir: auto-detected {}", app_dir.display()));
             if command.skip_codegen {
                 lines.push("codegen preflight: skipped by --skip-codegen".to_string());
             } else {
@@ -224,6 +289,26 @@ pub(super) fn start_startup_summary_lines(
     lines
 }
 
+pub(super) fn resolve_start_app_dir(
+    command: &StartCommand,
+) -> Result<Option<ResolvedStartAppDir>, Error> {
+    let cwd = std::env::current_dir().map_err(|error| {
+        Error::Internal(format!("failed to determine current directory: {error}"))
+    })?;
+    if let Some(explicit_app_dir) = command.app_dir.as_deref() {
+        let resolved = resolve_deploy_app_dir(Some(explicit_app_dir), &cwd)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        return Ok(Some(ResolvedStartAppDir::Explicit(resolved)));
+    }
+
+    let detected = resolve_deploy_app_dir(None, &cwd)
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    if app_dir_has_convex_surface(&detected) || app_dir_has_cloud_functions_surface(&detected) {
+        return Ok(Some(ResolvedStartAppDir::AutoDetected(detected)));
+    }
+    Ok(None)
+}
+
 fn local_listen_url(addr: SocketAddr) -> String {
     let host = if addr.ip().is_unspecified() {
         "localhost".to_string()
@@ -233,6 +318,18 @@ fn local_listen_url(addr: SocketAddr) -> String {
         addr.ip().to_string()
     };
     format!("http://{host}:{}/", addr.port())
+}
+
+fn app_dir_has_convex_surface(app_dir: &Path) -> bool {
+    app_dir.join("convex").is_dir()
+        || app_dir.join("neovex").is_dir()
+        || required_functions_manifest_path(app_dir).is_file()
+}
+
+fn app_dir_has_cloud_functions_surface(app_dir: &Path) -> bool {
+    app_dir.join("firebase.json").is_file()
+        || required_cloud_functions_manifest_path(app_dir).is_file()
+        || package_declares_functions_framework(&app_dir.join("package.json"))
 }
 
 fn ensure_required_functions_manifest(app_dir: &Path, skip_codegen: bool) -> Result<(), Error> {
@@ -261,6 +358,57 @@ fn required_functions_manifest_path(app_dir: &Path) -> PathBuf {
         .join("functions.json")
 }
 
+fn ensure_required_cloud_functions_manifest(
+    app_dir: &Path,
+    skip_codegen: bool,
+) -> Result<(), Error> {
+    let artifact_path = required_cloud_functions_manifest_path(app_dir);
+    match std::fs::read_to_string(&artifact_path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::InvalidInput(format!(
+                "No generated cloud functions artifact manifest found at {}.\n\n{}",
+                artifact_path.display(),
+                cloud_functions_manifest_recovery_hint(app_dir, skip_codegen)
+            )))
+        }
+        Err(error) => Err(Error::InvalidInput(format!(
+            "Generated cloud functions artifact manifest {} is not readable: {error}.\n\n{}",
+            artifact_path.display(),
+            cloud_functions_manifest_recovery_hint(app_dir, skip_codegen)
+        ))),
+    }
+}
+
+fn required_cloud_functions_manifest_path(app_dir: &Path) -> PathBuf {
+    app_dir
+        .join(".neovex")
+        .join("firebase")
+        .join("artifact.json")
+}
+
+fn package_declares_functions_framework(package_json_path: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(package_json_path) else {
+        return false;
+    };
+    let Ok(package_json) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return false;
+    };
+    [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ]
+    .into_iter()
+    .any(|field| {
+        package_json
+            .get(field)
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|deps| deps.contains_key("@google-cloud/functions-framework"))
+    })
+}
+
 fn manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) -> String {
     if skip_codegen {
         format!(
@@ -275,25 +423,16 @@ fn manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) -> String {
     }
 }
 
-async fn run_server_with_optional_runtime_and_services(
-    listener: tokio::net::TcpListener,
-    service: Arc<Service>,
-    convex_registry: Option<ConvexRegistry>,
-    license_state: LicenseState,
-    sandbox_service_manager: Option<Arc<neovex::SandboxServiceManager>>,
-    deploy_admin_token: Option<String>,
-    local_server_security: Arc<LocalServerSecurityState>,
-) -> std::io::Result<()> {
-    let mut options = ServeOptions::default().with_license(license_state);
-    if let Some(registry) = convex_registry {
-        options = options.with_convex_registry(registry);
+fn cloud_functions_manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) -> String {
+    if skip_codegen {
+        format!(
+            "Run \"neovex codegen --app {}\" to generate it, or remove --skip-codegen to generate manifests automatically on start.",
+            app_dir.display()
+        )
+    } else {
+        format!(
+            "Run \"neovex codegen --app {}\" to generate it before retrying.",
+            app_dir.display()
+        )
     }
-    if let Some(manager) = sandbox_service_manager {
-        options = options.with_sandbox_service_manager(manager);
-    }
-    if let Some(token) = deploy_admin_token {
-        options = options.with_deploy_admin_token(token);
-    }
-    options = options.with_local_server_security(local_server_security);
-    serve_with_options(listener, service, options).await
 }

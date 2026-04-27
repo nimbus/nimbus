@@ -1,4 +1,5 @@
 use super::*;
+use crate::application_auth::verify_optional_application_auth_from_headers;
 
 pub(super) async fn registry_and_auth(
     state: &Arc<AppState>,
@@ -11,7 +12,7 @@ pub(super) async fn registry_and_auth(
         .convex_registry
         .current()
         .ok_or_else(|| AppError::not_found(expectation))?;
-    let auth = match registry.verify_authorization_header(headers).await {
+    let auth = match verify_optional_application_auth_from_headers(state, headers).await {
         Ok(auth) => {
             state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
                 route_family,

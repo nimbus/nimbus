@@ -149,7 +149,7 @@ fn process_due_jobs(service: &Service, tenant_id: &TenantId, now: Timestamp) -> 
         }
 
         let execution_result = ScheduledJobResult {
-            id: job.id,
+            id: job.id.clone(),
             run_at: job.run_at,
             finished_at: service.now(),
             mutation: job.mutation,
@@ -173,6 +173,7 @@ async fn process_due_jobs_async(
 ) -> Result<()> {
     let due_jobs = service.claim_due_jobs_async(tenant_id.clone(), now).await?;
     for job in due_jobs {
+        let job_id = job.id.clone();
         let execution_id = format!("scheduled:{}", job.id);
         let result = service
             .execute_scheduled_mutation_async(tenant_id.clone(), execution_id, job.mutation.clone())
@@ -199,7 +200,7 @@ async fn process_due_jobs_async(
         }
 
         let execution_result = ScheduledJobResult {
-            id: job.id,
+            id: job_id.clone(),
             run_at: job.run_at,
             finished_at: service.now(),
             mutation: job.mutation,
@@ -214,7 +215,7 @@ async fn process_due_jobs_async(
             .record_scheduled_job_result_async(tenant_id.clone(), execution_result)
             .await?;
         service
-            .complete_scheduled_job_async(tenant_id.clone(), job.id)
+            .complete_scheduled_job_async(tenant_id.clone(), job_id)
             .await?;
     }
     Ok(())
@@ -282,8 +283,14 @@ async fn process_cron_jobs_async(
 #[cfg(test)]
 fn dispatch_mutation(service: &Service, tenant_id: &TenantId, mutation: Mutation) -> Result<()> {
     match mutation {
-        Mutation::Insert { table, fields } => service
-            .insert_document(tenant_id, table, fields)
+        Mutation::Insert { table, id, fields } => service
+            .insert_document_with_id_with_principal(
+                tenant_id,
+                table,
+                id,
+                fields,
+                &neovex_core::PrincipalContext::anonymous(),
+            )
             .map(|_| ()),
         Mutation::Update { table, id, patch } => service
             .update_document(tenant_id, table, id, patch)
@@ -298,8 +305,14 @@ async fn dispatch_mutation_async(
     mutation: Mutation,
 ) -> Result<()> {
     match mutation {
-        Mutation::Insert { table, fields } => service
-            .insert_document_async(tenant_id, table, fields)
+        Mutation::Insert { table, id, fields } => service
+            .insert_document_async_with_id_with_principal(
+                tenant_id,
+                table,
+                id,
+                fields,
+                neovex_core::PrincipalContext::anonymous(),
+            )
             .await
             .map(|_| ()),
         Mutation::Update { table, id, patch } => service

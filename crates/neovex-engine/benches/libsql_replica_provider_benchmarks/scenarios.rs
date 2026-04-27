@@ -23,7 +23,7 @@ pub(super) async fn exercise_crud_sample(
                 .await?,
         );
     }
-    for (rank, id) in ids.iter().copied().enumerate() {
+    for (rank, id) in ids.iter().cloned().enumerate() {
         let _ = service
             .update_document_async(
                 tenant_id.clone(),
@@ -48,7 +48,7 @@ pub(super) async fn exercise_point_read_sample(
     batch_size: usize,
 ) -> BenchResult<()> {
     for step in 0..batch_size {
-        let id = ids[(step * 17) % ids.len()];
+        let id = ids[(step * 17) % ids.len()].clone();
         let document = service
             .get_document_async(tenant_id.clone(), tasks_table(), id)
             .await?;
@@ -94,7 +94,7 @@ pub(super) async fn exercise_mixed_load_sample(
                 limit: Some(25),
             };
             for step in 0..ops_per_tenant {
-                let id = state.ids[step % state.ids.len()];
+                let id = state.ids[step % state.ids.len()].clone();
                 match step % 4 {
                     0 => {
                         let document = tokio::time::timeout(
@@ -218,7 +218,11 @@ pub(super) async fn exercise_peer_catch_up_sample(
     loop {
         match fixture
             .opener_service
-            .get_document_async(fixture.tenant_id.clone(), tasks_table(), inserted_id)
+            .get_document_async(
+                fixture.tenant_id.clone(),
+                tasks_table(),
+                inserted_id.clone(),
+            )
             .await
         {
             Ok(document) => {

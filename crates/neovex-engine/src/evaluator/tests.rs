@@ -403,7 +403,7 @@ fn evaluator_without_order_sorts_by_document_id() {
     let documents = evaluate_query(&store, &query_for("tasks")).expect("query should evaluate");
     let ids = documents
         .iter()
-        .map(|document| document.id)
+        .map(|document| document.id.clone())
         .collect::<Vec<_>>();
     let mut sorted_ids = ids.clone();
     sorted_ids.sort();

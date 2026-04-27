@@ -34,6 +34,11 @@ pub(super) fn serialize_document_fields(document: &Document) -> Result<String> {
     serde_json::to_string(&document.fields).map_err(|error| Error::Serialization(error.to_string()))
 }
 
+pub(super) fn serialize_document_typed_fields(document: &Document) -> Result<String> {
+    serde_json::to_string(&document.typed_fields)
+        .map_err(|error| Error::Serialization(error.to_string()))
+}
+
 pub(super) fn encode_u64(value: u64) -> [u8; 8] {
     value.to_be_bytes()
 }
@@ -49,13 +54,18 @@ pub(super) fn row_to_document(
     table: &TableName,
     id: &DocumentId,
     creation_time: u64,
+    update_time: u64,
     data_json: String,
+    typed_fields_json: String,
 ) -> Result<Document> {
     Ok(Document {
-        id: *id,
+        id: id.clone(),
         table: table.clone(),
         creation_time: Timestamp(creation_time),
+        update_time: Timestamp(update_time),
         fields: serde_json::from_str(&data_json)
+            .map_err(|error| Error::Serialization(error.to_string()))?,
+        typed_fields: serde_json::from_str(&typed_fields_json)
             .map_err(|error| Error::Serialization(error.to_string()))?,
     })
 }
@@ -66,7 +76,7 @@ pub(super) fn load_document_from_conn(
     id: &DocumentId,
 ) -> Result<Option<Document>> {
     conn.query_row(
-        "SELECT creation_time, data_json
+        "SELECT creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_name = ?1 AND id = ?2",
         params![table.as_str(), id.to_string()],
@@ -75,7 +85,9 @@ pub(super) fn load_document_from_conn(
                 table,
                 id,
                 row.get(0)?,
-                row.get::<_, String>(1)?,
+                row.get(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
             ))
         },
     )

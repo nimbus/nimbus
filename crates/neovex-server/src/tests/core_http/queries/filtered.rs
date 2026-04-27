@@ -59,6 +59,7 @@ async fn query_endpoint_returns_filtered_results() {
         body["data"],
         json!([{
             "_creationTime": body["data"][0]["_creationTime"].clone(),
+            "_updateTime": body["data"][0]["_updateTime"].clone(),
             "_id": body["data"][0]["_id"].clone(),
             "status": "todo",
             "title": "Alpha"

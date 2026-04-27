@@ -1,4 +1,5 @@
 use super::*;
+use crate::application_auth::normalize_principal_context;
 
 pub(super) async fn handle_socket_message(
     message: Message,
@@ -67,10 +68,10 @@ async fn handle_text_message(
         Err(error) => {
             let _ = ctx
                 .outbound_tx
-                .send(ServerMessage::Error {
-                    request_id: None,
-                    message: format!("invalid websocket message: {error}"),
-                })
+                .send(ServerMessage::session_error(
+                    "protocol.invalid_json",
+                    format!("invalid websocket message: {error}"),
+                ))
                 .await;
         }
     }
@@ -97,9 +98,7 @@ async fn handle_authenticate(
         Err(error) => {
             let _ = ctx
                 .outbound_tx
-                .send(ServerMessage::AuthError {
-                    message: error.to_string(),
-                })
+                .send(ServerMessage::auth_error(error.to_string()))
                 .await;
         }
     }
@@ -143,10 +142,11 @@ async fn handle_plain_subscription(
             clear_pending_transform(ctx.transforms, &request_id);
             let _ = ctx
                 .outbound_tx
-                .send(ServerMessage::Error {
-                    request_id: Some(request_id),
-                    message: error.to_string(),
-                })
+                .send(ServerMessage::request_error(
+                    request_id,
+                    "op.failed",
+                    error.to_string(),
+                ))
                 .await;
         }
     }
@@ -172,10 +172,10 @@ async fn reset_active_subscriptions_for_auth_change(
     .await;
     let _ = ctx
         .outbound_tx
-        .send(ServerMessage::Error {
-            request_id: None,
-            message: "authentication context changed; resubscribe active subscriptions".to_string(),
-        })
+        .send(ServerMessage::session_warning(
+            "session.auth_context_changed",
+            "authentication context changed; resubscribe active subscriptions",
+        ))
         .await;
 }
 

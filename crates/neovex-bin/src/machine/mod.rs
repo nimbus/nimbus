@@ -55,10 +55,10 @@ pub(crate) use self::protocol::MachineApiServiceSandboxDetails;
 
 use self::command::MachineApiCommand;
 use self::files::write_json_file;
-#[cfg(test)]
-use self::record::MachineImageFormat;
 #[cfg(any(unix, test))]
 use self::record::MachineBootstrapMode;
+#[cfg(test)]
+use self::record::MachineImageFormat;
 use self::record::{
     MachineConfigRecord, MachineImageSource, MachineLifecycle, MachineManagerState, MachinePaths,
     MachineProvider, MachineRootLayout, MachineStateRecord, MachineVolume,

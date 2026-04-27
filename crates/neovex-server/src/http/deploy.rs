@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::http::header::AUTHORIZATION;
@@ -9,9 +10,15 @@ use serde_json::Value;
 
 use super::*;
 use crate::ConvexRegistry;
+use crate::adapters::cloud_functions::{
+    CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
+    CLOUD_FUNCTIONS_RUNTIME_BUNDLE_FILE, CLOUD_FUNCTIONS_RUNTIME_BUNDLE_SHA256_FILE,
+    CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsRegistry, CloudFunctionsTriggerExecutor,
+};
 use crate::adapters::convex::{
     ConvexFunctionDeploySummary, ConvexHttpRouteDeploySummary, ConvexRegistryDeploySummary,
 };
+use crate::application_auth::ApplicationAuthVerifier;
 
 static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -21,25 +28,75 @@ pub(crate) async fn deploy_app(
     Json(request): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, AppError> {
     authorize_deploy(&state, &headers)?;
-    let (previous_generation, previous_registry) = state.convex_registry.snapshot();
+    let previous_generation = state.deploy_generation.current();
+    let previous_registry = state.convex_registry.current();
+    let previous_cloud_functions_registry = state.cloud_functions_registry.current();
     let runtime_limits = previous_registry
         .as_ref()
         .map(|registry| registry.runtime_limits())
+        .or_else(|| {
+            previous_cloud_functions_registry
+                .as_ref()
+                .map(|registry| registry.runtime_limits())
+        })
         .unwrap_or_default();
     let previous_summary = previous_registry
         .as_deref()
         .map(ConvexRegistry::deploy_summary);
 
     let staged = stage_deploy_artifacts(&request.artifacts)?;
-    let next_registry =
-        ConvexRegistry::from_app_dir(staged.app_dir())?.with_runtime_limits(runtime_limits);
-    let next_summary = next_registry.deploy_summary();
+    let next_registry = staged
+        .includes_convex()
+        .then(|| {
+            ConvexRegistry::from_app_dir(staged.app_dir())
+                .map(|registry| registry.with_runtime_limits(runtime_limits.clone()))
+        })
+        .transpose()?;
+    let next_summary = next_registry
+        .as_ref()
+        .map(ConvexRegistry::deploy_summary)
+        .or(previous_summary.clone())
+        .unwrap_or_else(DeployDiff::empty_summary);
     let diff = DeployDiff::from_summaries(previous_summary.as_ref(), &next_summary);
+    let next_cloud_functions_registry = staged
+        .includes_cloud_functions()
+        .then(|| {
+            CloudFunctionsRegistry::from_app_dir(staged.app_dir())
+                .map(|registry| registry.with_runtime_limits(runtime_limits.clone()))
+        })
+        .transpose()?;
 
     let generation = if request.dry_run {
         previous_generation
     } else {
-        state.convex_registry.activate(next_registry).0
+        if let Some(next_registry) = next_registry {
+            let next_registry = Arc::new(next_registry);
+            let application_auth_verifier: Arc<dyn ApplicationAuthVerifier> = next_registry.clone();
+            state
+                .application_auth_verifier
+                .activate(application_auth_verifier);
+            state.convex_registry.activate_shared(next_registry);
+        }
+        if let Some(next_cloud_functions_registry) = next_cloud_functions_registry {
+            state
+                .cloud_functions_registry
+                .activate(next_cloud_functions_registry);
+            let registry = state
+                .cloud_functions_registry
+                .current()
+                .expect("cloud functions registry should be active after activation");
+            state
+                .service
+                .install_trigger_registrations(registry.trigger_registrations()?)?;
+            state.service.install_trigger_invocation_executor(Arc::new(
+                CloudFunctionsTriggerExecutor::new(
+                    state.service.clone(),
+                    registry,
+                    state.runtime_service_registry(),
+                ),
+            ))?;
+        }
+        state.deploy_generation.advance().0
     };
 
     Ok(Json(DeployResponse {
@@ -85,6 +142,14 @@ pub(crate) struct DeployRequest {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct DeployArtifacts {
+    #[serde(default)]
+    convex: Option<ConvexDeployArtifacts>,
+    #[serde(default)]
+    cloud_functions: Option<CloudFunctionsDeployArtifacts>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConvexDeployArtifacts {
     functions_json: Value,
     #[serde(default)]
     http_routes_json: Option<Value>,
@@ -96,6 +161,14 @@ pub(crate) struct DeployArtifacts {
     bundle_mjs: Option<String>,
     #[serde(default)]
     bundle_sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CloudFunctionsDeployArtifacts {
+    artifact_json: Value,
+    targets_json: Value,
+    bundle_mjs: String,
+    bundle_sha256: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,17 +215,21 @@ pub(crate) struct DeployHttpRouteChange {
 }
 
 impl DeployDiff {
-    fn from_summaries(
-        previous: Option<&ConvexRegistryDeploySummary>,
-        next: &ConvexRegistryDeploySummary,
-    ) -> Self {
-        let empty = ConvexRegistryDeploySummary {
+    fn empty_summary() -> ConvexRegistryDeploySummary {
+        ConvexRegistryDeploySummary {
             functions: Vec::new(),
             http_routes: Vec::new(),
             schema_fingerprint: None,
             index_fingerprint: None,
             runtime_bundle_fingerprint: None,
-        };
+        }
+    }
+
+    fn from_summaries(
+        previous: Option<&ConvexRegistryDeploySummary>,
+        next: &ConvexRegistryDeploySummary,
+    ) -> Self {
+        let empty = Self::empty_summary();
         let previous = previous.unwrap_or(&empty);
         Self {
             functions: diff_functions(&previous.functions, &next.functions),
@@ -254,11 +331,21 @@ impl DeployHttpRouteChange {
 
 struct StagedDeployArtifacts {
     app_dir: PathBuf,
+    includes_convex: bool,
+    includes_cloud_functions: bool,
 }
 
 impl StagedDeployArtifacts {
     fn app_dir(&self) -> &Path {
         &self.app_dir
+    }
+
+    fn includes_convex(&self) -> bool {
+        self.includes_convex
+    }
+
+    fn includes_cloud_functions(&self) -> bool {
+        self.includes_cloud_functions
     }
 }
 
@@ -269,57 +356,107 @@ impl Drop for StagedDeployArtifacts {
 }
 
 fn stage_deploy_artifacts(artifacts: &DeployArtifacts) -> Result<StagedDeployArtifacts, Error> {
-    validate_bundle_pair(artifacts)?;
+    validate_deploy_artifacts(artifacts)?;
     let app_dir = std::env::temp_dir().join(format!(
         "neovex-deploy-{}-{}",
         std::process::id(),
         STAGING_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let convex_dir = app_dir.join(".neovex").join("convex");
-    std::fs::create_dir_all(&convex_dir).map_err(|error| {
-        Error::InvalidInput(format!(
-            "failed to create deploy staging directory {}: {error}",
-            convex_dir.display()
-        ))
-    })?;
-
-    write_json_file(
-        &convex_dir.join("functions.json"),
-        &artifacts.functions_json,
-    )?;
-    if let Some(value) = &artifacts.http_routes_json {
-        write_json_file(&convex_dir.join("http_routes.json"), value)?;
-    }
-    if let Some(value) = &artifacts.schema_json {
-        write_json_file(&convex_dir.join("schema.json"), value)?;
-    }
-    if let Some(value) = &artifacts.auth_config_json {
-        write_json_file(&convex_dir.join("auth.config.json"), value)?;
-    }
-    if let Some(bundle) = &artifacts.bundle_mjs {
-        std::fs::write(convex_dir.join("bundle.mjs"), bundle).map_err(|error| {
-            Error::InvalidInput(format!("failed to stage runtime bundle: {error}"))
+    if let Some(convex) = &artifacts.convex {
+        let convex_dir = app_dir.join(".neovex").join("convex");
+        std::fs::create_dir_all(&convex_dir).map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to create deploy staging directory {}: {error}",
+                convex_dir.display()
+            ))
         })?;
-    }
-    if let Some(hash) = &artifacts.bundle_sha256 {
-        std::fs::write(convex_dir.join("bundle.sha256"), hash).map_err(|error| {
-            Error::InvalidInput(format!("failed to stage runtime bundle hash: {error}"))
-        })?;
+        write_json_file(&convex_dir.join("functions.json"), &convex.functions_json)?;
+        if let Some(value) = &convex.http_routes_json {
+            write_json_file(&convex_dir.join("http_routes.json"), value)?;
+        }
+        if let Some(value) = &convex.schema_json {
+            write_json_file(&convex_dir.join("schema.json"), value)?;
+        }
+        if let Some(value) = &convex.auth_config_json {
+            write_json_file(&convex_dir.join("auth.config.json"), value)?;
+        }
+        if let Some(bundle) = &convex.bundle_mjs {
+            std::fs::write(convex_dir.join("bundle.mjs"), bundle).map_err(|error| {
+                Error::InvalidInput(format!("failed to stage runtime bundle: {error}"))
+            })?;
+        }
+        if let Some(hash) = &convex.bundle_sha256 {
+            std::fs::write(convex_dir.join("bundle.sha256"), hash).map_err(|error| {
+                Error::InvalidInput(format!("failed to stage runtime bundle hash: {error}"))
+            })?;
+        }
     }
 
-    Ok(StagedDeployArtifacts { app_dir })
+    if let Some(cloud_functions) = &artifacts.cloud_functions {
+        let cloud_functions_dir = app_dir.join(CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR);
+        std::fs::create_dir_all(&cloud_functions_dir).map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to create deploy staging directory {}: {error}",
+                cloud_functions_dir.display()
+            ))
+        })?;
+        write_json_file(
+            &cloud_functions_dir.join(CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE),
+            &cloud_functions.artifact_json,
+        )?;
+        write_json_file(
+            &cloud_functions_dir.join(CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE),
+            &cloud_functions.targets_json,
+        )?;
+        std::fs::write(
+            cloud_functions_dir.join(CLOUD_FUNCTIONS_RUNTIME_BUNDLE_FILE),
+            &cloud_functions.bundle_mjs,
+        )
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to stage cloud functions runtime bundle: {error}"
+            ))
+        })?;
+        std::fs::write(
+            cloud_functions_dir.join(CLOUD_FUNCTIONS_RUNTIME_BUNDLE_SHA256_FILE),
+            &cloud_functions.bundle_sha256,
+        )
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to stage cloud functions runtime bundle hash: {error}"
+            ))
+        })?;
+    }
+
+    Ok(StagedDeployArtifacts {
+        app_dir,
+        includes_convex: artifacts.convex.is_some(),
+        includes_cloud_functions: artifacts.cloud_functions.is_some(),
+    })
 }
 
-fn validate_bundle_pair(artifacts: &DeployArtifacts) -> Result<(), Error> {
-    match (&artifacts.bundle_mjs, &artifacts.bundle_sha256) {
-        (Some(_), Some(_)) | (None, None) => Ok(()),
-        (Some(_), None) => Err(Error::InvalidInput(
-            "deploy artifact bundle_mjs requires bundle_sha256".to_string(),
-        )),
-        (None, Some(_)) => Err(Error::InvalidInput(
-            "deploy artifact bundle_sha256 requires bundle_mjs".to_string(),
-        )),
+fn validate_deploy_artifacts(artifacts: &DeployArtifacts) -> Result<(), Error> {
+    if artifacts.convex.is_none() && artifacts.cloud_functions.is_none() {
+        return Err(Error::InvalidInput(
+            "deploy request must include convex and/or cloud functions artifacts".to_string(),
+        ));
     }
+    if let Some(convex) = &artifacts.convex {
+        match (&convex.bundle_mjs, &convex.bundle_sha256) {
+            (Some(_), Some(_)) | (None, None) => {}
+            (Some(_), None) => {
+                return Err(Error::InvalidInput(
+                    "deploy artifact bundle_mjs requires bundle_sha256".to_string(),
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(Error::InvalidInput(
+                    "deploy artifact bundle_sha256 requires bundle_mjs".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_json_file(path: &Path, value: &Value) -> Result<(), Error> {

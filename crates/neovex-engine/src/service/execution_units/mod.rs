@@ -7,6 +7,7 @@ use crate::tenant::TenantRuntime;
 
 use super::Service;
 
+mod batch;
 mod commit;
 mod reads;
 mod staging;

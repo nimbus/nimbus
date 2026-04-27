@@ -12,7 +12,7 @@ pub use access::{
 };
 #[cfg(test)]
 pub(crate) use audit::LocalServerAuditRecord;
-pub(crate) use audit::{LocalServerAuditEvent, origin_from_headers, tenant_id_from_path};
+pub(crate) use audit::{LocalServerAuditEvent, origin_from_headers, tenant_id_from_request};
 pub use discovery::{
     SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,
     read_live_server_discovery,

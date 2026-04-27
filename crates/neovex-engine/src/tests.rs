@@ -614,7 +614,7 @@ pub(crate) async fn create_service_with_durable_unapplied_task(
     let document_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
-        .map(|write| write.doc_id)
+        .map(|write| write.doc_id.clone())
         .expect("durable commit should include the inserted document id");
 
     (data_dir, service, tenant_id, faults, document_id)
@@ -652,7 +652,7 @@ async fn service_missing_document_operations_return_not_found() {
     let missing_id = neovex_core::DocumentId::new();
 
     let get_error = service
-        .get_document(&tenant_id, &tasks_table(), missing_id)
+        .get_document(&tenant_id, &tasks_table(), missing_id.clone())
         .expect_err("missing get should fail");
     assert!(matches!(get_error, Error::DocumentNotFound(_)));
 
@@ -660,14 +660,14 @@ async fn service_missing_document_operations_return_not_found() {
         .update_document(
             &tenant_id,
             tasks_table(),
-            missing_id,
+            missing_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
         )
         .expect_err("missing update should fail");
     assert!(matches!(update_error, Error::DocumentNotFound(_)));
 
     let delete_error = service
-        .delete_document(&tenant_id, tasks_table(), missing_id)
+        .delete_document(&tenant_id, tasks_table(), missing_id.clone())
         .expect_err("missing delete should fail");
     assert!(matches!(delete_error, Error::DocumentNotFound(_)));
 }
@@ -705,6 +705,31 @@ async fn service_tenant_data_is_isolated_across_tenants() {
     assert_eq!(beta_docs.len(), 1);
     assert_eq!(alpha_docs[0].fields.get("title"), Some(&json!("Alpha")));
     assert_eq!(beta_docs[0].fields.get("title"), Some(&json!("Beta")));
+}
+
+#[tokio::test]
+async fn service_insert_document_with_explicit_id_round_trips_firestore_style_key() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let explicit_id =
+        DocumentId::from_key("cities.SF-42".to_string()).expect("explicit id should be valid");
+
+    let inserted_id = service
+        .insert_document_with_id(
+            &tenant_id,
+            tasks_table(),
+            explicit_id.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("San Francisco"))]),
+        )
+        .expect("explicit insert should succeed");
+
+    assert_eq!(inserted_id, explicit_id);
+    let document = service
+        .get_document(&tenant_id, &tasks_table(), explicit_id.clone())
+        .expect("explicitly keyed document should exist");
+    assert_eq!(document.id, explicit_id);
+    assert_eq!(document.get_field("title"), Some(&json!("San Francisco")));
 }
 
 #[tokio::test]
@@ -829,7 +854,7 @@ async fn service_validates_update_against_full_document() {
         .update_document(
             &tenant_id,
             TableName::new("users").expect("table name should be valid"),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("age".to_string(), json!("not a number"))]),
         )
         .expect_err("update should fail");

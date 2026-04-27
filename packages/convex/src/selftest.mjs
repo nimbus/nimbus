@@ -506,7 +506,8 @@ async function testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule) 
   socket.open();
   await delay(0);
 
-  assert.deepEqual(socket.sent[0], {
+  assertClientHello(socket.sent[0]);
+  assert.deepEqual(socket.sent[1], {
     type: "subscribe_named",
     request_id: "convex-1",
     name: "messages:list",
@@ -515,7 +516,7 @@ async function testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule) 
 
   socket.message({
     type: "subscription_result",
-    request_id: "convex-1",
+    request_id: socket.sent[1].request_id,
     subscription_id: 7,
     data: [{ body: "hello" }],
   });
@@ -580,12 +581,13 @@ async function testReconnectResubscribesActiveQueries(browserModule) {
 
     firstSocket.open();
     await delay(0);
-    assert.equal(firstSocket.sent.length, 1);
-    assert.equal(firstSocket.sent[0].type, "subscribe_named");
-    assert.equal(firstSocket.sent[0].name, "messages:list");
-    assert.deepEqual(firstSocket.sent[0].args, { author: "Ada" });
+    assert.equal(firstSocket.sent.length, 2);
+    assertClientHello(firstSocket.sent[0]);
+    assert.equal(firstSocket.sent[1].type, "subscribe_named");
+    assert.equal(firstSocket.sent[1].name, "messages:list");
+    assert.deepEqual(firstSocket.sent[1].args, { author: "Ada" });
 
-    const firstRequestId = firstSocket.sent[0].request_id;
+    const firstRequestId = firstSocket.sent[1].request_id;
     firstSocket.message({
       type: "subscription_result",
       request_id: firstRequestId,
@@ -603,15 +605,16 @@ async function testReconnectResubscribesActiveQueries(browserModule) {
 
     secondSocket.open();
     await delay(0);
-    assert.equal(secondSocket.sent.length, 1);
-    assert.equal(secondSocket.sent[0].type, "subscribe_named");
-    assert.equal(secondSocket.sent[0].name, "messages:list");
-    assert.deepEqual(secondSocket.sent[0].args, { author: "Ada" });
-    assert.notEqual(secondSocket.sent[0].request_id, firstRequestId);
+    assert.equal(secondSocket.sent.length, 2);
+    assertClientHello(secondSocket.sent[0]);
+    assert.equal(secondSocket.sent[1].type, "subscribe_named");
+    assert.equal(secondSocket.sent[1].name, "messages:list");
+    assert.deepEqual(secondSocket.sent[1].args, { author: "Ada" });
+    assert.notEqual(secondSocket.sent[1].request_id, firstRequestId);
 
     secondSocket.message({
       type: "subscription_result",
-      request_id: secondSocket.sent[0].request_id,
+      request_id: secondSocket.sent[1].request_id,
       subscription_id: 11,
       data: [{ body: "second" }],
     });
@@ -688,17 +691,18 @@ async function testSocketAuthenticatesBeforeSubscriptions(browserModule) {
     socket.open();
     await delay(0);
 
-    assert.deepEqual(socket.sent[0], {
+    assertClientHello(socket.sent[0]);
+    assert.deepEqual(socket.sent[1], {
       type: "authenticate",
       token: "socket-token",
     });
-    assert.equal(socket.sent.length, 1);
+    assert.equal(socket.sent.length, 2);
 
     socket.message({ type: "authenticated", is_authenticated: true });
     await delay(0);
 
-    assert.equal(socket.sent[1].type, "subscribe_named");
-    assert.equal(socket.sent[1].name, "messages:list");
+    assert.equal(socket.sent[2].type, "subscribe_named");
+    assert.equal(socket.sent[2].name, "messages:list");
     assert.equal(authTransitions.at(-1), true);
 
     client.close();
@@ -734,14 +738,15 @@ async function testSocketAuthErrorForcesTokenRefresh(browserModule) {
     const socket = FakeWebSocket.instances[0];
     socket.open();
     await delay(0);
-    assert.deepEqual(socket.sent[0], {
+    assertClientHello(socket.sent[0]);
+    assert.deepEqual(socket.sent[1], {
       type: "authenticate",
       token: "stale-token",
     });
 
-    socket.message({ type: "auth_error", message: "expired" });
+    socket.message({ type: "error", error: { message: "expired" } });
     await delay(0);
-    assert.deepEqual(socket.sent[1], {
+    assert.deepEqual(socket.sent[2], {
       type: "authenticate",
       token: "fresh-token",
     });
@@ -750,7 +755,7 @@ async function testSocketAuthErrorForcesTokenRefresh(browserModule) {
     await delay(0);
 
     assert.deepEqual(authRequests, [false, true]);
-    assert.equal(socket.sent[2].type, "subscribe_named");
+    assert.equal(socket.sent[3].type, "subscribe_named");
     assert.equal(authTransitions.at(-1), true);
 
     client.close();
@@ -793,7 +798,8 @@ async function testSocketSchedulesPreemptiveTokenRefresh(browserModule) {
     socket.open();
     await delay(0);
 
-    assert.deepEqual(socket.sent[0], {
+    assertClientHello(socket.sent[0]);
+    assert.deepEqual(socket.sent[1], {
       type: "authenticate",
       token: initialToken,
     });
@@ -839,13 +845,14 @@ async function testPaginatedSubscriptionsUseNamedConvexFlow(browserModule) {
     const socket = FakeWebSocket.instances[0];
     socket.open();
     await delay(0);
-    assert.equal(socket.sent.length, 1);
-    assert.equal(socket.sent[0].type, "subscribe_named");
-    assert.equal(socket.sent[0].name, "messages:listPage");
+    assert.equal(socket.sent.length, 2);
+    assertClientHello(socket.sent[0]);
+    assert.equal(socket.sent[1].type, "subscribe_named");
+    assert.equal(socket.sent[1].name, "messages:listPage");
 
     socket.message({
       type: "subscription_result",
-      request_id: socket.sent[0].request_id,
+      request_id: socket.sent[1].request_id,
       subscription_id: 5,
       data: [{ body: "page item" }],
     });
@@ -884,11 +891,12 @@ async function testPaginatedSubscriptionsCarryWindowSize(browserModule) {
     const socket = FakeWebSocket.instances[0];
     socket.open();
     await delay(0);
-    assert.equal(socket.sent.length, 1);
-    assert.equal(socket.sent[0].type, "subscribe_named");
-    assert.equal(socket.sent[0].name, "messages:listPage");
-    assert.equal(socket.sent[0].page_size, 7);
-    assert.equal(socket.sent[0].cursor, null);
+    assert.equal(socket.sent.length, 2);
+    assertClientHello(socket.sent[0]);
+    assert.equal(socket.sent[1].type, "subscribe_named");
+    assert.equal(socket.sent[1].name, "messages:listPage");
+    assert.equal(socket.sent[1].page_size, 7);
+    assert.equal(socket.sent[1].cursor, null);
 
     unsubscribe();
     client.close();
@@ -927,13 +935,14 @@ async function testPaginatedReconnectPreservesWindowSizeAndSuppressesUnchangedRe
     firstSocket.open();
     await delay(0);
 
-    assert.equal(firstSocket.sent[0].type, "subscribe_named");
-    assert.equal(firstSocket.sent[0].name, "messages:listPage");
-    assert.equal(firstSocket.sent[0].page_size, 3);
+    assertClientHello(firstSocket.sent[0]);
+    assert.equal(firstSocket.sent[1].type, "subscribe_named");
+    assert.equal(firstSocket.sent[1].name, "messages:listPage");
+    assert.equal(firstSocket.sent[1].page_size, 3);
 
     firstSocket.message({
       type: "subscription_result",
-      request_id: firstSocket.sent[0].request_id,
+      request_id: firstSocket.sent[1].request_id,
       subscription_id: 13,
       data: [{ body: "stable page item" }],
     });
@@ -945,14 +954,15 @@ async function testPaginatedReconnectPreservesWindowSizeAndSuppressesUnchangedRe
     secondSocket.open();
     await delay(0);
 
-    assert.equal(secondSocket.sent[0].type, "subscribe_named");
-    assert.equal(secondSocket.sent[0].name, "messages:listPage");
-    assert.equal(secondSocket.sent[0].page_size, 3);
-    assert.equal(secondSocket.sent[0].cursor, null);
+    assertClientHello(secondSocket.sent[0]);
+    assert.equal(secondSocket.sent[1].type, "subscribe_named");
+    assert.equal(secondSocket.sent[1].name, "messages:listPage");
+    assert.equal(secondSocket.sent[1].page_size, 3);
+    assert.equal(secondSocket.sent[1].cursor, null);
 
     secondSocket.message({
       type: "subscription_result",
-      request_id: secondSocket.sent[0].request_id,
+      request_id: secondSocket.sent[1].request_id,
       subscription_id: 14,
       data: [{ body: "stable page item" }],
     });
@@ -991,7 +1001,7 @@ async function testUnchangedSubscriptionResultsDoNotNotifyAgain(browserModule) {
 
     socket.message({
       type: "subscription_result",
-      request_id: socket.sent[0].request_id,
+      request_id: socket.sent[1].request_id,
       subscription_id: 9,
       data: [{ body: "same" }],
     });
@@ -1044,7 +1054,7 @@ async function testReconnectDoesNotNotifyWhenResubscribedResultIsUnchanged(brows
 
     firstSocket.message({
       type: "subscription_result",
-      request_id: firstSocket.sent[0].request_id,
+      request_id: firstSocket.sent[1].request_id,
       subscription_id: 3,
       data: [{ body: "stable" }],
     });
@@ -1058,7 +1068,7 @@ async function testReconnectDoesNotNotifyWhenResubscribedResultIsUnchanged(brows
 
     secondSocket.message({
       type: "subscription_result",
-      request_id: secondSocket.sent[0].request_id,
+      request_id: secondSocket.sent[1].request_id,
       subscription_id: 4,
       data: [{ body: "stable" }],
     });
@@ -1101,6 +1111,18 @@ function makeJwt(payload) {
   const encode = (value) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encode({ alg: "RS256", typ: "JWT" })}.${encode(payload)}.signature`;
+}
+
+function assertClientHello(message) {
+  assert.deepEqual(message, {
+    type: "client_hello",
+    protocol: "neovex.v2",
+    client: {
+      kind: "browser",
+      version: "unknown",
+    },
+    capabilities: ["queries.v1", "subscriptions.v1"],
+  });
 }
 
 class FakeWebSocket {

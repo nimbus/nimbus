@@ -19,6 +19,7 @@ base64.workspace = true
 futures.workspace = true
 neovex-core = { path = "../neovex-core" }
 neovex-storage = { path = "../neovex-storage" }
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true

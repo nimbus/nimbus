@@ -6,9 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use libsql::{Builder, Database};
 use neovex_core::{
-    CronJob, CronSchedule, DocumentId, DurableMutationRecord, FieldSchema, FieldType,
-    IndexDefinition, Mutation, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult,
-    SequenceNumber, TableName, TableSchema, TenantId, Timestamp, WriteOp, WriteOpType,
+    CollectionName, CronJob, CronSchedule, Document, DocumentId, DocumentLocator, DocumentPath,
+    DurableMutationRecord, FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding,
+    ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName, TableSchema,
+    TenantId, Timestamp, WriteOp, WriteOpType,
 };
 use serial_test::serial;
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
@@ -182,7 +183,7 @@ async fn libsql_opened_tenant_materializes_local_sqlite_snapshot() {
             &config,
             &registration.namespace,
             &table_schema,
-            document_id,
+            document_id.clone(),
             serde_json::json!({
                 "rank": 5,
                 "title": "from-primary"
@@ -376,6 +377,42 @@ async fn libsql_direct_writes_refresh_derivative_cache_and_round_trip_journal_pr
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn libsql_trigger_delivery_cursor_round_trips_in_remote_metadata() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("trigger-cursor").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+
+        assert_eq!(
+            opened
+                .store
+                .trigger_delivery_cursor()
+                .expect("cursor should load"),
+            neovex_core::TriggerDeliveryCursor::default()
+        );
+
+        opened
+            .store
+            .set_trigger_delivery_cursor(neovex_core::TriggerDeliveryCursor::new(SequenceNumber(
+                17,
+            )))
+            .expect("cursor should persist");
+
+        assert_eq!(
+            opened
+                .store
+                .trigger_delivery_cursor()
+                .expect("cursor should round trip"),
+            neovex_core::TriggerDeliveryCursor::new(SequenceNumber(17))
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("batch").expect("tenant id should build");
@@ -428,6 +465,7 @@ async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
                 &[ResolvedWrite::Insert {
                     document: document.clone(),
                     indexes: Vec::new(),
+                    resource_path_binding: None,
                 }],
                 &[ResolvedScheduleOp::Insert {
                     job: scheduled_job.clone(),
@@ -475,7 +513,7 @@ async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
             .claim_due_jobs(Timestamp(6_000))
             .expect("second claim should succeed");
         let result = ScheduledJobResult {
-            id: scheduled_job.id,
+            id: scheduled_job.id.clone(),
             run_at: Timestamp(6_000),
             finished_at: Timestamp(6_500),
             mutation: claimed[0].mutation.clone(),
@@ -503,6 +541,7 @@ async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
             schedule: CronSchedule::Interval { seconds: 10 },
             mutation: Mutation::Insert {
                 table: TableName::new("tasks").expect("table name should build"),
+                id: None,
                 fields: serde_json::Map::from_iter([(
                     "title".to_string(),
                     serde_json::json!("heartbeat"),
@@ -547,6 +586,97 @@ async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn libsql_execution_unit_batch_round_trips_resource_path_bindings() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("resource-paths").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("landmarks_store").expect("table name should build");
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("rank".to_string(), serde_json::json!(1))]),
+        );
+        let binding = ResourcePathBinding::new(
+            DocumentLocator::new(table.clone(), document.id.clone()),
+            DocumentPath::from_segments(["cities", "SF", "landmarks", "golden-gate"])
+                .expect("document path should parse"),
+        );
+
+        let insert_commit = opened
+            .store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Insert {
+                    document: document.clone(),
+                    indexes: Vec::new(),
+                    resource_path_binding: Some(binding.clone()),
+                }],
+                &[],
+            )
+            .expect("insert batch should succeed")
+            .expect("insert batch should emit a commit");
+        assert_eq!(insert_commit.sequence, SequenceNumber(1));
+
+        let snapshot = opened
+            .store
+            .read_snapshot()
+            .expect("replica snapshot should open after insert");
+        assert_eq!(
+            snapshot
+                .locator_for_document_path(&binding.document_path)
+                .expect("path lookup should succeed"),
+            Some(binding.locator.clone())
+        );
+        assert_eq!(
+            snapshot
+                .scan_collection_group_bindings(
+                    &CollectionName::new("landmarks").expect("collection group should parse"),
+                )
+                .expect("collection-group scan should succeed"),
+            vec![binding.clone()]
+        );
+        drop(snapshot);
+
+        let delete_commit = opened
+            .store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Delete {
+                    previous: document,
+                    indexes: Vec::new(),
+                }],
+                &[],
+            )
+            .expect("delete batch should succeed")
+            .expect("delete batch should emit a commit");
+        assert_eq!(delete_commit.sequence, SequenceNumber(2));
+
+        let snapshot = opened
+            .store
+            .read_snapshot()
+            .expect("replica snapshot should open after delete");
+        assert!(
+            snapshot
+                .resource_path_binding(&binding.locator)
+                .expect("binding lookup should succeed")
+                .is_none(),
+            "delete batch should remove the sidecar binding"
+        );
+        assert!(
+            snapshot
+                .scan_collection_group_bindings(
+                    &CollectionName::new("landmarks").expect("collection group should parse"),
+                )
+                .expect("collection-group scan should succeed")
+                .is_empty(),
+            "delete batch should clear the collection-group index row"
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_records() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("recovery").expect("tenant id should build");
@@ -563,7 +693,9 @@ async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_recor
                 vec![WriteOp {
                     table: first.table.clone(),
                     op_type: WriteOpType::Insert,
-                    doc_id: first.id,
+                    doc_id: first.id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: Some(first.clone()),
                 }],
@@ -576,7 +708,9 @@ async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_recor
                 vec![WriteOp {
                     table: second.table.clone(),
                     op_type: WriteOpType::Insert,
-                    doc_id: second.id,
+                    doc_id: second.id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: Some(second.clone()),
                 }],
@@ -819,6 +953,7 @@ fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
         run_at,
         mutation: Mutation::Insert {
             table: TableName::new("tasks").expect("table name should build"),
+            id: None,
             fields: serde_json::Map::from_iter([("title".to_string(), serde_json::json!(title))]),
         },
         created_at: Timestamp(100),

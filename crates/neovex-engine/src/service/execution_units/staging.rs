@@ -12,6 +12,15 @@ impl MutationExecutionUnit {
         table: TableName,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
+        self.insert_document_with_id(table, None, fields)
+    }
+
+    pub fn insert_document_with_id(
+        &self,
+        table: TableName,
+        document_id: Option<DocumentId>,
+        fields: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<DocumentId> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let table_schema = self.schema_snapshot.get_table(&table).cloned();
         let indexes = table_schema
@@ -22,7 +31,10 @@ impl MutationExecutionUnit {
             })
             .transpose()?
             .unwrap_or_default();
-        let document = Document::new(table.clone(), fields);
+        let document = match document_id {
+            Some(document_id) => Document::with_id(document_id, table.clone(), fields),
+            None => Document::new(table.clone(), fields),
+        };
         enforce_mutation_authorization(
             table_schema.as_ref(),
             AccessAction::Create,
@@ -30,7 +42,14 @@ impl MutationExecutionUnit {
             Some(&document),
             None,
         )?;
-        self.stage_write(table, document.id, None, Some(document.clone()), indexes)?;
+        self.stage_write(
+            table,
+            document.id.clone(),
+            None,
+            Some(document.clone()),
+            indexes,
+            None,
+        )?;
         Ok(document.id)
     }
 
@@ -47,8 +66,8 @@ impl MutationExecutionUnit {
             .map(|table_schema| table_schema.indexes.clone())
             .unwrap_or_default();
         let existing = self
-            .current_document(&table, document_id)?
-            .ok_or(Error::DocumentNotFound(document_id))?;
+            .current_document(&table, &document_id)?
+            .ok_or(Error::DocumentNotFound(document_id.clone()))?;
         let mut document = existing.clone();
         for (field, value) in patch {
             document.fields.insert(field, value);
@@ -63,7 +82,14 @@ impl MutationExecutionUnit {
             Some(&document),
             Some(&existing),
         )?;
-        self.stage_write(table, document_id, Some(existing), Some(document), indexes)?;
+        self.stage_write(
+            table,
+            document_id.clone(),
+            Some(existing),
+            Some(document),
+            indexes,
+            None,
+        )?;
         Ok(document_id)
     }
 
@@ -75,8 +101,8 @@ impl MutationExecutionUnit {
             .map(|table_schema| table_schema.indexes.clone())
             .unwrap_or_default();
         let existing = self
-            .current_document(&table, document_id)?
-            .ok_or(Error::DocumentNotFound(document_id))?;
+            .current_document(&table, &document_id)?
+            .ok_or(Error::DocumentNotFound(document_id.clone()))?;
         enforce_mutation_authorization(
             table_schema.as_ref(),
             AccessAction::Delete,
@@ -84,7 +110,14 @@ impl MutationExecutionUnit {
             None,
             Some(&existing),
         )?;
-        self.stage_write(table, document_id, Some(existing), None, indexes)?;
+        self.stage_write(
+            table,
+            document_id.clone(),
+            Some(existing),
+            None,
+            indexes,
+            None,
+        )?;
         Ok(())
     }
 
@@ -101,7 +134,7 @@ impl MutationExecutionUnit {
             mutation,
             created_at: now,
         };
-        let job_id = job.id;
+        let job_id = job.id.clone();
         self.stage_scheduled_job(job)?;
         Ok(job_id)
     }
@@ -119,7 +152,7 @@ impl MutationExecutionUnit {
             mutation,
             created_at: now,
         };
-        let job_id = job.id;
+        let job_id = job.id.clone();
         self.stage_scheduled_job(job)?;
         Ok(job_id)
     }
@@ -129,16 +162,17 @@ impl MutationExecutionUnit {
         self.stage_scheduled_job_cancellation(job_id)
     }
 
-    fn stage_write(
+    pub(super) fn stage_write(
         &self,
         table: TableName,
         document_id: DocumentId,
         original: Option<Document>,
         current: Option<Document>,
         indexes: Vec<neovex_core::IndexDefinition>,
+        resource_path_binding: Option<neovex_core::ResourcePathBinding>,
     ) -> Result<()> {
         let mut state = self.active_state()?;
-        let key = (table.clone(), document_id);
+        let key = (table.clone(), document_id.clone());
         if !state.staged_writes.contains_key(&key) {
             state.write_order.push(key.clone());
         }
@@ -150,9 +184,15 @@ impl MutationExecutionUnit {
                 original: original.clone(),
                 current: None,
                 indexes: indexes.clone(),
+                resource_path_binding: resource_path_binding.clone(),
             });
         entry.current = current;
         entry.indexes = indexes;
+        if entry.current.is_none() {
+            entry.resource_path_binding = None;
+        } else if let Some(resource_path_binding) = resource_path_binding {
+            entry.resource_path_binding = Some(resource_path_binding);
+        }
 
         if entry.original == entry.current {
             state.staged_writes.remove(&key);
@@ -167,9 +207,9 @@ impl MutationExecutionUnit {
 
     fn stage_scheduled_job(&self, job: neovex_core::ScheduledJob) -> Result<()> {
         let mut state = self.active_state()?;
-        let job_id = job.id;
+        let job_id = job.id.clone();
         if !state.staged_scheduler_jobs.contains_key(&job_id) {
-            state.scheduler_order.push(job_id);
+            state.scheduler_order.push(job_id.clone());
         }
         state
             .staged_scheduler_jobs
@@ -190,7 +230,7 @@ impl MutationExecutionUnit {
                 Err(Error::ScheduledJobNotFound(job_id))
             }
             None => {
-                state.scheduler_order.push(job_id);
+                state.scheduler_order.push(job_id.clone());
                 state
                     .staged_scheduler_jobs
                     .insert(job_id, StagedSchedulerEntry::CancelExisting);

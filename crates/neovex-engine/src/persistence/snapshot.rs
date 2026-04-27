@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use neovex_core::{Document, DocumentId, Result, SequenceNumber, TableName};
+use neovex_core::{
+    CollectionName, Document, DocumentId, ResourcePathBinding, Result, SequenceNumber, TableName,
+};
 use neovex_storage::{
     MySqlReadSnapshot, PostgresReadSnapshot, SqliteReadSnapshot,
     TenantReadSnapshot as RedbReadSnapshot,
@@ -23,6 +25,18 @@ impl TenantPersistenceSnapshot {
         match_tenant_persistence_snapshot!(self, |snapshot| snapshot.get(table, id))
     }
 
+    pub(crate) fn scan_resource_path_bindings(&self) -> Result<Vec<ResourcePathBinding>> {
+        match self {
+            Self::Redb(snapshot) => snapshot.scan_resource_path_bindings(),
+            Self::Sqlite(snapshot) | Self::LibsqlReplica(snapshot) => snapshot
+                .lock()
+                .expect("sqlite read snapshot lock should not be poisoned")
+                .scan_resource_path_bindings(),
+            Self::Postgres(snapshot) => snapshot.scan_resource_path_bindings(),
+            Self::MySql(snapshot) => snapshot.scan_resource_path_bindings(),
+        }
+    }
+
     pub(crate) fn scan_table_matching_cancellable<F>(
         &self,
         table: &TableName,
@@ -40,5 +54,20 @@ impl TenantPersistenceSnapshot {
                 include_document,
             )
         })
+    }
+
+    pub(crate) fn scan_collection_group_bindings(
+        &self,
+        collection_group: &CollectionName,
+    ) -> Result<Vec<ResourcePathBinding>> {
+        match self {
+            Self::Redb(snapshot) => snapshot.scan_collection_group_bindings(collection_group),
+            Self::Sqlite(snapshot) | Self::LibsqlReplica(snapshot) => snapshot
+                .lock()
+                .expect("sqlite read snapshot lock should not be poisoned")
+                .scan_collection_group_bindings(collection_group),
+            Self::Postgres(snapshot) => snapshot.scan_collection_group_bindings(collection_group),
+            Self::MySql(snapshot) => snapshot.scan_collection_group_bindings(collection_group),
+        }
     }
 }

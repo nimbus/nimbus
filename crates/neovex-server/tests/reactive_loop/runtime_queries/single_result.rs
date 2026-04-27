@@ -161,7 +161,7 @@ async fn convex_named_unique_subscription_sends_error_on_duplicate_matches() {
     let duplicate_error = socket.next_json().await;
     assert_eq!(duplicate_error["type"], json!("error"));
     assert!(
-        duplicate_error["message"]
+        duplicate_error["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("multiple documents")

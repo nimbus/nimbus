@@ -19,10 +19,11 @@ impl Service {
         request: ScheduleRequest,
     ) -> Result<JobId> {
         let job = scheduled_job_from_request(self.now(), request);
-        let job_id = job.id;
+        let job_id = job.id.clone();
+        let job_id_for_insert = job_id.clone();
         with_scheduler_runtime(self, tenant_id, move |runtime| {
             runtime.store.insert_scheduled_job(&job)?;
-            Ok(job_id)
+            Ok(job_id_for_insert.clone())
         })?;
         self.wake_scheduler();
         Ok(job_id)
@@ -51,7 +52,7 @@ impl Service {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let job = scheduled_job_from_request(self.now(), request);
-        let job_id = job.id;
+        let job_id = job.id.clone();
         let outcome = write_scheduler_transaction_cancellable(
             self,
             tenant_id,
@@ -59,7 +60,7 @@ impl Service {
             check_cancel,
             move |transaction| {
                 transaction.insert_scheduled_job(&job)?;
-                Ok(job_id)
+                Ok(job_id.clone())
             },
         )
         .await?;
@@ -115,7 +116,7 @@ impl Service {
         let removed = with_scheduler_runtime(self, tenant_id, move |runtime| {
             runtime.store.cancel_scheduled_job(job_id)
         })?;
-        scheduled_job_removed_or_not_found(removed, *job_id)
+        scheduled_job_removed_or_not_found(removed, job_id.clone())
     }
 
     /// Cancels a pending scheduled job before it begins executing asynchronously.
@@ -140,12 +141,13 @@ impl Service {
         Fut: future::Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        let job_id_for_cancel = job_id.clone();
         let outcome = write_scheduler_transaction_cancellable(
             self,
             tenant_id,
             cancel_wait,
             check_cancel,
-            move |transaction| transaction.cancel_scheduled_job(&job_id),
+            move |transaction| transaction.cancel_scheduled_job(&job_id_for_cancel),
         )
         .await?;
         let removed = committed_or_cancelled(outcome)?;
@@ -186,7 +188,7 @@ impl Service {
             runtime
                 .store
                 .get_scheduled_job_result(job_id)?
-                .ok_or(Error::ScheduledJobNotFound(*job_id))
+                .ok_or(Error::ScheduledJobNotFound(job_id.clone()))
         })
     }
 

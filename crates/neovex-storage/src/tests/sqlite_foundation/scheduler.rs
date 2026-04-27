@@ -54,6 +54,7 @@ fn sqlite_execution_unit_batch_rolls_back_when_schedule_ops_fail() {
             &[ResolvedWrite::Insert {
                 document: document.clone(),
                 indexes: Vec::new(),
+                resource_path_binding: None,
             }],
             &[ResolvedScheduleOp::Cancel {
                 job_id: DocumentId::new(),
@@ -95,6 +96,7 @@ fn sqlite_execution_unit_batch_commits_documents_and_schedule_ops_together() {
             &[ResolvedWrite::Insert {
                 document: document.clone(),
                 indexes: Vec::new(),
+                resource_path_binding: None,
             }],
             &[ResolvedScheduleOp::Insert {
                 job: scheduled_job.clone(),
@@ -169,7 +171,7 @@ fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
         .expect("second claim should succeed");
     assert_eq!(claimed.len(), 1);
     let result = ScheduledJobResult {
-        id: job.id,
+        id: job.id.clone(),
         run_at: Timestamp(2_000),
         finished_at: Timestamp(2_500),
         mutation: claimed[0].mutation.clone(),
@@ -194,6 +196,7 @@ fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
         schedule: CronSchedule::Interval { seconds: 10 },
         mutation: Mutation::Insert {
             table: TableName::new("tasks").expect("table name should be valid"),
+            id: None,
             fields: serde_json::Map::from_iter([("title".to_string(), json!("heartbeat"))]),
         },
         enabled: true,

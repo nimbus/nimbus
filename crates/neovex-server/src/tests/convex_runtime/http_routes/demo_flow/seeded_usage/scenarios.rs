@@ -573,7 +573,7 @@ pub(super) async fn assert_seeded_convex_demo_usage_scenario_matches_model(
                             .await
                             .expect("unique query error should parse");
                         assert!(
-                            body["error"]
+                            body["error"]["message"]
                                 .as_str()
                                 .is_some_and(|message| message.contains("multiple documents")),
                             "{}",

@@ -110,7 +110,7 @@ async fn convex_named_unique_query_returns_document_null_or_error() {
         .await
         .expect("duplicate unique query error should parse");
     assert!(
-        duplicate_body["error"]
+        duplicate_body["error"]["message"]
             .as_str()
             .expect("error should be a string")
             .contains("multiple documents")

@@ -22,7 +22,7 @@ pub(super) fn sort_documents(documents: &mut [Document], order: Option<&OrderBy>
             });
         }
         None => {
-            documents.sort_by_key(|left| left.id);
+            documents.sort_by_key(|left| left.id.clone());
         }
     }
     Ok(())

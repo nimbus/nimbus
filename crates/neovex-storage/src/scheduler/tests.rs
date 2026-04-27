@@ -1,6 +1,6 @@
 use neovex_core::{
-    CronJob, CronSchedule, Mutation, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult,
-    Timestamp,
+    CronJob, CronSchedule, DocumentId, Mutation, ScheduledJob, ScheduledJobOutcome,
+    ScheduledJobResult, Timestamp,
 };
 use serde_json::json;
 
@@ -12,6 +12,7 @@ fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
         run_at,
         mutation: Mutation::Insert {
             table: neovex_core::TableName::new("tasks").expect("table name should be valid"),
+            id: None,
             fields: serde_json::Map::from_iter([("title".to_string(), json!(title))]),
         },
         created_at: Timestamp(1_000),
@@ -73,6 +74,35 @@ fn scheduled_job_future_not_due() {
 }
 
 #[test]
+fn scheduled_job_with_firestore_style_id_roundtrips() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let explicit_id =
+        DocumentId::from_key("jobs.alpha-1".to_string()).expect("job id should be valid");
+    let job = ScheduledJob {
+        id: explicit_id.clone(),
+        run_at: Timestamp(1_000),
+        mutation: Mutation::Insert {
+            table: neovex_core::TableName::new("tasks").expect("table name should be valid"),
+            id: None,
+            fields: serde_json::Map::from_iter([("title".to_string(), json!("explicit"))]),
+        },
+        created_at: Timestamp(900),
+    };
+    store
+        .insert_scheduled_job(&job)
+        .expect("scheduled insert should succeed");
+
+    let claimed = store
+        .claim_due_jobs(Timestamp(1_000))
+        .expect("claim should succeed");
+
+    assert_eq!(claimed, vec![job.clone()]);
+    store
+        .complete_scheduled_job(&explicit_id)
+        .expect("complete should succeed");
+}
+
+#[test]
 fn cancel_scheduled_job_removes_pending_entry() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let job = scheduled_insert_job(Timestamp(5_000), "cancel me");
@@ -131,6 +161,7 @@ fn cron_job_crud_and_restart_roundtrip() {
         schedule: CronSchedule::Interval { seconds: 10 },
         mutation: Mutation::Insert {
             table: neovex_core::TableName::new("tasks").expect("table name should be valid"),
+            id: None,
             fields: serde_json::Map::from_iter([("title".to_string(), json!("heartbeat"))]),
         },
         enabled: true,
@@ -237,6 +268,7 @@ fn next_scheduled_work_at_prefers_earliest_pending_or_enabled_cron() {
             schedule: CronSchedule::Interval { seconds: 10 },
             mutation: Mutation::Insert {
                 table: neovex_core::TableName::new("tasks").expect("table name should be valid"),
+                id: None,
                 fields: serde_json::Map::from_iter([("title".to_string(), json!("disabled"))]),
             },
             enabled: false,
@@ -251,6 +283,7 @@ fn next_scheduled_work_at_prefers_earliest_pending_or_enabled_cron() {
             schedule: CronSchedule::Interval { seconds: 10 },
             mutation: Mutation::Insert {
                 table: neovex_core::TableName::new("tasks").expect("table name should be valid"),
+                id: None,
                 fields: serde_json::Map::from_iter([("title".to_string(), json!("heartbeat"))]),
             },
             enabled: true,

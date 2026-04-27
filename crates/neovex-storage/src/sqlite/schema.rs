@@ -163,7 +163,7 @@ where
     let where_clauses = exact_prefix_clauses(&fields[..prefix_len]);
     let order_by = sqlite_order_by_fields_after_exact_prefix(fields, prefix_len);
     Ok(format!(
-        "SELECT id, creation_time, data_json
+        "SELECT id, creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_name = ?1 AND {}
          ORDER BY {}",
@@ -214,7 +214,7 @@ where
     }
 
     Ok(format!(
-        "SELECT id, creation_time, data_json
+        "SELECT id, creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_name = ?1 AND {}
          ORDER BY {}",

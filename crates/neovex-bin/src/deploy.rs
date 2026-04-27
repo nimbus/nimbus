@@ -53,6 +53,14 @@ pub(crate) struct DeployRequest {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct DeployArtifacts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) convex: Option<ConvexDeployArtifacts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cloud_functions: Option<CloudFunctionsDeployArtifacts>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConvexDeployArtifacts {
     pub(crate) functions_json: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) http_routes_json: Option<Value>,
@@ -64,6 +72,14 @@ pub(crate) struct DeployArtifacts {
     pub(crate) bundle_mjs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) bundle_sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CloudFunctionsDeployArtifacts {
+    pub(crate) artifact_json: Value,
+    pub(crate) targets_json: Value,
+    pub(crate) bundle_mjs: String,
+    pub(crate) bundle_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,7 +221,10 @@ fn resolve_deploy_token(
     Ok(token)
 }
 
-fn resolve_deploy_app_dir(explicit_app_dir: Option<&Path>, cwd: &Path) -> io::Result<PathBuf> {
+pub(crate) fn resolve_deploy_app_dir(
+    explicit_app_dir: Option<&Path>,
+    cwd: &Path,
+) -> io::Result<PathBuf> {
     let selected = explicit_app_dir
         .map(|path| resolve_unchecked_path(path, cwd))
         .unwrap_or_else(|| detect_app_dir(cwd));
@@ -216,16 +235,45 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
     for candidate in cwd.ancestors() {
         if candidate.join("neovex").is_dir()
             || candidate.join("convex").is_dir()
+            || candidate.join("firebase.json").is_file()
+            || package_declares_functions_framework(&candidate.join("package.json"))
             || candidate
                 .join(".neovex")
                 .join("convex")
                 .join("functions.json")
+                .is_file()
+            || candidate
+                .join(".neovex")
+                .join("firebase")
+                .join("artifact.json")
                 .is_file()
         {
             return candidate.to_path_buf();
         }
     }
     cwd.to_path_buf()
+}
+
+fn package_declares_functions_framework(package_json_path: &Path) -> bool {
+    let Ok(contents) = fs::read_to_string(package_json_path) else {
+        return false;
+    };
+    let Ok(package_json) = serde_json::from_str::<Value>(&contents) else {
+        return false;
+    };
+    [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ]
+    .into_iter()
+    .any(|field| {
+        package_json
+            .get(field)
+            .and_then(Value::as_object)
+            .is_some_and(|deps| deps.contains_key("@google-cloud/functions-framework"))
+    })
 }
 
 fn resolve_unchecked_path(path: &Path, cwd: &Path) -> PathBuf {
@@ -330,31 +378,23 @@ fn append_route_lines(lines: &mut Vec<String>, marker: &str, routes: &[DeployHtt
 
 impl DeployArtifacts {
     pub(crate) fn from_app_dir(app_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let generated_dir = generated_convex_dir(app_dir);
-        let functions_json = read_required_json(&generated_dir.join("functions.json"))?;
-        let http_routes_json = read_optional_json(&generated_dir.join("http_routes.json"))?;
-        let schema_json = read_optional_json(&generated_dir.join("schema.json"))?;
-        let auth_config_json = read_optional_json(&generated_dir.join("auth.config.json"))?;
-        let bundle_mjs = read_optional_text(&generated_dir.join("bundle.mjs"))?;
-        let bundle_sha256 = read_optional_text(&generated_dir.join("bundle.sha256"))?;
-        if bundle_mjs.is_some() != bundle_sha256.is_some() {
+        let convex = package_convex_artifacts(app_dir)?;
+        let cloud_functions = package_cloud_functions_artifacts(app_dir)?;
+        if convex.is_none() && cloud_functions.is_none() {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::NotFound,
                 format!(
-                    "runtime bundle artifacts in {} must include both bundle.mjs and bundle.sha256",
-                    generated_dir.display()
+                    "no generated deploy artifacts found under {} or {}",
+                    generated_convex_dir(app_dir).display(),
+                    generated_cloud_functions_dir(app_dir).display(),
                 ),
             )
             .into());
         }
 
         Ok(Self {
-            functions_json,
-            http_routes_json,
-            schema_json,
-            auth_config_json,
-            bundle_mjs,
-            bundle_sha256,
+            convex,
+            cloud_functions,
         })
     }
 }
@@ -386,6 +426,61 @@ pub(crate) fn deploy_endpoint_url(base_url: &str) -> String {
 
 fn generated_convex_dir(app_dir: &Path) -> PathBuf {
     app_dir.join(".neovex").join("convex")
+}
+
+fn generated_cloud_functions_dir(app_dir: &Path) -> PathBuf {
+    app_dir.join(".neovex").join("firebase")
+}
+
+fn package_convex_artifacts(
+    app_dir: &Path,
+) -> Result<Option<ConvexDeployArtifacts>, Box<dyn std::error::Error>> {
+    let generated_dir = generated_convex_dir(app_dir);
+    let Some(functions_json) = read_optional_json(&generated_dir.join("functions.json"))? else {
+        return Ok(None);
+    };
+    let http_routes_json = read_optional_json(&generated_dir.join("http_routes.json"))?;
+    let schema_json = read_optional_json(&generated_dir.join("schema.json"))?;
+    let auth_config_json = read_optional_json(&generated_dir.join("auth.config.json"))?;
+    let bundle_mjs = read_optional_text(&generated_dir.join("bundle.mjs"))?;
+    let bundle_sha256 = read_optional_text(&generated_dir.join("bundle.sha256"))?;
+    if bundle_mjs.is_some() != bundle_sha256.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "runtime bundle artifacts in {} must include both bundle.mjs and bundle.sha256",
+                generated_dir.display()
+            ),
+        )
+        .into());
+    }
+
+    Ok(Some(ConvexDeployArtifacts {
+        functions_json,
+        http_routes_json,
+        schema_json,
+        auth_config_json,
+        bundle_mjs,
+        bundle_sha256,
+    }))
+}
+
+fn package_cloud_functions_artifacts(
+    app_dir: &Path,
+) -> Result<Option<CloudFunctionsDeployArtifacts>, Box<dyn std::error::Error>> {
+    let generated_dir = generated_cloud_functions_dir(app_dir);
+    let Some(artifact_json) = read_optional_json(&generated_dir.join("artifact.json"))? else {
+        return Ok(None);
+    };
+    let targets_json = read_required_json(&generated_dir.join("targets.json"))?;
+    let bundle_mjs = read_required_text(&generated_dir.join("bundle.mjs"))?;
+    let bundle_sha256 = read_required_text(&generated_dir.join("bundle.sha256"))?;
+    Ok(Some(CloudFunctionsDeployArtifacts {
+        artifact_json,
+        targets_json,
+        bundle_mjs,
+        bundle_sha256,
+    }))
 }
 
 fn read_required_json(path: &Path) -> Result<Value, Box<dyn std::error::Error>> {
@@ -422,6 +517,19 @@ fn parse_json_file(path: &Path, contents: &str) -> Result<Value, Box<dyn std::er
             io::ErrorKind::InvalidData,
             format!(
                 "failed to parse deploy artifact {}: {error}",
+                path.display()
+            ),
+        )
+        .into()
+    })
+}
+
+fn read_required_text(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    fs::read_to_string(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to read required deploy artifact {}: {error}",
                 path.display()
             ),
         )
@@ -549,6 +657,56 @@ mod tests {
     }
 
     #[test]
+    fn deploy_app_dir_detection_walks_to_firebase_project_root() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let functions_src = temp.path().join("functions").join("src");
+        fs::create_dir_all(&functions_src).expect("firebase functions source should create");
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions":{"source":"functions"}}"#,
+        )
+        .expect("firebase.json should write");
+
+        let app_dir =
+            resolve_deploy_app_dir(None, &functions_src).expect("firebase app dir should resolve");
+
+        assert_eq!(
+            app_dir,
+            temp.path()
+                .canonicalize()
+                .expect("tempdir should canonicalize")
+        );
+    }
+
+    #[test]
+    fn deploy_app_dir_detection_walks_to_framework_package_root() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let source_dir = temp.path().join("src");
+        fs::create_dir_all(&source_dir).expect("framework source should create");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{
+  "main": "dist/index.js",
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.5"
+  }
+}
+"#,
+        )
+        .expect("package.json should write");
+
+        let app_dir =
+            resolve_deploy_app_dir(None, &source_dir).expect("framework app dir should resolve");
+
+        assert_eq!(
+            app_dir,
+            temp.path()
+                .canonicalize()
+                .expect("tempdir should canonicalize")
+        );
+    }
+
+    #[test]
     fn deploy_endpoint_url_appends_admin_route() {
         assert_eq!(
             deploy_endpoint_url("http://localhost:3210/"),
@@ -578,20 +736,21 @@ mod tests {
 
         let artifacts =
             DeployArtifacts::from_app_dir(temp.path()).expect("artifacts should package");
+        let convex = artifacts.convex.expect("convex artifacts should package");
 
         assert_eq!(
-            artifacts.functions_json["functions"][0]["name"],
+            convex.functions_json["functions"][0]["name"],
             json!("messages:list")
         );
-        assert_eq!(artifacts.http_routes_json, Some(json!({ "routes": [] })));
-        assert_eq!(artifacts.schema_json, Some(json!({ "tables": {} })));
-        assert_eq!(artifacts.auth_config_json, Some(json!({ "providers": [] })));
+        assert_eq!(convex.http_routes_json, Some(json!({ "routes": [] })));
+        assert_eq!(convex.schema_json, Some(json!({ "tables": {} })));
+        assert_eq!(convex.auth_config_json, Some(json!({ "providers": [] })));
         assert_eq!(
-            artifacts.bundle_mjs.as_deref(),
+            convex.bundle_mjs.as_deref(),
             Some("export const value = 1;\n")
         );
         assert_eq!(
-            artifacts.bundle_sha256.as_deref(),
+            convex.bundle_sha256.as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
     }
@@ -613,6 +772,39 @@ mod tests {
             error
                 .to_string()
                 .contains("must include both bundle.mjs and bundle.sha256")
+        );
+    }
+
+    #[test]
+    fn deploy_artifacts_package_cloud_functions_family() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let generated = temp.path().join(".neovex").join("firebase");
+        fs::create_dir_all(&generated).expect("generated dir should create");
+        fs::write(generated.join("artifact.json"), r#"{"version":1,"family":"cloud_functions","runtime_bundle":{"entry_file":"bundle.mjs","sha256_file":"bundle.sha256"},"targets_manifest":"targets.json","import_resolution":{"strategy":"deploy_alias_layer","covered_specifiers":["@google-cloud/functions-framework","firebase-admin/app","firebase-admin/firestore","firebase-functions/v2","firebase-functions/v2/firestore","firebase-functions/v2/https"]}}"#)
+            .expect("artifact manifest should write");
+        fs::write(
+            generated.join("targets.json"),
+            r#"{"version":1,"targets":[]}"#,
+        )
+        .expect("targets should write");
+        fs::write(generated.join("bundle.mjs"), "export const value = 1;\n")
+            .expect("bundle should write");
+        fs::write(generated.join("bundle.sha256"), "b".repeat(64))
+            .expect("bundle hash should write");
+
+        let artifacts =
+            DeployArtifacts::from_app_dir(temp.path()).expect("artifacts should package");
+        let cloud_functions = artifacts
+            .cloud_functions
+            .expect("cloud functions artifacts should package");
+
+        assert_eq!(
+            cloud_functions.targets_json,
+            json!({ "version": 1, "targets": [] })
+        );
+        assert_eq!(
+            cloud_functions.bundle_sha256,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         );
     }
 

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { runActionFixtures } from "./selftest/action_fixtures.mjs";
 import { runCodegenChecks } from "./selftest/check_fixtures.mjs";
+import { runCloudFunctionsFixtures } from "./selftest/cloud_functions_fixtures.mjs";
 import { runCoreFixtures } from "./selftest/core_fixtures.mjs";
 import { runDatabaseFixtures } from "./selftest/database_fixtures.mjs";
 import { runRuntimeFixtures } from "./selftest/runtime_fixtures.mjs";
@@ -16,6 +17,7 @@ async function main() {
   if (typecheckOnly) {
     return;
   }
+  await runCloudFunctionsFixtures();
   await runCoreFixtures();
   await runDatabaseFixtures();
   await runActionFixtures();

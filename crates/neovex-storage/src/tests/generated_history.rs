@@ -16,7 +16,7 @@ fn generated_task_fields(
 }
 
 fn normalize_generated_task_documents(mut documents: Vec<Document>) -> Vec<GeneratedTaskRecord> {
-    documents.sort_by_key(|left| left.id);
+    documents.sort_by_key(|left| left.id.clone());
     let mut records = documents
         .into_iter()
         .map(|document| GeneratedTaskRecord {
@@ -52,7 +52,7 @@ fn assert_generated_task_history_matches_model_on_storage_surface(
         history,
         |_slot, record| {
             let document = Document::new(table.clone(), generated_task_fields(record));
-            let document_id = document.id;
+            let document_id = document.id.clone();
             store.insert(&document)?;
             Ok::<DocumentId, Error>(document_id)
         },
@@ -126,7 +126,9 @@ fn build_generated_task_durable_record(
             vec![WriteOp {
                 table: document.table.clone(),
                 op_type: WriteOpType::Insert,
-                doc_id: document.id,
+                doc_id: document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: None,
                 current: Some(document),
             }]
@@ -147,7 +149,9 @@ fn build_generated_task_durable_record(
             vec![WriteOp {
                 table: current.table.clone(),
                 op_type: WriteOpType::Update,
-                doc_id: current.id,
+                doc_id: current.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: Some(previous),
                 current: Some(current),
             }]
@@ -165,7 +169,9 @@ fn build_generated_task_durable_record(
             vec![WriteOp {
                 table: previous.table.clone(),
                 op_type: WriteOpType::Delete,
-                doc_id: previous.id,
+                doc_id: previous.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: Some(previous),
                 current: None,
             }]
@@ -222,7 +228,7 @@ fn shadow_materializer_seeded_rebuild_matches_live_state_across_operation_sequen
                 }
                 1 => {
                     let index = (draw as usize) % live_ids.len();
-                    let document_id = live_ids[index];
+                    let document_id = live_ids[index].clone();
                     live.update(
                         &table,
                         &document_id,

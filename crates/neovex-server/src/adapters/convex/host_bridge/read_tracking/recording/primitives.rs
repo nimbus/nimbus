@@ -5,11 +5,7 @@ impl ConvexHostBridge {
         self.state.record_table_read(table);
     }
 
-    pub(in crate::adapters::convex) fn record_document_read(
-        &self,
-        table: &TableName,
-        document_id: &DocumentId,
-    ) {
+    pub(crate) fn record_document_read(&self, table: &TableName, document_id: &DocumentId) {
         self.state.record_document_read(table, document_id);
     }
 

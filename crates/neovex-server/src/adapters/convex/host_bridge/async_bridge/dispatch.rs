@@ -44,6 +44,10 @@ impl ConvexHostBridge {
                 self.dispatch_document_host_call_async(payload, cancellation)
                     .await
             }
+            HostCallPayload::RuntimeExtensionCall(payload) => {
+                self.dispatch_adapter_extension_host_call_async(payload, cancellation)
+                    .await
+            }
             payload @ (HostCallPayload::CtxSchedulerRunAfter(_)
             | HostCallPayload::CtxSchedulerRunAt(_)
             | HostCallPayload::CtxSchedulerCancel(_)) => {
@@ -91,6 +95,9 @@ impl ConvexHostBridge {
             | HostCallPayload::CtxDbDelete(_)) => {
                 self.dispatch_document_host_call_cancellable(payload, cancellation)
             }
+            HostCallPayload::RuntimeExtensionCall(payload) => {
+                self.dispatch_adapter_extension_host_call_cancellable(payload, cancellation)
+            }
             payload @ (HostCallPayload::CtxSchedulerRunAfter(_)
             | HostCallPayload::CtxSchedulerRunAt(_)
             | HostCallPayload::CtxSchedulerCancel(_)) => {
@@ -132,6 +139,9 @@ impl ConvexHostBridge {
             | HostCallPayload::CtxDbInsert(_)
             | HostCallPayload::CtxDbPatch(_)
             | HostCallPayload::CtxDbDelete(_)) => self.dispatch_document_host_call(payload),
+            HostCallPayload::RuntimeExtensionCall(payload) => {
+                self.dispatch_adapter_extension_host_call(payload)
+            }
             payload @ (HostCallPayload::CtxSchedulerRunAfter(_)
             | HostCallPayload::CtxSchedulerRunAt(_)
             | HostCallPayload::CtxSchedulerCancel(_)) => self.dispatch_scheduler_host_call(payload),

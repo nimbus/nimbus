@@ -2,14 +2,14 @@ use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-pub(in crate::adapters::convex) enum ConvexRuntimeResponseEnvelope {
+pub(crate) enum ConvexRuntimeResponseEnvelope {
     Ok { value: Value },
     Error { error: ConvexRuntimeEncodedError },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(in crate::adapters::convex) enum ConvexRuntimeEncodedError {
+pub(crate) enum ConvexRuntimeEncodedError {
     Cancelled,
     TenantNotFound {
         tenant_id: String,
@@ -54,17 +54,17 @@ pub(in crate::adapters::convex) enum ConvexRuntimeEncodedError {
 }
 
 impl ConvexRuntimeResponseEnvelope {
-    pub(in crate::adapters::convex) fn ok(value: Value) -> Self {
+    pub(crate) fn ok(value: Value) -> Self {
         Self::Ok { value }
     }
 
-    pub(in crate::adapters::convex) fn from_core_error(error: Error) -> Self {
+    pub(crate) fn from_core_error(error: Error) -> Self {
         Self::Error {
             error: ConvexRuntimeEncodedError::from_core_error(error),
         }
     }
 
-    pub(in crate::adapters::convex) fn into_core_result(self) -> Result<Value, Error> {
+    pub(crate) fn into_core_result(self) -> Result<Value, Error> {
         match self {
             Self::Ok { value } => Ok(value),
             Self::Error { error } => Err(error.into_core_error()),
@@ -73,7 +73,7 @@ impl ConvexRuntimeResponseEnvelope {
 }
 
 impl ConvexRuntimeEncodedError {
-    pub(in crate::adapters::convex) fn from_core_error(error: Error) -> Self {
+    pub(crate) fn from_core_error(error: Error) -> Self {
         match error {
             Error::Cancelled => Self::Cancelled,
             Error::TenantNotFound(tenant_id) => Self::TenantNotFound {
@@ -103,7 +103,7 @@ impl ConvexRuntimeEncodedError {
         }
     }
 
-    pub(in crate::adapters::convex) fn into_core_error(self) -> Error {
+    pub(crate) fn into_core_error(self) -> Error {
         match self {
             Self::Cancelled => Error::Cancelled,
             Self::TenantNotFound { tenant_id } => TenantId::new(tenant_id)

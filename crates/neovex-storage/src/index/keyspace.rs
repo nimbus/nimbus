@@ -1,6 +1,9 @@
 use neovex_core::{Document, DocumentId, IndexDefinition, Result, TableName};
+use std::str::FromStr;
 
 use super::encoding::encode_index_value;
+
+const INDEX_KEY_DOC_ID_LENGTH_BYTES: usize = 2;
 
 /// Builds a full index key for a specific value and document.
 fn index_key(
@@ -11,7 +14,11 @@ fn index_key(
 ) -> Vec<u8> {
     let mut key = index_prefix(table, index_name);
     key.extend_from_slice(encoded_value);
-    key.extend_from_slice(&doc_id.to_bytes());
+    let doc_id_bytes = doc_id.as_str().as_bytes();
+    let doc_id_length =
+        u16::try_from(doc_id_bytes.len()).expect("document ids should fit in index key trailer");
+    key.extend_from_slice(doc_id_bytes);
+    key.extend_from_slice(&doc_id_length.to_be_bytes());
     key
 }
 
@@ -60,10 +67,11 @@ pub(super) fn index_value_prefix(
 
 /// Extracts the document id from an index key.
 pub(super) fn doc_id_from_index_key(key: &[u8]) -> DocumentId {
-    let bytes: [u8; 16] = key[key.len() - 16..]
-        .try_into()
-        .expect("index key should end with a document id");
-    DocumentId::from_bytes(bytes)
+    let doc_id_start = encoded_value_end(key);
+    let doc_id_end = key.len() - INDEX_KEY_DOC_ID_LENGTH_BYTES;
+    let doc_id = std::str::from_utf8(&key[doc_id_start..doc_id_end])
+        .expect("index key should end with a UTF-8 document id");
+    DocumentId::from_str(doc_id).expect("index key should end with a valid document id")
 }
 
 pub(super) fn table_index_prefix(table: &TableName) -> Vec<u8> {
@@ -74,5 +82,19 @@ pub(super) fn table_index_prefix(table: &TableName) -> Vec<u8> {
 }
 
 pub(super) fn encoded_value_from_index_key(key: &[u8], prefix_len: usize) -> &[u8] {
-    &key[prefix_len..key.len() - 16]
+    &key[prefix_len..encoded_value_end(key)]
+}
+
+fn encoded_value_end(key: &[u8]) -> usize {
+    let doc_id_length_offset = key
+        .len()
+        .checked_sub(INDEX_KEY_DOC_ID_LENGTH_BYTES)
+        .expect("index key should include a document id length trailer");
+    let doc_id_length_bytes: [u8; INDEX_KEY_DOC_ID_LENGTH_BYTES] = key[doc_id_length_offset..]
+        .try_into()
+        .expect("index key should include a document id length trailer");
+    let doc_id_length = usize::from(u16::from_be_bytes(doc_id_length_bytes));
+    doc_id_length_offset
+        .checked_sub(doc_id_length)
+        .expect("index key should contain a full document id payload")
 }

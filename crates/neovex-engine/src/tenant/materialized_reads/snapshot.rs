@@ -47,11 +47,11 @@ impl ServingSnapshot {
             .map(|documents| documents.values().cloned().collect())
     }
 
-    pub(crate) fn document(&self, table: &TableName, document_id: DocumentId) -> Option<Document> {
+    pub(crate) fn document(&self, table: &TableName, document_id: &DocumentId) -> Option<Document> {
         self.inner
             .tables
             .get(table)
-            .and_then(|documents| documents.get(&document_id))
+            .and_then(|documents| documents.get(document_id))
             .cloned()
     }
 

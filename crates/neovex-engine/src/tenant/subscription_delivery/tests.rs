@@ -106,11 +106,11 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
         .expect("reactive update should arrive after the worker is released")
         .expect("reactive update channel should stay open");
     match update {
-        SubscriptionUpdate::Result {
-            commit: Some(commit),
-            data,
-            ..
-        } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
+            let commit = snapshot
+                .commit
+                .expect("single-commit delivery should retain commit metadata");
             assert_eq!(commit.sequence, SequenceNumber(2));
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("After"));
@@ -178,7 +178,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
         )
         .expect("first update should succeed");
@@ -191,7 +191,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
         )
         .expect("second update should queue behind the blocked delivery");
@@ -200,7 +200,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("third"))]),
         )
         .expect("overflow update should fall back without failing");
@@ -210,11 +210,11 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
         .expect("overflow fallback should still deliver the latest visible state")
         .expect("subscription channel should stay open");
     match latest {
-        SubscriptionUpdate::Result {
-            commit: Some(commit),
-            data,
-            ..
-        } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
+            let commit = snapshot
+                .commit
+                .expect("single-commit fallback should retain commit metadata");
             assert_eq!(commit.sequence, SequenceNumber(4));
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("third"));
@@ -293,7 +293,7 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
         )
         .expect("first update should succeed");
@@ -306,7 +306,7 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         .update_document(
             &tenant_id,
             tasks_table(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
         )
         .expect("second update should enqueue a later delivery item");
@@ -318,9 +318,10 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
         .expect("merged subscription update should arrive")
         .expect("subscription channel should stay open");
     match update {
-        SubscriptionUpdate::Result { commit, data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert!(
-                commit.is_none(),
+                snapshot.commit.is_none(),
                 "queue-level merged deliveries should omit per-commit metadata"
             );
             assert_eq!(data.len(), 1);
@@ -444,7 +445,7 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
     .await
     .expect("queued inserts should complete once the journal worker is released");
     assert_eq!(
-        inserted_ids.iter().copied().collect::<BTreeSet<_>>().len(),
+        inserted_ids.iter().cloned().collect::<BTreeSet<_>>().len(),
         3,
         "all queued inserts should complete successfully"
     );
@@ -454,18 +455,14 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
         .expect("coalesced subscription update should arrive")
         .expect("subscription channel should remain open");
     match update {
-        SubscriptionUpdate::Result {
-            commit,
-            deleted_documents,
-            data,
-            ..
-        } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert!(
-                commit.is_none(),
+                snapshot.commit.is_none(),
                 "multi-commit coalesced deliveries should omit per-commit metadata"
             );
             assert!(
-                deleted_documents.is_empty(),
+                snapshot.deleted_documents.is_empty(),
                 "insert-only batches should not surface deleted documents"
             );
             assert_eq!(data.len(), 3);

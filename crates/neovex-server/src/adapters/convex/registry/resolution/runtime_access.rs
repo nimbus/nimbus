@@ -13,20 +13,18 @@ impl ConvexRegistry {
             .ok_or_else(|| Error::Internal("convex runtime bundle not loaded".to_string()))
     }
 
-    pub(in crate::adapters::convex) async fn verify_authorization_header(
+    pub(crate) async fn verify_bearer_token(
         &self,
-        headers: &HeaderMap,
-    ) -> Result<Option<InvocationAuth>, AppError> {
-        self.auth_verifier
-            .verify_authorization_header(headers)
-            .await
+        token: &str,
+    ) -> Result<InvocationAuth, AppError> {
+        self.auth_verifier.verify_bearer_token(token).await
     }
 
     pub(in crate::adapters::convex) async fn verify_socket_token(
         &self,
         token: &str,
     ) -> Result<InvocationAuth, AppError> {
-        self.auth_verifier.verify_socket_token(token).await
+        self.verify_bearer_token(token).await
     }
 
     pub(in crate::adapters::convex) fn runtime_policy(&self) -> Arc<RuntimePolicy> {
