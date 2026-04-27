@@ -19,6 +19,22 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 
 ---
 
+```
+                        Apps & Agents
+                              │
+                              ▼
+        ┌─ neovex ────────────────────────────────┐
+        │                                          │
+        │   Storage    ·  Compute   ·  Networking  │
+        │                                          │
+        │   SQLite       V8 Runtime    REST / WS   │
+        │   Postgres     Scheduling    Convex      │
+        │   MySQL        Cron          Firebase    │
+        │   libSQL                     MongoDB     │
+        │                                          │
+        └─────────── single Rust binary ───────────┘
+```
+
 Neovex packages the three backend primitives -- storage, compute, and networking -- into a single binary you run on your own infrastructure. It gives you the developer experience of a managed BaaS -- document storage, server-side JavaScript, real-time subscriptions, durable scheduling -- without the SaaS lock-in, the per-request billing, or the *"this is a dev tool, don't run it in production"* disclaimer that comes with most self-hosted alternatives.
 
 It's built for teams and agents that need to run their full application stack on their own hardware: regulated industries, air-gapped environments, customers with data residency requirements, AI agent infrastructure, and any team whose SaaS bill has stopped making sense.
