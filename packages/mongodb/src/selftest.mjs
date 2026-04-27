@@ -40,7 +40,7 @@ async function main() {
   }
 
   await buildPackageSurface();
-  await testConnectionStringBuilder();
+  await testUriBuilder();
   await typecheckSurface();
 
   if (smokePort) {
@@ -77,16 +77,16 @@ async function buildPackageSurface() {
   return outDir;
 }
 
-async function testConnectionStringBuilder() {
-  const { buildConnectionString } = await import("./connection-string.ts");
+async function testUriBuilder() {
+  const { uri } = await import("./uri.ts");
 
-  const defaultUri = buildConnectionString();
+  const defaultUri = uri();
   assert.equal(
     defaultUri,
     "mongodb://127.0.0.1:27017/default?directConnection=true",
   );
 
-  const customUri = buildConnectionString({
+  const customUri = uri({
     host: "localhost",
     port: 27018,
     database: "mydb",
@@ -96,7 +96,7 @@ async function testConnectionStringBuilder() {
     "mongodb://localhost:27018/mydb?directConnection=true",
   );
 
-  const authUri = buildConnectionString({
+  const authUri = uri({
     username: "admin",
     password: "s3cret",
     database: "testdb",
@@ -106,14 +106,14 @@ async function testConnectionStringBuilder() {
     "mongodb://admin:s3cret@127.0.0.1:27017/testdb?directConnection=true",
   );
 
-  const specialCharsUri = buildConnectionString({
+  const specialCharsUri = uri({
     username: "user@domain",
     password: "p@ss:word",
   });
   assert.ok(specialCharsUri.includes("user%40domain"));
   assert.ok(specialCharsUri.includes("p%40ss%3Aword"));
 
-  console.log("  ✓ connection string builder tests passed");
+  console.log("  ✓ uri builder tests passed");
 }
 
 async function typecheckSurface() {
@@ -131,8 +131,10 @@ async function typecheckSurface() {
 }
 
 async function smokeTestCrud(port) {
-  const { connectNeovex } = await import("./connect.ts");
-  const client = await connectNeovex({ port, database: "smoketest" });
+  const { uri } = await import("./uri.ts");
+  const { MongoClient } = await import("mongodb");
+  const client = new MongoClient(uri({ port, database: "smoketest" }));
+  await client.connect();
 
   try {
     const db = client.db("smoketest");
@@ -188,8 +190,10 @@ async function smokeTestCrud(port) {
 }
 
 async function smokeTestAggregation(port) {
-  const { connectNeovex } = await import("./connect.ts");
-  const client = await connectNeovex({ port, database: "smoketest" });
+  const { uri } = await import("./uri.ts");
+  const { MongoClient } = await import("mongodb");
+  const client = new MongoClient(uri({ port, database: "smoketest" }));
+  await client.connect();
 
   try {
     const db = client.db("smoketest");

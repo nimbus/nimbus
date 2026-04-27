@@ -54,7 +54,7 @@ Current demos:
   - the demo now authors functions through `convex/_generated/server`, `convex/values`, and `convex/schema.ts`
   - codegen now emits `_generated/dataModel.d.ts` and `_generated/scheduled_functions.ts` for the supported subset
   - the app exercises live `ctx.db.insert(...)`, delayed `ctx.scheduler.runAfter(...)`, `ctx.db.patch(...)`, `ctx.db.delete(...)`, a runtime-only list query, `ctx.db.query(...).first()`, `ctx.db.query(...).unique()`, `ctx.db.get(id)`, `useQueries`, and `usePaginatedQuery` against a runtime-only `paginatedQuery`
-- `mongodb/node/`: MongoDB wire protocol demo using `@neovex/mongodb` for CRUD operations
+- `mongodb/node/`: MongoDB wire protocol demo using `@neovex/mongodb` URI helper with the stock `mongodb` driver for CRUD operations
 - `convex/http/`: Convex-style browser HTTP demo using `convex/browser` and generated refs without React
   - the demo authors queries with a runtime-only filtered list, compiled `ctx.db.query(...).withIndex(...).filter(...).unique()`, `ctx.db.get(id)`, and a runtime-only multi-step mutation that writes immediately and schedules a follow-up write
   - the composer path now goes through a Convex-style action that delegates to an internal mutation via generated refs, it can also schedule that same internal mutation with `ctx.scheduler.runAfter(...)`, and it includes compiled `httpAction` routes for POST and GET flows
