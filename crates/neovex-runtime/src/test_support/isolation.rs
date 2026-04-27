@@ -55,19 +55,22 @@ fn acquire_runtime_suite_subprocess_lock() -> RuntimeSuiteSubprocessLockGuard {
 pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeTestCase) {
     let _guard = acquire_runtime_suite_lock();
     let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
-    let status = std::process::Command::new(
+    let output = std::process::Command::new(
         std::env::current_exe().expect("current test binary path should resolve"),
     )
     .arg("--ignored")
     .arg("--exact")
     .arg(case.subprocess_test_name())
     .arg("--nocapture")
-    .status()
+    .output()
     .expect("isolated runtime test subprocess should launch");
     assert!(
-        status.success(),
-        "{} (exit status: {status})",
-        case.failure_context("isolated runtime test subprocess should succeed")
+        output.status.success(),
+        "{} (exit status: {})\nstdout:\n{}\nstderr:\n{}",
+        case.failure_context("isolated runtime test subprocess should succeed"),
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
 }
 
