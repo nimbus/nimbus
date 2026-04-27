@@ -112,41 +112,8 @@ my-mongo-app/
 └── tsconfig.json
 ```
 
-This is the key difference from the [Convex adapter](../convex.md), which
-requires a `convex/` source directory, codegen, and a `.neovex/` artifact
-directory. The MongoDB adapter is schema-optional and driver-native -- it
-works the way you already know MongoDB works.
-
-## MongoDB Adapter vs. Convex/Neovex SDK
-
-The MongoDB adapter and the Convex/Neovex JS SDK are two different
-entry points into the same engine. Choose based on your use case:
-
-```
-┌──────────────────────────────────┬──────────────────────────────────┐
-│       MongoDB Adapter            │       Convex/Neovex SDK          │
-├──────────────────────────────────┼──────────────────────────────────┤
-│ Use any MongoDB driver           │ Use packages/convex or           │
-│ (any language)                   │ packages/neovex (JS/TS)          │
-│                                  │                                  │
-│ No codegen, no .neovex dir       │ Codegen + .neovex artifact dir   │
-│ No schema files required         │ Schema in convex/schema.ts       │
-│                                  │                                  │
-│ Client sends raw operations      │ Server-side functions            │
-│ (insert, find, update, delete)   │ (query, mutation, action)        │
-│                                  │                                  │
-│ Manual change streams for        │ useQuery() auto-subscribes,      │
-│ real-time updates                │ re-renders React on change       │
-│                                  │                                  │
-│ No end-to-end type safety        │ Full type safety via codegen     │
-│                                  │                                  │
-│ Familiar if you know MongoDB     │ Familiar if you know Convex      │
-└──────────────────────────────────┴──────────────────────────────────┘
-```
-
-Both paths go through the same engine and storage. A document written
-via the MongoDB adapter is visible through the Convex/Neovex SDK and
-vice versa.
+No special directory structure is needed. Schema is optional -- the adapter
+accepts any document shape and auto-creates collections on first write.
 
 ## Further Reading
 

@@ -29,4 +29,3 @@ for the current coverage and planned work.
 
 - [MongoDB adapter hardening plan](../../plans/mongodb-adapter-hardening-plan.md)
 - [Demo: mongodb/node](../../../demos/mongodb/node/)
-- [Convex adapter](../convex.md) (the alternative SDK-based development model)
