@@ -20,38 +20,40 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 ---
 
 ```
-                                             Apps & Agents
-                                                  │
-                                                  ▼
-                 ┌─ Machine (local dev · cloud vm · bare metal) ────────────────────┐
-                 │                                │                                 │
-                 │                                ▼                                 │
-                 │   ┌─ neovex (single Rust binary) ─────────────────────────────┐  │
-                 │   │                            │                              │  │
-                 │   │                            ▼                              │  │
-                 │   │  ┌─ Adapters ──────────────────────────────────────────┐  │  │
-                 │   │  │ Convex · Firebase · Cloud Functions · MongoDB       │  │  │
-                 │   │  └───────┬─────────────────┬──────────────────┬────────┘  │  │
-                 │   │          │                 │                  │           │  │
-                 │   │          ▼                 ▼                  ▼           │  │
-  (optional)     │   │  ┌─ Storage ────┐  ┌─ Compute ────┐  ┌─ Networking ────┐  │  │
-┌─ DB Conn ─┐    │   │  │ • SQLite     │  │ • V8 Runtime │  │ • HTTP / WS     │  │  │
-│ Postgres  │◀─────────▶│ • libSQL     │  │ • Scheduling │  │ • Realtime Sync │  │  │
-│ MySQL     │    │   │  │ • redb       │  │ • Crons      │  │ • Auth          │  │  │
-└───────────┘    │   │  └──────────────┘  └───────┬──────┘  └─────────────────┘  │  │
-                 │   └────────────────────────────┼──────────────────────────────┘  │
-                 │                                │                                 │
-                 │                                ▼                                 │
-                 │  ┌─ krun (compose.yml · programtic) ──────────────────────────┐  │
-                 │  │                             │                              │  │
-                 │  │          ┌──────────────────┼─────────────────┐            │  │
-                 │  │          ▼                  ▼                 ▼            │  │
-                 │  │   ┌─ MicroVM #1 ─┐  ┌─ MicroVM #2 ─┐  ┌─ MicroVM #3 ─┐     │  │ 
-                 │  │   │    Agent     │  │   Service    │  │    Agent     │ ••• │  │
-                 │  │   │  OCI Image   │  │  OCI Image   │  │  OCI Image   │     │  │
-                 │  │   └──────────────┘  └──────────────┘  └──────────────┘     │  │
-                 │  └────────────────────────────────────────────────────────────┘  │
-                 └──────────────────────────────────────────────────────────────────┘
+                                            ┌───────────────┐
+                                            │ Apps & Agents │
+                                            └───────┬───────┘
+                                                    │
+                                                    ▼
+                   ┌─ Machine (local dev · cloud vm · bare metal) ────────────────────┐
+                   │                                │                                 │
+                   │                                ▼                                 │
+                   │   ┌─ neovex (single Rust binary) ─────────────────────────────┐  │
+                   │   │                            │                              │  │
+                   │   │                            ▼                              │  │
+                   │   │  ┌─ Adapters ──────────────────────────────────────────┐  │  │
+                   │   │  │ Convex · Firebase · Cloud Functions · MongoDB       │  │  │
+                   │   │  └───────┬─────────────────┬──────────────────┬────────┘  │  │
+                   │   │          │                 │                  │           │  │
+                   │   │          ▼                 ▼                  ▼           │  │
+  (optional)       │   │  ┌─ Storage ────┐  ┌─ Compute ────┐  ┌─ Networking ────┐  │  │
+┌─ DB Conn ───┐    │   │  │ • SQLite     │  │ • V8 Runtime │  │ • HTTP / WS     │  │  │
+│ • Postgres  │◀─────────▶│ • libSQL     │  │ • Scheduling │  │ • Realtime Sync │  │  │
+│ • MySQL     │    │   │  │ • redb       │  │ • Crons      │  │ • Auth          │  │  │
+└─────────────┘    │   │  └──────────────┘  └───────┬──────┘  └─────────────────┘  │  │
+                   │   └────────────────────────────┼──────────────────────────────┘  │
+                   │                                │                                 │
+                   │                                ▼                                 │
+                   │  ┌─ krun (compose.yml · programmatic) ────────────────────────┐  │
+                   │  │                             │                              │  │
+                   │  │          ┌──────────────────┼─────────────────┐            │  │
+                   │  │          ▼                  ▼                 ▼            │  │
+                   │  │   ┌─ MicroVM #1 ─┐  ┌─ MicroVM #2 ─┐  ┌─ MicroVM #3 ─┐     │  │ 
+                   │  │   │    Agent     │  │   Service    │  │    Agent     │ ••• │  │
+                   │  │   │  OCI Image   │  │  OCI Image   │  │  OCI Image   │     │  │
+                   │  │   └──────────────┘  └──────────────┘  └──────────────┘     │  │
+                   │  └────────────────────────────────────────────────────────────┘  │
+                   └──────────────────────────────────────────────────────────────────┘
 ```
 
 Neovex packages the three backend primitives -- storage, compute, and networking -- into a single binary you run on your own infrastructure. It gives you the developer experience of a managed BaaS -- document storage, server-side JavaScript, real-time subscriptions, durable scheduling -- without the SaaS lock-in, the per-request billing, or the *"this is a dev tool, don't run it in production"* disclaimer that comes with most self-hosted alternatives.
