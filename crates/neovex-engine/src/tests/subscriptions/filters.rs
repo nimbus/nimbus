@@ -47,7 +47,8 @@ async fn service_only_notifies_subscriptions_for_affected_tables() {
 
     let tasks_update = tasks_rx.recv().await.expect("tasks update should arrive");
     match tasks_update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("Hello"));
         }
@@ -111,7 +112,8 @@ async fn service_insert_only_notifies_filtered_subscriptions_for_matching_docume
 
     let active_update = active_rx.recv().await.expect("active update should arrive");
     match active_update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("Ship it"));
         }
@@ -197,15 +199,12 @@ async fn service_delete_only_notifies_filtered_subscriptions_for_matching_docume
         .await
         .expect("active delete update should arrive");
     match active_update {
-        SubscriptionUpdate::Result {
-            data,
-            deleted_documents,
-            ..
-        } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert!(data.is_empty());
-            assert_eq!(deleted_documents.len(), 1);
+            assert_eq!(snapshot.deleted_documents.len(), 1);
             assert_eq!(
-                deleted_documents[0].fields.get("status"),
+                snapshot.deleted_documents[0].fields.get("status"),
                 Some(&json!("active"))
             );
         }
@@ -283,7 +282,8 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
 
     let active_update = active_rx.recv().await.expect("active update should arrive");
     match active_update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("After"));
         }
@@ -295,7 +295,8 @@ async fn service_updates_remain_conservative_for_filtered_subscriptions() {
         .await
         .expect("done update should still arrive");
     match done_update {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert!(data.is_empty());
         }
         other => panic!("unexpected done update subscription event: {other:?}"),
@@ -338,7 +339,8 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
 
     let initial = rx.recv().await.expect("initial update should arrive");
     match initial {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 2);
             assert_eq!(data[0]["rank"], json!(1));
             assert_eq!(data[1]["rank"], json!(2));
@@ -375,7 +377,7 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
         )
         .expect("rank lookup should succeed")
         .first()
-        .map(|document| document.id)
+        .map(|document| document.id.clone())
         .expect("rank-2 document should exist");
     service
         .update_document(
@@ -388,7 +390,8 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
 
     let shifted = rx.recv().await.expect("window shift update should arrive");
     match shifted {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 2);
             assert_eq!(data[0]["rank"], json!(1));
             assert_eq!(data[1]["rank"], json!(3));
@@ -426,7 +429,8 @@ async fn service_limited_subscriptions_skip_out_of_window_ordered_writes() {
 
     let refreshed = rx.recv().await.expect("inside-window update should arrive");
     match refreshed {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 2);
             assert_eq!(data[0]["rank"], json!(0));
             assert_eq!(data[1]["rank"], json!(1));

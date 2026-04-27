@@ -168,9 +168,41 @@ async fn valid_token_post_creates_session_cookie_and_cookie_auth_unlocks_ui_and_
         header::COOKIE,
         HeaderValue::from_str(&cookie).expect("cookie header should build"),
     );
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        HeaderValue::from_static("neovex.v2"),
+    );
     let (mut socket, _) = connect_async(request)
         .await
         .expect("cookie-auth websocket should connect");
+    let hello = socket
+        .next()
+        .await
+        .expect("websocket hello should arrive")
+        .expect("websocket hello frame should be valid");
+    let hello_text = match hello {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text,
+        other => panic!("unexpected websocket hello frame: {other:?}"),
+    };
+    let hello_body =
+        serde_json::from_str::<serde_json::Value>(&hello_text).expect("hello should parse");
+    assert_eq!(hello_body["type"], json!("hello"));
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            json!({
+                "type": "client_hello",
+                "protocol": "neovex.v2",
+                "client": {
+                    "kind": "test",
+                    "version": "0.0.0"
+                },
+                "capabilities": ["queries.v1", "subscriptions.v1"]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("client hello should send");
     socket
         .send(tokio_tungstenite::tungstenite::Message::Text(
             json!({
@@ -255,5 +287,5 @@ async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
         .json::<serde_json::Value>()
         .await
         .expect("revoked response should be json");
-    assert_eq!(body["error"], json!("auth.token_revoked"));
+    assert_eq!(body["error"]["message"], json!("auth.token_revoked"));
 }

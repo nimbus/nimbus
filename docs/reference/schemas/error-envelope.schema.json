@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentstation.dev/neovex/reference/schemas/error-envelope.schema.json",
+  "title": "Neovex error envelope examples",
+  "description": "Example-oriented schema for the public error shapes documented in errors.md.",
+  "oneOf": [
+    { "$ref": "#/$defs/httpEnvelope" },
+    { "$ref": "#/$defs/fatalErrorFrame" },
+    { "$ref": "#/$defs/opErrorFrame" }
+  ],
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["fatal", "error", "warning"]
+    },
+    "remediation": {
+      "type": "object",
+      "required": ["action", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "retry",
+            "reauthenticate",
+            "upgrade_client",
+            "upgrade_server",
+            "fix_request",
+            "wait_and_retry",
+            "contact_operator"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "errorObject": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "requestId",
+        "timestamp",
+        "severity",
+        "retryable",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": ["object", "null"]
+        },
+        "remediation": {
+          "$ref": "#/$defs/remediation"
+        }
+      }
+    },
+    "httpEnvelope": {
+      "type": "object",
+      "required": ["error"],
+      "additionalProperties": false,
+      "properties": {
+        "error": { "$ref": "#/$defs/errorObject" }
+      }
+    },
+    "fatalErrorFrame": {
+      "type": "object",
+      "required": ["type", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "fatal_error" },
+        "error": { "$ref": "#/$defs/errorObject" }
+      }
+    },
+    "opErrorFrame": {
+      "type": "object",
+      "required": ["type", "id", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "op.error" },
+        "id": { "type": "string", "minLength": 1 },
+        "error": { "$ref": "#/$defs/errorObject" }
+      }
+    }
+  }
+}

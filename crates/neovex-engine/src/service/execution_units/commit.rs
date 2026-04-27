@@ -21,14 +21,19 @@ impl MutationExecutionUnit {
     pub fn commit(&self) -> Result<Option<CommitEntry>> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
-        let (writes, schedule_ops, conflict_dependencies) = {
+        let (writes, schedule_ops, conflict_dependencies, trigger_write_origin) = {
             let mut state = self.active_state()?;
             state.lifecycle = ExecutionUnitLifecycle::Finalizing;
             let writes = self.build_resolved_writes(&state);
             let schedule_ops = self.build_resolved_schedule_ops(&state);
             let mut conflict_dependencies = state.read_dependencies.clone();
             conflict_dependencies.extend(&state.write_dependencies);
-            (writes, schedule_ops, conflict_dependencies)
+            (
+                writes,
+                schedule_ops,
+                conflict_dependencies,
+                state.trigger_write_origin.clone(),
+            )
         };
         if writes.is_empty() && schedule_ops.is_empty() {
             return Ok(None);
@@ -40,9 +45,11 @@ impl MutationExecutionUnit {
 
             let commit = {
                 let _sequence_guard = self.runtime.lock_mutation_sequence();
-                self.runtime
-                    .store
-                    .apply_execution_unit_batch(&writes, &schedule_ops)?
+                self.runtime.store.apply_execution_unit_batch_with_origin(
+                    &writes,
+                    &schedule_ops,
+                    trigger_write_origin.as_ref(),
+                )?
             };
             Ok(commit)
         })();

@@ -205,7 +205,7 @@ async fn convex_http_demo_flow_matches_generated_app_behavior() {
         .await
         .expect("duplicate unique query error should parse");
     assert!(
-        unique_conflict_body["error"]
+        unique_conflict_body["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("multiple documents")),
         "{unique_conflict_body}"

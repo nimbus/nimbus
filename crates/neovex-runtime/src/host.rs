@@ -39,6 +39,7 @@ pub enum HostCallOperation {
     CtxSchedulerCancel,
     CtxServiceLookup,
     CtxRuntimeEnterNestedCall,
+    RuntimeExtensionCall,
 }
 
 impl HostCallOperation {
@@ -70,6 +71,7 @@ impl HostCallOperation {
             Self::CtxSchedulerCancel => "ctx_scheduler_cancel",
             Self::CtxServiceLookup => "ctx_service_lookup",
             Self::CtxRuntimeEnterNestedCall => "ctx_runtime_enter_nested_call",
+            Self::RuntimeExtensionCall => "runtime_extension_call",
         }
     }
 }
@@ -154,6 +156,14 @@ pub struct RuntimeAsyncDbDeletePayload {
     pub id: String,
     #[serde(default)]
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAsyncExtensionPayload {
+    pub namespace: String,
+    pub operation: String,
+    #[serde(default)]
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -300,6 +310,7 @@ pub enum HostCallPayload {
     CtxSchedulerCancel(RuntimeAsyncSchedulerCancelPayload),
     CtxServiceLookup(RuntimeAsyncServiceLookupPayload),
     CtxRuntimeEnterNestedCall(RuntimeSyncNestedCallPayload),
+    RuntimeExtensionCall(RuntimeAsyncExtensionPayload),
 }
 
 impl HostCallPayload {
@@ -331,6 +342,7 @@ impl HostCallPayload {
             Self::CtxSchedulerCancel(_) => HostCallOperation::CtxSchedulerCancel,
             Self::CtxServiceLookup(_) => HostCallOperation::CtxServiceLookup,
             Self::CtxRuntimeEnterNestedCall(_) => HostCallOperation::CtxRuntimeEnterNestedCall,
+            Self::RuntimeExtensionCall(_) => HostCallOperation::RuntimeExtensionCall,
         }
     }
 
@@ -404,6 +416,9 @@ impl HostCallPayload {
             HostCallOperation::CtxRuntimeEnterNestedCall => Ok(Self::CtxRuntimeEnterNestedCall(
                 serde_json::from_value(payload)?,
             )),
+            HostCallOperation::RuntimeExtensionCall => {
+                Ok(Self::RuntimeExtensionCall(serde_json::from_value(payload)?))
+            }
         }
     }
 

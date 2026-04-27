@@ -45,6 +45,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
                     run_after_ms: 5_000,
                     mutation: Mutation::Insert {
                         table: tasks_table(),
+                        id: None,
                         fields: serde_json::Map::from_iter([(
                             "title".to_string(),
                             json!("Scheduled"),
@@ -72,7 +73,7 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             .record_scheduled_job_result_async(
                 tenant_id.clone(),
                 neovex_core::ScheduledJobResult {
-                    id: scheduled_job_id,
+                    id: scheduled_job_id.clone(),
                     run_at: claimed[0].run_at,
                     finished_at: Timestamp(claimed[0].run_at.0.saturating_add(1)),
                     mutation: claimed[0].mutation.clone(),
@@ -83,12 +84,12 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             .await
             .expect("scheduled result should persist");
         service
-            .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id)
+            .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id.clone())
             .await
             .expect("scheduled completion should persist");
         assert_eq!(
             service
-                .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id)
+                .get_scheduled_job_result_async(tenant_id.clone(), scheduled_job_id.clone())
                 .await
                 .expect("scheduled result should load")
                 .outcome,
@@ -276,6 +277,8 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
                 id: DocumentId::new(),
                 fields: serde_json::Map::from_iter([("title".to_string(), json!("Recovered"))]),
                 creation_time: Timestamp(100),
+                update_time: Timestamp(100),
+                typed_fields: Default::default(),
             })
             .expect("external document write should succeed");
 

@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct RemoteNamespaceSnapshot {
     pub(super) schemas: Vec<RemoteSchemaRow>,
     pub(super) documents: Vec<RemoteDocumentRow>,
+    pub(super) resource_path_bindings: Vec<RemoteResourcePathBindingRow>,
     pub(super) scheduled_jobs: Vec<RemoteJsonRow>,
     pub(super) running_scheduled_jobs: Vec<RemoteJsonRow>,
     pub(super) scheduled_job_results: Vec<RemoteJsonRow>,
@@ -24,7 +25,18 @@ pub(super) struct RemoteDocumentRow {
     table_name: String,
     id: String,
     creation_time: u64,
+    update_time: u64,
     data_json: String,
+    typed_fields_json: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct RemoteResourcePathBindingRow {
+    locator_key: Vec<u8>,
+    document_path_key: Vec<u8>,
+    collection_group: String,
+    binding_blob: Vec<u8>,
+    locator_blob: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +77,7 @@ pub(super) async fn fetch_remote_namespace_snapshot(
         Ok(RemoteNamespaceSnapshot {
             schemas: query_remote_schema_rows(&conn).await?,
             documents: query_remote_document_rows(&conn).await?,
+            resource_path_bindings: query_remote_resource_path_binding_rows(&conn).await?,
             scheduled_jobs: query_remote_json_rows(&conn, "scheduled_jobs", "id").await?,
             running_scheduled_jobs: query_remote_json_rows(&conn, "running_scheduled_jobs", "id")
                 .await?,
@@ -102,7 +115,7 @@ pub(super) async fn query_remote_schema_rows(conn: &Connection) -> Result<Vec<Re
 async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocumentRow>> {
     let mut rows = conn
         .query(
-            "SELECT table_name, id, creation_time, data_json
+            "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json
              FROM documents
              ORDER BY table_name, id",
             (),
@@ -112,6 +125,7 @@ async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocum
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         let creation_time = row.get::<i64>(2).map_err(map_libsql_error)?;
+        let update_time = row.get::<i64>(3).map_err(map_libsql_error)?;
         result.push(RemoteDocumentRow {
             table_name: row.get::<String>(0).map_err(map_libsql_error)?,
             id: row.get::<String>(1).map_err(map_libsql_error)?,
@@ -123,7 +137,41 @@ async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocum
                     ),
                 )
             })?,
-            data_json: row.get::<String>(3).map_err(map_libsql_error)?,
+            update_time: u64::try_from(update_time).map_err(|_| {
+                Error::storage(
+                    StorageErrorKind::Corruption,
+                    format!(
+                        "remote libsql update_time {update_time} is negative for namespace snapshot"
+                    ),
+                )
+            })?,
+            data_json: row.get::<String>(4).map_err(map_libsql_error)?,
+            typed_fields_json: row.get::<String>(5).map_err(map_libsql_error)?,
+        });
+    }
+    Ok(result)
+}
+
+async fn query_remote_resource_path_binding_rows(
+    conn: &Connection,
+) -> Result<Vec<RemoteResourcePathBindingRow>> {
+    let mut rows = conn
+        .query(
+            "SELECT locator_key, document_path_key, collection_group, binding_blob, locator_blob
+             FROM resource_path_bindings
+             ORDER BY collection_group, document_path_key",
+            (),
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+        result.push(RemoteResourcePathBindingRow {
+            locator_key: row.get::<Vec<u8>>(0).map_err(map_libsql_error)?,
+            document_path_key: row.get::<Vec<u8>>(1).map_err(map_libsql_error)?,
+            collection_group: row.get::<String>(2).map_err(map_libsql_error)?,
+            binding_blob: row.get::<Vec<u8>>(3).map_err(map_libsql_error)?,
+            locator_blob: row.get::<Vec<u8>>(4).map_err(map_libsql_error)?,
         });
     }
     Ok(result)
@@ -289,8 +337,8 @@ fn insert_snapshot_rows(
     {
         let mut statement = conn
             .prepare(
-                "INSERT INTO documents (table_name, id, data_json, creation_time)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .map_err(map_local_sqlite_error)?;
         for row in &snapshot.documents {
@@ -299,7 +347,33 @@ fn insert_snapshot_rows(
                     row.table_name.as_str(),
                     row.id.as_str(),
                     row.data_json.as_str(),
-                    row.creation_time
+                    row.typed_fields_json.as_str(),
+                    row.creation_time,
+                    row.update_time
+                ])
+                .map_err(map_local_sqlite_error)?;
+        }
+    }
+    {
+        let mut statement = conn
+            .prepare(
+                "INSERT INTO resource_path_bindings (
+                    locator_key,
+                    document_path_key,
+                    collection_group,
+                    binding_blob,
+                    locator_blob
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .map_err(map_local_sqlite_error)?;
+        for row in &snapshot.resource_path_bindings {
+            statement
+                .execute(params![
+                    row.locator_key.as_slice(),
+                    row.document_path_key.as_slice(),
+                    row.collection_group.as_str(),
+                    row.binding_blob.as_slice(),
+                    row.locator_blob.as_slice(),
                 ])
                 .map_err(map_local_sqlite_error)?;
         }

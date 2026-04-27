@@ -60,6 +60,51 @@ fn store_reopens_from_disk() {
 }
 
 #[test]
+fn store_reopens_with_typed_scalar_metadata_intact() {
+    let dir = tempdir().expect("tempdir should create");
+    let path = dir.path().join("tenant.redb");
+    let mut document = sample_document("tasks", "Typed");
+    document.set_typed_field(
+        "updatedAt",
+        neovex_core::TypedScalarValue::Timestamp {
+            value: Timestamp(1_234),
+        },
+    );
+    document.set_typed_field(
+        "ceiling",
+        neovex_core::TypedScalarValue::SpecialDouble {
+            value: neovex_core::SpecialDouble::PositiveInfinity,
+        },
+    );
+
+    {
+        let store = TenantStore::open(&path).expect("store should open");
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let reopened = TenantStore::open(&path).expect("store should reopen");
+    let fetched = reopened
+        .get(&document.table, &document.id)
+        .expect("get should succeed")
+        .expect("document should exist");
+
+    assert_eq!(
+        fetched.typed_field("updatedAt"),
+        Some(&neovex_core::TypedScalarValue::Timestamp {
+            value: Timestamp(1_234),
+        })
+    );
+    assert_eq!(fetched.get_field("updatedAt"), Some(&json!(1234_u64)));
+    assert_eq!(
+        fetched.typed_field("ceiling"),
+        Some(&neovex_core::TypedScalarValue::SpecialDouble {
+            value: neovex_core::SpecialDouble::PositiveInfinity,
+        })
+    );
+    assert_eq!(fetched.get_field("ceiling"), Some(&json!("Infinity")));
+}
+
+#[test]
 fn store_get_nonexistent_document_returns_none() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let result = store

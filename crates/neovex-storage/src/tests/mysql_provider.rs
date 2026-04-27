@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mysql_async::prelude::Queryable;
 use mysql_async::{Opts, Pool};
 use neovex_core::{
-    CronJob, CronSchedule, Mutation, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, Schema,
+    CollectionName, CronJob, CronSchedule, DocumentLocator, DocumentPath, Mutation,
+    ResourcePathBinding, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, Schema,
     SequenceNumber, TableName, TableSchema, TenantId, Timestamp, WriteOp, WriteOpType,
 };
 use testcontainers_modules::{
@@ -243,6 +244,93 @@ async fn mysql_direct_writes_dedupe_and_journal_progress_round_trip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mysql_resource_path_bindings_round_trip_without_table_name_delimiter_tricks() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("resource-paths").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let bindings = vec![
+            binding("reserved_store", "loc_reserved", &["__meta__", "doc-1"]),
+            binding("dotted_store", "loc_dotted", &["cities.v2", "SF"]),
+            binding("unicode_store", "loc_unicode", &["日本語", "東京"]),
+            binding("deep_store", "loc_deep", &["a", "1", "b", "2", "c", "3"]),
+        ];
+
+        for binding in &bindings {
+            opened
+                .store
+                .upsert_resource_path_binding(binding)
+                .expect("binding should persist");
+        }
+
+        for binding in &bindings {
+            assert_eq!(
+                opened
+                    .store
+                    .resource_path_binding(&binding.locator)
+                    .expect("binding lookup should succeed"),
+                Some(binding.clone())
+            );
+            assert_eq!(
+                opened
+                    .store
+                    .locator_for_document_path(&binding.document_path)
+                    .expect("path lookup should succeed"),
+                Some(binding.locator.clone())
+            );
+        }
+
+        assert_eq!(
+            opened
+                .store
+                .scan_collection_group_bindings(
+                    &CollectionName::new("c").expect("collection group should parse"),
+                )
+                .expect("collection-group scan should succeed"),
+            vec![bindings[3].clone()]
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mysql_trigger_delivery_cursor_round_trips_in_metadata() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("trigger-cursor").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+
+        assert_eq!(
+            opened
+                .store
+                .trigger_delivery_cursor()
+                .expect("cursor should load"),
+            neovex_core::TriggerDeliveryCursor::default()
+        );
+
+        opened
+            .store
+            .set_trigger_delivery_cursor(neovex_core::TriggerDeliveryCursor::new(SequenceNumber(
+                23,
+            )))
+            .expect("cursor should persist");
+
+        assert_eq!(
+            opened
+                .store
+                .trigger_delivery_cursor()
+                .expect("cursor should round trip"),
+            neovex_core::TriggerDeliveryCursor::new(SequenceNumber(23))
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("batch").expect("tenant id should build");
@@ -259,6 +347,7 @@ async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
                 &[ResolvedWrite::Insert {
                     document: document.clone(),
                     indexes: Vec::new(),
+                    resource_path_binding: None,
                 }],
                 &[ResolvedScheduleOp::Insert {
                     job: scheduled_job.clone(),
@@ -306,7 +395,7 @@ async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
             .claim_due_jobs(Timestamp(6_000))
             .expect("second claim should succeed");
         let result = ScheduledJobResult {
-            id: scheduled_job.id,
+            id: scheduled_job.id.clone(),
             run_at: Timestamp(6_000),
             finished_at: Timestamp(6_500),
             mutation: claimed[0].mutation.clone(),
@@ -334,6 +423,7 @@ async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
             schedule: CronSchedule::Interval { seconds: 10 },
             mutation: Mutation::Insert {
                 table: TableName::new("tasks").expect("table name should build"),
+                id: None,
                 fields: serde_json::Map::from_iter([(
                     "title".to_string(),
                     serde_json::json!("heartbeat"),
@@ -377,6 +467,77 @@ async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mysql_execution_unit_batch_persists_and_removes_resource_path_bindings_atomically() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("resource-batch").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("landmarks_store").expect("table name should parse");
+        let document = super::sample_document("landmarks_store", "golden-gate");
+        let binding = ResourcePathBinding::new(
+            DocumentLocator::new(table.clone(), document.id.clone()),
+            DocumentPath::from_segments(["cities", "SF", "landmarks", "golden-gate"])
+                .expect("document path should parse"),
+        );
+
+        let commit = opened
+            .store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Insert {
+                    document: document.clone(),
+                    indexes: Vec::new(),
+                    resource_path_binding: Some(binding.clone()),
+                }],
+                &[],
+            )
+            .expect("insert batch should succeed")
+            .expect("insert batch should emit a commit");
+        assert_eq!(commit.sequence, SequenceNumber(1));
+        assert_eq!(
+            opened
+                .store
+                .locator_for_document_path(&binding.document_path)
+                .expect("path lookup should succeed"),
+            Some(binding.locator.clone())
+        );
+
+        let delete_commit = opened
+            .store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Delete {
+                    previous: document,
+                    indexes: Vec::new(),
+                }],
+                &[],
+            )
+            .expect("delete batch should succeed")
+            .expect("delete batch should emit a commit");
+        assert_eq!(delete_commit.sequence, SequenceNumber(2));
+        assert!(
+            opened
+                .store
+                .resource_path_binding(&binding.locator)
+                .expect("binding lookup should succeed")
+                .is_none(),
+            "delete batch should remove the sidecar binding in the same transaction"
+        );
+        assert!(
+            opened
+                .store
+                .scan_collection_group_bindings(
+                    &CollectionName::new("landmarks").expect("collection group should parse"),
+                )
+                .expect("collection-group scan should succeed")
+                .is_empty(),
+            "delete batch should remove collection-group metadata too"
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mysql_durable_journal_recovery_applies_pending_records() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("recovery").expect("tenant id should build");
@@ -393,7 +554,9 @@ async fn mysql_durable_journal_recovery_applies_pending_records() {
                 vec![WriteOp {
                     table: first.table.clone(),
                     op_type: WriteOpType::Insert,
-                    doc_id: first.id,
+                    doc_id: first.id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: Some(first.clone()),
                 }],
@@ -406,7 +569,9 @@ async fn mysql_durable_journal_recovery_applies_pending_records() {
                 vec![WriteOp {
                     table: second.table.clone(),
                     op_type: WriteOpType::Insert,
-                    doc_id: second.id,
+                    doc_id: second.id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: Some(second.clone()),
                 }],
@@ -764,12 +929,23 @@ fn unique_suffix() -> String {
     format!("{counter:08x}{:x}{timestamp:x}", std::process::id())
 }
 
+fn binding(table: &str, id: &str, path: &[&str]) -> ResourcePathBinding {
+    ResourcePathBinding::new(
+        DocumentLocator::new(
+            TableName::new(table).expect("table name should parse"),
+            neovex_core::DocumentId::from_key(id).expect("document id should parse"),
+        ),
+        DocumentPath::from_segments(path.iter().copied()).expect("document path should parse"),
+    )
+}
+
 fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJob {
     ScheduledJob {
         id: neovex_core::DocumentId::new(),
         run_at,
         mutation: Mutation::Insert {
             table: TableName::new("tasks").expect("table name should build"),
+            id: None,
             fields: serde_json::Map::from_iter([("title".to_string(), serde_json::json!(title))]),
         },
         created_at: Timestamp(100),

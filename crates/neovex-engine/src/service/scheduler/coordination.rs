@@ -172,7 +172,12 @@ impl Service {
 
         let opened_executor = opened.executor.clone();
         let runtime = Arc::new(
-            TenantRuntime::from_parts_async(opened.persistence.clone(), opened_executor).await?,
+            TenantRuntime::from_parts_async(
+                tenant_id.clone(),
+                opened.persistence.clone(),
+                opened_executor,
+            )
+            .await?,
         );
         let progress = opened
             .persistence
@@ -180,9 +185,17 @@ impl Service {
             .await?;
         runtime.sync_mutation_journal_progress(progress);
         if !self.provider_background_ready() {
-            self.catch_up_loaded_provider_tenant_async(runtime.clone(), &tenant_id, true, true)
-                .await?;
+            self.catch_up_loaded_provider_tenant_async(
+                runtime.clone(),
+                &tenant_id,
+                true,
+                true,
+                true,
+            )
+            .await?;
         }
+        self.bootstrap_trigger_candidate_feed(runtime.clone())?;
+        self.bootstrap_trigger_execution(runtime.clone())?;
         // Running-job recovery belongs to startup/unloaded-tenant activation.
         // Once a tenant is already loaded, the live scheduler owns claim
         // state and provider wake paths must not requeue in-flight jobs.

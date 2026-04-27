@@ -1,16 +1,17 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
-use axum::Json;
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use neovex_core::{Error, StorageErrorKind};
+use neovex_core::Error;
 use neovex_engine::Service;
 use neovex_runtime::{HostCallCancellation, InvocationAuth};
-use serde_json::json;
 use tracing::warn;
 
+use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::ConvexRegistry;
+use crate::adapters::firebase::FirebaseConfig;
+use crate::application_auth::ApplicationAuthVerifier;
+use crate::error_envelope::StructuredHttpError;
 use crate::license::LicenseState;
 use crate::local_server::{LocalServerAuditEvent, LocalServerSecurityState};
 use crate::service_registry::RuntimeServiceRegistry;
@@ -18,6 +19,9 @@ use crate::service_registry::RuntimeServiceRegistry;
 pub(crate) struct AppStateConfig {
     pub(crate) service: Arc<Service>,
     pub(crate) convex_registry: Option<ConvexRegistry>,
+    pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
+    pub(crate) cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    pub(crate) firebase_config: Option<FirebaseConfig>,
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(crate) deploy_admin_token: Option<String>,
@@ -29,6 +33,10 @@ pub(crate) struct AppStateConfig {
 pub(crate) struct AppState {
     pub(crate) service: Arc<Service>,
     pub(crate) convex_registry: Arc<ActiveConvexRegistry>,
+    pub(crate) application_auth_verifier: Arc<ActiveApplicationAuthVerifier>,
+    pub(crate) cloud_functions_registry: Arc<ActiveCloudFunctionsRegistry>,
+    pub(crate) firebase_config: Arc<ActiveFirebaseConfig>,
+    pub(crate) deploy_generation: Arc<ActiveDeployGeneration>,
     pub(crate) license_state: Arc<LicenseState>,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(crate) deploy_admin_token: Option<String>,
@@ -41,15 +49,29 @@ impl AppState {
         let AppStateConfig {
             service,
             convex_registry,
+            application_auth_verifier,
+            cloud_functions_registry,
+            firebase_config,
             license_state,
             runtime_service_registry,
             deploy_admin_token,
             local_server_security,
             listen_addr,
         } = config;
+        let convex_registry = convex_registry.map(Arc::new);
+        let initial_generation =
+            u64::from(convex_registry.is_some() || cloud_functions_registry.is_some());
         Self {
             service,
-            convex_registry: Arc::new(ActiveConvexRegistry::new(convex_registry)),
+            convex_registry: Arc::new(ActiveConvexRegistry::from_arc(convex_registry)),
+            application_auth_verifier: Arc::new(ActiveApplicationAuthVerifier::new(
+                application_auth_verifier,
+            )),
+            cloud_functions_registry: Arc::new(ActiveCloudFunctionsRegistry::new(
+                cloud_functions_registry,
+            )),
+            firebase_config: Arc::new(ActiveFirebaseConfig::new(firebase_config)),
+            deploy_generation: Arc::new(ActiveDeployGeneration::new(initial_generation)),
             license_state: Arc::new(license_state),
             runtime_service_registry,
             deploy_admin_token,
@@ -76,6 +98,115 @@ impl AppState {
     }
 }
 
+pub(crate) struct ActiveApplicationAuthVerifier {
+    inner: RwLock<Option<Arc<dyn ApplicationAuthVerifier>>>,
+}
+
+impl ActiveApplicationAuthVerifier {
+    fn new(verifier: Option<Arc<dyn ApplicationAuthVerifier>>) -> Self {
+        Self {
+            inner: RwLock::new(verifier),
+        }
+    }
+
+    pub(crate) fn current(&self) -> Option<Arc<dyn ApplicationAuthVerifier>> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn activate(
+        &self,
+        verifier: Arc<dyn ApplicationAuthVerifier>,
+    ) -> Option<Arc<dyn ApplicationAuthVerifier>> {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(verifier)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActiveCloudFunctionsRegistry {
+    inner: RwLock<Option<Arc<CloudFunctionsRegistry>>>,
+}
+
+impl ActiveCloudFunctionsRegistry {
+    fn new(registry: Option<CloudFunctionsRegistry>) -> Self {
+        Self {
+            inner: RwLock::new(registry.map(Arc::new)),
+        }
+    }
+
+    pub(crate) fn current(&self) -> Option<Arc<CloudFunctionsRegistry>> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn activate(
+        &self,
+        registry: CloudFunctionsRegistry,
+    ) -> Option<Arc<CloudFunctionsRegistry>> {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(Arc::new(registry))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActiveDeployGeneration {
+    current: RwLock<u64>,
+}
+
+impl ActiveDeployGeneration {
+    fn new(initial_generation: u64) -> Self {
+        Self {
+            current: RwLock::new(initial_generation),
+        }
+    }
+
+    pub(crate) fn current(&self) -> u64 {
+        *self
+            .current
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn advance(&self) -> (u64, u64) {
+        let mut generation = self
+            .current
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = *generation;
+        *generation = generation.saturating_add(1);
+        (*generation, previous)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActiveFirebaseConfig {
+    inner: RwLock<Option<Arc<FirebaseConfig>>>,
+}
+
+impl ActiveFirebaseConfig {
+    fn new(config: Option<FirebaseConfig>) -> Self {
+        Self {
+            inner: RwLock::new(config.map(Arc::new)),
+        }
+    }
+
+    pub(crate) fn current(&self) -> Option<Arc<FirebaseConfig>> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ActiveConvexRegistry {
     inner: RwLock<ActiveConvexRegistryState>,
@@ -88,12 +219,17 @@ struct ActiveConvexRegistryState {
 }
 
 impl ActiveConvexRegistry {
+    #[cfg(test)]
     fn new(registry: Option<ConvexRegistry>) -> Self {
+        Self::from_arc(registry.map(Arc::new))
+    }
+
+    fn from_arc(registry: Option<Arc<ConvexRegistry>>) -> Self {
         let generation = u64::from(registry.is_some());
         Self {
             inner: RwLock::new(ActiveConvexRegistryState {
                 generation,
-                registry: registry.map(Arc::new),
+                registry,
             }),
         }
     }
@@ -106,20 +242,20 @@ impl ActiveConvexRegistry {
             .clone()
     }
 
-    pub(crate) fn snapshot(&self) -> (u64, Option<Arc<ConvexRegistry>>) {
-        let state = self
-            .inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (state.generation, state.registry.clone())
+    #[cfg(test)]
+    pub(crate) fn activate(&self, registry: ConvexRegistry) -> (u64, Option<Arc<ConvexRegistry>>) {
+        self.activate_shared(Arc::new(registry))
     }
 
-    pub(crate) fn activate(&self, registry: ConvexRegistry) -> (u64, Option<Arc<ConvexRegistry>>) {
+    pub(crate) fn activate_shared(
+        &self,
+        registry: Arc<ConvexRegistry>,
+    ) -> (u64, Option<Arc<ConvexRegistry>>) {
         let mut state = self
             .inner
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = state.registry.replace(Arc::new(registry));
+        let previous = state.registry.replace(registry);
         state.generation = state.generation.saturating_add(1);
         (state.generation, previous)
     }
@@ -140,6 +276,7 @@ pub(crate) enum AppError {
     Unauthorized(String),
     Forbidden(String),
     NotFound(String),
+    Structured(Box<StructuredHttpError>),
 }
 
 impl From<Error> for AppError {
@@ -150,44 +287,7 @@ impl From<Error> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        match self {
-            Self::Core(error) => {
-                let status = match error {
-                    Error::Cancelled => StatusCode::REQUEST_TIMEOUT,
-                    Error::TenantNotFound(_)
-                    | Error::DocumentNotFound(_)
-                    | Error::ScheduledJobNotFound(_)
-                    | Error::SchemaNotFound(_) => StatusCode::NOT_FOUND,
-                    Error::Conflict(_) => StatusCode::CONFLICT,
-                    Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
-                    Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
-                    Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
-                    Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                    Error::AlreadyExists(_) => StatusCode::CONFLICT,
-                    Error::Storage { kind, .. } => match kind {
-                        StorageErrorKind::Busy
-                        | StorageErrorKind::Transient
-                        | StorageErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-                        StorageErrorKind::Corruption
-                        | StorageErrorKind::Io
-                        | StorageErrorKind::Other => StatusCode::INTERNAL_SERVER_ERROR,
-                    },
-                    Error::Serialization(_) | Error::Internal(_) => {
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    }
-                };
-                (status, Json(json!({ "error": error.to_string() }))).into_response()
-            }
-            Self::Unauthorized(message) => {
-                (StatusCode::UNAUTHORIZED, Json(json!({ "error": message }))).into_response()
-            }
-            Self::Forbidden(message) => {
-                (StatusCode::FORBIDDEN, Json(json!({ "error": message }))).into_response()
-            }
-            Self::NotFound(message) => {
-                (StatusCode::NOT_FOUND, Json(json!({ "error": message }))).into_response()
-            }
-        }
+        StructuredHttpError::from_app_error(self).into_response()
     }
 }
 
@@ -208,6 +308,7 @@ impl AppError {
 impl std::fmt::Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Structured(error) => write!(f, "{error}"),
             Self::Core(error) => write!(f, "{error}"),
             Self::Unauthorized(message) => write!(f, "{message}"),
             Self::Forbidden(message) => write!(f, "{message}"),
@@ -220,12 +321,15 @@ impl std::error::Error for AppError {}
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
+    use tempfile::tempdir;
+
     use super::*;
 
     #[test]
     fn unavailable_storage_error_maps_to_service_unavailable() {
         let response = AppError::from(Error::storage(
-            StorageErrorKind::Unavailable,
+            neovex_core::StorageErrorKind::Unavailable,
             "postgres pool unavailable",
         ))
         .into_response();
@@ -254,6 +358,48 @@ mod tests {
         );
         assert_ne!(Arc::as_ptr(&current), previous_ptr);
         assert_eq!(Arc::as_ptr(&previous), previous_ptr);
+    }
+
+    #[test]
+    fn active_deploy_generation_advances_from_initial_state() {
+        let generation = ActiveDeployGeneration::new(1);
+
+        assert_eq!(generation.current(), 1);
+        assert_eq!(generation.advance(), (2, 1));
+        assert_eq!(generation.current(), 2);
+    }
+
+    #[test]
+    fn active_firebase_config_returns_current_config_when_present() {
+        let config = ActiveFirebaseConfig::new(Some(FirebaseConfig::new()));
+        assert!(config.current().is_some());
+
+        let missing = ActiveFirebaseConfig::new(None);
+        assert!(missing.current().is_none());
+    }
+
+    #[test]
+    fn app_state_does_not_infer_application_auth_verifier_from_convex_registry() {
+        let temp = tempdir().expect("service tempdir should build");
+        let service = Arc::new(Service::new(temp.path()).expect("service should build"));
+        let state = AppState::from_config(AppStateConfig {
+            service,
+            convex_registry: Some(ConvexRegistry::empty()),
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            firebase_config: None,
+            license_state: LicenseState::community(),
+            runtime_service_registry: Arc::new(
+                crate::service_registry::SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+                    crate::sandbox::EmptySandboxCatalog,
+                )),
+            ),
+            deploy_admin_token: None,
+            local_server_security: None,
+            listen_addr: None,
+        });
+
+        assert!(state.application_auth_verifier.current().is_none());
     }
 }
 

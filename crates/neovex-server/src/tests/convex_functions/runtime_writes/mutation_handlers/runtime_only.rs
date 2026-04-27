@@ -1,4 +1,6 @@
 use super::*;
+use neovex_core::DocumentId;
+use std::str::FromStr;
 
 #[tokio::test]
 async fn convex_named_mutation_can_use_runtime_only_handler() {
@@ -81,15 +83,14 @@ export {};
         .convex_named_mutation("demo", "messages:sendTwice", json!({ "body": "Hello" }))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(
-        response
-            .json::<serde_json::Value>()
-            .await
-            .expect("runtime-only convex mutation response should parse")
-            .as_str()
-            .is_some(),
-        "runtime-only mutation should return the first inserted id"
-    );
+    let returned_id = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("runtime-only convex mutation response should parse")
+        .as_str()
+        .expect("runtime-only mutation should return the first inserted id")
+        .to_string();
+    DocumentId::from_str(&returned_id).expect("returned id should remain a valid document id");
 
     let listed = api.list_documents("demo", "messages").await;
     assert_eq!(listed.status(), StatusCode::OK);
@@ -98,4 +99,12 @@ export {};
         .await
         .expect("runtime-only mutation list should parse");
     assert_eq!(listed_body["data"].as_array().map(Vec::len), Some(2));
+    assert!(
+        listed_body["data"]
+            .as_array()
+            .expect("list payload should include data rows")
+            .iter()
+            .any(|document| document["_id"] == returned_id),
+        "listed documents should include the returned insert id"
+    );
 }

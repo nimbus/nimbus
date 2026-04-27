@@ -4,7 +4,8 @@ use std::future::{Future, pending};
 use std::sync::Arc;
 
 use neovex_core::{
-    DependencySet, Document, Error, PrincipalContext, Query, Result, SequenceNumber, TenantId,
+    DependencySet, Document, Error, PrincipalContext, Query, Result, SequenceNumber,
+    SubscriptionResultSnapshot, TenantId,
 };
 use tokio::sync::mpsc;
 
@@ -13,7 +14,7 @@ use crate::subscriptions::{
 };
 use crate::tenant::TenantRuntime;
 
-use super::{Service, documents_to_json};
+use super::Service;
 pub use bootstrap::SubscriptionBootstrapCancellation;
 use bootstrap::{
     evaluate_subscription_bootstrap_async_for_principal,
@@ -29,6 +30,13 @@ fn subscription_send_failure(error: mpsc::error::TrySendError<SubscriptionUpdate
             Error::Internal("subscription channel closed".to_string())
         }
     }
+}
+
+struct SubscriptionBootstrapPublication<'a> {
+    subscription_id: u64,
+    request_id: String,
+    sender: &'a mpsc::Sender<SubscriptionUpdate>,
+    covered_sequence: SequenceNumber,
 }
 
 impl Service {
@@ -55,22 +63,22 @@ impl Service {
         &self,
         runtime: &Arc<TenantRuntime>,
         query: &Query,
-        subscription_id: u64,
-        request_id: String,
-        sender: &mpsc::Sender<SubscriptionUpdate>,
+        publication: SubscriptionBootstrapPublication<'_>,
         documents: Vec<Document>,
     ) -> Result<DependencySet> {
         runtime.cache_documents(&documents);
         let dependencies = subscription_dependencies(query, &documents);
         let update = SubscriptionUpdate::Result {
-            subscription_id,
-            request_id: Some(request_id),
-            commit: None,
-            deleted_documents: Vec::new(),
-            data: documents_to_json(documents),
+            subscription_id: publication.subscription_id,
+            request_id: Some(publication.request_id),
+            snapshot: SubscriptionResultSnapshot::bootstrap(
+                publication.covered_sequence,
+                documents,
+            ),
+            commit_hint: None,
         };
-        if let Err(error) = sender.try_send(update) {
-            runtime.subscriptions.remove(subscription_id);
+        if let Err(error) = publication.sender.try_send(update) {
+            runtime.subscriptions.remove(publication.subscription_id);
             return Err(subscription_send_failure(error));
         }
         Ok(dependencies)
@@ -146,9 +154,12 @@ impl Service {
                 let dependencies = self.publish_subscription_bootstrap(
                     &runtime,
                     &query,
-                    subscription_id,
-                    request_id,
-                    &sender,
+                    SubscriptionBootstrapPublication {
+                        subscription_id,
+                        request_id,
+                        sender: &sender,
+                        covered_sequence,
+                    },
                     documents,
                 )?;
                 self.activate_bootstrapped_subscription(
@@ -273,9 +284,12 @@ impl Service {
         let dependencies = self.publish_subscription_bootstrap(
             &runtime,
             &query,
-            subscription_id,
-            request_id,
-            &sender,
+            SubscriptionBootstrapPublication {
+                subscription_id,
+                request_id,
+                sender: &sender,
+                covered_sequence,
+            },
             documents,
         )?;
         #[cfg(any(test, feature = "test-hooks"))]

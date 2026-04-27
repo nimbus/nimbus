@@ -49,13 +49,13 @@ impl LibsqlReplicaTenantStore {
     }
 
     pub fn complete_scheduled_job(&self, job_id: &DocumentId) -> Result<()> {
-        let job_id = *job_id;
+        let job_id = job_id.clone();
         self.execute_write(move |transaction| transaction.complete_scheduled_job(&job_id))?;
         Ok(())
     }
 
     pub fn cancel_scheduled_job(&self, job_id: &DocumentId) -> Result<bool> {
-        let job_id = *job_id;
+        let job_id = job_id.clone();
         Ok(self
             .execute_write(move |transaction| transaction.cancel_scheduled_job(&job_id))?
             .value)
@@ -156,7 +156,7 @@ impl LibsqlReplicaTenantStore {
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         let patch = patch.clone();
         let execution_id = execution_id.map(ToOwned::to_owned);
         let committed = self.execute_write(move |transaction| {
@@ -229,7 +229,7 @@ impl LibsqlReplicaTenantStore {
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         let execution_id = execution_id.map(ToOwned::to_owned);
         let committed = self.execute_write(move |transaction| {
             if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
@@ -283,6 +283,15 @@ impl LibsqlReplicaTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+    }
+
+    pub fn apply_execution_unit_batch_with_origin(
+        &self,
+        writes: &[ResolvedWrite],
+        schedule_ops: &[ResolvedScheduleOp],
+        trigger_write_origin: Option<&TriggerWriteOrigin>,
+    ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
                 "execution-unit batch must contain at least one change".to_string(),
@@ -290,7 +299,9 @@ impl LibsqlReplicaTenantStore {
         }
         let writes = writes.to_vec();
         let schedule_ops = schedule_ops.to_vec();
+        let trigger_write_origin = trigger_write_origin.cloned();
         let committed = self.execute_write(move |transaction| {
+            transaction.set_trigger_write_origin(trigger_write_origin.clone());
             for write in &writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -375,6 +386,7 @@ impl LibsqlReplicaWriteTransaction {
             store,
             tx: Some(tx),
             commit_writes: Vec::new(),
+            trigger_write_origin: None,
             check_cancel: Box::new(check_cancel),
             refresh_cache_after_commit: false,
         })
@@ -435,16 +447,19 @@ impl LibsqlReplicaWriteTransaction {
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
         let data_json = serialize_document_fields(document)?;
+        let typed_fields_json = serialize_document_typed_fields(document)?;
         self.store.block_on(async {
             self.session()?
                 .execute(
-                    "INSERT INTO documents (table_name, id, data_json, creation_time)
-                     VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     libsql::params![
                         document.table.as_str(),
                         document.id.to_string(),
                         data_json,
-                        i64_from_u64(document.creation_time.0)?
+                        typed_fields_json,
+                        i64_from_u64(document.creation_time.0)?,
+                        i64_from_u64(document.update_time.0)?
                     ],
                 )
                 .await
@@ -454,7 +469,9 @@ impl LibsqlReplicaWriteTransaction {
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
             op_type: WriteOpType::Insert,
-            doc_id: document.id,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: None,
             current: Some(document.clone()),
         });
@@ -474,24 +491,28 @@ impl LibsqlReplicaWriteTransaction {
         self.check_cancel()?;
         let existing_document = self
             .load_document(table, id)?
-            .ok_or(Error::DocumentNotFound(*id))?;
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
         let mut document = existing_document.clone();
         for (field, value) in patch {
-            document.fields.insert(field.clone(), value.clone());
+            document.set_field(field.clone(), value.clone());
         }
+        document.update_time = self.store.provider.clock.now();
         validate(&existing_document, &document)?;
         let data_json = serialize_document_fields(&document)?;
+        let typed_fields_json = serialize_document_typed_fields(&document)?;
         self.store.block_on(async {
             self.session()?
                 .execute(
                     "UPDATE documents
-                     SET data_json = ?3, creation_time = ?4
+                     SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
                      WHERE table_name = ?1 AND id = ?2",
                     libsql::params![
                         table.as_str(),
                         id.to_string(),
                         data_json,
-                        i64_from_u64(document.creation_time.0)?
+                        typed_fields_json,
+                        i64_from_u64(document.creation_time.0)?,
+                        i64_from_u64(document.update_time.0)?
                     ],
                 )
                 .await
@@ -501,7 +522,11 @@ impl LibsqlReplicaWriteTransaction {
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Update,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding: self.store.resource_path_binding(
+                &neovex_core::DocumentLocator::new(table.clone(), id.clone()),
+            )?,
+            trigger_write_origin: None,
             previous: Some(existing_document),
             current: Some(document),
         });
@@ -520,7 +545,7 @@ impl LibsqlReplicaWriteTransaction {
         self.check_cancel()?;
         let removed_document = self
             .load_document(table, id)?
-            .ok_or(Error::DocumentNotFound(*id))?;
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
         validate(&removed_document)?;
         self.store.block_on(async {
             self.session()?
@@ -532,10 +557,15 @@ impl LibsqlReplicaWriteTransaction {
                 .map_err(map_libsql_error)?;
             Ok(())
         })?;
+        let resource_path_binding = self.remove_resource_path_binding(
+            &neovex_core::DocumentLocator::new(table.clone(), id.clone()),
+        )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Delete,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding,
+            trigger_write_origin: None,
             previous: Some(removed_document.clone()),
             current: None,
         });
@@ -698,7 +728,11 @@ impl LibsqlReplicaWriteTransaction {
 
     pub fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
         match write {
-            ResolvedWrite::Insert { document, .. } => {
+            ResolvedWrite::Insert {
+                document,
+                resource_path_binding,
+                ..
+            } => {
                 self.check_cancel()?;
                 if self.load_document(&document.table, &document.id)?.is_some() {
                     return Err(Error::Conflict(format!(
@@ -706,10 +740,20 @@ impl LibsqlReplicaWriteTransaction {
                         document.id
                     )));
                 }
-                self.insert_document(document)
+                self.insert_document(document)?;
+                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
+                    if let Some(write) = self.commit_writes.last_mut() {
+                        write.resource_path_binding = Some(resource_path_binding.clone());
+                    }
+                    self.upsert_resource_path_binding(resource_path_binding)?;
+                }
+                Ok(())
             }
             ResolvedWrite::Update {
-                previous, current, ..
+                previous,
+                current,
+                resource_path_binding,
+                ..
             } => {
                 self.check_cancel()?;
                 let existing =
@@ -725,17 +769,20 @@ impl LibsqlReplicaWriteTransaction {
                     )));
                 }
                 let data_json = serialize_document_fields(current)?;
+                let typed_fields_json = serialize_document_typed_fields(current)?;
                 self.store.block_on(async {
                     self.session()?
                         .execute(
                             "UPDATE documents
-                             SET data_json = ?3, creation_time = ?4
+                             SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
                              WHERE table_name = ?1 AND id = ?2",
                             libsql::params![
                                 current.table.as_str(),
                                 current.id.to_string(),
                                 data_json,
-                                i64_from_u64(current.creation_time.0)?
+                                typed_fields_json,
+                                i64_from_u64(current.creation_time.0)?,
+                                i64_from_u64(current.update_time.0)?
                             ],
                         )
                         .await
@@ -745,10 +792,15 @@ impl LibsqlReplicaWriteTransaction {
                 self.record_commit_write(WriteOp {
                     table: current.table.clone(),
                     op_type: WriteOpType::Update,
-                    doc_id: current.id,
+                    doc_id: current.id.clone(),
+                    resource_path_binding: resource_path_binding.clone(),
+                    trigger_write_origin: None,
                     previous: Some(previous.clone()),
                     current: Some(current.clone()),
                 });
+                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
+                    self.upsert_resource_path_binding(resource_path_binding)?;
+                }
                 Ok(())
             }
             ResolvedWrite::Delete { previous, .. } => {
@@ -775,10 +827,15 @@ impl LibsqlReplicaWriteTransaction {
                         .map_err(map_libsql_error)?;
                     Ok(())
                 })?;
+                let resource_path_binding = self.remove_resource_path_binding(
+                    &neovex_core::DocumentLocator::new(previous.table.clone(), previous.id.clone()),
+                )?;
                 self.record_commit_write(WriteOp {
                     table: previous.table.clone(),
                     op_type: WriteOpType::Delete,
-                    doc_id: previous.id,
+                    doc_id: previous.id.clone(),
+                    resource_path_binding,
+                    trigger_write_origin: None,
                     previous: Some(previous.clone()),
                     current: None,
                 });
@@ -826,17 +883,24 @@ impl LibsqlReplicaWriteTransaction {
         }
     }
 
-    fn session(&self) -> Result<&Transaction> {
+    pub(super) fn session(&self) -> Result<&Transaction> {
         self.tx.as_ref().ok_or_else(|| {
             Error::Internal("libsql replica write transaction already closed".to_string())
         })
     }
 
-    fn check_cancel(&self) -> Result<()> {
+    pub(super) fn check_cancel(&self) -> Result<()> {
         (self.check_cancel.as_ref())()
     }
 
-    fn record_commit_write(&mut self, write: WriteOp) {
+    fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
+        self.trigger_write_origin = trigger_write_origin;
+    }
+
+    fn record_commit_write(&mut self, mut write: WriteOp) {
+        if write.trigger_write_origin.is_none() {
+            write.trigger_write_origin = self.trigger_write_origin.clone();
+        }
         self.commit_writes.push(write);
     }
 
@@ -844,7 +908,7 @@ impl LibsqlReplicaWriteTransaction {
         self.store.block_on(load_remote_document_from_session(
             self.session()?,
             table.clone(),
-            *id,
+            id.clone(),
         ))
     }
 

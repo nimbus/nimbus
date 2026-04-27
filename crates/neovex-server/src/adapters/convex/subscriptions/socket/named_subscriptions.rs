@@ -34,9 +34,10 @@ pub(super) async fn send_request_error(
     message: String,
 ) {
     let _ = outbound_tx
-        .send(ServerMessage::Error {
-            request_id: Some(request_id),
+        .send(ServerMessage::request_error(
+            request_id,
+            "op.failed",
             message,
-        })
+        ))
         .await;
 }

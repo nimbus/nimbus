@@ -80,13 +80,13 @@ impl MySqlTenantStore {
     }
 
     pub fn complete_scheduled_job(&self, job_id: &DocumentId) -> Result<()> {
-        let job_id = *job_id;
+        let job_id = job_id.clone();
         self.execute_write(move |transaction| transaction.complete_scheduled_job(&job_id))?;
         Ok(())
     }
 
     pub fn cancel_scheduled_job(&self, job_id: &DocumentId) -> Result<bool> {
-        let job_id = *job_id;
+        let job_id = job_id.clone();
         Ok(self
             .execute_write(move |transaction| transaction.cancel_scheduled_job(&job_id))?
             .value)
@@ -120,6 +120,15 @@ impl MySqlTenantStore {
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
     ) -> Result<Option<CommitEntry>> {
+        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None)
+    }
+
+    pub fn apply_execution_unit_batch_with_origin(
+        &self,
+        writes: &[ResolvedWrite],
+        schedule_ops: &[ResolvedScheduleOp],
+        trigger_write_origin: Option<&TriggerWriteOrigin>,
+    ) -> Result<Option<CommitEntry>> {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Err(Error::Internal(
                 "execution-unit batch must contain at least one change".to_string(),
@@ -129,6 +138,7 @@ impl MySqlTenantStore {
         let writes = writes.to_vec();
         let schedule_ops = schedule_ops.to_vec();
         let committed = self.execute_write(move |transaction| {
+            transaction.set_trigger_write_origin(trigger_write_origin.cloned());
             for write in &writes {
                 transaction.apply_resolved_write(write)?;
             }
@@ -210,7 +220,7 @@ impl MySqlTenantStore {
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         let patch = patch.clone();
         let execution_id = execution_id.map(str::to_string);
         let committed = self.execute_write(move |transaction| {
@@ -283,7 +293,7 @@ impl MySqlTenantStore {
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         let execution_id = execution_id.map(str::to_string);
         let committed = self.execute_write(move |transaction| {
             if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
@@ -351,6 +361,7 @@ impl MySqlWriteTransaction {
             schema_cache: store.schema_cache.clone(),
             conn: Some(conn),
             commit_writes: Vec::new(),
+            trigger_write_origin: None,
             schema_cache_changed: false,
             check_cancel: Box::new(check_cancel),
         };
@@ -402,24 +413,38 @@ impl MySqlWriteTransaction {
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
         let query = format!(
-            "INSERT INTO {} (table_name, id, data_json, creation_time) VALUES (?, ?, ?, ?)",
+            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
             qualified_table(&self.database_name, "documents")
         );
         let table_name = document.table.as_str().to_string();
         let document_id = document.id.to_string();
         let data_json = serialize_document_fields(document)?;
+        let typed_fields_json = serialize_document_typed_fields(document)?;
         let creation_time = document.creation_time.0;
+        let update_time = document.update_time.0;
         let runtime_handle = self.provider.runtime_handle.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            conn.exec_drop(query, (table_name, document_id, data_json, creation_time))
-                .await
-                .map_err(map_mysql_error)
+            conn.exec_drop(
+                query,
+                (
+                    table_name,
+                    document_id,
+                    data_json,
+                    typed_fields_json,
+                    creation_time,
+                    update_time,
+                ),
+            )
+            .await
+            .map_err(map_mysql_error)
         })?;
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
             op_type: WriteOpType::Insert,
-            doc_id: document.id,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: None,
             current: Some(document.clone()),
         });
@@ -439,31 +464,49 @@ impl MySqlWriteTransaction {
         self.check_cancel()?;
         let existing_document = self
             .load_document(table, id)?
-            .ok_or(Error::DocumentNotFound(*id))?;
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
         let mut document = existing_document.clone();
         for (field, value) in patch {
-            document.fields.insert(field.clone(), value.clone());
+            document.set_field(field.clone(), value.clone());
         }
+        document.update_time = self.provider.clock.now();
         validate(&existing_document, &document)?;
         let query = format!(
-            "UPDATE {} SET data_json = ?, creation_time = ? WHERE table_name = ? AND id = ?",
+            "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_name = ? AND id = ?",
             qualified_table(&self.database_name, "documents")
         );
         let data_json = serialize_document_fields(&document)?;
+        let typed_fields_json = serialize_document_typed_fields(&document)?;
         let creation_time = document.creation_time.0;
+        let update_time = document.update_time.0;
         let table_name = table.as_str().to_string();
         let document_id = id.to_string();
         let runtime_handle = self.provider.runtime_handle.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            conn.exec_drop(query, (data_json, creation_time, table_name, document_id))
-                .await
-                .map_err(map_mysql_error)
+            conn.exec_drop(
+                query,
+                (
+                    data_json,
+                    typed_fields_json,
+                    creation_time,
+                    update_time,
+                    table_name,
+                    document_id,
+                ),
+            )
+            .await
+            .map_err(map_mysql_error)
         })?;
+        let resource_path_binding = self.resource_path_binding(
+            &neovex_core::DocumentLocator::new(table.clone(), id.clone()),
+        )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Update,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding,
+            trigger_write_origin: None,
             previous: Some(existing_document),
             current: Some(document),
         });
@@ -482,7 +525,7 @@ impl MySqlWriteTransaction {
         self.check_cancel()?;
         let removed_document = self
             .load_document(table, id)?
-            .ok_or(Error::DocumentNotFound(*id))?;
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
         validate(&removed_document)?;
         let query = format!(
             "DELETE FROM {} WHERE table_name = ? AND id = ?",
@@ -497,10 +540,15 @@ impl MySqlWriteTransaction {
                 .await
                 .map_err(map_mysql_error)
         })?;
+        let resource_path_binding = self.remove_resource_path_binding(
+            &neovex_core::DocumentLocator::new(table.clone(), id.clone()),
+        )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Delete,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding,
+            trigger_write_origin: None,
             previous: Some(removed_document.clone()),
             current: None,
         });
@@ -773,7 +821,11 @@ impl MySqlWriteTransaction {
 
     pub fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
         match write {
-            ResolvedWrite::Insert { document, .. } => {
+            ResolvedWrite::Insert {
+                document,
+                resource_path_binding,
+                ..
+            } => {
                 self.check_cancel()?;
                 if self.load_document(&document.table, &document.id)?.is_some() {
                     return Err(Error::Conflict(format!(
@@ -781,10 +833,20 @@ impl MySqlWriteTransaction {
                         document.id
                     )));
                 }
-                self.insert_document(document)
+                self.insert_document(document)?;
+                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
+                    if let Some(write) = self.commit_writes.last_mut() {
+                        write.resource_path_binding = Some(resource_path_binding.clone());
+                    }
+                    self.upsert_resource_path_binding(resource_path_binding)?;
+                }
+                Ok(())
             }
             ResolvedWrite::Update {
-                previous, current, ..
+                previous,
+                current,
+                resource_path_binding,
+                ..
             } => {
                 self.check_cancel()?;
                 let existing =
@@ -800,27 +862,44 @@ impl MySqlWriteTransaction {
                     )));
                 }
                 let query = format!(
-                    "UPDATE {} SET data_json = ?, creation_time = ? WHERE table_name = ? AND id = ?",
+                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_name = ? AND id = ?",
                     qualified_table(&self.database_name, "documents")
                 );
                 let data_json = serialize_document_fields(current)?;
+                let typed_fields_json = serialize_document_typed_fields(current)?;
                 let creation_time = current.creation_time.0;
+                let update_time = current.update_time.0;
                 let table_name = current.table.as_str().to_string();
                 let document_id = current.id.to_string();
                 let runtime_handle = self.provider.runtime_handle.clone();
                 let conn = self.session()?;
                 Self::block_on(&runtime_handle, async move {
-                    conn.exec_drop(query, (data_json, creation_time, table_name, document_id))
-                        .await
-                        .map_err(map_mysql_error)
+                    conn.exec_drop(
+                        query,
+                        (
+                            data_json,
+                            typed_fields_json,
+                            creation_time,
+                            update_time,
+                            table_name,
+                            document_id,
+                        ),
+                    )
+                    .await
+                    .map_err(map_mysql_error)
                 })?;
                 self.record_commit_write(WriteOp {
                     table: current.table.clone(),
                     op_type: WriteOpType::Update,
-                    doc_id: current.id,
+                    doc_id: current.id.clone(),
+                    resource_path_binding: resource_path_binding.clone(),
+                    trigger_write_origin: None,
                     previous: Some(previous.clone()),
                     current: Some(current.clone()),
                 });
+                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
+                    self.upsert_resource_path_binding(resource_path_binding)?;
+                }
                 Ok(())
             }
             ResolvedWrite::Delete { previous, .. } => {
@@ -850,10 +929,15 @@ impl MySqlWriteTransaction {
                         .await
                         .map_err(map_mysql_error)
                 })?;
+                let resource_path_binding = self.remove_resource_path_binding(
+                    &neovex_core::DocumentLocator::new(previous.table.clone(), previous.id.clone()),
+                )?;
                 self.record_commit_write(WriteOp {
                     table: previous.table.clone(),
                     op_type: WriteOpType::Delete,
-                    doc_id: previous.id,
+                    doc_id: previous.id.clone(),
+                    resource_path_binding,
+                    trigger_write_origin: None,
                     previous: Some(previous.clone()),
                     current: None,
                 });
@@ -896,7 +980,7 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn block_on<F, T>(runtime_handle: &TokioRuntimeHandle, future: F) -> Result<T>
+    pub(super) fn block_on<F, T>(runtime_handle: &TokioRuntimeHandle, future: F) -> Result<T>
     where
         F: Future<Output = Result<T>> + Send,
         T: Send,
@@ -908,11 +992,11 @@ impl MySqlWriteTransaction {
         )
     }
 
-    fn check_cancel(&self) -> Result<()> {
+    pub(super) fn check_cancel(&self) -> Result<()> {
         (self.check_cancel.as_ref())()
     }
 
-    fn session(&mut self) -> Result<&mut Conn> {
+    pub(super) fn session(&mut self) -> Result<&mut Conn> {
         self.conn
             .as_mut()
             .ok_or_else(|| Error::Internal("MySQL write transaction already closed".to_string()))
@@ -1018,7 +1102,7 @@ impl MySqlWriteTransaction {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
             load_document_from_session(conn, &database_name, &table, &id).await
@@ -1106,7 +1190,14 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn record_commit_write(&mut self, write: WriteOp) {
+    fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
+        self.trigger_write_origin = trigger_write_origin;
+    }
+
+    fn record_commit_write(&mut self, mut write: WriteOp) {
+        if write.trigger_write_origin.is_none() {
+            write.trigger_write_origin = self.trigger_write_origin.clone();
+        }
         self.commit_writes.push(write);
     }
 }

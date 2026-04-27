@@ -46,7 +46,9 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         .await
         .expect("initial subscription update should arrive");
     match initial {
-        SubscriptionUpdate::Result { data, .. } => assert_eq!(data.len(), 2),
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            assert_eq!(snapshot.to_json_documents().len(), 2)
+        }
         other => panic!("unexpected initial subscription update: {other:?}"),
     }
 
@@ -105,21 +107,18 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         .expect("coalesced delete subscription update should arrive")
         .expect("subscription channel should remain open");
     match update {
-        SubscriptionUpdate::Result {
-            commit,
-            deleted_documents,
-            data,
-            ..
-        } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert!(
-                commit.is_none(),
+                snapshot.commit.is_none(),
                 "multi-commit coalesced deliveries should omit per-commit metadata"
             );
             assert!(
                 data.is_empty(),
                 "the active query should be empty after both deletes"
             );
-            let titles = deleted_documents
+            let titles = snapshot
+                .deleted_documents
                 .into_iter()
                 .map(|document| {
                     document
@@ -204,7 +203,8 @@ async fn service_does_not_fail_committed_mutation_when_subscription_re_evaluatio
         .await
         .expect("recovered subscription result should arrive");
     match recovered {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 2);
         }
         other => panic!("unexpected recovered subscription event: {other:?}"),

@@ -51,5 +51,5 @@ export {};
         .json::<serde_json::Value>()
         .await
         .expect("runtime timeout response should parse");
-    assert_eq!(body["error"], json!("operation canceled"));
+    assert_eq!(body["error"]["message"], json!("operation canceled"));
 }

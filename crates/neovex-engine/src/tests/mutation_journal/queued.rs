@@ -120,7 +120,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     assert_eq!(
         visible
             .into_iter()
-            .map(|document| document.id)
+            .map(|document| document.id.clone())
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([first_id, second_id])
     );

@@ -85,7 +85,7 @@ where
 {
     let query = if table.is_some() {
         format!(
-            "SELECT table_name, id, creation_time, data_json \
+            "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
              FROM {} \
              WHERE table_name = $1 \
              ORDER BY id",
@@ -93,7 +93,7 @@ where
         )
     } else {
         format!(
-            "SELECT table_name, id, creation_time, data_json \
+            "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
              FROM {} \
              ORDER BY table_name, id",
             qualified_table(schema_name, "documents")
@@ -124,7 +124,7 @@ where
     C: GenericClient + Sync,
 {
     let query = format!(
-        "SELECT table_name, id, creation_time, data_json \
+        "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
          FROM {} \
          WHERE table_name = $1 AND id = $2",
         qualified_table(schema_name, "documents")
@@ -203,7 +203,7 @@ where
     }
 
     let sql = format!(
-        "SELECT table_name, id, creation_time, data_json \
+        "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
          FROM {} \
          WHERE {} \
          ORDER BY id",
@@ -483,14 +483,19 @@ pub(super) fn row_to_document(row: tokio_postgres::Row) -> Result<Document> {
     let id = DocumentId::from_str(row.get::<_, String>(1).as_str())
         .map_err(|error| Error::InvalidInput(error.to_string()))?;
     let creation_time = timestamp_from_i64(row.get::<_, i64>(2))?;
+    let update_time = timestamp_from_i64(row.get::<_, i64>(3))?;
     let fields =
-        serde_json::from_str::<serde_json::Map<String, Value>>(row.get::<_, String>(3).as_str())
+        serde_json::from_str::<serde_json::Map<String, Value>>(row.get::<_, String>(4).as_str())
             .map_err(|error| Error::Serialization(error.to_string()))?;
+    let typed_fields = serde_json::from_str(row.get::<_, String>(5).as_str())
+        .map_err(|error| Error::Serialization(error.to_string()))?;
     Ok(Document {
         id,
         table,
         creation_time,
+        update_time,
         fields,
+        typed_fields,
     })
 }
 
@@ -597,15 +602,27 @@ where
                     }
                     None => {
                         let query = format!(
-                            "INSERT INTO {} (table_name, id, data_json, creation_time) VALUES ($1, $2, $3, $4)",
+                            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES ($1, $2, $3, $4, $5, $6)",
                             qualified_table(schema_name, "documents")
                         );
                         let table = write.table.as_str().to_string();
                         let id = write.doc_id.to_string();
                         let data_json = serialize_document_fields(current)?;
+                        let typed_fields_json = serialize_document_typed_fields(current)?;
                         let creation_time = i64_from_timestamp(current.creation_time)?;
+                        let update_time = i64_from_timestamp(current.update_time)?;
                         session
-                            .execute(query.as_str(), &[&table, &id, &data_json, &creation_time])
+                            .execute(
+                                query.as_str(),
+                                &[
+                                    &table,
+                                    &id,
+                                    &data_json,
+                                    &typed_fields_json,
+                                    &creation_time,
+                                    &update_time,
+                                ],
+                            )
                             .await
                             .map_err(map_postgres_error)?;
                     }
@@ -629,15 +646,27 @@ where
                     )));
                 }
                 let query = format!(
-                    "UPDATE {} SET data_json = $3, creation_time = $4 WHERE table_name = $1 AND id = $2",
+                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_name = $1 AND id = $2",
                     qualified_table(schema_name, "documents")
                 );
                 let table = write.table.as_str().to_string();
                 let id = write.doc_id.to_string();
                 let data_json = serialize_document_fields(current)?;
+                let typed_fields_json = serialize_document_typed_fields(current)?;
                 let creation_time = i64_from_timestamp(current.creation_time)?;
+                let update_time = i64_from_timestamp(current.update_time)?;
                 session
-                    .execute(query.as_str(), &[&table, &id, &data_json, &creation_time])
+                    .execute(
+                        query.as_str(),
+                        &[
+                            &table,
+                            &id,
+                            &data_json,
+                            &typed_fields_json,
+                            &creation_time,
+                            &update_time,
+                        ],
+                    )
                     .await
                     .map_err(map_postgres_error)?;
             }
@@ -767,6 +796,11 @@ where
 
 pub(super) fn serialize_document_fields(document: &Document) -> Result<String> {
     serde_json::to_string(&document.fields).map_err(|error| Error::Serialization(error.to_string()))
+}
+
+pub(super) fn serialize_document_typed_fields(document: &Document) -> Result<String> {
+    serde_json::to_string(&document.typed_fields)
+        .map_err(|error| Error::Serialization(error.to_string()))
 }
 
 pub(super) fn matches_filters(document: &Document, filters: &[Filter]) -> Result<bool> {
@@ -1051,7 +1085,7 @@ pub(super) fn apply_schedule_ops_in_transaction(
             ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
             ResolvedScheduleOp::Cancel { job_id } => {
                 if !transaction.cancel_scheduled_job(job_id)? {
-                    return Err(Error::ScheduledJobNotFound(*job_id));
+                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
                 }
             }
         }

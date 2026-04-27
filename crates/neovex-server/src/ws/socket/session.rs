@@ -88,10 +88,9 @@ impl GenericSocketSession {
             InboundSocketEvent::Message(ClientMessage::Authenticate { .. }) => {
                 let _ = self
                     .outbound_tx
-                    .send(ServerMessage::AuthError {
-                        message: "authentication is not supported on the generic websocket route"
-                            .to_string(),
-                    })
+                    .send(ServerMessage::auth_error(
+                        "authentication is not supported on the generic websocket route",
+                    ))
                     .await;
             }
             InboundSocketEvent::Message(ClientMessage::ClearAuth) => {
@@ -116,10 +115,10 @@ impl GenericSocketSession {
             InboundSocketEvent::Invalid(message) => {
                 let _ = self
                     .outbound_tx
-                    .send(ServerMessage::Error {
-                        request_id: None,
+                    .send(ServerMessage::session_error(
+                        "protocol.invalid_json",
                         message,
-                    })
+                    ))
                     .await;
             }
         }
@@ -208,10 +207,10 @@ impl GenericSocketSession {
         {
             let _ = self
                 .outbound_tx
-                .send(ServerMessage::Error {
-                    request_id: None,
-                    message: error.to_string(),
-                })
+                .send(ServerMessage::session_error(
+                    "session.unsubscribe_failed",
+                    error.to_string(),
+                ))
                 .await;
         }
         drop(cleanup_handle);
@@ -238,10 +237,11 @@ impl GenericSocketSession {
             } => {
                 let _ = self
                     .outbound_tx
-                    .send(ServerMessage::Error {
-                        request_id: Some(request_id),
+                    .send(ServerMessage::request_error(
+                        request_id,
+                        "op.failed",
                         message,
-                    })
+                    ))
                     .await;
             }
         }

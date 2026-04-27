@@ -31,7 +31,9 @@ pub(super) async fn load_remote_document_from_session(
 ) -> Result<Option<Document>> {
     let mut rows = conn
         .query(
-            "SELECT creation_time, data_json FROM documents WHERE table_name = ?1 AND id = ?2",
+            "SELECT creation_time, update_time, data_json, typed_fields_json
+             FROM documents
+             WHERE table_name = ?1 AND id = ?2",
             libsql::params![table.as_str(), id.to_string()],
         )
         .await
@@ -40,12 +42,16 @@ pub(super) async fn load_remote_document_from_session(
         return Ok(None);
     };
     let creation_time = row.get::<i64>(0).map_err(map_libsql_error)?;
-    let data_json = row.get::<String>(1).map_err(map_libsql_error)?;
+    let update_time = row.get::<i64>(1).map_err(map_libsql_error)?;
+    let data_json = row.get::<String>(2).map_err(map_libsql_error)?;
+    let typed_fields_json = row.get::<String>(3).map_err(map_libsql_error)?;
     Ok(Some(row_to_document(
         &table,
         &id,
         creation_time,
+        update_time,
         data_json.as_str(),
+        typed_fields_json.as_str(),
     )?))
 }
 
@@ -110,9 +116,12 @@ pub(super) async fn apply_durable_record_in_remote_conn(
     for write in &record.writes {
         match (&write.previous, &write.current) {
             (None, Some(current)) => {
-                let existing =
-                    load_remote_document_from_session(conn, write.table.clone(), write.doc_id)
-                        .await?;
+                let existing = load_remote_document_from_session(
+                    conn,
+                    write.table.clone(),
+                    write.doc_id.clone(),
+                )
+                .await?;
                 match existing {
                     Some(existing) if existing == *current => continue,
                     Some(_) => {
@@ -123,13 +132,21 @@ pub(super) async fn apply_durable_record_in_remote_conn(
                     }
                     None => {
                         conn.execute(
-                            "INSERT INTO documents (table_name, id, data_json, creation_time)
-                             VALUES (?1, ?2, ?3, ?4)",
+                            "INSERT INTO documents (
+                                table_name,
+                                id,
+                                data_json,
+                                typed_fields_json,
+                                creation_time,
+                                update_time
+                             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                             libsql::params![
                                 write.table.as_str(),
                                 write.doc_id.to_string(),
                                 serialize_document_fields(current)?,
-                                i64_from_u64(current.creation_time.0)?
+                                serialize_document_typed_fields(current)?,
+                                i64_from_u64(current.creation_time.0)?,
+                                i64_from_u64(current.update_time.0)?
                             ],
                         )
                         .await
@@ -138,13 +155,16 @@ pub(super) async fn apply_durable_record_in_remote_conn(
                 }
             }
             (Some(previous), Some(current)) => {
-                let existing =
-                    load_remote_document_from_session(conn, write.table.clone(), write.doc_id)
-                        .await?
-                        .ok_or(Error::Conflict(format!(
-                            "durable journal update replay missing document {}",
-                            write.doc_id
-                        )))?;
+                let existing = load_remote_document_from_session(
+                    conn,
+                    write.table.clone(),
+                    write.doc_id.clone(),
+                )
+                .await?
+                .ok_or(Error::Conflict(format!(
+                    "durable journal update replay missing document {}",
+                    write.doc_id
+                )))?;
                 if existing == *current {
                     continue;
                 }
@@ -156,21 +176,27 @@ pub(super) async fn apply_durable_record_in_remote_conn(
                 }
                 conn.execute(
                     "UPDATE documents
-                     SET data_json = ?3, creation_time = ?4
+                     SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
                      WHERE table_name = ?1 AND id = ?2",
                     libsql::params![
                         write.table.as_str(),
                         write.doc_id.to_string(),
                         serialize_document_fields(current)?,
-                        i64_from_u64(current.creation_time.0)?
+                        serialize_document_typed_fields(current)?,
+                        i64_from_u64(current.creation_time.0)?,
+                        i64_from_u64(current.update_time.0)?
                     ],
                 )
                 .await
                 .map_err(map_libsql_error)?;
             }
             (Some(previous), None) => {
-                match load_remote_document_from_session(conn, write.table.clone(), write.doc_id)
-                    .await?
+                match load_remote_document_from_session(
+                    conn,
+                    write.table.clone(),
+                    write.doc_id.clone(),
+                )
+                .await?
                 {
                     Some(existing) if existing != *previous => {
                         return Err(Error::Conflict(format!(
@@ -235,6 +261,10 @@ pub(super) fn serialize_document_fields(document: &Document) -> Result<String> {
     serialize_json(&document.fields)
 }
 
+pub(super) fn serialize_document_typed_fields(document: &Document) -> Result<String> {
+    serialize_json(&document.typed_fields)
+}
+
 pub(super) fn encode_u64(value: u64) -> [u8; 8] {
     value.to_be_bytes()
 }
@@ -249,10 +279,12 @@ pub(super) fn row_to_document(
     table: &TableName,
     id: &DocumentId,
     creation_time: i64,
+    update_time: i64,
     data_json: &str,
+    typed_fields_json: &str,
 ) -> Result<Document> {
     Ok(Document {
-        id: *id,
+        id: id.clone(),
         table: table.clone(),
         creation_time: Timestamp(u64::try_from(creation_time).map_err(|_| {
             Error::storage(
@@ -260,7 +292,14 @@ pub(super) fn row_to_document(
                 format!("negative creation_time in libsql row: {creation_time}"),
             )
         })?),
+        update_time: Timestamp(u64::try_from(update_time).map_err(|_| {
+            Error::storage(
+                StorageErrorKind::Corruption,
+                format!("negative update_time in libsql row: {update_time}"),
+            )
+        })?),
         fields: deserialize_json(data_json)?,
+        typed_fields: deserialize_json(typed_fields_json)?,
     })
 }
 

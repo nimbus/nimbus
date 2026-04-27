@@ -127,12 +127,21 @@ export class NeovexSubscriptionClient {
 
     const wsUrl = websocketUrlFromBase(this.baseUrl);
     wsUrl.searchParams.set("tenant_id", this.tenantId);
-    const socket = new WebSocket(wsUrl);
+    const socket = new WebSocket(wsUrl, ["neovex.v2"]);
     this.socket = socket;
 
     await new Promise((resolve, reject) => {
       const open = () => {
         cleanup();
+        socket.send(JSON.stringify({
+          type: "client_hello",
+          protocol: "neovex.v2",
+          client: {
+            kind: "demo",
+            version: "unknown",
+          },
+          capabilities: ["queries.v1", "subscriptions.v1"],
+        }));
         this.onLog(`websocket connected to ${wsUrl}`);
         resolve();
       };
@@ -212,12 +221,21 @@ export class NeovexSubscriptionClient {
     const message = JSON.parse(raw);
     this.onLog(`ws <= ${JSON.stringify(message)}`);
 
+    if (message.type === "hello") {
+      return;
+    }
+
+    if (message.type === "fatal_error") {
+      this.onLog(`ws fatal error: ${message.error?.message ?? "protocol failure"}`);
+      return;
+    }
+
     if (message.type === "subscription_result") {
       this.handleSubscriptionResult(message);
       return;
     }
 
-    if (message.type === "error") {
+    if (message.type === "error" || message.type === "op.error") {
       this.handleError(message);
     }
   }
@@ -244,16 +262,18 @@ export class NeovexSubscriptionClient {
   }
 
   handleError(message) {
-    if (message.request_id && this.pending.has(message.request_id)) {
-      const pending = this.pending.get(message.request_id);
-      this.pending.delete(message.request_id);
-      const error = new Error(message.message);
+    const requestId = typeof message.id === "string" ? message.id : message.request_id;
+    const errorMessage = message.error?.message ?? "websocket request failed";
+    if (requestId && this.pending.has(requestId)) {
+      const pending = this.pending.get(requestId);
+      this.pending.delete(requestId);
+      const error = new Error(errorMessage);
       pending.onError?.(error, message);
       pending.reject(error);
       return;
     }
 
-    this.onLog(`ws error: ${message.message}`);
+    this.onLog(`ws error: ${errorMessage}`);
   }
 }
 

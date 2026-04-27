@@ -145,6 +145,7 @@ impl Service {
             tenant_id,
             notification.schema_changed,
             notification.journal_changed,
+            true,
         )
         .await
     }
@@ -155,6 +156,7 @@ impl Service {
         tenant_id: &TenantId,
         refresh_schema: bool,
         refresh_journal: bool,
+        emit_trigger_candidates: bool,
     ) -> Result<()> {
         let _operation = runtime.enter_operation(tenant_id)?;
 
@@ -175,7 +177,7 @@ impl Service {
             }
             runtime.sync_mutation_journal_progress(progress);
             if !commits.is_empty() {
-                self.process_applied_commit_batch(runtime, &commits);
+                self.process_applied_commit_batch(runtime, &commits, emit_trigger_candidates);
             }
         }
 
@@ -198,7 +200,7 @@ impl Service {
             // startup can race the first listener becoming live, and later
             // reconnects can miss schema notifications just as easily as
             // journal notifications while the LISTEN connection is down.
-            self.catch_up_loaded_provider_tenant_async(runtime, &tenant_id, true, true)
+            self.catch_up_loaded_provider_tenant_async(runtime, &tenant_id, true, true, true)
                 .await?;
         }
 
@@ -283,6 +285,7 @@ impl Service {
                     tenant_id,
                     refresh_schema,
                     refresh_journal,
+                    true,
                 )
                 .await?;
             }

@@ -39,6 +39,52 @@ and where to go next.
   and host/guest service execution flow
 - [HTTP and WebSocket API](reference/http-api.md):
   native and optional Convex route catalog
+- [WebSocket protocol](reference/websocket-protocol.md):
+  canonical version negotiation, handshake, framing, ordering, and reconnect
+  contract for native and Convex WebSocket clients
+- [Structured errors](reference/errors.md):
+  canonical public error envelope, code taxonomy, severity model, and channel
+  wrapping rules
+- [Firebase WebSocket Listen](reference/firebase-websocket-listen.md):
+  browser-facing Firestore `Listen` framing, origin policy, and close-code
+  contract
+- [Firebase compatibility](reference/firebase-compatibility.md):
+  current Firestore SDK/runtime support matrix, transport boundaries, and
+  first-party `@neovex/firebase` scope
+- [Firebase application auth contract](reference/firebase-auth-contract.md):
+  current Firebase route-family auth inputs, settled principal-resolution
+  truth, and the server-edge auth-entry contract used by the completed
+  boundary-hardening waves
+- [Runtime capability and adapter boundary](reference/runtime-adapter-boundary.md):
+  canonical ownership model and landed baseline for adapter-owned runtime
+  compatibility shims versus provider-neutral `runtime_host/*` capabilities
+- [Server auth and runtime trust](reference/server-auth-runtime-trust.md):
+  completed post-Firebase trust baseline for server-owned auth,
+  provider-family sharing, runtime bootstrap ownership, and trusted metadata
+  contracts
+- [Firebase migration guide](reference/firebase-migration-guide.md):
+  pragmatic import/config/transport migration path from Firestore apps to the
+  current `@neovex/firebase` and Neovex server surface
+- [Cloud Functions artifact contract](reference/cloud-functions-artifact-contract.md):
+  sibling `.neovex/firebase/` artifact family, runtime bundle envelope, and
+  exact import-resolution strategy for the first Cloud Functions slice
+- [Cloud Functions target binding contract](reference/cloud-functions-target-binding-contract.md):
+  `targets.json` schema, deploy-time target metadata, binding validation, and
+  first-slice explicit rejections for Cloud Functions-compatible handlers
+- [Cloud Functions root defaults contract](reference/cloud-functions-root-defaults-contract.md):
+  `firebase-functions/v2` root import behavior, `setGlobalOptions()`
+  inheritance order, and first-slice fail-fast boundaries
+- [Cloud Functions app-root and admin contract](reference/cloud-functions-app-root-and-admin-contract.md):
+  shared Firebase and standalone app-root discovery rules, `.neovex/firebase/`
+  artifact ownership, and the first covered `firebase-admin` method matrix
+- [Cloud Functions compatibility](reference/cloud-functions-compatibility.md):
+  current Firebase-v2 and standalone Functions Framework support matrix,
+  durable delivery semantics, covered admin/option surfaces, and explicit
+  non-goals
+- [Cloud Functions migration guide](reference/cloud-functions-migration-guide.md):
+  practical migration path for covered `firebase-functions/v2` and
+  `@google-cloud/functions-framework` apps onto the current Neovex server
+  surface
 - [Deploy admin API](reference/deploy-admin-api.md):
   authenticated staging, diffing, validation, and generation activation
   contract behind `neovex deploy`

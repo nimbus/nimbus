@@ -172,10 +172,12 @@ fn probe_document_fields_from_msgpack(
     }
 
     let mut cursor = Cursor::new(bytes);
-    if read_array_len(&mut cursor).ok()? != 4 {
+    let array_len = read_array_len(&mut cursor).ok()?;
+    if array_len != 5 && array_len != 6 {
         return None;
     }
 
+    skip_msgpack_value(&mut cursor).ok()?;
     skip_msgpack_value(&mut cursor).ok()?;
     skip_msgpack_value(&mut cursor).ok()?;
     skip_msgpack_value(&mut cursor).ok()?;

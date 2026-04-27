@@ -41,7 +41,7 @@ async fn convex_named_query_reports_runtime_bundle_contract_errors() {
         .await
         .expect("runtime contract error response should parse");
     assert!(
-        body["error"]
+        body["error"]["message"]
             .as_str()
             .expect("error message should be a string")
             .contains("__neovexInvoke"),

@@ -10,6 +10,7 @@ fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
     QueuedMutationRequest {
         mutation: Mutation::Insert {
             table: TableName::new("tasks").expect("table name should build"),
+            id: None,
             fields: serde_json::Map::new(),
         },
         principal: PrincipalContext::anonymous(),

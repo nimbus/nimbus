@@ -80,7 +80,7 @@ impl MaterializedServingBackend {
                     )?;
                     let mut materialized_by_id = materialized_documents
                         .drain(..)
-                        .map(|document| (document.id, document))
+                        .map(|document| (document.id.clone(), document))
                         .collect::<HashMap<_, _>>();
                     let mut document_count = materialized_by_id.len();
                     let mut estimated_bytes = materialized_by_id

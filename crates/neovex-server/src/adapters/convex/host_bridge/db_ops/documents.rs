@@ -9,19 +9,23 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
+        let table = payload.table.clone();
+        let document_id = payload.id.clone();
         let response = match self.mutation_execution_unit().map_or_else(
             || None,
             |execution_unit| {
                 Some(
                     execution_unit
-                        .get_document(&payload.table, payload.id)
-                        .and_then(|document| document.ok_or(Error::DocumentNotFound(payload.id))),
+                        .get_document(&table, document_id.clone())
+                        .and_then(|document| {
+                            document.ok_or(Error::DocumentNotFound(document_id.clone()))
+                        }),
                 )
             },
         ) {
             Some(result) => match result {
                 Ok(document) => {
-                    self.record_document_read(&payload.table, &payload.id);
+                    self.record_document_read(&table, &document_id);
                     ConvexRuntimeResponseEnvelope::ok(document.into_json())
                 }
                 Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
@@ -33,8 +37,8 @@ impl ConvexHostBridge {
                     .service
                     .get_document_async_cancellable_with_principal(
                         self.tenant_id.clone(),
-                        payload.table.clone(),
-                        payload.id,
+                        table.clone(),
+                        document_id.clone(),
                         self.principal.clone(),
                         cancellation.cancelled(),
                         move || check_host_cancellation(&check_cancellation),
@@ -42,7 +46,7 @@ impl ConvexHostBridge {
                     .await
                 {
                     Ok(document) => {
-                        self.record_document_read(&payload.table, &payload.id);
+                        self.record_document_read(&table, &document_id);
                         ConvexRuntimeResponseEnvelope::ok(document.into_json())
                     }
                     Err(Error::DocumentNotFound(_)) => {
@@ -71,23 +75,27 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeDbGetPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
+        let table = payload.table.clone();
+        let document_id = payload.id.clone();
         let response = match self.mutation_execution_unit().map_or_else(
             || {
                 self.service.get_document_with_principal(
                     &self.tenant_id,
-                    &payload.table,
-                    payload.id,
+                    &table,
+                    document_id.clone(),
                     &self.principal,
                 )
             },
             |execution_unit| {
                 execution_unit
-                    .get_document(&payload.table, payload.id)
-                    .and_then(|document| document.ok_or(Error::DocumentNotFound(payload.id)))
+                    .get_document(&table, document_id.clone())
+                    .and_then(|document| {
+                        document.ok_or(Error::DocumentNotFound(document_id.clone()))
+                    })
             },
         ) {
             Ok(document) => {
-                self.record_document_read(&payload.table, &payload.id);
+                self.record_document_read(&table, &document_id);
                 ConvexRuntimeResponseEnvelope::ok(document.into_json())
             }
             Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
@@ -120,6 +128,7 @@ impl ConvexHostBridge {
                 .insert_document_async_cancellable_with_principal(
                     self.tenant_id.clone(),
                     table,
+                    None,
                     fields,
                     self.principal.clone(),
                     cancel_wait,

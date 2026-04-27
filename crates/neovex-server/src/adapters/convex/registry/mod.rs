@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use axum::http::{HeaderMap, Method};
+use axum::http::Method;
 use neovex_runtime::{
     InvocationAuth, InvocationKind, NeovexRuntimeError, RuntimeBundle, RuntimeExecutor,
     RuntimeLimits, RuntimePolicy,

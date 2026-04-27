@@ -84,7 +84,7 @@ impl DependencySet {
             self.record_table(table);
         }
         for (table, document_id) in &other.documents {
-            self.record_document(table, *document_id);
+            self.record_document(table, document_id.clone());
         }
         for dependency in &other.index_ranges {
             self.record_index_range(dependency.clone());
@@ -202,7 +202,7 @@ where
 {
     let candidate_documents = candidate_documents
         .iter()
-        .map(|document| ((document.table.clone(), document.id), document))
+        .map(|document| ((document.table.clone(), document.id.clone()), document))
         .collect::<HashMap<(TableName, DocumentId), &Document>>();
 
     writes.iter().any(|write| {
@@ -225,7 +225,7 @@ where
 
     if dependencies
         .documents
-        .contains(&(write.table.clone(), write.doc_id))
+        .contains(&(write.table.clone(), write.doc_id.clone()))
     {
         return true;
     }
@@ -275,7 +275,7 @@ where
     }
 
     if let Some(document) = candidate_documents
-        .get(&(write.table.clone(), write.doc_id))
+        .get(&(write.table.clone(), write.doc_id.clone()))
         .copied()
     {
         return document_intersects_dependencies(
@@ -290,7 +290,7 @@ where
         return true;
     }
 
-    match resolve_document(&write.table, write.doc_id) {
+    match resolve_document(&write.table, write.doc_id.clone()) {
         Ok(Some(document)) => document_intersects_dependencies(
             &document,
             &relevant_predicates,
@@ -532,7 +532,9 @@ mod tests {
             id: document_id,
             table,
             creation_time: Timestamp::now(),
+            update_time: Timestamp::now(),
             fields,
+            typed_fields: Default::default(),
         }
     }
 
@@ -548,6 +550,8 @@ mod tests {
                 table,
                 op_type,
                 doc_id,
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: None,
                 current: None,
             }],
@@ -575,7 +579,7 @@ mod tests {
         let target_id = DocumentId::new();
         let other_id = DocumentId::new();
         let mut dependencies = DependencySet::default();
-        dependencies.record_document(&table, target_id);
+        dependencies.record_document(&table, target_id.clone());
 
         assert!(commit_intersects_dependency_set(
             &single_write_commit(table.clone(), WriteOpType::Update, target_id),
@@ -595,7 +599,7 @@ mod tests {
     fn index_range_dependency_matches_documents_inside_the_range() {
         let table = tasks_table();
         let doc_id = DocumentId::new();
-        let commit = single_write_commit(table.clone(), WriteOpType::Insert, doc_id);
+        let commit = single_write_commit(table.clone(), WriteOpType::Insert, doc_id.clone());
         let document = document_with_fields(
             table.clone(),
             doc_id,
@@ -624,7 +628,7 @@ mod tests {
     fn paginated_window_dependency_respects_filters() {
         let table = tasks_table();
         let doc_id = DocumentId::new();
-        let commit = single_write_commit(table.clone(), WriteOpType::Insert, doc_id);
+        let commit = single_write_commit(table.clone(), WriteOpType::Insert, doc_id.clone());
         let matching = document_with_fields(
             table.clone(),
             doc_id,

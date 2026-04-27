@@ -6,6 +6,7 @@ use axum::body::Bytes;
 use axum::extract::OriginalUri;
 use axum::extract::ws::{Message, WebSocket};
 use axum::http::{HeaderMap, Method};
+use futures::future::BoxFuture;
 use futures::{SinkExt, StreamExt};
 use neovex_core::{
     CommitEntry, Cursor, DocumentId, Error, Filter, FilterOp, Mutation, OrderBy, OrderDirection,
@@ -36,13 +37,16 @@ mod templates;
 #[cfg(test)]
 mod tests;
 
-use self::auth::normalize_principal_context;
 use self::execution::{ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent};
 pub(crate) use self::handlers::{
     action, cancel_scheduled_job, http_route, http_route_root, mutation, paginated_query, query,
     schedule_after, schedule_at, ws,
 };
 use self::host_bridge::*;
+pub(crate) use self::host_bridge::{
+    ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope,
+    ConvexRuntimeResponseEnvelope,
+};
 use self::manifest::*;
 pub(crate) use self::registry::{
     ConvexFunctionDeploySummary, ConvexHttpRouteDeploySummary, ConvexRegistryDeploySummary,
@@ -50,6 +54,7 @@ pub(crate) use self::registry::{
 use self::requests::*;
 use self::templates::{empty_args, resolve_http_template};
 
+use crate::application_auth::ApplicationAuthVerifier;
 use crate::execution::read_tracking::{
     RuntimeIndexRangeRead, RuntimeReadSet, synthesize_runtime_subscription_base_queries,
 };
@@ -80,5 +85,14 @@ impl Default for ConvexRegistry {
             runtime_policy,
             runtime_executor,
         }
+    }
+}
+
+impl ApplicationAuthVerifier for ConvexRegistry {
+    fn verify_bearer_token<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> BoxFuture<'a, Result<InvocationAuth, AppError>> {
+        Box::pin(async move { ConvexRegistry::verify_bearer_token(self, token).await })
     }
 }

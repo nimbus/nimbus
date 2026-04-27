@@ -41,7 +41,7 @@ async fn convex_schedule_endpoints_reject_internal_mutations() {
         response
             .json::<serde_json::Value>()
             .await
-            .expect("schedule error should parse")["error"]
+            .expect("schedule error should parse")["error"]["message"]
             .as_str()
             .expect("error should be a string")
             .contains("not public")
@@ -103,7 +103,7 @@ export {};
         .await
         .expect("schedule error should parse");
     assert!(
-        body["error"]
+        body["error"]["message"]
             .as_str()
             .expect("error should be a string")
             .contains("resolved to invalid mutation"),

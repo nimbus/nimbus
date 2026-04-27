@@ -11,8 +11,9 @@ use deadpool_postgres::{
 };
 use neovex_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber,
-    StorageErrorKind, TableName, TableSchema, TenantId, Timestamp, WriteOp, WriteOpType,
+    FilterOp, IndexDefinition, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult,
+    Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,7 +39,10 @@ mod config;
 mod notifications;
 mod provider;
 mod read;
+mod resource_paths;
 mod storage;
+mod trigger_delivery;
+mod trigger_invocations;
 mod write;
 
 use self::backend::*;
@@ -60,6 +64,7 @@ const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 1;
 const MIN_POSTGRES_READ_PARALLELISM: usize = 2;
 const POSTGRES_TENANT_WRITE_PARALLELISM: usize = 1;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
+const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
 const POSTGRES_NOTIFICATION_CHANNEL_PREFIX: &str = "neovex_pg_";
 const POSTGRES_POOL_APPLICATION_NAME_PREFIX: &str = "neovex_pool_";
 
@@ -101,6 +106,7 @@ pub struct PostgresReadSnapshot {
     schema: Schema,
     progress: JournalProgress,
     documents: Vec<Document>,
+    resource_path_bindings: Vec<ResourcePathBinding>,
     scheduled_execution_ids: Vec<String>,
 }
 
@@ -119,6 +125,7 @@ pub struct PostgresWriteTransaction {
     schema_cache: Arc<RwLock<Option<Schema>>>,
     client: Option<Client>,
     commit_writes: Vec<WriteOp>,
+    trigger_write_origin: Option<TriggerWriteOrigin>,
     notification: PendingPostgresNotification,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,

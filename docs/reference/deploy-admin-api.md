@@ -42,6 +42,14 @@ bearer tokens also return `401`.
 bundles are a pair: if either `bundle_mjs` or `bundle_sha256` is supplied, both
 must be supplied.
 
+This request shape is the **current Convex-compatible artifact family**. The
+Cloud Functions plan keeps the same staging, integrity, and generation-swap
+guarantees, but uses a sibling internal artifact family under
+`.neovex/firebase/` with its own manifest envelope rather than forcing Cloud
+Functions metadata through the Convex manifest schema. See
+[Cloud Functions artifact contract](cloud-functions-artifact-contract.md) and
+[Cloud Functions target binding contract](cloud-functions-target-binding-contract.md).
+
 ## Server Behavior
 
 The server stages uploaded artifacts into a temporary app directory and loads

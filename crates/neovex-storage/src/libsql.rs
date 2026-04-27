@@ -14,7 +14,7 @@ use native_tls::TlsConnector as NativeTlsConnector;
 use neovex_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Result, ScheduledJob,
     ScheduledJobResult, Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId,
-    Timestamp, WriteOp, WriteOpType,
+    Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use reqwest::Client as HttpClient;
 use reqwest::header::AUTHORIZATION;
@@ -44,7 +44,7 @@ use crate::sqlite::{
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
     MAX_DURABLE_JOURNAL_STREAM_LIMIT, NEXT_SEQUENCE_KEY, ResolvedScheduleOp, ResolvedWrite,
-    TenantWriteCommit,
+    TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
 };
 
 mod backend;
@@ -52,8 +52,11 @@ mod freshness;
 mod provider;
 mod read;
 mod remote;
+mod resource_paths;
 mod storage;
 mod transport;
+mod trigger_delivery;
+mod trigger_invocations;
 mod write;
 
 use self::backend::*;
@@ -82,9 +85,11 @@ const LIBSQL_REPLICA_FILENAME: &str = "tenant.sqlite3";
 const LIBSQL_DROP_TENANT_SQL: &str = r#"
 DROP TABLE IF EXISTS documents;
 DROP TABLE IF EXISTS schemas;
+DROP TABLE IF EXISTS resource_path_bindings;
 DROP TABLE IF EXISTS scheduled_jobs;
 DROP TABLE IF EXISTS running_scheduled_jobs;
 DROP TABLE IF EXISTS scheduled_job_results;
+DROP TABLE IF EXISTS trigger_invocations;
 DROP TABLE IF EXISTS scheduled_job_executions;
 DROP TABLE IF EXISTS cron_jobs;
 DROP TABLE IF EXISTS commit_log;
@@ -225,6 +230,7 @@ pub struct LibsqlReplicaWriteTransaction {
     store: LibsqlReplicaTenantStore,
     tx: Option<Transaction>,
     commit_writes: Vec<WriteOp>,
+    trigger_write_origin: Option<TriggerWriteOrigin>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
     refresh_cache_after_commit: bool,
 }

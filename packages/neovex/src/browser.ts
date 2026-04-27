@@ -75,10 +75,15 @@ export type WebSocketLike = {
   send(data: string): void;
   close(): void;
 };
-export type WebSocketConstructor = new (url: string) => WebSocketLike;
+export type WebSocketConstructor = new (
+  url: string,
+  protocols?: string | string[],
+) => WebSocketLike;
 
 const MAXIMUM_REFRESH_DELAY = 20 * 24 * 60 * 60 * 1000;
 const DEFAULT_AUTH_REFRESH_TOKEN_LEEWAY_SECONDS = 10;
+const NEOVEX_WEBSOCKET_PROTOCOL = "neovex.v2";
+const NEOVEX_CLIENT_CAPABILITIES = ["queries.v1", "subscriptions.v1"] as const;
 
 export class NeovexClient {
   private readonly httpClient: NeovexHttpClient;
@@ -338,7 +343,9 @@ export class NeovexClient {
         reject(new Error("No WebSocket implementation is available for this environment."));
         return;
       }
-      const socket = new SocketImpl(websocketUrlFromBase(this.address));
+      const socket = new SocketImpl(websocketUrlFromBase(this.address), [
+        NEOVEX_WEBSOCKET_PROTOCOL,
+      ]);
       this.socket = socket;
 
       attachSocketListener(socket, "open", () => {
@@ -385,15 +392,36 @@ export class NeovexClient {
 
   private handleSocketMessage(raw: string) {
     const message = JSON.parse(raw) as
+      | { type: "hello"; protocol?: string }
+      | { type: "fatal_error"; error?: { message?: string } }
       | { type: "authenticated"; is_authenticated: boolean }
-      | { type: "auth_error"; message: string }
       | {
           type: "subscription_result";
           subscription_id: number;
           request_id?: string;
           data: unknown;
         }
-      | { type: "error"; request_id?: string; message: string };
+      | { type: "error"; error?: { message?: string } }
+      | { type: "op.error"; id?: string; error?: { message?: string } };
+
+    if (message.type === "hello") {
+      return;
+    }
+
+    if (message.type === "fatal_error") {
+      const error = new Error(
+        message.error?.message ?? "neovex websocket protocol negotiation failed",
+      );
+      if (this.socketAuthentication) {
+        this.socketAuthentication.reject(error);
+        this.socketAuthentication = null;
+      }
+      for (const active of this.activeSubscriptions.values()) {
+        active.onError?.(error);
+      }
+      this.socket?.close();
+      return;
+    }
 
     if (message.type === "authenticated") {
       const authenticatedToken = this.socketAuthentication?.token;
@@ -409,22 +437,6 @@ export class NeovexClient {
       }
       this.socketAuthentication?.resolve();
       this.socketAuthentication = null;
-      return;
-    }
-
-    if (message.type === "auth_error") {
-      this.clearScheduledAuthRefresh();
-      this.httpClient.notifyAuthState(false);
-      const error = new Error(message.message);
-      if (this.socketAuthentication) {
-        this.socketAuthentication.reject(error);
-        this.socketAuthentication = null;
-        return;
-      }
-      for (const active of this.activeSubscriptions.values()) {
-        active.onError?.(error);
-      }
-      this.restartSocketForAuthChange();
       return;
     }
 
@@ -462,20 +474,36 @@ export class NeovexClient {
       return;
     }
 
-    if (message.type === "error" && message.request_id) {
-      const pending = this.pendingSubscriptions.get(message.request_id);
+    const requestId =
+      message.type === "op.error" && typeof message.id === "string"
+        ? message.id
+        : undefined;
+    const errorMessage =
+      "error" in message && typeof message.error?.message === "string"
+        ? message.error.message
+        : null;
+
+    if (message.type === "op.error" && requestId) {
+      const pending = this.pendingSubscriptions.get(requestId);
       if (!pending || pending.unsubscribed) {
         return;
       }
-      this.pendingSubscriptions.delete(message.request_id);
+      this.pendingSubscriptions.delete(requestId);
       pending.pendingRequestId = undefined;
-      const error = new Error(message.message);
+      const error = new Error(errorMessage ?? "websocket request failed");
       pending.onError?.(error);
       return;
     }
 
-    if (message.type === "error") {
-      const error = new Error(message.message);
+    if (message.type === "error" || message.type === "op.error") {
+      const error = new Error(errorMessage ?? "websocket request failed");
+      if (this.socketAuthentication) {
+        this.clearScheduledAuthRefresh();
+        this.httpClient.notifyAuthState(false);
+        this.socketAuthentication.reject(error);
+        this.socketAuthentication = null;
+        return;
+      }
       for (const active of this.activeSubscriptions.values()) {
         active.onError?.(error);
       }
@@ -549,6 +577,7 @@ export class NeovexClient {
     reject: (error: Error) => void,
   ) {
     try {
+      this.sendClientHello(socket);
       await this.authenticateSocket(socket);
       if (this.socket !== socket) {
         return;
@@ -568,6 +597,20 @@ export class NeovexClient {
       reject(error instanceof Error ? error : new Error(String(error)));
       socket.close();
     }
+  }
+
+  private sendClientHello(socket: WebSocketLike) {
+    socket.send(
+      JSON.stringify({
+        type: "client_hello",
+        protocol: NEOVEX_WEBSOCKET_PROTOCOL,
+        client: {
+          kind: "browser",
+          version: "unknown",
+        },
+        capabilities: [...NEOVEX_CLIENT_CAPABILITIES],
+      }),
+    );
   }
 
   private async authenticateSocket(socket: WebSocketLike) {

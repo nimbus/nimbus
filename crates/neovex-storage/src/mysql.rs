@@ -10,8 +10,9 @@ use mysql_async::{
 };
 use neovex_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber,
-    StorageErrorKind, TableName, TableSchema, TenantId, Timestamp, WriteOp, WriteOpType,
+    FilterOp, IndexDefinition, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult,
+    Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -31,7 +32,10 @@ use crate::{ResolvedScheduleOp, ResolvedWrite};
 mod backend;
 mod provider;
 mod read;
+mod resource_paths;
 mod storage;
+mod trigger_delivery;
+mod trigger_invocations;
 mod write;
 
 use self::backend::*;
@@ -44,6 +48,7 @@ const MYSQL_TENANT_WRITE_PARALLELISM: usize = 1;
 const MYSQL_MAX_INDEX_KEY_BYTES: usize = 3072;
 const MYSQL_INDEX_KEY_BYTES_PER_CHAR: usize = 4;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
+const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
 const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 1;
 const MYSQL_INDEX_KEY_VALUE_LEN: usize = 191;
 
@@ -103,6 +108,7 @@ pub struct MySqlReadSnapshot {
     schema: Schema,
     progress: JournalProgress,
     documents: Vec<Document>,
+    resource_path_bindings: Vec<ResourcePathBinding>,
     scheduled_execution_ids: Vec<String>,
 }
 
@@ -120,6 +126,7 @@ pub struct MySqlWriteTransaction {
     schema_cache: Arc<RwLock<Option<Schema>>>,
     conn: Option<Conn>,
     commit_writes: Vec<WriteOp>,
+    trigger_write_origin: Option<TriggerWriteOrigin>,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }

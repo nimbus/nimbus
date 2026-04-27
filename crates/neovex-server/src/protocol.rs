@@ -5,7 +5,10 @@ use neovex_runtime::{
     RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::error_envelope::{ErrorSeverity, PublicError};
+use crate::ws::NegotiatedWebSocketProtocol;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateTenantRequest {
@@ -169,24 +172,119 @@ pub(crate) enum ClientMessage {
     Unsubscribe { subscription_id: u64 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone)]
 pub(crate) enum ServerMessage {
-    #[serde(rename = "authenticated")]
-    Authenticated { is_authenticated: bool },
-    #[serde(rename = "auth_error")]
-    AuthError { message: String },
-    #[serde(rename = "subscription_result")]
+    Authenticated {
+        is_authenticated: bool,
+    },
+    AuthError {
+        error: PublicError,
+    },
     SubscriptionResult {
         subscription_id: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
         data: Value,
     },
-    #[serde(rename = "error")]
     Error {
-        #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
-        message: String,
+        error: PublicError,
     },
+}
+
+impl ServerMessage {
+    pub(crate) fn auth_error(message: impl Into<String>) -> Self {
+        Self::AuthError {
+            error: PublicError::auth_unauthorized(message),
+        }
+    }
+
+    pub(crate) fn request_error(
+        request_id: impl Into<String>,
+        code: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
+        let request_id = request_id.into();
+        Self::Error {
+            request_id: Some(request_id.clone()),
+            error: PublicError::websocket_error(
+                code,
+                message,
+                ErrorSeverity::Error,
+                false,
+                Some(request_id),
+            ),
+        }
+    }
+
+    pub(crate) fn session_error(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Error {
+            request_id: None,
+            error: PublicError::websocket_error(
+                code,
+                message,
+                ErrorSeverity::Error,
+                false,
+                None::<String>,
+            ),
+        }
+    }
+
+    pub(crate) fn session_warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Error {
+            request_id: None,
+            error: PublicError::warning(code, message, None::<String>),
+        }
+    }
+
+    pub(crate) fn to_text(
+        &self,
+        protocol: NegotiatedWebSocketProtocol,
+    ) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&self.to_json(protocol))
+    }
+
+    fn to_json(&self, protocol: NegotiatedWebSocketProtocol) -> Value {
+        match protocol {
+            NegotiatedWebSocketProtocol::V2 => self.to_v2_json(),
+        }
+    }
+
+    fn to_v2_json(&self) -> Value {
+        match self {
+            Self::Authenticated { is_authenticated } => json!({
+                "type": "authenticated",
+                "is_authenticated": is_authenticated,
+            }),
+            Self::AuthError { error } => json!({
+                "type": "error",
+                "error": error,
+            }),
+            Self::SubscriptionResult {
+                subscription_id,
+                request_id,
+                data,
+            } => {
+                let mut body = json!({
+                    "type": "subscription_result",
+                    "subscription_id": subscription_id,
+                    "data": data,
+                });
+                if let Some(request_id) = request_id {
+                    body["request_id"] = Value::String(request_id.clone());
+                }
+                body
+            }
+            Self::Error { request_id, error } => match request_id {
+                Some(request_id) => json!({
+                    "type": "op.error",
+                    "id": request_id,
+                    "error": error,
+                }),
+                None => json!({
+                    "type": "error",
+                    "error": error,
+                }),
+            },
+        }
+    }
 }

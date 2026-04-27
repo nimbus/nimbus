@@ -8,8 +8,12 @@ use neovex_core::Result;
 #[cfg(any(test, feature = "test-hooks"))]
 use neovex_core::TenantId;
 #[cfg(test)]
-use neovex_core::{SequenceNumber, TableName};
+use neovex_core::{
+    ResourcePathBinding, SequenceNumber, TableName, TriggerDeliveryCursor, TriggerInvocationRecord,
+};
 
+#[cfg(test)]
+use crate::TriggerRegistration;
 use crate::service::Service;
 
 impl Service {
@@ -54,6 +58,26 @@ impl Service {
         tenant_id: &TenantId,
     ) -> Result<crate::tenant::SubscriptionDeliveryStats> {
         self.with_runtime_for_testing(tenant_id, |runtime| runtime.subscription_delivery_stats())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_trigger_candidate_count_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.pending_trigger_candidate_count_for_testing()
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drain_trigger_candidates_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Vec<crate::triggers::dispatch::TriggerCommitCandidate>> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.drain_trigger_candidates_for_testing()
+        })
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -199,6 +223,16 @@ impl Service {
     }
 
     #[cfg(test)]
+    pub(crate) fn trigger_candidate_pause_handle_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::TriggerCandidatePauseHandle> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.trigger_candidate_pause_handle_for_testing()
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn mutation_journal_pause_handle_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -256,5 +290,59 @@ impl Service {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             runtime.materialized_read_publish_pause_handle_for_testing()
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn upsert_resource_path_binding_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        binding: ResourcePathBinding,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.store.upsert_resource_path_binding(&binding)
+        })??;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_trigger_delivery_cursor_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        cursor: TriggerDeliveryCursor,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.store.set_trigger_delivery_cursor(cursor)
+        })??;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trigger_delivery_cursor_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<TriggerDeliveryCursor> {
+        self.with_runtime_for_testing(tenant_id, |runtime| runtime.store.trigger_delivery_cursor())?
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_trigger_registrations_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        registrations: Vec<TriggerRegistration>,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.replace_trigger_registrations(registrations)
+        })??;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn list_trigger_invocations_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Vec<TriggerInvocationRecord>> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.store.list_trigger_invocations()
+        })?
     }
 }

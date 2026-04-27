@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentstation.dev/neovex/reference/schemas/websocket-protocol.schema.json",
+  "title": "Neovex WebSocket protocol examples",
+  "description": "Example-oriented schema for the public frame families documented in websocket-protocol.md.",
+  "oneOf": [
+    { "$ref": "#/$defs/helloFrame" },
+    { "$ref": "#/$defs/clientHelloFrame" },
+    { "$ref": "#/$defs/v1Authenticate" },
+    { "$ref": "#/$defs/v1ClearAuth" },
+    { "$ref": "#/$defs/v1Subscribe" },
+    { "$ref": "#/$defs/v1Unsubscribe" },
+    { "$ref": "#/$defs/v1Authenticated" },
+    { "$ref": "#/$defs/v1AuthError" },
+    { "$ref": "#/$defs/v1SubscriptionResult" },
+    { "$ref": "#/$defs/v1Error" },
+    { "$ref": "#/$defs/v2Op" },
+    { "$ref": "#/$defs/v2OpOk" },
+    { "$ref": "#/$defs/v2OpError" },
+    { "$ref": "#/$defs/v2Event" }
+  ],
+  "$defs": {
+    "protocol": {
+      "type": "string",
+      "pattern": "^neovex\\.v[0-9]+$"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "helloFrame": {
+      "type": "object",
+      "required": ["type", "protocol", "server", "features", "session"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "hello" },
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "server": {
+          "type": "object",
+          "required": ["version", "build"],
+          "additionalProperties": false,
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "build": { "type": "string", "minLength": 1 }
+          }
+        },
+        "features": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "session": {
+          "type": "object",
+          "required": ["id", "serverNow"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "serverNow": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "clientHelloFrame": {
+      "type": "object",
+      "required": ["type", "protocol", "client", "capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "client_hello" },
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "client": {
+          "type": "object",
+          "required": ["kind", "version"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "v1Authenticate": {
+      "type": "object",
+      "required": ["type", "token"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "authenticate" },
+        "token": { "type": "string", "minLength": 1 }
+      }
+    },
+    "v1ClearAuth": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "clear_auth" }
+      }
+    },
+    "v1Subscribe": {
+      "type": "object",
+      "required": ["type", "request_id", "query"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "subscribe" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "query": {
+          "type": "object",
+          "required": ["table", "filters", "order", "limit"],
+          "additionalProperties": true,
+          "properties": {
+            "table": { "type": "string", "minLength": 1 },
+            "filters": { "type": "array" },
+            "order": { "type": ["object", "null"] },
+            "limit": { "type": ["integer", "null"] }
+          }
+        }
+      }
+    },
+    "v1Unsubscribe": {
+      "type": "object",
+      "required": ["type", "subscription_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "unsubscribe" },
+        "subscription_id": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "v1Authenticated": {
+      "type": "object",
+      "required": ["type", "is_authenticated"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "authenticated" },
+        "is_authenticated": { "type": "boolean" }
+      }
+    },
+    "v1AuthError": {
+      "type": "object",
+      "required": ["type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "auth_error" },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "v1SubscriptionResult": {
+      "type": "object",
+      "required": ["type", "subscription_id", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "subscription_result" },
+        "subscription_id": { "type": "integer", "minimum": 0 },
+        "request_id": { "type": "string" },
+        "data": {}
+      }
+    },
+    "v1Error": {
+      "type": "object",
+      "required": ["type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "error" },
+        "request_id": { "type": "string" },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "v2Op": {
+      "type": "object",
+      "required": ["type", "op", "id", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "op" },
+        "op": { "type": "string", "minLength": 1 },
+        "id": { "$ref": "#/$defs/requestId" },
+        "payload": {}
+      }
+    },
+    "v2OpOk": {
+      "type": "object",
+      "required": ["type", "op", "id", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "op.ok" },
+        "op": { "type": "string", "minLength": 1 },
+        "id": { "$ref": "#/$defs/requestId" },
+        "data": {}
+      }
+    },
+    "v2OpError": {
+      "type": "object",
+      "required": ["type", "id", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "op.error" },
+        "id": { "$ref": "#/$defs/requestId" },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "requestId",
+            "timestamp",
+            "severity",
+            "retryable",
+            "detail"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"
+            },
+            "message": { "type": "string", "minLength": 1 },
+            "requestId": { "type": "string", "minLength": 1 },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "severity": {
+              "type": "string",
+              "enum": ["fatal", "error", "warning"]
+            },
+            "retryable": { "type": "boolean" },
+            "detail": { "type": ["object", "null"] },
+            "remediation": {
+              "type": "object",
+              "required": ["action", "message"],
+              "additionalProperties": false,
+              "properties": {
+                "action": { "type": "string", "minLength": 1 },
+                "message": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "v2Event": {
+      "type": "object",
+      "required": ["type", "stream", "subscriptionId", "seq", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "event" },
+        "stream": { "type": "string", "minLength": 1 },
+        "subscriptionId": { "type": "string", "minLength": 1 },
+        "seq": { "type": "integer", "minimum": 0 },
+        "data": {}
+      }
+    }
+  }
+}
