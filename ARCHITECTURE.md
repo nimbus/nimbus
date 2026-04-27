@@ -981,7 +981,7 @@ round trips.
 
 For the deeper provider-topology baselines and readiness gates for
 `PostgresProvider`, `LibsqlReplicaProvider`, and `MySqlProvider`, see
-[docs/reference/provider-topologies.md](docs/reference/provider-topologies.md).
+[docs/architecture/storage/provider-topologies.md](docs/architecture/storage/provider-topologies.md).
 
 ---
 
@@ -1163,7 +1163,7 @@ At the architecture level, the key rules are:
 
 The backend layouts, durable-journal baseline, serving-snapshot direction,
 shadow-materializer posture, and persistence-specific design decisions now live
-in [docs/reference/persistence-engine-baseline.md](docs/reference/persistence-engine-baseline.md).
+in [docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
 
 ---
 
@@ -1171,7 +1171,7 @@ in [docs/reference/persistence-engine-baseline.md](docs/reference/persistence-en
 
 Persistence-engine decisions that would otherwise dominate this document now
 live in
-[docs/reference/persistence-engine-baseline.md](docs/reference/persistence-engine-baseline.md).
+[docs/architecture/storage/persistence-engine-baseline.md](docs/architecture/storage/persistence-engine-baseline.md).
 That reference owns the settled backend layouts, durable-journal baseline,
 bootstrap and replay contract, serving-snapshot direction, shadow-materializer
 posture, format guidance, and the persistence-specific non-decisions that keep
@@ -1337,12 +1337,12 @@ test files.
 For the deeper verification topology — simulation seams, harness ownership,
 generated-history oracles, differential runners, consistency reports, and
 named `pr` / `nightly` / `repro` corpora — see
-[docs/reference/verification-architecture.md](docs/reference/verification-architecture.md).
+[docs/architecture/testing/verification-architecture.md](docs/architecture/testing/verification-architecture.md).
 For the proof-discipline guidance that sits above those mechanics — semantic
 waits, bounded budgets, deterministic hardship, and CI investigation — see
-[docs/reference/reliability-posture.md](docs/reference/reliability-posture.md)
+[docs/architecture/testing/reliability-posture.md](docs/architecture/testing/reliability-posture.md)
 and
-[docs/reference/ci-failure-investigation.md](docs/reference/ci-failure-investigation.md).
+[docs/architecture/testing/ci-failure-investigation.md](docs/architecture/testing/ci-failure-investigation.md).
 
 The first composite-index slice is also in place behind that verification
 discipline. Table schemas now treat indexes as `IndexDefinition { name, fields

@@ -113,11 +113,11 @@ export const greet = onCall(async (request) => {
 - Broader `setGlobalOptions()` fields fail fast
 - No App Check support
 
-See the [Cloud Functions compatibility matrix](../reference/cloud-functions-compatibility.md) for the full scope.
+See the [Cloud Functions compatibility matrix](compatibility.md) for the full scope.
 
 ## Related Docs
 
-- [Cloud Functions compatibility matrix](../reference/cloud-functions-compatibility.md)
-- [Cloud Functions migration guide](../reference/cloud-functions-migration-guide.md)
-- [Cloud Functions artifact contract](../reference/cloud-functions-artifact-contract.md)
-- [Cloud Functions target binding contract](../reference/cloud-functions-target-binding-contract.md)
+- [Cloud Functions compatibility matrix](compatibility.md)
+- [Cloud Functions migration guide](migration.md)
+- [Cloud Functions artifact contract](artifact-contract.md)
+- [Cloud Functions target binding contract](target-binding-contract.md)

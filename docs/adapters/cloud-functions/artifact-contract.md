@@ -44,7 +44,7 @@ The first-slice internal Cloud Functions artifact root is:
 
 `artifact.json` is the stable family envelope. `targets.json` is the
 deploy-time target and binding manifest defined in
-[cloud-functions-target-binding-contract.md](/Users/jack/src/github.com/agentstation/neovex/docs/reference/cloud-functions-target-binding-contract.md).
+[cloud-functions-target-binding-contract.md](target-binding-contract.md).
 
 `bundle.mjs` and `bundle.sha256` follow the same integrity rule as the current
 Convex runtime bundle path: activation must validate the SHA-256 sidecar

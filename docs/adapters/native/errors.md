@@ -5,7 +5,7 @@ session failures, and per-operation failures.
 
 Schema source for the examples below:
 
-- [error-envelope.schema.json](/Users/jack/src/github.com/agentstation/neovex/docs/reference/schemas/error-envelope.schema.json)
+- [error-envelope.schema.json](schemas/error-envelope.schema.json)
 
 ## Goals
 
@@ -228,6 +228,6 @@ path is implemented:
 ## Example Validation Coverage
 
 The JSON examples in this document are intended to validate against
-[error-envelope.schema.json](/Users/jack/src/github.com/agentstation/neovex/docs/reference/schemas/error-envelope.schema.json).
+[error-envelope.schema.json](schemas/error-envelope.schema.json).
 That schema is example-oriented and documents the stable public shape rather
 than replacing transport-specific server validation.

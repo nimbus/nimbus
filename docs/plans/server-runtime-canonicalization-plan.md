@@ -26,13 +26,13 @@ Reviewed against:
 - `docs/README.md`
 - `docs/plans/README.md`
 - `AGENTS.md`
-- `docs/reference/reliability-posture.md`
-- `docs/reference/ci-failure-investigation.md`
-- `docs/reference/runtime-adapter-boundary.md`
-- `docs/reference/server-auth-runtime-trust.md`
-- `docs/reference/firebase-auth-contract.md`
-- `docs/reference/firebase-compatibility.md`
-- `docs/reference/cloud-functions-compatibility.md`
+- `docs/architecture/testing/reliability-posture.md`
+- `docs/architecture/testing/ci-failure-investigation.md`
+- `docs/architecture/runtime/adapter-boundary.md`
+- `docs/architecture/server/auth-runtime-trust.md`
+- `docs/adapters/firebase/auth-contract.md`
+- `docs/adapters/firebase/compatibility.md`
+- `docs/adapters/cloud-functions/compatibility.md`
 - `docs/plans/runtime-capability-adapter-boundary-plan.md`
 - `docs/plans/adapter-runtime-trust-hardening-plan.md`
 - the current git worktree on `2026-04-26`
@@ -148,7 +148,7 @@ This plan does not cover:
   preferred composition-root modularity band.
 - Convex host-bridge document/query dispatch now routes through a narrower
   family-owned dispatch seam instead of three mostly parallel trees.
-- `docs/reference/runtime-adapter-boundary.md` matches the landed
+- `docs/architecture/runtime/adapter-boundary.md` matches the landed
   `runtime_host/abi/document_calls.rs` layout.
 
 ## Context Window Scale
@@ -367,5 +367,5 @@ Use broader workspace verification only after the focused proofs are green.
 | 2026-04-26 | `SRC5` | `done` | Split callable-specific Cloud Functions HTTP behavior into `adapters/cloud_functions/http/callable.rs`, leaving `http.rs` as a thinner composition root under the 1,500-line threshold while preserving the same tenant-resolution, CORS, and runtime invocation behavior. Focused proof: `cargo test -p neovex-server cloud_functions --lib`. |
 | 2026-04-26 | `SRC6` | `done` | Extracted the remaining Firebase Firestore public-surface helpers into `packages/firebase/src/internal/firestore-helpers.ts`, shrinking `packages/firebase/src/firestore.ts` back under the 1,500-line threshold without changing the public API surface. Focused proofs: `npm run typecheck --workspace @neovex/firebase`; `npm run build --workspace @neovex/firebase`; `npm run test --workspace @neovex/firebase`. |
 | 2026-04-26 | `SRC7` | `done` | Consolidated the Convex host-bridge triple-dispatch into family-owned enums under `adapters/convex/host_bridge/db_ops/dispatch.rs`, leaving `db_ops/mod.rs` as a narrower adapter-owned dispatch root with explicit unsupported handling for adapter-owned host calls. Focused proofs: `cargo test -p neovex-server adapters::convex::tests::authorization --lib`; `cargo test -p neovex-server adapters::convex::tests::cancellation --lib`; `cargo test -p neovex-server cloud_functions --lib`; `cargo check -p neovex-server`. |
-| 2026-04-26 | `SRC8` | `done` | Refreshed the canonical boundary docs and stable completed baselines so the runtime-host ABI layout, composition-root thresholds, and completed canonicalization wave all match the landed code instead of the pre-split plan state. Focused proof: targeted `sed`/`rg` review across `docs/reference/runtime-adapter-boundary.md`, `docs/plans/README.md`, `AGENTS.md`, and `docs/plans/native-transport-evolution-plan.md`. |
+| 2026-04-26 | `SRC8` | `done` | Refreshed the canonical boundary docs and stable completed baselines so the runtime-host ABI layout, composition-root thresholds, and completed canonicalization wave all match the landed code instead of the pre-split plan state. Focused proof: targeted `sed`/`rg` review across `docs/architecture/runtime/adapter-boundary.md`, `docs/plans/README.md`, `AGENTS.md`, and `docs/plans/native-transport-evolution-plan.md`. |
 | 2026-04-26 | `SRC9` | `done` | Closed the control plane by moving this plan out of the active index, rewriting `AGENTS.md` to treat it as a completed baseline instead of an active owner, and refreshing native-transport guidance so future work starts from the corrected server/runtime/auth baseline. Focused proofs: `cargo fmt --all --check`; targeted `rg` review of plan-index and AGENTS references. |

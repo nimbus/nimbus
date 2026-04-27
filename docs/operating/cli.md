@@ -391,7 +391,7 @@ the new app generation only after validation succeeds, so in-flight requests
 continue on the generation they already captured while new requests observe the
 new generation after activation.
 
-See `docs/reference/deploy-admin-api.md` for the request and response schema.
+See [deploy-admin-api.md](deploy-admin-api.md) for the request and response schema.
 
 ## Startup Behavior
 
@@ -450,7 +450,7 @@ This is why `start` and `compose` are not the same concept:
   CLI/state-model wiring, and the initial direct `krunkit` + `gvproxy`
   machine-manager seam
 - guest-image/bootstrap completion, packaging behavior, and transparent
-  developer UX are documented in `docs/reference/macos-machine-flow.md`
+  developer UX are documented in [macos-machine-flow.md](../architecture/sandbox/macos-machine-flow.md)
 
 Output-shaping contract:
 

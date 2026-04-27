@@ -48,7 +48,7 @@ tenant boundaries.
 
 How isolation is enforced depends on which storage backend is active
 (file-per-tenant for SQLite, schema-per-tenant for Postgres, etc.). See
-[Storage Backends: Tenant Isolation](../../guides/storage-backends.md#tenant-isolation)
+[Storage Backends: Tenant Isolation](../../operating/storage-backends.md#tenant-isolation)
 for the full breakdown.
 
 ## Single-Tenant Apps

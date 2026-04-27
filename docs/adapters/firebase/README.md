@@ -89,12 +89,12 @@ await batch.commit();
 - No offline persistence, bundles, or `onSnapshotsInSync`
 - No first-party React hooks (Firebase does not ship these upstream)
 
-See the [Firebase compatibility matrix](../reference/firebase-compatibility.md) for the full scope.
+See the [Firebase compatibility matrix](compatibility.md) for the full scope.
 
 ## Related Docs
 
-- [Firebase compatibility matrix](../reference/firebase-compatibility.md)
-- [Firebase migration guide](../reference/firebase-migration-guide.md)
-- [Firebase auth contract](../reference/firebase-auth-contract.md)
-- [Firebase WebSocket Listen](../reference/firebase-websocket-listen.md)
+- [Firebase compatibility matrix](compatibility.md)
+- [Firebase migration guide](migration.md)
+- [Firebase auth contract](auth-contract.md)
+- [Firebase WebSocket Listen](websocket-listen.md)
 - [Demo: firebase/html](../../demos/firebase/html/)

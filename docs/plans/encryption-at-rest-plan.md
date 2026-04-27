@@ -846,7 +846,7 @@ implementations land.
 - `crates/neovex-engine/src/persistence_config.rs`
 - `crates/neovex-bin/src/main.rs`
 - `crates/neovex/src/lib.rs`
-- `docs/reference/cli.md`
+- `docs/operating/cli.md`
 
 #### Acceptance criteria
 
@@ -1193,7 +1193,7 @@ experience.
 - `crates/neovex-bin/src/encryption/` (new CLI module tree for inspect,
   migrate, rotate, export, and retirement commands)
 - `crates/neovex-storage/src/`
-- `docs/reference/cli.md`
+- `docs/operating/cli.md`
 
 #### Acceptance criteria
 
@@ -1236,7 +1236,7 @@ path instead of stopping at local files.
 - `crates/neovex-storage/src/` (new AWS KMS provider module)
 - `crates/neovex-engine/src/persistence_config.rs`
 - `crates/neovex-bin/src/main.rs`
-- `docs/reference/cli.md`
+- `docs/operating/cli.md`
 
 #### Acceptance criteria
 
@@ -1257,7 +1257,7 @@ can actually evaluate.
 
 #### Implementation plan
 
-1. Add `docs/reference/encryption.md` covering:
+1. Add `docs/operating/encryption.md` covering:
    - provider coverage matrix
    - key-provider options
    - migration and rotation rules
@@ -1285,8 +1285,8 @@ can actually evaluate.
 
 #### Files likely to change
 
-- `docs/reference/encryption.md` (new)
-- `docs/reference/cli.md`
+- `docs/operating/encryption.md` (new)
+- `docs/operating/cli.md`
 - `crates/neovex-engine/benches/`
 - `scripts/collect-encryption-benchmark-evidence.sh`
 

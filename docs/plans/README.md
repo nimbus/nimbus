@@ -26,11 +26,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
     verification helper, and the libkrun gap on Debian/Ubuntu.
 ## Stable implementation baselines
 
-- `docs/reference/microvm-service-baseline.md`
+- `docs/architecture/sandbox/microvm-service-baseline.md`
   - concise current baseline for the landed krun-backed microVM runtime,
     service activation, Compose-backed `neovex compose ...` surface, and the
     Linux-versus-macOS platform model
-- `docs/reference/macos-machine-flow.md`
+- `docs/architecture/sandbox/macos-machine-flow.md`
   - concise current reference for the settled macOS developer-machine contract:
     pinned Podman image digest, host-managed guest binary sync, forwarded
     machine API, host-resident `neovex start`, and proof-helper entrypoints
@@ -354,18 +354,18 @@ completed plans unless explicitly asked to review historical work.
 - Start with the plan that owns your workstream.
 - For broad maintainability, refactor, modularity, readability, canonical
   naming, idiomatic-Rust, or god-file cleanup work, start with
-  `docs/reference/reliability-posture.md` and
-  `docs/reference/ci-failure-investigation.md`, use
+  `docs/architecture/testing/reliability-posture.md` and
+  `docs/architecture/testing/ci-failure-investigation.md`, use
   `docs/plans/archive/codebase-architecture-and-maintainability-plan.md` for
   the latest completed governance baseline when historical execution detail is
   needed, and promote a new active plan before landing another repo-wide
   cleanup wave unless another active plan already owns the slice.
 - For the landed krun-backed microVM and service-control architecture, start
-  with `docs/reference/microvm-service-baseline.md` rather than opening the
+  with `docs/architecture/sandbox/microvm-service-baseline.md` rather than opening the
   archived plans first.
 - For current macOS developer-machine behavior, start with
-  `docs/reference/microvm-service-baseline.md` and
-  `docs/reference/macos-machine-flow.md`.
+  `docs/architecture/sandbox/microvm-service-baseline.md` and
+  `docs/architecture/sandbox/macos-machine-flow.md`.
 - For historical machine/service CLI follow-on work, start with
   `docs/plans/archive/machine-cli-follow-on-plan.md` only when you need the
   completed `CLIF1`-`CLIF5` rollout, exact proof-bundle paths, or the settled
@@ -396,8 +396,8 @@ completed plans unless explicitly asked to review historical work.
   resuming further Convex compat work.
 - For Convex or Neovex CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
-  contract), start with `docs/reference/convex-ai-guidelines.md`,
-  `docs/reference/cli.md`, and `docs/convex/compatibility.md`. Promote a new
+  contract), start with `docs/adapters/convex/ai-guidelines.md`,
+  `docs/operating/cli.md`, and `docs/adapters/convex/compatibility.md`. Promote a new
   active plan before another CLI/codegen/facade architecture wave unless one
   already owns the slice. Use `archive/codegen-and-facade-hardening-plan.md`
   for the most recent cleanup wave's execution record, use
@@ -407,11 +407,11 @@ completed plans unless explicitly asked to review historical work.
   context.
 - For encryption at rest work, start with `encryption-at-rest-plan.md`.
 - For Compose-backed service lifecycle follow-on work, start with
-  `docs/reference/microvm-service-baseline.md`, then promote or author a new
+  `docs/architecture/sandbox/microvm-service-baseline.md`, then promote or author a new
   active plan if the task is larger than a small focused change.
 - For repo-wide reliability-proof posture or CI flake investigation, start
-  with `docs/reference/reliability-posture.md` and
-  `docs/reference/ci-failure-investigation.md`. Open
+  with `docs/architecture/testing/reliability-posture.md` and
+  `docs/architecture/testing/ci-failure-investigation.md`. Open
   `archive/codebase-reliability-and-maintainability-hardening-plan.md` only
   when you need the completed hardening wave's execution record, closeout
   verification baseline, or proof-packaging decisions.
@@ -422,8 +422,8 @@ completed plans unless explicitly asked to review historical work.
   that area.
 - For broad maintainability, readability, modularity, reliability hardening,
   canonical naming, or god-file cleanup work, start with
-  `docs/reference/reliability-posture.md` and
-  `docs/reference/ci-failure-investigation.md`. Use
+  `docs/architecture/testing/reliability-posture.md` and
+  `docs/architecture/testing/ci-failure-investigation.md`. Use
   `archive/architecture-modularity-and-maintainability-plan.md` for the most
   recent completed repo-wide maintainability wave's execution record,
   closeout verification bundle, and governance baseline for thin roots,

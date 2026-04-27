@@ -5,8 +5,8 @@ develop on Windows and deploy to Linux production hosts.
 
 Reviewed against:
 
-- `docs/reference/microvm-service-baseline.md`
-- `docs/reference/macos-machine-flow.md`
+- `docs/architecture/sandbox/microvm-service-baseline.md`
+- `docs/architecture/sandbox/macos-machine-flow.md`
 - `docs/plans/archive/macos-machine-support-plan.md`
 - `docs/plans/distribution-plan.md`
 - `crates/neovex-bin/src/machine/mod.rs`
@@ -81,12 +81,12 @@ Reviewed against:
   closeout record; Windows remains deferred only because this plan itself has
   not been promoted.
 - **Related plans:**
-  - `docs/reference/macos-machine-flow.md` — current macOS developer-machine
+  - `docs/architecture/sandbox/macos-machine-flow.md` — current macOS developer-machine
     contract reference; Windows shares the hybrid control-plane architecture
     and the forwarded machine-API contract
   - `docs/plans/archive/macos-machine-support-plan.md` — completed macOS
     execution record with the exact proof and sequencing Windows can reuse
-  - `docs/reference/microvm-service-baseline.md` — current landed Linux
+  - `docs/architecture/sandbox/microvm-service-baseline.md` — current landed Linux
     microVM and service-control baseline
   - `docs/plans/distribution-plan.md` — packaging/distribution umbrella; this
     plan owns the detailed execution of the Windows row
@@ -890,8 +890,8 @@ with the specific patterns to mirror:
 Source of truth:
 1. the current git worktree
 2. this plan's `Roadmap Status Ledger` and `Execution Log`
-3. `docs/reference/macos-machine-flow.md` (architectural precedent)
-4. `docs/reference/microvm-service-baseline.md`
+3. `docs/architecture/sandbox/macos-machine-flow.md` (architectural precedent)
+4. `docs/architecture/sandbox/microvm-service-baseline.md`
 5. `docs/plans/distribution-plan.md`
 6. the reviewed Podman source files listed at the top of this document
 

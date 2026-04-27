@@ -30,7 +30,7 @@ Reviewed against:
 - **Related plans:**
   - `docs/plans/desktop-ui-plan.md` — the UI's React frontend consumes the
     query surface and HTTP endpoints this plan creates
-  - `docs/reference/microvm-service-baseline.md` — architecture context for
+  - `docs/architecture/sandbox/microvm-service-baseline.md` — architecture context for
     machine/service state
 
 ## Current Assessed State

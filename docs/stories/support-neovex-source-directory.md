@@ -273,8 +273,8 @@ an explicit compatibility guardrail.
 Update text that currently implies `convex/` is the only valid root:
 
 - `packages/convex/src/cli.mjs`
-- `docs/reference/cli.md`
-- `docs/convex/compatibility.md`
+- `docs/operating/cli.md`
+- `docs/adapters/convex/compatibility.md`
 
 Recommended wording pattern:
 
@@ -294,8 +294,8 @@ Recommended wording pattern:
 | `packages/codegen/src/selftest/helpers.mjs` | parameterize fixture source root |
 | `packages/codegen/src/selftest/core_fixtures.mjs` | add native, both-roots, and missing-root fixtures |
 | `packages/convex/src/cli.mjs` | relax help text so it is accurate for both roots |
-| `docs/reference/cli.md` | document the dual-root contract |
-| `docs/convex/compatibility.md` | explain `convex/` as compatibility mode, not the only app layout |
+| `docs/operating/cli.md` | document the dual-root contract |
+| `docs/adapters/convex/compatibility.md` | explain `convex/` as compatibility mode, not the only app layout |
 
 ## Files likely not to modify
 

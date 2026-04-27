@@ -196,5 +196,5 @@ Convex compatibility is intentionally partial. See the [Convex compatibility mat
 ## Related Docs
 
 - [Convex compatibility matrix](../convex/compatibility.md)
-- [Convex AI guidelines](../reference/convex-ai-guidelines.md)
+- [Convex AI guidelines](ai-guidelines.md)
 - [Demos: convex/html](../../demos/convex/html/), [convex/http](../../demos/convex/http/), [convex/node](../../demos/convex/node/)

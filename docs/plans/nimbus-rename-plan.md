@@ -460,11 +460,11 @@ Bulk update all docs (~30+ files). Global replacements across all
 
 Files to update (non-exhaustive):
 - `docs/README.md`
-- `docs/reference/cli.md`
-- `docs/reference/microvm-service-baseline.md`
-- `docs/reference/macos-machine-flow.md`
-- `docs/reference/krun-vmm-host-validation.md`
-- `docs/reference/macos-machine-flow.md`
+- `docs/operating/cli.md`
+- `docs/architecture/sandbox/microvm-service-baseline.md`
+- `docs/architecture/sandbox/macos-machine-flow.md`
+- `docs/architecture/sandbox/krun-vmm-host-validation.md`
+- `docs/architecture/sandbox/macos-machine-flow.md`
 - `docs/plans/archive/machine-lifecycle-hardening-plan.md`
 - `docs/plans/archive/machine-cli-dx-plan.md`
 - `docs/plans/windows-machine-support-plan.md`

@@ -7,12 +7,12 @@ It defines the single prelaunch WebSocket contract Neovex now supports:
 explicit `neovex.v2` negotiation plus the structured handshake/error behavior
 that `docs/plans/websocket-protocol-plan.md` established.
 
-Use [docs/reference/errors.md](/Users/jack/src/github.com/agentstation/neovex/docs/reference/errors.md)
+Use [errors.md](errors.md)
 for the structured error contract that this protocol embeds.
 
 Schema source for the examples below:
 
-- [websocket-protocol.schema.json](/Users/jack/src/github.com/agentstation/neovex/docs/reference/schemas/websocket-protocol.schema.json)
+- [websocket-protocol.schema.json](schemas/websocket-protocol.schema.json)
 
 ## Scope
 
@@ -273,6 +273,6 @@ implicitly.
 ## Example Validation Coverage
 
 The examples in this document are intended to validate against
-[websocket-protocol.schema.json](/Users/jack/src/github.com/agentstation/neovex/docs/reference/schemas/websocket-protocol.schema.json).
+[websocket-protocol.schema.json](schemas/websocket-protocol.schema.json).
 That schema is example-oriented: it covers the public frame families shown
 here and is not a substitute for server-side validation logic.

@@ -145,7 +145,7 @@ A JSON configuration file can also be provided via `--config` or `NEOVEX_CONFIG`
 
 ## Encryption at Rest
 
-Neovex supports optional encryption at rest for embedded backends (SQLite, redb). See the [Encryption reference](../reference/encryption.md) for setup, key providers, and migration workflows.
+Neovex supports optional encryption at rest for embedded backends (SQLite, redb). See the [Encryption reference](encryption.md) for setup, key providers, and migration workflows.
 
 ```bash
 neovex start \
@@ -170,7 +170,7 @@ neovex start --tenant-provider postgres --postgres-url "postgresql://neovex:neov
 
 ## Related Docs
 
-- [CLI reference](../reference/cli.md) -- all flags and defaults
-- [Encryption reference](../reference/encryption.md) -- key management and migration
-- [Provider topologies](../reference/provider-topologies.md) -- architecture details
-- [Persistence engine baseline](../reference/persistence-engine-baseline.md) -- backend layouts
+- [CLI reference](cli.md) -- all flags and defaults
+- [Encryption reference](encryption.md) -- key management and migration
+- [Provider topologies](../architecture/storage/provider-topologies.md) -- architecture details
+- [Persistence engine baseline](../architecture/storage/persistence-engine-baseline.md) -- backend layouts

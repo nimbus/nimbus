@@ -15,8 +15,8 @@ Reviewed against:
 - `docs/README.md`
 - `docs/plans/README.md`
 - `AGENTS.md`
-- `docs/reference/reliability-posture.md`
-- `docs/reference/ci-failure-investigation.md`
+- `docs/architecture/testing/reliability-posture.md`
+- `docs/architecture/testing/ci-failure-investigation.md`
 - the current git worktree on `2026-04-27`
 
 ---
@@ -352,7 +352,7 @@ Completion gate:
   `cargo test -p neovex-server cloud_functions --lib`.
 - `2026-04-27`: `ASC7` completed. Removed the blanket Cloud Functions
   `dead_code` allowance, documented shared adapter expectations in
-  `docs/reference/adapter-expectations.md`, made run-to-completion backend
+  `docs/architecture/server/adapter-expectations.md`, made run-to-completion backend
   selection injectable, documented the intentional `neovex-testing ->
   neovex-storage` dependency, and split Firebase Listen WebSocket tests out of
   `tests/firebase/listen.rs`, reducing the root from `1741` lines to `1342`.

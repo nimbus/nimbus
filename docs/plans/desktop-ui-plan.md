@@ -57,7 +57,7 @@ These plans must complete before UI implementation begins:
   - `docs/plans/websocket-protocol-plan.md` — protocol and error schema
   - `docs/plans/localhost-server-security-plan.md` — auth and server security
   - `docs/plans/system-tenant-api-plan.md` — data layer the UI consumes
-  - `docs/reference/microvm-service-baseline.md` — machine/service architecture
+  - `docs/architecture/sandbox/microvm-service-baseline.md` — machine/service architecture
 
 ## Current Assessed State
 

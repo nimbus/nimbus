@@ -16,7 +16,7 @@ Reviewed against:
   `compose`); no `token` subcommand exists
 - `crates/neovex-bin/src/machine/mod.rs:2206-2246` — established XDG path
   convention (`$XDG_CONFIG_HOME/neovex/machine/`, etc.)
-- `docs/reference/macos-machine-flow.md:232-237` — settled XDG convention
+- `docs/architecture/sandbox/macos-machine-flow.md:232-237` — settled XDG convention
 - `Cargo.toml` — `ring` 0.17 already a workspace dependency
 
 ---

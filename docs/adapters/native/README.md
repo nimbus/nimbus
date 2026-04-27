@@ -148,7 +148,7 @@ subscription.unsubscribe();
 ws.close();
 ```
 
-The native WebSocket uses the `neovex.v2` protocol. See the [WebSocket protocol reference](../reference/websocket-protocol.md) for the full framing contract.
+The native WebSocket uses the `neovex.v2` protocol. See the [WebSocket protocol reference](websocket-protocol.md) for the full framing contract.
 
 ### Server functions with the `neovex` SDK
 
@@ -185,7 +185,7 @@ live.onUpdate(api.tasks.list, {}, (results) => console.log(results));
 | `POST` | `/api/tenants/{id}/crons` | Create cron job |
 | `WS` | `/ws?tenant_id={id}` | WebSocket (neovex.v2) |
 
-See the [HTTP and WebSocket API reference](../reference/http-api.md) for the full route catalog.
+See the [HTTP and WebSocket API reference](http-api.md) for the full route catalog.
 
 ### Tenant creation security
 
@@ -199,6 +199,6 @@ This is experimental. See the [source directory story](../stories/support-neovex
 
 ## Related Docs
 
-- [HTTP and WebSocket API reference](../reference/http-api.md)
-- [WebSocket protocol](../reference/websocket-protocol.md)
+- [HTTP and WebSocket API reference](http-api.md)
+- [WebSocket protocol](websocket-protocol.md)
 - [Demo: neovex/html](../../demos/neovex/html/)

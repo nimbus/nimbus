@@ -69,7 +69,7 @@ db.messages.find()
 
 > **Note:** The MongoDB wire protocol listener is currently configured at the
 > server library level. A `--mongodb-port` CLI flag is planned. Check the
-> [CLI reference](../../reference/cli.md) for the current state.
+> [CLI reference](../../operating/cli.md) for the current state.
 
 ## Client Package
 

@@ -13,9 +13,9 @@ target platforms and package channels.
   reached `done`; this plan is now active because the binary release,
   Homebrew/cask, and Linux package mirror lanes are all in flight
 - **Related plans:**
-  - `docs/reference/microvm-service-baseline.md` — current landed runtime and
+  - `docs/architecture/sandbox/microvm-service-baseline.md` — current landed runtime and
     service-control baseline
-  - `docs/reference/macos-machine-flow.md` — current macOS developer-machine
+  - `docs/architecture/sandbox/macos-machine-flow.md` — current macOS developer-machine
     contract reference
   - `docs/plans/archive/macos-machine-support-plan.md` — completed macOS
     execution record with exact closeout evidence for Channel 4

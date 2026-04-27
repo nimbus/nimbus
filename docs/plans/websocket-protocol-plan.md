@@ -159,7 +159,7 @@ Error code namespaces: `auth.*`, `protocol.*`, `rate.*`, `session.*`, `op.*`,
 
 ### WP1 — Spec: WebSocket protocol reference document
 
-Write `docs/reference/websocket-protocol.md`. Covers: subprotocol
+Write `docs/adapters/native/websocket-protocol.md`. Covers: subprotocol
 negotiation, hello/client_hello frames, op types (query.subscribe, mutation,
 action, stream.subscribe, ping), frame envelope schema, ordering guarantee,
 backpressure rules, reconnection semantics.
@@ -170,7 +170,7 @@ backpressure rules, reconnection semantics.
 
 ### WP2 — Spec: error schema reference document
 
-Write `docs/reference/errors.md`. Covers: error code taxonomy covering all
+Write `docs/adapters/native/errors.md`. Covers: error code taxonomy covering all
 existing `AppError` variants, error field contracts, per-channel wrapping
 (HTTP vs WebSocket fatal vs in-session op error), client rendering contract
 (how to map severity to UI behavior).
@@ -211,7 +211,7 @@ per error code asserting shape, `make test` green.
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-04-18 | Plan authored | — | Extracted from desktop-ui-plan.md as prerequisite |
-| 2026-04-26 | WP1 | `done` | Added `docs/reference/websocket-protocol.md` plus example-oriented frame schema at `docs/reference/schemas/websocket-protocol.schema.json` |
-| 2026-04-26 | WP2 | `done` | Added `docs/reference/errors.md` plus example-oriented error schema at `docs/reference/schemas/error-envelope.schema.json` |
+| 2026-04-26 | WP1 | `done` | Added `docs/adapters/native/websocket-protocol.md` plus example-oriented frame schema at `docs/adapters/native/schemas/websocket-protocol.schema.json` |
+| 2026-04-26 | WP2 | `done` | Added `docs/adapters/native/errors.md` plus example-oriented error schema at `docs/adapters/native/schemas/error-envelope.schema.json` |
 | 2026-04-26 | WP3 | `done` | Implemented `Sec-WebSocket-Protocol` negotiation, `neovex.v2` `hello` / `client_hello` handshake with 10s timeout, structured `protocol.no_overlap` HTTP rejection, and legacy `v1` compatibility on `/ws` and `/convex/{tenant_id}/ws` |
 | 2026-04-26 | WP4 | `done` | Completed the structured error rollout across HTTP bodies, WebSocket fatal frames, and negotiated `v2` request-scoped `op.error` frames; boxed `AppError::Structured` to keep the shared error path clippy-safe, updated protocol/docs/schema references to the shipped frame shape, and verified the full `neovex-server` lib lane plus schema/example parsing |

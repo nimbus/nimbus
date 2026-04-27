@@ -16,7 +16,7 @@ on:
       - "scripts/prepare-conmon-krun-drill.sh"
       - "scripts/verify-conmon-krun-drill-helper.sh"
       - "scripts/fixtures/crun-spec-config.json"
-      - "docs/reference/krun-vmm-host-validation.md"
+      - "docs/architecture/sandbox/krun-vmm-host-validation.md"
       - "Makefile"
       - ".github/workflows/verify-neovex-crun-patch.yml"
   push:
@@ -36,7 +36,7 @@ on:
       - "scripts/prepare-conmon-krun-drill.sh"
       - "scripts/verify-conmon-krun-drill-helper.sh"
       - "scripts/fixtures/crun-spec-config.json"
-      - "docs/reference/krun-vmm-host-validation.md"
+      - "docs/architecture/sandbox/krun-vmm-host-validation.md"
       - "Makefile"
       - ".github/workflows/verify-neovex-crun-patch.yml"
   workflow_dispatch:
