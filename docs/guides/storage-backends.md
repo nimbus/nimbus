@@ -96,6 +96,30 @@ Retained embedded key-value backend. Supported during the provider-model transit
 neovex start --tenant-provider redb --data-dir ./data
 ```
 
+## Tenant Isolation
+
+Every tenant is fully isolated at the storage level -- separate data,
+separate indexes, no cross-tenant visibility. The isolation boundary depends
+on which backend is active:
+
+| Backend | Isolation boundary |
+|---|---|
+| SQLite | File per tenant |
+| Postgres | Schema per tenant |
+| MySQL | Database per tenant |
+| libsql | Namespace per tenant |
+| redb | Directory per tenant |
+
+There is no operation that can read or write across tenant boundaries.
+Tenants are auto-created on first access (`ensure_tenant`). No upfront
+provisioning is needed for development.
+
+How tenants are addressed depends on which adapter the client connects
+through. The MongoDB adapter maps database names to tenant IDs, the Convex
+adapter maps deployment URLs, and the Native HTTP API uses the
+`X-Tenant-Id` header. Regardless of the addressing mechanism, the storage
+isolation is identical.
+
 ## Environment Variables
 
 All CLI flags have `NEOVEX_*` environment variable equivalents. Environment variables are overridden by CLI flags. Example:

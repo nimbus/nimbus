@@ -42,19 +42,14 @@ via the admin API or CLI.
 
 ## Storage Backend Isolation
 
-Each backend enforces tenant isolation at a different level:
-
-| Backend | Isolation boundary |
-|---|---|
-| redb | Directory per tenant |
-| SQLite | File per tenant |
-| Postgres | Schema per tenant |
-| MySQL | Database per tenant |
-| libsql | Namespace per tenant |
-
 A `users` collection in `tenant_a` and a `users` collection in `tenant_b`
-are completely separate. There is no operation in the MongoDB adapter that
-can read or write across tenant boundaries.
+are completely separate. There is no operation that can read or write across
+tenant boundaries.
+
+How isolation is enforced depends on which storage backend is active
+(file-per-tenant for SQLite, schema-per-tenant for Postgres, etc.). See
+[Storage Backends: Tenant Isolation](../../guides/storage-backends.md#tenant-isolation)
+for the full breakdown.
 
 ## Single-Tenant Apps
 
