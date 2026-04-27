@@ -1,7 +1,7 @@
 <!-- convex-ai-start -->
 This project implements a [Convex](https://convex.dev)-compatible backend server.
 
-When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/reference/convex-ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
 <!-- convex-ai-end -->
 
 # Neovex
@@ -42,8 +42,8 @@ Use the repo docs for architecture and behavior details:
   landing roadmap work. Prefer the active owner over archived history.
 - For generic maintainability, refactor, modularity, reliability hardening,
   canonical naming, or god-file cleanup work, open
-  `docs/reference/reliability-posture.md` and
-  `docs/reference/ci-failure-investigation.md` after the three docs above.
+  `docs/architecture/testing/reliability-posture.md` and
+  `docs/architecture/testing/ci-failure-investigation.md` after the three docs above.
   Use `docs/plans/architecture-seam-cleanliness-plan.md` as the latest
   completed repo-wide architecture/modularity/seam-cleanliness baseline, and
   promote a new active plan before another broad architecture cleanup wave.
@@ -55,9 +55,9 @@ Use the repo docs for architecture and behavior details:
 - For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
   compatibility-truth reconciliation, runtime-host seam promotion, auth
   ownership cleanup, provider-family seam cleanup, or runtime trust
-  hardening, open `docs/reference/adapter-expectations.md`,
-  `docs/reference/runtime-adapter-boundary.md`,
-  `docs/reference/server-auth-runtime-trust.md`, and
+  hardening, open `docs/architecture/server/adapter-expectations.md`,
+  `docs/architecture/runtime/adapter-boundary.md`,
+  `docs/architecture/server/auth-runtime-trust.md`, and
   `docs/plans/deployment-auth-runtime-boundary-plan.md` after the three docs
   above plus the reliability references when the work touches deploy/auth/live
   runtime seams. Treat it as the latest completed baseline for that
@@ -73,18 +73,18 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
   completed historical hardening wave.
 - For the landed krun-backed microVM and service-control architecture, open
-  `docs/reference/microvm-service-baseline.md` after the three docs above.
+  `docs/architecture/sandbox/microvm-service-baseline.md` after the three docs above.
 - For current macOS developer-machine behavior, open
-  `docs/reference/macos-machine-flow.md` after the microVM baseline.
+  `docs/architecture/sandbox/macos-machine-flow.md` after the microVM baseline.
 - For machine/service CLI UX work, help/output/progress consistency, or
-  Podman/Docker-style command-surface work, start with `docs/reference/cli.md`
-  and `docs/reference/microvm-service-baseline.md`. Promote a new active plan
+  Podman/Docker-style command-surface work, start with `docs/operating/cli.md`
+  and `docs/architecture/sandbox/microvm-service-baseline.md`. Promote a new active plan
   before landing another CLI command-surface wave unless one already owns the
   slice.
 - For shared machine-lifecycle hardening, enterprise machine-management
   reliability, or Windows-provider groundwork that reuses the existing machine
-  manager seams, start with `docs/reference/microvm-service-baseline.md`,
-  `docs/reference/macos-machine-flow.md` when relevant, and the active platform
+  manager seams, start with `docs/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/architecture/sandbox/macos-machine-flow.md` when relevant, and the active platform
   plan from `docs/plans/README.md`.
 - **For localhost/server security work:** start with the completed contract in
   `docs/plans/localhost-server-security-plan.md` for local
@@ -100,11 +100,11 @@ Use the repo docs for architecture and behavior details:
   Linux dependency context, but treat the install-script plan as the execution
   owner.
 - **For Firebase/Firestore compatibility work:** start with
-  `docs/reference/firebase-compatibility.md` and
-  `docs/reference/firebase-migration-guide.md` and
-  `docs/reference/firebase-auth-contract.md`, then use
-  `docs/reference/runtime-adapter-boundary.md` and
-  `docs/reference/server-auth-runtime-trust.md` plus
+  `docs/adapters/firebase/compatibility.md` and
+  `docs/adapters/firebase/migration.md` and
+  `docs/adapters/firebase/auth-contract.md`, then use
+  `docs/architecture/runtime/adapter-boundary.md` and
+  `docs/architecture/server/auth-runtime-trust.md` plus
   `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
   completed repo-wide auth/runtime/modularity baseline. Promote a new active
   plan before another broad Firebase-driven seam-hardening wave. Use
@@ -119,10 +119,10 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/firebase-adapter-plan.md` only as the completed
   historical execution record for the adapter and primitive-hardening wave.
 - **For Cloud Functions compute or HTTP handler work:** start with
-  `docs/reference/cloud-functions-compatibility.md` and
-  `docs/reference/cloud-functions-migration-guide.md`, then use
-  `docs/reference/runtime-adapter-boundary.md` and
-  `docs/reference/server-auth-runtime-trust.md` plus
+  `docs/adapters/cloud-functions/compatibility.md` and
+  `docs/adapters/cloud-functions/migration.md`, then use
+  `docs/architecture/runtime/adapter-boundary.md` and
+  `docs/architecture/server/auth-runtime-trust.md` plus
   `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
   completed repo-wide runtime/auth/modularity baseline. Promote a new active
   plan before another broad Cloud Functions seam-hardening wave. Use
@@ -138,8 +138,8 @@ Use the repo docs for architecture and behavior details:
   historical execution record for Firebase v2 and standalone Functions
   Framework compatibility.
 - **For Convex or Neovex CLI/codegen workflow work:** after
-  `docs/reference/convex-ai-guidelines.md`, open `docs/reference/cli.md` and
-  `docs/convex/compatibility.md` for `packages/codegen/`,
+  `docs/adapters/convex/ai-guidelines.md`, open `docs/operating/cli.md` and
+  `docs/adapters/convex/compatibility.md` for `packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
   contract. Promote a new active plan before landing another CLI/codegen
   workflow wave unless one already owns the slice. Use
@@ -155,8 +155,8 @@ Use the repo docs for architecture and behavior details:
   of truth.
 - For generic maintainability, refactor, modularity, reliability hardening,
   canonical naming, or readability cleanup work, open
-  `docs/reference/reliability-posture.md` and
-  `docs/reference/ci-failure-investigation.md` immediately after those three
+  `docs/architecture/testing/reliability-posture.md` and
+  `docs/architecture/testing/ci-failure-investigation.md` immediately after those three
   docs. Use `docs/plans/architecture-seam-cleanliness-plan.md` as the latest
   completed repo-wide architecture/modularity/seam-cleanliness baseline, and
   promote a new active plan before another broad architecture cleanup wave.
@@ -168,9 +168,9 @@ Use the repo docs for architecture and behavior details:
 - For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
   compatibility-truth reconciliation, runtime-host seam promotion, auth
   ownership cleanup, provider-family seam cleanup, or runtime trust
-  hardening, open `docs/reference/adapter-expectations.md`,
-  `docs/reference/runtime-adapter-boundary.md`,
-  `docs/reference/server-auth-runtime-trust.md`, and
+  hardening, open `docs/architecture/server/adapter-expectations.md`,
+  `docs/architecture/runtime/adapter-boundary.md`,
+  `docs/architecture/server/auth-runtime-trust.md`, and
   `docs/plans/deployment-auth-runtime-boundary-plan.md` immediately after
   those three docs plus the reliability references when the work touches
   deploy/auth/live runtime seams. Treat that plan as the latest completed
@@ -187,16 +187,16 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
   completed wave.
 - For the current krun-backed microVM and service-control architecture, open
-  `docs/reference/microvm-service-baseline.md` immediately after those three
+  `docs/architecture/sandbox/microvm-service-baseline.md` immediately after those three
   docs.
 - For macOS developer-machine work, open
-  `docs/reference/macos-machine-flow.md` after the microVM baseline.
+  `docs/architecture/sandbox/macos-machine-flow.md` after the microVM baseline.
 - For historical machine/service CLI alignment work, start with
-  `docs/reference/cli.md` and `docs/reference/microvm-service-baseline.md`.
+  `docs/operating/cli.md` and `docs/architecture/sandbox/microvm-service-baseline.md`.
   Promote a new active plan before starting another CLI UX wave unless one
   already owns the slice.
 - For shared machine-lifecycle hardening work, open
-  `docs/reference/microvm-service-baseline.md` after the microVM baseline and
+  `docs/architecture/sandbox/microvm-service-baseline.md` after the microVM baseline and
   then the active platform plan from `docs/plans/README.md`.
 - For localhost/server security work, open
   `docs/plans/localhost-server-security-plan.md` after the three top-level
@@ -204,11 +204,11 @@ Use the repo docs for architecture and behavior details:
   the slice. Keep local server-access auth separate from tenant/application
   auth unless an active plan explicitly says otherwise.
 - For Firebase/Firestore compatibility work, open
-  `docs/reference/firebase-compatibility.md` and
-  `docs/reference/firebase-migration-guide.md` and
-  `docs/reference/firebase-auth-contract.md` after the three top-level docs.
-  Use `docs/reference/runtime-adapter-boundary.md`,
-  `docs/reference/server-auth-runtime-trust.md`, and
+  `docs/adapters/firebase/compatibility.md` and
+  `docs/adapters/firebase/migration.md` and
+  `docs/adapters/firebase/auth-contract.md` after the three top-level docs.
+  Use `docs/architecture/runtime/adapter-boundary.md`,
+  `docs/architecture/server/auth-runtime-trust.md`, and
   `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
   completed repo-wide canonicalization baseline. Promote a new active plan
   before another broad Firebase-driven seam-hardening wave. Use
@@ -223,10 +223,10 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/firebase-adapter-plan.md` only when you need the
   completed execution record for the historical adapter wave.
 - For Cloud Functions compute, HTTP handlers, or trigger work (both Firebase
-  and standalone), open `docs/reference/cloud-functions-compatibility.md` and
-  `docs/reference/cloud-functions-migration-guide.md` after the three
-  top-level docs. Use `docs/reference/runtime-adapter-boundary.md`,
-  `docs/reference/server-auth-runtime-trust.md`, and
+  and standalone), open `docs/adapters/cloud-functions/compatibility.md` and
+  `docs/adapters/cloud-functions/migration.md` after the three
+  top-level docs. Use `docs/architecture/runtime/adapter-boundary.md`,
+  `docs/architecture/server/auth-runtime-trust.md`, and
   `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
   completed repo-wide canonicalization baseline. Promote a new active plan
   before another broad Cloud Functions seam-hardening wave. Use
@@ -241,8 +241,8 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/archive/firebase-cloud-functions-plan.md` only when you need the
   completed execution record for the historical compatibility wave.
 - For Convex or Neovex CLI/codegen workflow work, open
-  `docs/reference/convex-ai-guidelines.md`, `docs/reference/cli.md`, and
-  `docs/convex/compatibility.md` after the three top-level docs. Promote a
+  `docs/adapters/convex/ai-guidelines.md`, `docs/operating/cli.md`, and
+  `docs/adapters/convex/compatibility.md` after the three top-level docs. Promote a
   new active plan before landing another CLI/codegen workflow wave unless one
   already owns the slice. Use
   `docs/plans/archive/codegen-and-facade-hardening-plan.md` only when you

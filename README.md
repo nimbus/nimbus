@@ -112,7 +112,7 @@ curl -s -X POST http://localhost:8080/api/tenants/demo/query \
   -d '{"table": "messages", "filters": []}'
 ```
 
-Live query subscriptions are available over WebSocket at `/ws`. See the [HTTP & WebSocket API reference](docs/reference/http-api.md) for the full route catalog.
+Live query subscriptions are available over WebSocket at `/ws`. See the [HTTP & WebSocket API reference](docs/adapters/native/http-api.md) for the full route catalog.
 
 ## Adapters
 
@@ -120,11 +120,11 @@ Neovex speaks the protocols of platforms developers already use, so migration is
 
 | Adapter | Client Package | Protocol | Guide |
 |---------|---------------|----------|-------|
-| **Convex** | `convex` | Convex WebSocket + HTTP | [docs/adapters/convex.md](docs/adapters/convex.md) |
-| **Firebase / Firestore** | `@neovex/firebase` | REST, gRPC-Web, WebSocket Listen | [docs/adapters/firebase.md](docs/adapters/firebase.md) |
-| **Cloud Functions** | *(server-side)* | Firebase v2 + Functions Framework | [docs/adapters/cloud-functions.md](docs/adapters/cloud-functions.md) |
+| **Convex** | `convex` | Convex WebSocket + HTTP | [docs/adapters/convex/](docs/adapters/convex/) |
+| **Firebase / Firestore** | `@neovex/firebase` | REST, gRPC-Web, WebSocket Listen | [docs/adapters/firebase/](docs/adapters/firebase/) |
+| **Cloud Functions** | *(server-side)* | Firebase v2 + Functions Framework | [docs/adapters/cloud-functions/](docs/adapters/cloud-functions/) |
 | **MongoDB** | `@neovex/mongodb` | MongoDB Wire Protocol | [docs/adapters/mongodb/](docs/adapters/mongodb/) |
-| **Native HTTP/WS** | `neovex` | REST + WebSocket | [docs/adapters/native.md](docs/adapters/native.md) |
+| **Native HTTP/WS** | `neovex` | REST + WebSocket | [docs/adapters/native/](docs/adapters/native/) |
 
 All adapters share the same engine -- every mutation flows through the same write path, the same storage transactions, and the same subscription fan-out. Choosing an adapter is a client-side decision, not a server-side fork.
 
@@ -135,7 +135,7 @@ All adapters share the same engine -- every mutation flows through the same writ
 
 **Storage** -- the persistence layer
 - **Document storage** with optional per-table schemas, indexed queries, and cursor-based pagination
-- **Pluggable backends** -- SQLite by default, with Postgres, MySQL, libSQL, and redb. See the [storage backends guide](docs/guides/storage-backends.md).
+- **Pluggable backends** -- SQLite by default, with Postgres, MySQL, libSQL, and redb. See the [storage backends guide](docs/operating/storage-backends.md).
 - **Tenant isolation** built into the storage layer, not bolted on
 
 **Compute** -- the execution layer
@@ -202,16 +202,16 @@ To build from source, see [build from source](#build-from-source).
 |----------|-------------|
 | [Documentation index](docs/README.md) | Start here for deeper technical docs |
 | [Architecture](ARCHITECTURE.md) | How Neovex is built and why |
-| [Convex adapter](docs/adapters/convex.md) | Convex-compatible queries, mutations, React hooks |
-| [Firebase adapter](docs/adapters/firebase.md) | Firestore REST/gRPC-Web/WebSocket Listen |
-| [Cloud Functions adapter](docs/adapters/cloud-functions.md) | Firebase v2 triggers and HTTP handlers |
+| [Convex adapter](docs/adapters/convex/) | Convex-compatible queries, mutations, React hooks |
+| [Firebase adapter](docs/adapters/firebase/) | Firestore REST/gRPC-Web/WebSocket Listen |
+| [Cloud Functions adapter](docs/adapters/cloud-functions/) | Firebase v2 triggers and HTTP handlers |
 | [MongoDB adapter](docs/adapters/mongodb/) | MongoDB wire protocol compatibility |
-| [Native adapter](docs/adapters/native.md) | Direct REST and WebSocket API |
-| [Storage backends](docs/guides/storage-backends.md) | Choosing and configuring SQLite, Postgres, MySQL, libSQL |
-| [HTTP & WebSocket API](docs/reference/http-api.md) | Full route catalog |
-| [CLI reference](docs/reference/cli.md) | Every flag and default |
-| [Current capabilities](docs/reference/current-capabilities.md) | What works today |
-| [Convex compatibility](docs/convex/compatibility.md) | Convex surface scope and limits |
+| [Native adapter](docs/adapters/native/) | Direct REST and WebSocket API |
+| [Storage backends](docs/operating/storage-backends.md) | Choosing and configuring SQLite, Postgres, MySQL, libSQL |
+| [HTTP & WebSocket API](docs/adapters/native/http-api.md) | Full route catalog |
+| [CLI reference](docs/operating/cli.md) | Every flag and default |
+| [Current capabilities](docs/current-capabilities.md) | What works today |
+| [Convex compatibility](docs/adapters/convex/compatibility.md) | Convex surface scope and limits |
 | [Demos](demos/README.md) | Working example applications |
 
 ## Community
