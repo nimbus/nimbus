@@ -826,11 +826,13 @@ async fn seed_remote_namespace_documents(
     }
     for (index, (document_id, fields)) in documents.iter().enumerate() {
         conn.execute(
-            "INSERT INTO documents (table_name, id, data_json, creation_time) VALUES (?, ?, ?, ?)",
+            "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
             libsql::params![
                 tasks_table().as_str(),
                 document_id.to_string(),
                 serde_json::Value::Object(fields.clone()).to_string(),
+                "{}",
+                i64::try_from(index + 1)?,
                 i64::try_from(index + 1)?,
             ],
         )

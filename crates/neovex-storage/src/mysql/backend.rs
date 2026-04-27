@@ -73,7 +73,7 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
                 table_name VARCHAR(191) NOT NULL,\
                 id VARCHAR(191) NOT NULL,\
                 data_json LONGTEXT NOT NULL,\
-                typed_fields_json LONGTEXT NOT NULL DEFAULT '{{}}',\
+                typed_fields_json LONGTEXT NOT NULL,\
                 creation_time BIGINT UNSIGNED NOT NULL,\
                 update_time BIGINT UNSIGNED NOT NULL,\
                 PRIMARY KEY (table_name, id)\
@@ -706,7 +706,7 @@ where
                     }
                     None => {
                         let query = format!(
-                            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time) VALUES (?, ?, ?, ?, ?)",
+                            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
                             qualified_table(database_name, "documents")
                         );
                         session
@@ -718,6 +718,7 @@ where
                                     serialize_document_fields(current)?,
                                     serialize_document_typed_fields(current)?,
                                     current.creation_time.0,
+                                    current.update_time.0,
                                 ),
                             )
                             .await

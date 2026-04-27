@@ -1066,11 +1066,13 @@ async fn seed_remote_namespace(
     .await
     .expect("remote schema insert should succeed");
     conn.execute(
-        "INSERT INTO documents (table_name, id, data_json, creation_time) VALUES (?, ?, ?, ?)",
+        "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
         libsql::params![
             table_schema.table.as_str(),
             document_id.to_string(),
             fields.to_string(),
+            "{}",
+            7_i64,
             7_i64
         ],
     )
