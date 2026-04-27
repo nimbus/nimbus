@@ -12,7 +12,8 @@
     "./react": "./src/react.ts",
     "./browser": "./src/browser.ts",
     "./server": "./src/server.ts",
-    "./values": "./src/values.ts"
+    "./values": "./src/values.ts",
+    "./rest": "./src/rest.ts"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

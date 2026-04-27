@@ -123,11 +123,11 @@
         <article class="card">
           <h2>neovex/html</h2>
           <p>
-            A single-page playground for creating a tenant, installing a schema,
+            A single-page playground using <code>neovex/rest</code> SDK for creating a tenant, installing a schema,
             inserting documents, scheduling a mutation, and watching live subscription results.
           </p>
-          <a class="button" href="/demos/neovex/html/">Open demo</a>
-          <div class="meta">Static demo served directly by the Neovex server.</div>
+          <a class="button" href="http://127.0.0.1:5177/">Open demo</a>
+          <div class="meta">Run <code>npm run neovex:demo:html</code> (Vite dev server on port 5177).</div>
         </article>
 
         <article class="card">
@@ -154,6 +154,14 @@
             Browser HTTP demo using <code>convex/browser</code>, generated refs, and Convex-style actions and queries.
           </p>
           <div class="meta">Run <code>npm run convex:server:http</code> and <code>npm run convex:demo:http</code>.</div>
+        </article>
+
+        <article class="card">
+          <h2>mongodb/node</h2>
+          <p>
+            Node.js demo using <code>@neovex/mongodb</code> over the MongoDB wire protocol for CRUD and aggregation.
+          </p>
+          <div class="meta">Run <code>npm run demo --workspace mongodb-node</code>.</div>
         </article>
       </section>
     </main>

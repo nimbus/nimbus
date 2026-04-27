@@ -9,10 +9,12 @@
     "packages/neovex",
     "packages/codegen",
     "packages/mongodb",
-    "demos/firebase/html",
-    "demos/convex/node",
     "demos/convex/html",
-    "demos/convex/http"
+    "demos/convex/http",
+    "demos/convex/node",
+    "demos/firebase/html",
+    "demos/mongodb/node",
+    "demos/neovex/html"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -30,6 +32,7 @@
     "convex:demo:html": "npm run dev --workspace convex-html",
     "convex:demo:http": "npm run dev --workspace convex-http",
     "firebase:server:html": "cargo run -p neovex-bin -- start --port 8080",
-    "firebase:demo:html": "npm run dev --workspace firebase-html"
+    "firebase:demo:html": "npm run dev --workspace firebase-html",
+    "neovex:demo:html": "npm run dev --workspace neovex-html"
   }
 }
