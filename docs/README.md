@@ -40,5 +40,5 @@ Internal docs mirroring the crate tree. See
 ## Other
 
 - [Plans](plans/README.md) -- active execution plans and archived history
-- [Research](research/) -- background research and north-star direction
+- [Research](plans/research/) -- background research and north-star direction
 - [Demos](../demos/README.md) -- working example applications
