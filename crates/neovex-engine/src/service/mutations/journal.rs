@@ -93,7 +93,7 @@ impl Service {
                     for pending_response in batch_result.responses {
                         let _ = pending_response.response.send(Ok(pending_response.result));
                     }
-                    self.process_applied_commit_batch(runtime.clone(), &batch_result.applied);
+                    self.process_applied_commit_batch(runtime.clone(), &batch_result.applied, true);
                 }
                 Ok(Err(error)) => {
                     runtime.record_mutation_worker_failure();
@@ -326,7 +326,7 @@ fn plan_queued_mutation_request(
 
     let schema = runtime.schema();
     match mutation {
-        Mutation::Insert { table, fields } => {
+        Mutation::Insert { table, id, fields } => {
             let table_schema = schema.get_table(&table).cloned();
             if let Some(table_schema) = table_schema.as_ref()
                 && let Err(error) = table_schema.validate(&fields)
@@ -334,7 +334,10 @@ fn plan_queued_mutation_request(
                 let _ = response.send(Err(error));
                 return None;
             }
-            let document = Document::new(table.clone(), fields);
+            let document = match id {
+                Some(document_id) => Document::with_id(document_id, table.clone(), fields),
+                None => Document::new(table.clone(), fields),
+            };
             if let Err(error) = enforce_mutation_authorization(
                 table_schema.as_ref(),
                 AccessAction::Create,
@@ -345,14 +348,14 @@ fn plan_queued_mutation_request(
                 let _ = response.send(Err(error));
                 return None;
             }
-            let document_id = document.id;
-            overlay.insert((table, document_id), Some(document.clone()));
+            let document_id = document.id.clone();
+            overlay.insert((table, document_id.clone()), Some(document.clone()));
             if let Some(execution_id) = scheduled_execution_id.as_ref() {
                 scheduled_execution_overlay.insert(execution_id.clone());
             }
             let result = match scheduled_execution_id.as_ref() {
                 Some(_) => QueuedMutationResult::Scheduled(true),
-                None => QueuedMutationResult::Immediate(Some(document_id)),
+                None => QueuedMutationResult::Immediate(Some(document_id.clone())),
             };
             Some(PlannedQueuedMutation {
                 cancelled,
@@ -363,7 +366,9 @@ fn plan_queued_mutation_request(
                 writes: vec![neovex_core::WriteOp {
                     table: document.table.clone(),
                     op_type: neovex_core::WriteOpType::Insert,
-                    doc_id: document_id,
+                    doc_id: document_id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: None,
                     current: Some(document),
                 }],
@@ -371,7 +376,7 @@ fn plan_queued_mutation_request(
         }
         Mutation::Update { table, id, patch } => {
             let table_schema = schema.get_table(&table).cloned();
-            let existing = match load_batched_document(runtime, overlay, &table, id) {
+            let existing = match load_batched_document(runtime, overlay, &table, &id) {
                 Ok(Some(existing)) => existing,
                 Ok(None) => {
                     let _ = response.send(Err(Error::DocumentNotFound(id)));
@@ -402,13 +407,13 @@ fn plan_queued_mutation_request(
                 let _ = response.send(Err(error));
                 return None;
             }
-            overlay.insert((table.clone(), id), Some(document.clone()));
+            overlay.insert((table.clone(), id.clone()), Some(document.clone()));
             if let Some(execution_id) = scheduled_execution_id.as_ref() {
                 scheduled_execution_overlay.insert(execution_id.clone());
             }
             let result = match scheduled_execution_id.as_ref() {
                 Some(_) => QueuedMutationResult::Scheduled(true),
-                None => QueuedMutationResult::Immediate(Some(id)),
+                None => QueuedMutationResult::Immediate(Some(id.clone())),
             };
             Some(PlannedQueuedMutation {
                 cancelled,
@@ -420,6 +425,8 @@ fn plan_queued_mutation_request(
                     table: table.clone(),
                     op_type: neovex_core::WriteOpType::Update,
                     doc_id: id,
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: Some(existing),
                     current: Some(document),
                 }],
@@ -427,7 +434,7 @@ fn plan_queued_mutation_request(
         }
         Mutation::Delete { table, id } => {
             let table_schema = schema.get_table(&table).cloned();
-            let existing = match load_batched_document(runtime, overlay, &table, id) {
+            let existing = match load_batched_document(runtime, overlay, &table, &id) {
                 Ok(Some(existing)) => existing,
                 Ok(None) => {
                     let _ = response.send(Err(Error::DocumentNotFound(id)));
@@ -448,7 +455,7 @@ fn plan_queued_mutation_request(
                 let _ = response.send(Err(error));
                 return None;
             }
-            overlay.insert((table.clone(), id), None);
+            overlay.insert((table.clone(), id.clone()), None);
             if let Some(execution_id) = scheduled_execution_id.as_ref() {
                 scheduled_execution_overlay.insert(execution_id.clone());
             }
@@ -466,6 +473,8 @@ fn plan_queued_mutation_request(
                     table: table.clone(),
                     op_type: neovex_core::WriteOpType::Delete,
                     doc_id: id,
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
                     previous: Some(existing),
                     current: None,
                 }],
@@ -485,10 +494,10 @@ fn load_batched_document(
     runtime: &TenantRuntime,
     overlay: &HashMap<(TableName, DocumentId), Option<Document>>,
     table: &TableName,
-    id: DocumentId,
+    id: &DocumentId,
 ) -> Result<Option<Document>> {
-    if let Some(document) = overlay.get(&(table.clone(), id)) {
+    if let Some(document) = overlay.get(&(table.clone(), id.clone())) {
         return Ok(document.clone());
     }
-    runtime.store.get(table, &id)
+    runtime.store.get(table, id)
 }

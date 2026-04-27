@@ -90,10 +90,12 @@ fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavi
 
     let document_id = neovex_core::DocumentId::new();
     let matching_document = neovex_core::Document {
-        id: document_id,
+        id: document_id.clone(),
         table: table.clone(),
         creation_time: neovex_core::Timestamp::now(),
+        update_time: neovex_core::Timestamp::now(),
         fields: serde_json::Map::from_iter([("author".to_string(), json!("Ada"))]),
+        typed_fields: Default::default(),
     };
     let commit = neovex_core::CommitEntry {
         sequence: neovex_core::SequenceNumber(1),
@@ -101,7 +103,9 @@ fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavi
         writes: vec![neovex_core::WriteOp {
             table: table.clone(),
             op_type: neovex_core::WriteOpType::Insert,
-            doc_id: document_id,
+            doc_id: document_id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: None,
             current: Some(matching_document.clone()),
         }],
@@ -130,16 +134,20 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
 
     let document_id = neovex_core::DocumentId::new();
     let previous = neovex_core::Document {
-        id: document_id,
+        id: document_id.clone(),
         table: table.clone(),
         creation_time: neovex_core::Timestamp::now(),
+        update_time: neovex_core::Timestamp::now(),
         fields: serde_json::Map::from_iter([("author".to_string(), json!("Ada"))]),
+        typed_fields: Default::default(),
     };
     let current = neovex_core::Document {
-        id: document_id,
+        id: document_id.clone(),
         table: table.clone(),
         creation_time: previous.creation_time,
+        update_time: neovex_core::Timestamp::now(),
         fields: serde_json::Map::from_iter([("author".to_string(), json!("Grace"))]),
+        typed_fields: Default::default(),
     };
 
     let commit = neovex_core::CommitEntry {
@@ -148,7 +156,9 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
         writes: vec![neovex_core::WriteOp {
             table,
             op_type: neovex_core::WriteOpType::Update,
-            doc_id: document_id,
+            doc_id: document_id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: Some(previous),
             current: Some(current),
         }],

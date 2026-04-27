@@ -6,11 +6,12 @@ use neovex_runtime::{
 };
 use serde_json::Value;
 
-use crate::adapters::convex::host_bridge::{
-    ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope,
-    ConvexRuntimeResponseEnvelope,
+use crate::adapters::convex::host_bridge::ConvexRuntimeResponseEnvelope;
+use crate::adapters::convex::{
+    ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope, ConvexRegistry,
+    RuntimeReadSet,
 };
-use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet, normalize_principal_context};
+use crate::application_auth::normalize_principal_context;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_on_worker_with_host_state,
 };

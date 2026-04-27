@@ -363,6 +363,7 @@ fn document_field_value(document: &Document, field: &str) -> Option<Value> {
     match field {
         "_id" => Some(Value::String(document.id.to_string())),
         "_creationTime" => Some(Value::Number(document.creation_time.0.into())),
+        "_updateTime" => Some(Value::Number(document.update_time.0.into())),
         _ => document.get_field(field).cloned(),
     }
 }

@@ -305,7 +305,7 @@ impl SqliteReadSnapshot {
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         self.conn
             .query_row(
-                "SELECT creation_time, data_json
+                "SELECT creation_time, update_time, data_json, typed_fields_json
                  FROM documents
                  WHERE table_name = ?1 AND id = ?2",
                 params![table.as_str(), id.to_string()],
@@ -314,7 +314,9 @@ impl SqliteReadSnapshot {
                         table,
                         id,
                         row.get(0)?,
-                        row.get::<_, String>(1)?,
+                        row.get(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
                     ))
                 },
             )
@@ -340,7 +342,7 @@ impl SqliteReadSnapshot {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT table_name, id, creation_time, data_json
+                "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json
                  FROM documents
                  ORDER BY table_name, id",
             )
@@ -358,7 +360,9 @@ impl SqliteReadSnapshot {
                 &table,
                 &id,
                 row.get(2).map_err(map_sqlite_error)?,
-                row.get::<_, String>(3).map_err(map_sqlite_error)?,
+                row.get(3).map_err(map_sqlite_error)?,
+                row.get::<_, String>(4).map_err(map_sqlite_error)?,
+                row.get::<_, String>(5).map_err(map_sqlite_error)?,
             )?);
         }
         Ok(documents)
@@ -394,7 +398,7 @@ impl SqliteReadSnapshot {
         let mut stmt = self
             .conn
             .prepare_cached(
-                "SELECT id, creation_time, data_json
+                "SELECT id, creation_time, update_time, data_json, typed_fields_json
                  FROM documents
                  WHERE table_name = ?1
                  ORDER BY id",
@@ -412,7 +416,9 @@ impl SqliteReadSnapshot {
                 &DocumentId::from_str(id.as_str())
                     .map_err(|error| Error::Serialization(error.to_string()))?,
                 row.get(1).map_err(map_sqlite_error)?,
-                row.get::<_, String>(2).map_err(map_sqlite_error)?,
+                row.get(2).map_err(map_sqlite_error)?,
+                row.get::<_, String>(3).map_err(map_sqlite_error)?,
+                row.get::<_, String>(4).map_err(map_sqlite_error)?,
             )?;
             if include_document(&document)? {
                 documents.push(document);
@@ -552,7 +558,9 @@ impl SqliteReadSnapshot {
                 table,
                 &id,
                 row.get(1).map_err(map_sqlite_error)?,
-                row.get::<_, String>(2).map_err(map_sqlite_error)?,
+                row.get(2).map_err(map_sqlite_error)?,
+                row.get::<_, String>(3).map_err(map_sqlite_error)?,
+                row.get::<_, String>(4).map_err(map_sqlite_error)?,
             )?);
         }
         Ok(documents)

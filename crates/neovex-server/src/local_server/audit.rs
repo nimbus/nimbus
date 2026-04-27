@@ -1,6 +1,6 @@
-use std::fs::{File, OpenOptions};
 #[cfg(any(test, unix))]
 use std::fs;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -102,10 +102,16 @@ pub(crate) fn origin_from_headers(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn tenant_id_from_request(path: &str, headers: &HeaderMap) -> Option<String> {
+    tenant_id_from_path(path).or_else(|| firebase_project_id_from_headers(headers))
+}
+
 pub(crate) fn tenant_id_from_path(path: &str) -> Option<String> {
     let tenant_segment = if let Some(rest) = path.strip_prefix("/api/tenants/") {
         Some(rest)
     } else if let Some(rest) = path.strip_prefix("/debug/tenants/") {
+        Some(rest)
+    } else if let Some(rest) = path.strip_prefix("/v1/projects/") {
         Some(rest)
     } else {
         path.strip_prefix("/convex/")
@@ -115,6 +121,31 @@ pub(crate) fn tenant_id_from_path(path: &str) -> Option<String> {
         .next()
         .filter(|segment| !segment.is_empty())
         .map(str::to_string)
+}
+
+fn firebase_project_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("google-cloud-resource-prefix")
+        .and_then(|value| value.to_str().ok())
+        .and_then(project_id_from_firestore_metadata)
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get("x-goog-request-params")
+                .and_then(|value| value.to_str().ok())
+                .and_then(project_id_from_firestore_metadata)
+                .map(str::to_string)
+        })
+}
+
+fn project_id_from_firestore_metadata(value: &str) -> Option<&str> {
+    if let Some((_, rest)) = value.split_once("projects/") {
+        return rest.split('/').next().filter(|segment| !segment.is_empty());
+    }
+    let (_, rest) = value.split_once("projects%2F")?;
+    rest.split("%2F")
+        .next()
+        .filter(|segment| !segment.is_empty())
 }
 
 #[cfg(unix)]
@@ -143,6 +174,8 @@ fn set_secure_path_permissions(_path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
     use super::*;
 
     fn sample_paths(root: &Path) -> LocalServerPaths {
@@ -209,7 +242,39 @@ mod tests {
             tenant_id_from_path("/convex/demo/query").as_deref(),
             Some("demo")
         );
+        assert_eq!(
+            tenant_id_from_path("/v1/projects/demo/databases/(default)/documents:commit")
+                .as_deref(),
+            Some("demo")
+        );
         assert_eq!(tenant_id_from_path("/health"), None);
+    }
+
+    #[test]
+    fn tenant_id_from_request_extracts_firebase_project_from_metadata_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "google-cloud-resource-prefix",
+            HeaderValue::from_static("projects/demo/databases/(default)"),
+        );
+        assert_eq!(
+            tenant_id_from_request("/google.firestore.v1.Firestore/Commit", &headers).as_deref(),
+            Some("demo")
+        );
+
+        let mut request_params_headers = HeaderMap::new();
+        request_params_headers.insert(
+            "x-goog-request-params",
+            HeaderValue::from_static("database=projects/demo/databases/(default)"),
+        );
+        assert_eq!(
+            tenant_id_from_request(
+                "/google.firestore.v1.Firestore/Commit",
+                &request_params_headers
+            )
+            .as_deref(),
+            Some("demo")
+        );
     }
 
     #[cfg(unix)]

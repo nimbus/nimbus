@@ -91,7 +91,9 @@ fn sqlite_materialized_snapshot_records_durable_boundary_and_rejects_incomplete_
         vec![WriteOp {
             table: document.table.clone(),
             op_type: WriteOpType::Insert,
-            doc_id: document.id,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: None,
             current: Some(document.clone()),
         }],

@@ -53,7 +53,7 @@ impl TenantWriteTransaction {
                 let existing = documents
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
-                    .ok_or(neovex_core::Error::DocumentNotFound(*id))?;
+                    .ok_or(neovex_core::Error::DocumentNotFound(id.clone()))?;
                 decode_document_msgpack(existing.value())
                     .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
             };
@@ -107,7 +107,9 @@ impl TenantWriteTransaction {
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Update,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: Some(old_document),
             current: Some(new_document),
         });
@@ -132,7 +134,7 @@ impl TenantWriteTransaction {
                 .open_table(crate::store::DOCUMENTS)
                 .map_err(map_redb_error)?;
             let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
-            let removed = removed.ok_or(neovex_core::Error::DocumentNotFound(*id))?;
+            let removed = removed.ok_or(neovex_core::Error::DocumentNotFound(id.clone()))?;
             decode_document_msgpack(removed.value())
                 .map_err(|error| neovex_core::Error::Serialization(error.to_string()))?
         };
@@ -154,7 +156,9 @@ impl TenantWriteTransaction {
         self.record_commit_write(WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Delete,
-            doc_id: *id,
+            doc_id: id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: Some(old_document.clone()),
             current: None,
         });

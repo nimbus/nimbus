@@ -97,24 +97,25 @@ impl From<TableName> for String {
     }
 }
 
-/// ULID-backed document identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct DocumentId(pub Ulid);
+/// Protocol-neutral document identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct DocumentId(String);
 
 impl DocumentId {
     /// Generates a new document identifier.
     pub fn new() -> Self {
-        Self(Ulid::new())
+        Self(Ulid::new().to_string())
     }
 
-    /// Returns the identifier as raw bytes.
-    pub fn to_bytes(self) -> [u8; 16] {
-        self.0.to_bytes()
+    /// Returns the identifier as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 
-    /// Constructs an identifier from raw bytes.
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self(Ulid::from_bytes(bytes))
+    /// Creates a document identifier from a caller-provided key.
+    pub fn from_key(value: impl Into<String>) -> Result<Self> {
+        value.into().try_into()
     }
 }
 
@@ -126,15 +127,30 @@ impl Default for DocumentId {
 
 impl Display for DocumentId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        f.write_str(&self.0)
     }
 }
 
 impl FromStr for DocumentId {
-    type Err = ulid::DecodeError;
+    type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self(Ulid::from_string(s)?))
+        Self::from_key(s)
+    }
+}
+
+impl TryFrom<String> for DocumentId {
+    type Error = Error;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        validate_document_key(&value)?;
+        Ok(Self(value))
+    }
+}
+
+impl From<DocumentId> for String {
+    fn from(value: DocumentId) -> Self {
+        value.0
     }
 }
 
@@ -189,4 +205,29 @@ pub(crate) fn validate_logical_name(value: &str, kind: &str) -> Result<()> {
     Err(Error::InvalidInput(format!(
         "{kind} may only contain ASCII letters, numbers, `_`, and `-`"
     )))
+}
+
+pub(crate) fn validate_document_key(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(Error::InvalidInput(
+            "document key cannot be empty".to_string(),
+        ));
+    }
+    if value.len() > 1_500 {
+        return Err(Error::InvalidInput(
+            "document key cannot exceed 1500 bytes".to_string(),
+        ));
+    }
+    if value.contains('/') {
+        return Err(Error::InvalidInput(
+            "document key cannot contain `/`".to_string(),
+        ));
+    }
+    if value.bytes().any(|byte| byte == 0) {
+        return Err(Error::InvalidInput(
+            "document key cannot contain NUL bytes".to_string(),
+        ));
+    }
+
+    Ok(())
 }

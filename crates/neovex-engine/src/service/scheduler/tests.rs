@@ -39,6 +39,7 @@ fn subscription_channel() -> (
 fn insert_task_mutation(title: &str) -> Mutation {
     Mutation::Insert {
         table: tasks_table(),
+        id: None,
         fields: serde_json::Map::from_iter([("title".to_string(), json!(title))]),
     }
 }
@@ -114,7 +115,7 @@ async fn scheduler_async_write_path_round_trips_pending_running_and_history_stat
     );
 
     let result = ScheduledJobResult {
-        id: job_id,
+        id: job_id.clone(),
         run_at: claimed[0].run_at,
         finished_at: Timestamp::now(),
         mutation: claimed[0].mutation.clone(),
@@ -126,12 +127,12 @@ async fn scheduler_async_write_path_round_trips_pending_running_and_history_stat
         .await
         .expect("history should save");
     service
-        .complete_scheduled_job_async(tenant_id.clone(), job_id)
+        .complete_scheduled_job_async(tenant_id.clone(), job_id.clone())
         .await
         .expect("completion should succeed");
 
     let loaded = service
-        .get_scheduled_job_result_async(tenant_id.clone(), job_id)
+        .get_scheduled_job_result_async(tenant_id.clone(), job_id.clone())
         .await
         .expect("history should load");
     assert_eq!(loaded.outcome, ScheduledJobOutcome::Completed);
@@ -154,9 +155,10 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
     match initial {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert!(data.is_empty());
         }
@@ -181,9 +183,10 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert!(request_id.is_none());
             assert_eq!(data.len(), 1);
@@ -263,6 +266,7 @@ async fn scheduled_mutation_validates_against_schema() {
                 run_after_ms: 0,
                 mutation: Mutation::Insert {
                     table: TableName::new("users").expect("table name should be valid"),
+                    id: None,
                     fields: serde_json::Map::from_iter([("age".to_string(), json!(42))]),
                 },
             },
@@ -584,7 +588,7 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
             .record_scheduled_job_result(
                 &tenant_id,
                 &ScheduledJobResult {
-                    id: completed_job.id,
+                    id: completed_job.id.clone(),
                     run_at: completed_job.run_at,
                     finished_at: Timestamp::now(),
                     mutation: completed_job.mutation,

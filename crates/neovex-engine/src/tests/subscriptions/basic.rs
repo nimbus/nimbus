@@ -23,9 +23,10 @@ async fn service_insert_drives_subscription_updates() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert_eq!(request_id.as_deref(), Some("req-1"));
             assert!(data.is_empty());
@@ -46,9 +47,10 @@ async fn service_insert_drives_subscription_updates() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert!(request_id.is_none());
             assert_eq!(data.len(), 1);
@@ -88,9 +90,10 @@ async fn service_update_and_delete_drive_subscription_updates() {
     match initial {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("Before"));
@@ -102,7 +105,7 @@ async fn service_update_and_delete_drive_subscription_updates() {
         .update_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
         )
         .expect("update should succeed");
@@ -112,9 +115,10 @@ async fn service_update_and_delete_drive_subscription_updates() {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
             request_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert!(request_id.is_none());
             assert_eq!(data[0]["title"], json!("After"));
@@ -126,7 +130,7 @@ async fn service_update_and_delete_drive_subscription_updates() {
         .delete_document(
             &tenant_id,
             TableName::new("tasks").expect("table name should be valid"),
-            document_id,
+            document_id.clone(),
         )
         .expect("delete should succeed");
 
@@ -134,9 +138,10 @@ async fn service_update_and_delete_drive_subscription_updates() {
     match deleted {
         SubscriptionUpdate::Result {
             subscription_id: actual_id,
-            data,
+            snapshot,
             ..
         } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(actual_id, subscription_id);
             assert_eq!(data, Vec::<serde_json::Value>::new());
         }
@@ -192,7 +197,8 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
         .await
         .expect("initial update should still be buffered");
     match initial {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("Before"));
         }
@@ -203,4 +209,83 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
     ));
+}
+
+#[tokio::test]
+async fn subscription_snapshots_expose_covered_sequence_and_commit_timestamp_metadata() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    let document_id = service
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
+        )
+        .expect("seed insert should succeed");
+    let bootstrap_sequence = service
+        .latest_sequence(&tenant_id)
+        .expect("latest sequence should load after seed insert");
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = service
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "snapshot-meta".to_string(),
+            tx,
+        )
+        .expect("subscribe should succeed");
+
+    let initial = rx.recv().await.expect("initial update should arrive");
+    match initial {
+        SubscriptionUpdate::Result {
+            request_id,
+            snapshot,
+            ..
+        } => {
+            let data = snapshot.to_json_documents();
+            assert_eq!(request_id.as_deref(), Some("snapshot-meta"));
+            assert_eq!(snapshot.covered_sequence, bootstrap_sequence);
+            assert!(snapshot.commit.is_none());
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("Before"));
+        }
+        other => panic!("unexpected initial subscription event: {other:?}"),
+    }
+
+    service
+        .update_document(
+            &tenant_id,
+            tasks_table(),
+            document_id,
+            serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
+        )
+        .expect("update should succeed");
+
+    let durable_commit = durable_journal_commits(&service, &tenant_id, SequenceNumber(0))
+        .into_iter()
+        .last()
+        .expect("durable journal should contain the update commit");
+    let update = rx.recv().await.expect("reactive update should arrive");
+    match update {
+        SubscriptionUpdate::Result {
+            request_id,
+            snapshot,
+            ..
+        } => {
+            let data = snapshot.to_json_documents();
+            let commit = snapshot
+                .commit
+                .expect("single-commit delivery should retain stable commit metadata");
+            assert!(request_id.is_none());
+            assert_eq!(snapshot.covered_sequence, durable_commit.sequence);
+            assert_eq!(commit.sequence, durable_commit.sequence);
+            assert_eq!(commit.timestamp, durable_commit.timestamp);
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("After"));
+        }
+        other => panic!("unexpected reactive subscription event: {other:?}"),
+    }
 }

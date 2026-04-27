@@ -9,6 +9,7 @@ pub(crate) async fn ws(
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
+    let negotiated_protocol = crate::ws::negotiate(&headers)?;
     let service = state.service.clone();
     let tenant_check = tenant_id.clone();
     service.ensure_tenant_exists_async(tenant_check).await?;
@@ -21,7 +22,26 @@ pub(crate) async fn ws(
     )
     .await?;
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_convex_socket_for_tenant(socket, state, registry, tenant_id, auth)
-    }))
+    Ok(
+        crate::ws::configure_upgrade(ws).on_upgrade(move |socket| async move {
+            let Some(socket) = crate::ws::complete_handshake(
+                socket,
+                negotiated_protocol,
+                crate::ws::HelloContext::convex(),
+            )
+            .await
+            else {
+                return;
+            };
+            handle_convex_socket_for_tenant(
+                socket,
+                state,
+                registry,
+                tenant_id,
+                auth,
+                negotiated_protocol,
+            )
+            .await;
+        }),
+    )
 }

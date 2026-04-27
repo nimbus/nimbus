@@ -258,8 +258,8 @@ fn execute_document_mutation_with_execution_unit(
     mutation: Mutation,
 ) -> Result<Value, Error> {
     match mutation {
-        Mutation::Insert { table, fields } => execution_unit
-            .insert_document(table, fields)
+        Mutation::Insert { table, id, fields } => execution_unit
+            .insert_document_with_id(table, id, fields)
             .map(|id| Value::String(id.to_string())),
         Mutation::Update { table, id, patch } => execution_unit
             .update_document(table, id, patch)

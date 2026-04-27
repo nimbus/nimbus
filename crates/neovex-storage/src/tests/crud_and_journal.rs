@@ -165,7 +165,9 @@ fn durable_journal_serialization_preserves_payload_and_metadata() {
         vec![WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Update,
-            doc_id: before.id,
+            doc_id: before.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: Some(before.clone()),
             current: Some(after.clone()),
         }],
@@ -213,7 +215,9 @@ fn durable_journal_metadata_supports_dependency_intersection_checks() {
         vec![WriteOp {
             table: table.clone(),
             op_type: WriteOpType::Update,
-            doc_id: before.id,
+            doc_id: before.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
             previous: Some(before.clone()),
             current: Some(after.clone()),
         }],
@@ -221,7 +225,7 @@ fn durable_journal_metadata_supports_dependency_intersection_checks() {
     )
     .expect("durable record should build");
     let mut document_dependency = DependencySet::default();
-    document_dependency.record_document(&table, before.id);
+    document_dependency.record_document(&table, before.id.clone());
     assert!(durable_record_intersects_dependency_set(
         &record,
         &document_dependency,

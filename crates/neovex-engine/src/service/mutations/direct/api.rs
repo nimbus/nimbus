@@ -22,9 +22,27 @@ impl Service {
         table: TableName,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.insert_document_with_principal(
+        self.insert_document_with_id_with_principal(
             tenant_id,
             table,
+            None,
+            fields,
+            &PrincipalContext::anonymous(),
+        )
+    }
+
+    /// Inserts a document with an explicit identifier and fan-outs any resulting subscription updates.
+    pub fn insert_document_with_id(
+        &self,
+        tenant_id: &TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        fields: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<DocumentId> {
+        self.insert_document_with_id_with_principal(
+            tenant_id,
+            table,
+            Some(document_id),
             fields,
             &PrincipalContext::anonymous(),
         )
@@ -38,9 +56,25 @@ impl Service {
         fields: serde_json::Map<String, serde_json::Value>,
         principal: &PrincipalContext,
     ) -> Result<DocumentId> {
+        self.insert_document_with_id_with_principal(tenant_id, table, None, fields, principal)
+    }
+
+    /// Inserts a document with an explicit identifier for the provided principal.
+    pub fn insert_document_with_id_with_principal(
+        &self,
+        tenant_id: &TenantId,
+        table: TableName,
+        document_id: Option<DocumentId>,
+        fields: serde_json::Map<String, serde_json::Value>,
+        principal: &PrincipalContext,
+    ) -> Result<DocumentId> {
         self.execute_immediate_document_mutation(
             tenant_id,
-            Mutation::Insert { table, fields },
+            Mutation::Insert {
+                table,
+                id: document_id,
+                fields,
+            },
             principal,
             "insert should return a document id",
         )
@@ -59,6 +93,24 @@ impl Service {
         .await
     }
 
+    /// Inserts a document asynchronously with an explicit identifier.
+    pub async fn insert_document_async_with_id(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: DocumentId,
+        fields: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<DocumentId> {
+        self.insert_document_async_with_id_with_principal(
+            tenant_id,
+            table,
+            Some(document_id),
+            fields,
+            PrincipalContext::anonymous(),
+        )
+        .await
+    }
+
     /// Inserts a document asynchronously for the provided principal.
     pub async fn insert_document_async_with_principal(
         self: &Arc<Self>,
@@ -67,9 +119,23 @@ impl Service {
         fields: serde_json::Map<String, serde_json::Value>,
         principal: PrincipalContext,
     ) -> Result<DocumentId> {
+        self.insert_document_async_with_id_with_principal(tenant_id, table, None, fields, principal)
+            .await
+    }
+
+    /// Inserts a document asynchronously with an explicit identifier for the provided principal.
+    pub async fn insert_document_async_with_id_with_principal(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+        document_id: Option<DocumentId>,
+        fields: serde_json::Map<String, serde_json::Value>,
+        principal: PrincipalContext,
+    ) -> Result<DocumentId> {
         self.insert_document_async_cancellable_with_principal(
             tenant_id,
             table,
+            document_id,
             fields,
             principal,
             future::pending(),
@@ -93,6 +159,7 @@ impl Service {
         self.insert_document_async_cancellable_with_principal(
             tenant_id,
             table,
+            None,
             fields,
             PrincipalContext::anonymous(),
             cancel_wait,
@@ -101,10 +168,15 @@ impl Service {
         .await
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "async inserts share the existing API surface while adding caller-provided document keys"
+    )]
     pub async fn insert_document_async_cancellable_with_principal<Fut, Check>(
         self: &Arc<Self>,
         tenant_id: TenantId,
         table: TableName,
+        document_id: Option<DocumentId>,
         fields: serde_json::Map<String, serde_json::Value>,
         principal: PrincipalContext,
         cancel_wait: Fut,
@@ -116,7 +188,11 @@ impl Service {
     {
         self.execute_immediate_document_mutation_async(
             tenant_id,
-            Mutation::Insert { table, fields },
+            Mutation::Insert {
+                table,
+                id: document_id,
+                fields,
+            },
             principal,
             cancel_wait,
             check_cancel,

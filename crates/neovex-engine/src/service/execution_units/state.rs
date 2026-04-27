@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::sync::MutexGuard;
 
-use neovex_core::{DependencySet, Document, DocumentId, Error, IndexDefinition, Result, TableName};
+use neovex_core::{
+    DependencySet, Document, DocumentId, Error, IndexDefinition, ResourcePathBinding, Result,
+    TableName, TriggerWriteOrigin,
+};
 use neovex_storage::{ResolvedScheduleOp, ResolvedWrite};
 
 use super::MutationExecutionUnit;
@@ -11,6 +14,7 @@ pub(super) struct StagedWriteEntry {
     pub(super) original: Option<Document>,
     pub(super) current: Option<Document>,
     pub(super) indexes: Vec<IndexDefinition>,
+    pub(super) resource_path_binding: Option<ResourcePathBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +29,7 @@ pub(super) struct MutationExecutionUnitState {
     pub(super) lifecycle: ExecutionUnitLifecycle,
     pub(super) read_dependencies: DependencySet,
     pub(super) write_dependencies: DependencySet,
+    pub(super) trigger_write_origin: Option<TriggerWriteOrigin>,
     pub(super) staged_writes: HashMap<(TableName, DocumentId), StagedWriteEntry>,
     pub(super) write_order: Vec<(TableName, DocumentId)>,
     pub(super) staged_scheduler_jobs: HashMap<neovex_core::JobId, StagedSchedulerEntry>,
@@ -83,6 +88,7 @@ impl MutationExecutionUnit {
         state.scheduler_order.clear();
         state.read_dependencies = DependencySet::default();
         state.write_dependencies = DependencySet::default();
+        state.trigger_write_origin = None;
     }
 
     pub(super) fn build_resolved_writes(
@@ -97,11 +103,13 @@ impl MutationExecutionUnit {
                 (None, Some(current)) => Some(ResolvedWrite::Insert {
                     document: current.clone(),
                     indexes: entry.indexes.clone(),
+                    resource_path_binding: entry.resource_path_binding.clone(),
                 }),
                 (Some(previous), Some(current)) => Some(ResolvedWrite::Update {
                     previous: previous.clone(),
                     current: current.clone(),
                     indexes: entry.indexes.clone(),
+                    resource_path_binding: entry.resource_path_binding.clone(),
                 }),
                 (Some(previous), None) => Some(ResolvedWrite::Delete {
                     previous: previous.clone(),
@@ -123,11 +131,17 @@ impl MutationExecutionUnit {
                 Some(StagedSchedulerEntry::Insert(job)) => {
                     Some(ResolvedScheduleOp::Insert { job: job.clone() })
                 }
-                Some(StagedSchedulerEntry::CancelExisting) => {
-                    Some(ResolvedScheduleOp::Cancel { job_id: *job_id })
-                }
+                Some(StagedSchedulerEntry::CancelExisting) => Some(ResolvedScheduleOp::Cancel {
+                    job_id: job_id.clone(),
+                }),
                 Some(StagedSchedulerEntry::NoOp) | None => None,
             })
             .collect()
+    }
+
+    pub fn set_trigger_write_origin(&self, origin: TriggerWriteOrigin) -> Result<()> {
+        let mut state = self.active_state()?;
+        state.trigger_write_origin = Some(origin);
+        Ok(())
     }
 }

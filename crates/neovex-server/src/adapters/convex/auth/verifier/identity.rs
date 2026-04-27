@@ -1,4 +1,3 @@
-use axum::http::HeaderMap;
 use neovex_runtime::{
     InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
@@ -8,7 +7,6 @@ use super::super::jwt::{
     ParsedJwt, normalize_issuer, select_jwk, validate_temporal_claims, verify_signature,
 };
 use super::ConvexAuthVerifier;
-use super::headers::extract_bearer_token;
 use crate::state::AppError;
 
 struct ResolvedAuthIdentity {
@@ -17,22 +15,7 @@ struct ResolvedAuthIdentity {
 }
 
 impl ConvexAuthVerifier {
-    pub(in crate::adapters::convex) async fn verify_authorization_header(
-        &self,
-        headers: &HeaderMap,
-    ) -> Result<Option<InvocationAuth>, AppError> {
-        let Some(token) = extract_bearer_token(headers)? else {
-            return Ok(None);
-        };
-        let identity = self.verify_token(&token).await?;
-        Ok(Some(InvocationAuth::with_identities(
-            identity.convex_identity,
-            identity.verified_identity,
-            false,
-        )))
-    }
-
-    pub(in crate::adapters::convex) async fn verify_socket_token(
+    pub(crate) async fn verify_bearer_token(
         &self,
         token: &str,
     ) -> Result<InvocationAuth, AppError> {

@@ -21,9 +21,8 @@ async fn delete_tenant_sends_subscription_error() {
 
     let teardown = socket.next_json().await;
     assert_eq!(teardown["type"], json!("error"));
-    assert!(teardown.get("request_id").is_none());
     assert!(
-        teardown["message"]
+        teardown["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("tenant deleted: demo")

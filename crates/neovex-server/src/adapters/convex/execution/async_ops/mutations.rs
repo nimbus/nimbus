@@ -1,6 +1,7 @@
 use super::queries::execute_query_result_async;
 use super::scheduling::execute_schedule_command_async;
 use super::*;
+use crate::application_auth::normalize_principal_context;
 
 pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
     service: &Arc<neovex_engine::Service>,
@@ -11,7 +12,7 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
 ) -> Result<Value, Error> {
     let principal = normalize_principal_context(auth);
     match (mutation, cancellation) {
-        (Mutation::Insert { table, fields }, Some(cancellation)) => {
+        (Mutation::Insert { table, id, fields }, Some(cancellation)) => {
             let check_cancellation = cancellation.clone();
             let cancel_wait = {
                 let cancellation = cancellation.clone();
@@ -23,6 +24,7 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                 .insert_document_async_cancellable_with_principal(
                     tenant_id.clone(),
                     table,
+                    id,
                     fields,
                     principal,
                     cancel_wait,
@@ -31,9 +33,15 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                 .await?;
             Ok(Value::String(id.to_string()))
         }
-        (Mutation::Insert { table, fields }, None) => {
+        (Mutation::Insert { table, id, fields }, None) => {
             let id = service
-                .insert_document_async_with_principal(tenant_id.clone(), table, fields, principal)
+                .insert_document_async_with_id_with_principal(
+                    tenant_id.clone(),
+                    table,
+                    id,
+                    fields,
+                    principal,
+                )
                 .await?;
             Ok(Value::String(id.to_string()))
         }

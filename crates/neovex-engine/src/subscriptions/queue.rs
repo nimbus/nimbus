@@ -59,7 +59,7 @@ pub(crate) fn merge_queued_subscription_work(
     let mut deleted_documents = first
         .deleted_documents
         .into_iter()
-        .map(|document| (document.id, document))
+        .map(|document| (document.id.clone(), document))
         .collect::<BTreeMap<_, _>>();
     let mut earliest_enqueued_at = first.enqueued_at;
     let mut merged_count = 0_u64;
@@ -70,7 +70,7 @@ pub(crate) fn merge_queued_subscription_work(
         earliest_enqueued_at = earliest_enqueued_at.min(work.enqueued_at);
         merged_subscription_ids.extend(work.subscription_ids);
         for document in work.deleted_documents {
-            deleted_documents.insert(document.id, document);
+            deleted_documents.insert(document.id.clone(), document);
         }
     }
 

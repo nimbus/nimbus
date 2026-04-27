@@ -1,5 +1,6 @@
 mod async_effects;
 mod async_query;
+mod async_runtime_extension;
 mod async_services;
 mod nested_runtime;
 mod shared;
@@ -15,6 +16,7 @@ use self::async_query::{
     op_neovex_ctx_query_collect, op_neovex_ctx_query_first, op_neovex_ctx_query_paginate,
     op_neovex_ctx_query_take, op_neovex_ctx_query_unique,
 };
+use self::async_runtime_extension::op_neovex_runtime_extension_call;
 use self::async_services::op_neovex_ctx_service_lookup;
 use self::nested_runtime::{
     op_neovex_ctx_run_action, op_neovex_ctx_run_mutation, op_neovex_ctx_run_query,
@@ -42,6 +44,7 @@ extension!(
         op_neovex_ctx_db_insert,
         op_neovex_ctx_db_patch,
         op_neovex_ctx_db_delete,
+        op_neovex_runtime_extension_call,
         op_neovex_ctx_query_collect,
         op_neovex_ctx_query_take,
         op_neovex_ctx_query_paginate,

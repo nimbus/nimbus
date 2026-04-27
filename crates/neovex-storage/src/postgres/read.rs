@@ -1,3 +1,4 @@
+use super::resource_paths::load_resource_path_bindings_from_session;
 use super::*;
 
 pub(super) async fn has_scheduled_work_from_provider(
@@ -101,6 +102,8 @@ impl PostgresTenantStore {
             let schema = load_schema_from_session(&transaction, &schema_name).await?;
             let progress = load_journal_progress_from_session(&transaction, &schema_name).await?;
             let documents = load_documents_from_session(&transaction, &schema_name, None).await?;
+            let resource_path_bindings =
+                load_resource_path_bindings_from_session(&transaction, &schema_name).await?;
             let scheduled_execution_ids =
                 load_scheduled_execution_ids_from_session(&transaction, &schema_name).await?;
             transaction.commit().await.map_err(map_postgres_error)?;
@@ -108,6 +111,7 @@ impl PostgresTenantStore {
                 schema,
                 progress,
                 documents,
+                resource_path_bindings,
                 scheduled_execution_ids,
             })
         })
@@ -117,7 +121,7 @@ impl PostgresTenantStore {
         let provider = self.provider.clone();
         let schema_name = self.schema_name.clone();
         let table = table.clone();
-        let id = *id;
+        let id = id.clone();
         self.block_on(async move {
             let client = provider.client().await?;
             load_document_from_session(&client, &schema_name, &table, &id).await
@@ -247,7 +251,7 @@ impl PostgresTenantStore {
     ) -> Result<Option<ScheduledJobResult>> {
         let provider = self.provider.clone();
         let schema_name = self.schema_name.clone();
-        let job_id = *job_id;
+        let job_id = job_id.clone();
         self.block_on(async move {
             let client = provider.client().await?;
             load_scheduled_job_result_from_session(&client, &schema_name, &job_id).await

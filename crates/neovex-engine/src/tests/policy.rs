@@ -154,7 +154,8 @@ async fn service_read_policy_filters_full_scans_pagination_and_subscription_resu
         .await
         .expect("initial subscription event should arrive")
     {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(subscription_bodies(&data), vec!["Ada-1", "Ada-2"]);
         }
         other => panic!("unexpected initial subscription event: {other:?}"),
@@ -172,7 +173,8 @@ async fn service_read_policy_filters_full_scans_pagination_and_subscription_resu
         .expect("unauthorized fixture insert should still commit for another owner");
 
     match rx.recv().await.expect("subscription update should arrive") {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(subscription_bodies(&data), vec!["Ada-1", "Ada-2"]);
         }
         other => panic!("unexpected subscription update: {other:?}"),
@@ -307,7 +309,7 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
         .update_document_with_principal(
             &tenant_id,
             table.clone(),
-            document_id,
+            document_id.clone(),
             serde_json::Map::from_iter([("body".to_string(), json!("Intruder edit"))]),
             &intruder,
         )
@@ -321,7 +323,7 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     );
     assert_eq!(
         service
-            .get_document(&tenant_id, &table, document_id)
+            .get_document(&tenant_id, &table, document_id.clone())
             .expect("document should still exist")
             .get_field("body")
             .expect("body should be present"),
@@ -329,7 +331,7 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     );
 
     let delete_error = service
-        .delete_document_with_principal(&tenant_id, table.clone(), document_id, &intruder)
+        .delete_document_with_principal(&tenant_id, table.clone(), document_id.clone(), &intruder)
         .expect_err("delete should be denied");
     assert!(matches!(delete_error, Error::PermissionDenied(_)));
     assert_eq!(
@@ -340,7 +342,7 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     );
     assert_eq!(
         service
-            .get_document(&tenant_id, &table, document_id)
+            .get_document(&tenant_id, &table, document_id.clone())
             .expect("document should still exist")
             .get_field("body")
             .expect("body should be present"),
@@ -404,7 +406,8 @@ async fn policy_revision_changes_terminate_active_authorized_subscriptions() {
         .await
         .expect("initial subscription event should arrive")
     {
-        SubscriptionUpdate::Result { data, .. } => {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let data = snapshot.to_json_documents();
             assert_eq!(subscription_bodies(&data), vec!["Ada"]);
         }
         other => panic!("unexpected initial subscription event: {other:?}"),

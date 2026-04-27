@@ -68,6 +68,20 @@ async function resolveSourceRoot(appDir) {
   );
 }
 
+async function tryResolveSourceRoot(appDir) {
+  try {
+    return await resolveSourceRoot(appDir);
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message.startsWith("No neovex/ or convex/ directory found in ")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function collectModuleFiles(sourceDir) {
   const files = [];
   await walk(sourceDir, files);
@@ -101,4 +115,10 @@ async function walk(directory, files) {
   }
 }
 
-export { collectModuleFiles, resolveAppDirectory, resolveSourceRoot, sha256Hex };
+export {
+  collectModuleFiles,
+  resolveAppDirectory,
+  resolveSourceRoot,
+  sha256Hex,
+  tryResolveSourceRoot,
+};

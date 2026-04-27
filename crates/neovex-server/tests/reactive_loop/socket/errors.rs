@@ -13,9 +13,8 @@ async fn websocket_invalid_message_returns_error_event() {
 
     let message = socket.next_json().await;
     assert_eq!(message["type"], json!("error"));
-    assert!(message["request_id"].is_null());
     assert!(
-        message["message"]
+        message["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("invalid websocket message")

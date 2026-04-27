@@ -1,4 +1,6 @@
-use neovex_core::{Document, FieldSchema, FieldType, IndexDefinition, TableName, TableSchema};
+use neovex_core::{
+    Document, DocumentId, FieldSchema, FieldType, IndexDefinition, TableName, TableSchema,
+};
 use serde_json::json;
 
 use crate::TenantStore;
@@ -216,6 +218,34 @@ fn index_insert_and_eq_scan() {
         )
         .expect("index scan should succeed");
     assert!(missing_docs.is_empty());
+}
+
+#[test]
+fn index_scan_roundtrips_firestore_style_document_id() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("users").expect("table name should be valid");
+    let index = IndexDefinition {
+        name: "by_email".to_string(),
+        fields: vec!["email".to_string()],
+    };
+    let explicit_id =
+        DocumentId::from_key("users.alice-1".to_string()).expect("document id should be valid");
+    let document = Document::with_id(
+        explicit_id.clone(),
+        table.clone(),
+        serde_json::Map::from_iter([("email".to_string(), json!("alice@test.com"))]),
+    );
+
+    store
+        .insert_with_indexes(&document, std::slice::from_ref(&index))
+        .expect("insert should succeed");
+
+    let docs = store
+        .index_scan_eq(&table, "by_email", &json!("alice@test.com"))
+        .expect("index scan should succeed");
+
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].id, explicit_id);
 }
 
 #[test]

@@ -6,7 +6,7 @@ impl TenantRuntime {
     pub(crate) fn get_cached_document(
         &self,
         table: &TableName,
-        document_id: DocumentId,
+        document_id: &DocumentId,
     ) -> Option<Document> {
         self.document_cache.get(table, document_id)
     }

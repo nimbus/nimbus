@@ -32,6 +32,7 @@ aws-sdk-kms = { version = "1.105.0", default-features = false, features = ["rt-t
 arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
+bson = { version = "3.1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
 deadpool-postgres = "0.14"

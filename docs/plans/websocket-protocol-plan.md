@@ -19,7 +19,7 @@ Reviewed against:
 
 ## Status
 
-- **Status:** `active`
+- **Status:** `done`
 - **Primary owner:** this plan
 - **Activation gate:** prerequisite for `docs/plans/desktop-ui-plan.md`
 - **Related plans:**
@@ -27,6 +27,10 @@ Reviewed against:
     schema; depends on this plan completing before UI implementation
   - `docs/plans/localhost-server-security-plan.md` — middleware ordering
     references the protocol negotiation layer
+  - `docs/plans/native-transport-evolution-plan.md` — future follow-on for
+    native codec negotiation and WebTransport evaluation; this WebSocket plan
+    remains the owner of version negotiation, handshake, and structured error
+    schema
 
 ## Current Assessed State
 
@@ -51,6 +55,10 @@ Reviewed against:
    breaking changes to current clients.
 3. Error codes are public API — once shipped, they are never renamed, only
    deprecated.
+4. Optional native binary codecs and optional WebTransport are out of scope for
+   this plan. If future work needs them, it must land through
+   `docs/plans/native-transport-evolution-plan.md` rather than expanding this
+   plan's ownership.
 
 ## Verification Contract
 
@@ -158,7 +166,7 @@ backpressure rules, reconnection semantics.
 
 **Verification:** spec reviewed, JSON examples validate against a JSON Schema.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### WP2 — Spec: error schema reference document
 
@@ -170,7 +178,7 @@ existing `AppError` variants, error field contracts, per-channel wrapping
 **Verification:** every `AppError` variant has a corresponding error code,
 JSON examples validate.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### WP3 — Server: protocol version negotiation
 
@@ -185,7 +193,7 @@ with structured body, (b) `hello` sent immediately after upgrade,
 (d) negotiated subprotocol echoed in upgrade response, (e) existing
 Convex clients continue to work as `neovex.v1`.
 
-**Status:** `pending`
+**Status:** `done`
 
 ### WP4 — Server: structured error types
 
@@ -196,10 +204,14 @@ on all response paths (HTTP bodies, WebSocket close frames, per-op errors).
 **Verification:** all error responses conform to the schema, snapshot tests
 per error code asserting shape, `make test` green.
 
-**Status:** `pending`
+**Status:** `done`
 
 ## Execution Log
 
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-04-18 | Plan authored | — | Extracted from desktop-ui-plan.md as prerequisite |
+| 2026-04-26 | WP1 | `done` | Added `docs/reference/websocket-protocol.md` plus example-oriented frame schema at `docs/reference/schemas/websocket-protocol.schema.json` |
+| 2026-04-26 | WP2 | `done` | Added `docs/reference/errors.md` plus example-oriented error schema at `docs/reference/schemas/error-envelope.schema.json` |
+| 2026-04-26 | WP3 | `done` | Implemented `Sec-WebSocket-Protocol` negotiation, `neovex.v2` `hello` / `client_hello` handshake with 10s timeout, structured `protocol.no_overlap` HTTP rejection, and legacy `v1` compatibility on `/ws` and `/convex/{tenant_id}/ws` |
+| 2026-04-26 | WP4 | `done` | Completed the structured error rollout across HTTP bodies, WebSocket fatal frames, and negotiated `v2` request-scoped `op.error` frames; boxed `AppError::Structured` to keep the shared error path clippy-safe, updated protocol/docs/schema references to the shipped frame shape, and verified the full `neovex-server` lib lane plus schema/example parsing |

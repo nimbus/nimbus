@@ -175,13 +175,23 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
             table_name TEXT NOT NULL,\
             id TEXT NOT NULL,\
             data_json TEXT NOT NULL,\
+            typed_fields_json TEXT NOT NULL DEFAULT '{{}}',\
             creation_time BIGINT NOT NULL,\
+            update_time BIGINT NOT NULL,\
             PRIMARY KEY (table_name, id)\
         );\
         CREATE TABLE IF NOT EXISTS {} (\
             table_name TEXT PRIMARY KEY,\
             schema_json TEXT NOT NULL\
         );\
+        CREATE TABLE IF NOT EXISTS {} (\
+            locator_key BYTEA PRIMARY KEY,\
+            document_path_key BYTEA NOT NULL UNIQUE,\
+            collection_group TEXT NOT NULL,\
+            binding_blob BYTEA NOT NULL,\
+            locator_blob BYTEA NOT NULL\
+        );\
+        CREATE INDEX IF NOT EXISTS {} ON {} (collection_group, document_path_key);\
         CREATE TABLE IF NOT EXISTS {} (\
             execution_id TEXT PRIMARY KEY\
         );\
@@ -199,6 +209,12 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
             data_json TEXT NOT NULL\
         );\
         CREATE TABLE IF NOT EXISTS {} (\
+            registration_id TEXT NOT NULL,\
+            event_id TEXT NOT NULL,\
+            data_blob BYTEA NOT NULL,\
+            PRIMARY KEY (registration_id, event_id)\
+        );\
+        CREATE TABLE IF NOT EXISTS {} (\
             name TEXT PRIMARY KEY,\
             next_run BIGINT NOT NULL,\
             enabled BOOLEAN NOT NULL,\
@@ -214,10 +230,14 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
         );",
         qualified_table(schema_name, "documents"),
         qualified_table(schema_name, "schemas"),
+        qualified_table(schema_name, "resource_path_bindings"),
+        quote_identifier("idx_resource_path_bindings_collection_group_path"),
+        qualified_table(schema_name, "resource_path_bindings"),
         qualified_table(schema_name, "scheduled_job_executions"),
         qualified_table(schema_name, "scheduled_jobs"),
         qualified_table(schema_name, "running_scheduled_jobs"),
         qualified_table(schema_name, "scheduled_job_results"),
+        qualified_table(schema_name, "trigger_invocations"),
         qualified_table(schema_name, "cron_jobs"),
         qualified_table(schema_name, "commit_log"),
         qualified_table(schema_name, "metadata"),

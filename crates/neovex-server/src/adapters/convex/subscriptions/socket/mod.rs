@@ -9,6 +9,7 @@ use super::types::{
 use super::*;
 use crate::execution::subscriptions::subscribe_runtime_base_queries;
 use crate::owned_tasks::OwnedTaskSet;
+use crate::ws::NegotiatedWebSocketProtocol;
 use neovex_engine::{SubscriptionCleanupHandle, SubscriptionRegistration};
 
 mod forwarding;
@@ -83,6 +84,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
     convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     initial_auth: Option<InvocationAuth>,
+    protocol: NegotiatedWebSocketProtocol,
 ) {
     const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
 
@@ -104,7 +106,11 @@ pub(super) async fn handle_convex_socket_for_tenant(
         tenant_id.clone(),
         runtime_cancellation.clone(),
     ));
-    tasks.spawn(forwarding::run_socket_sender(socket_tx, outbound_rx));
+    tasks.spawn(forwarding::run_socket_sender(
+        socket_tx,
+        outbound_rx,
+        protocol,
+    ));
     let session_ctx = SocketSessionCtx {
         state: &state,
         tenant_id: &tenant_id,

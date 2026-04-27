@@ -34,20 +34,21 @@ impl RuntimeSubscriptionHandle {
                     let mut receiver = receiver;
                     while let Some(event) = receiver.recv().await {
                         match event {
-                            SubscriptionUpdate::Result { commit: None, .. } => {}
                             SubscriptionUpdate::Result {
-                                commit,
-                                deleted_documents,
-                                data,
+                                request_id: Some(_),
+                                ..
+                            } => {}
+                            SubscriptionUpdate::Result {
+                                snapshot,
+                                commit_hint,
                                 ..
                             } => {
                                 if sender
                                     .send(SubscriptionUpdate::Result {
                                         subscription_id: primary_subscription_id,
                                         request_id: None,
-                                        commit,
-                                        deleted_documents,
-                                        data,
+                                        snapshot,
+                                        commit_hint,
                                     })
                                     .await
                                     .is_err()
@@ -147,7 +148,7 @@ pub(crate) async fn subscribe_runtime_base_queries(
 mod tests {
     use std::time::Duration;
 
-    use neovex_core::{Document, SequenceNumber};
+    use neovex_core::{SequenceNumber, SubscriptionResultSnapshot};
     use serde_json::json;
     use tokio::time::timeout;
 
@@ -167,14 +168,17 @@ mod tests {
         pending_tx
             .send(SubscriptionUpdate::Result {
                 subscription_id: 7,
-                request_id: Some("internal".to_string()),
-                commit: Some(neovex_core::CommitEntry {
-                    sequence: SequenceNumber(9),
-                    timestamp: neovex_core::Timestamp(90),
-                    writes: Vec::new(),
-                }),
-                deleted_documents: Vec::<Document>::new(),
-                data: vec![json!({"body": "buffered"})],
+                request_id: None,
+                snapshot: SubscriptionResultSnapshot::from_delivery(
+                    SequenceNumber(9),
+                    None,
+                    vec![neovex_core::Document::new(
+                        neovex_core::TableName::new("tasks").expect("table should be valid"),
+                        serde_json::Map::from_iter([("body".to_string(), json!("buffered"))]),
+                    )],
+                    Vec::new(),
+                ),
+                commit_hint: None,
             })
             .await
             .expect("buffered update should send");
@@ -191,7 +195,7 @@ mod tests {
         let SubscriptionUpdate::Result {
             subscription_id,
             request_id,
-            data,
+            snapshot,
             ..
         } = timeout(Duration::from_secs(1), forwarded_rx.recv())
             .await
@@ -200,10 +204,12 @@ mod tests {
         else {
             panic!("expected forwarded result update");
         };
+        let data = snapshot.to_json_documents();
 
         assert_eq!(subscription_id, 42);
         assert_eq!(request_id, None);
-        assert_eq!(data, vec![json!({"body": "buffered"})]);
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["body"], json!("buffered"));
 
         handle.bridge_tasks.shutdown_and_drain().await;
     }

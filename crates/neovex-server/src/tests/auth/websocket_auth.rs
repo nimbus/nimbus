@@ -270,12 +270,15 @@ pub(crate) async fn convex_websocket_auth_change_drops_active_subscriptions_unti
             .to_string(),
         )
         .await;
+    let auth_changed = socket.next_json().await;
+    assert_eq!(auth_changed["type"], json!("error"));
     assert_eq!(
-        socket.next_json().await,
-        json!({
-            "type": "error",
-            "message": "authentication context changed; resubscribe active subscriptions"
-        })
+        auth_changed["error"]["code"],
+        json!("session.auth_context_changed")
+    );
+    assert_eq!(
+        auth_changed["error"]["message"],
+        json!("authentication context changed; resubscribe active subscriptions")
     );
     assert_eq!(
         socket.next_json().await,

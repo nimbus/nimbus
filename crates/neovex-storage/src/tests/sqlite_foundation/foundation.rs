@@ -56,3 +56,51 @@ fn sqlite_store_enforces_direct_read_connection_limit() {
         .read_snapshot()
         .expect("released sqlite read connection should be reusable after the snapshot drops");
 }
+
+#[test]
+fn sqlite_store_reopens_with_typed_scalar_metadata_intact() {
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let mut document = Document::new(
+        TableName::new("tasks").expect("table name should be valid"),
+        serde_json::Map::from_iter([("title".to_string(), json!("Typed"))]),
+    );
+    document.set_typed_field(
+        "updatedAt",
+        neovex_core::TypedScalarValue::Timestamp {
+            value: Timestamp(4_321),
+        },
+    );
+    document.set_typed_field(
+        "floor",
+        neovex_core::TypedScalarValue::SpecialDouble {
+            value: neovex_core::SpecialDouble::Nan,
+        },
+    );
+
+    {
+        let store = SqliteTenantStore::open(&path).expect("sqlite tenant store should open");
+        store.insert(&document).expect("insert should succeed");
+    }
+
+    let reopened = SqliteTenantStore::open(&path).expect("sqlite tenant store should reopen");
+    let fetched = reopened
+        .get(&document.table, &document.id)
+        .expect("get should succeed")
+        .expect("document should exist");
+
+    assert_eq!(
+        fetched.typed_field("updatedAt"),
+        Some(&neovex_core::TypedScalarValue::Timestamp {
+            value: Timestamp(4_321),
+        })
+    );
+    assert_eq!(fetched.get_field("updatedAt"), Some(&json!(4321_u64)));
+    assert_eq!(
+        fetched.typed_field("floor"),
+        Some(&neovex_core::TypedScalarValue::SpecialDouble {
+            value: neovex_core::SpecialDouble::Nan,
+        })
+    );
+    assert_eq!(fetched.get_field("floor"), Some(&json!("NaN")));
+}

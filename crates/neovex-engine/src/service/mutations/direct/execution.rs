@@ -22,9 +22,15 @@ impl Service {
         with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |runtime| {
             let schema = runtime.schema();
             match mutation {
-                Mutation::Insert { table, fields } => {
-                    self.apply_insert_like(runtime.clone(), &schema, mode, table, fields, principal)
-                }
+                Mutation::Insert { table, id, fields } => self.apply_insert_like(
+                    runtime.clone(),
+                    &schema,
+                    mode,
+                    table,
+                    id,
+                    fields,
+                    principal,
+                ),
                 Mutation::Update { table, id, patch } => self.apply_update_like(
                     runtime.clone(),
                     &schema,
@@ -86,12 +92,17 @@ impl Service {
         .await
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "insert execution now threads the optional caller-provided document key through the shared mutation path"
+    )]
     fn apply_insert_like(
         &self,
         runtime: Arc<TenantRuntime>,
         schema: &Schema,
         mode: MutationExecutionMode,
         table: TableName,
+        document_id: Option<DocumentId>,
         fields: serde_json::Map<String, serde_json::Value>,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
@@ -104,7 +115,10 @@ impl Service {
             })
             .transpose()?
             .unwrap_or_default();
-        let document = Document::new(table, fields);
+        let document = match document_id {
+            Some(document_id) => Document::with_id(document_id, table, fields),
+            None => Document::new(table, fields),
+        };
         enforce_mutation_authorization(
             table_schema.as_ref(),
             AccessAction::Create,
@@ -112,7 +126,7 @@ impl Service {
             Some(&document),
             None,
         )?;
-        let document_id = document.id;
+        let document_id = document.id.clone();
 
         match mode {
             MutationExecutionMode::Immediate => {
@@ -162,17 +176,23 @@ impl Service {
                 MutationExecutionMode::Immediate => {
                     let authorization_schema = table_schema.clone();
                     let principal = principal.clone();
+                    let document_id = id.clone();
                     self.run_store_mutation(runtime, move |store| {
-                        store.update_validated(&table, &id, &patch, move |existing, document| {
-                            table_schema.validate(&document.fields)?;
-                            enforce_mutation_authorization(
-                                Some(&authorization_schema),
-                                AccessAction::Update,
-                                &principal,
-                                Some(document),
-                                Some(existing),
-                            )
-                        })
+                        store.update_validated(
+                            &table,
+                            &document_id,
+                            &patch,
+                            move |existing, document| {
+                                table_schema.validate(&document.fields)?;
+                                enforce_mutation_authorization(
+                                    Some(&authorization_schema),
+                                    AccessAction::Update,
+                                    &principal,
+                                    Some(document),
+                                    Some(existing),
+                                )
+                            },
+                        )
                     })?;
                     Ok(MutationExecutionResult::Immediate(Some(id)))
                 }
@@ -206,10 +226,11 @@ impl Service {
                     MutationExecutionMode::Immediate => {
                         let authorization_schema = table_schema.clone();
                         let principal = principal.clone();
+                        let document_id = id.clone();
                         self.run_store_mutation(runtime, move |store| {
                             store.update_with_indexes_validated(
                                 &table,
-                                &id,
+                                &document_id,
                                 &patch,
                                 &indexes,
                                 move |existing, document| {
@@ -255,16 +276,22 @@ impl Service {
             None => match mode {
                 MutationExecutionMode::Immediate => {
                     let principal = principal.clone();
+                    let document_id = id.clone();
                     self.run_store_mutation(runtime, move |store| {
-                        store.update_validated(&table, &id, &patch, move |existing, document| {
-                            enforce_mutation_authorization(
-                                None,
-                                AccessAction::Update,
-                                &principal,
-                                Some(document),
-                                Some(existing),
-                            )
-                        })
+                        store.update_validated(
+                            &table,
+                            &document_id,
+                            &patch,
+                            move |existing, document| {
+                                enforce_mutation_authorization(
+                                    None,
+                                    AccessAction::Update,
+                                    &principal,
+                                    Some(document),
+                                    Some(existing),
+                                )
+                            },
+                        )
                     })?;
                     Ok(MutationExecutionResult::Immediate(Some(id)))
                 }

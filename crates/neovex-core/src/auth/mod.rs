@@ -31,6 +31,17 @@ impl PrincipalContext {
         Self::default()
     }
 
+    /// Returns the trusted service principal used for engine-owned work.
+    pub fn system() -> Self {
+        let mut claims = Map::new();
+        claims.insert("sub".to_string(), Value::String("system".to_string()));
+        Self {
+            authenticated: true,
+            claims,
+            verified_claims: Map::new(),
+        }
+    }
+
     /// Returns a stable snapshot fingerprint for subscription ownership and
     /// conservative invalidation.
     pub fn snapshot(&self) -> Result<PrincipalSnapshot> {

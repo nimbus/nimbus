@@ -42,7 +42,7 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                         .update_document_async(
                             tenant_id.clone(),
                             tasks_table(),
-                            document_id,
+                            document_id.clone(),
                             serde_json::Map::from_iter([(
                                 "rank".to_string(),
                                 json!(round + CRUD_ROUNDS),
@@ -51,7 +51,11 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                         .await
                         .expect("update should succeed");
                     service
-                        .delete_document_async(tenant_id.clone(), tasks_table(), document_id)
+                        .delete_document_async(
+                            tenant_id.clone(),
+                            tasks_table(),
+                            document_id.clone(),
+                        )
                         .await
                         .expect("delete should succeed");
                 }

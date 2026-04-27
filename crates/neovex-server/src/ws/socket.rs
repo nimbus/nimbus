@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use crate::owned_tasks::OwnedTaskSet;
 use crate::protocol::ServerMessage;
 use crate::state::AppState;
+use crate::ws::negotiation::NegotiatedWebSocketProtocol;
 
 mod pending;
 mod session;
@@ -18,6 +19,7 @@ pub(crate) async fn handle_socket_for_tenant(
     socket: WebSocket,
     state: Arc<AppState>,
     tenant_id: neovex_core::TenantId,
+    protocol: NegotiatedWebSocketProtocol,
 ) {
     const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
     const INBOUND_CHANNEL_CAPACITY: usize = 256;
@@ -42,7 +44,7 @@ pub(crate) async fn handle_socket_for_tenant(
         outbound_tx.clone(),
         pending_bootstrap_cancellations.clone(),
     );
-    transport::spawn_socket_writer(&mut tasks, socket_tx, outbound_rx);
+    transport::spawn_socket_writer(&mut tasks, socket_tx, outbound_rx, protocol);
 
     session::GenericSocketSession {
         state,

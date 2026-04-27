@@ -90,7 +90,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     let blocker_id = durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
-        .map(|write| write.doc_id)
+        .map(|write| write.doc_id.clone())
         .expect("durable blocker commit should include the inserted document id");
 
     let cancel = Arc::new(Notify::new());
@@ -218,6 +218,7 @@ async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_aft
         .insert_document_async_cancellable_with_principal(
             tenant_id.clone(),
             tasks_table(),
+            None,
             serde_json::Map::from_iter([("title".to_string(), json!("drop-cancel-future"))]),
             PrincipalContext::anonymous(),
             DropAwarePendingCancellation {
@@ -236,7 +237,7 @@ async fn mutation_async_non_cancelable_call_drops_unused_cancellation_future_aft
     );
     assert_eq!(
         service
-            .get_document(&tenant_id, &tasks_table(), document_id)
+            .get_document(&tenant_id, &tasks_table(), document_id.clone())
             .expect("inserted document should remain visible")
             .fields
             .get("title"),

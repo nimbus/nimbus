@@ -218,6 +218,7 @@ export default defineSchema({
   assert.match(generatedDataModel, /from "convex\/values"/);
   assert.match(generatedDataModel, /_id: Id<"messages">;/);
   assert.match(generatedDataModel, /_creationTime: number;/);
+  assert.match(generatedDataModel, /_updateTime: number;/);
   assert.match(generatedDataModel, /"channelId": GenericId<"channels">;/);
   assert.match(generatedDataModel, /"metadata": \{\n  "featured": boolean;\n\} \| undefined;/);
   assert.match(generatedDataModel, /"messages": "by_author";/);

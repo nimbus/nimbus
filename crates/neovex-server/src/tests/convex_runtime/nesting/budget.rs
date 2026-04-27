@@ -81,7 +81,7 @@ export {};
         .await
         .expect("nested runtime budget error should parse");
     assert!(
-        body["error"]
+        body["error"]["message"]
             .as_str()
             .expect("error message should be a string")
             .contains("nested invocation limit exceeded"),

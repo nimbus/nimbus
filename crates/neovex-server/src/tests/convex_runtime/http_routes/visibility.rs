@@ -32,7 +32,7 @@ async fn convex_public_endpoints_reject_internal_functions() {
         response
             .json::<serde_json::Value>()
             .await
-            .expect("internal convex error should parse")["error"]
+            .expect("internal convex error should parse")["error"]["message"]
             .as_str()
             .expect("internal convex error should be a string")
             .contains("not public")

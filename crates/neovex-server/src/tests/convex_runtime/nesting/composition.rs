@@ -111,6 +111,7 @@ async fn convex_named_action_can_compose_query_mutation_and_action_calls() {
         listed_body,
         json!([{
             "_creationTime": listed_body[0]["_creationTime"].clone(),
+            "_updateTime": listed_body[0]["_updateTime"].clone(),
             "_id": listed_body[0]["_id"].clone(),
             "author": "Ada",
             "body": "Hello from action"

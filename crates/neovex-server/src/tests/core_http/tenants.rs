@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn rejects_invalid_document_id_and_tenant_name() {
+async fn rejects_invalid_tenant_name_and_returns_not_found_for_unknown_document_key() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
@@ -12,8 +12,8 @@ async fn rejects_invalid_document_id_and_tenant_name() {
     let create_response = api.create_tenant("demo").await;
     assert_eq!(create_response.status(), StatusCode::CREATED);
 
-    let invalid_document_id = api.get_document("demo", "tasks", "not-a-ulid").await;
-    assert_eq!(invalid_document_id.status(), StatusCode::BAD_REQUEST);
+    let unknown_document_id = api.get_document("demo", "tasks", "not-a-ulid").await;
+    assert_eq!(unknown_document_id.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

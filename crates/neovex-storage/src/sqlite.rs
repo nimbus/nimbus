@@ -8,7 +8,7 @@ use std::time::Duration;
 use neovex_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Filter, JobId,
     Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, StorageErrorKind, TableName,
-    TableSchema, Timestamp, WriteOp, WriteOpType,
+    TableSchema, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -28,14 +28,17 @@ mod config;
 pub mod encryption;
 mod journal;
 mod read;
+mod resource_paths;
 mod scheduler;
 mod schema;
+mod trigger_delivery;
+mod trigger_invocations;
 mod write;
 
 use self::backend::{
     decode_u64, deserialize_json, encode_u64, expect_write_commit, load_document_from_conn,
-    map_sqlite_error, row_to_document, serialize_document_fields, serialize_json,
-    sql_value_from_json, table_has_entries,
+    map_sqlite_error, row_to_document, serialize_document_fields, serialize_document_typed_fields,
+    serialize_json, sql_value_from_json, table_has_entries,
 };
 use self::journal::{
     append_commit_entry, next_sequence_in_conn, validate_durable_journal_stream_limit,
@@ -58,7 +61,9 @@ CREATE TABLE IF NOT EXISTS documents (
     table_name TEXT NOT NULL,
     id TEXT NOT NULL,
     data_json TEXT NOT NULL,
+    typed_fields_json TEXT NOT NULL DEFAULT '{}',
     creation_time INTEGER NOT NULL,
+    update_time INTEGER NOT NULL,
     PRIMARY KEY (table_name, id)
 );
 
@@ -66,6 +71,17 @@ CREATE TABLE IF NOT EXISTS schemas (
     table_name TEXT NOT NULL PRIMARY KEY,
     schema_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS resource_path_bindings (
+    locator_key BLOB NOT NULL PRIMARY KEY,
+    document_path_key BLOB NOT NULL UNIQUE,
+    collection_group TEXT NOT NULL,
+    binding_blob BLOB NOT NULL,
+    locator_blob BLOB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_resource_path_bindings_collection_group_path
+    ON resource_path_bindings (collection_group, document_path_key);
 
 CREATE TABLE IF NOT EXISTS scheduled_jobs (
     id TEXT NOT NULL PRIMARY KEY,
@@ -80,6 +96,13 @@ CREATE TABLE IF NOT EXISTS running_scheduled_jobs (
 CREATE TABLE IF NOT EXISTS scheduled_job_results (
     job_id TEXT NOT NULL PRIMARY KEY,
     data_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trigger_invocations (
+    registration_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    data_blob BLOB NOT NULL,
+    PRIMARY KEY (registration_id, event_id)
 );
 
 CREATE TABLE IF NOT EXISTS scheduled_job_executions (
@@ -140,6 +163,7 @@ pub struct SqliteWriteTransaction {
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
+    trigger_write_origin: Option<TriggerWriteOrigin>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
     schema_cache: Arc<RwLock<Schema>>,
     schema_cache_dirty: bool,

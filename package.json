@@ -5,8 +5,10 @@
   "type": "module",
   "workspaces": [
     "packages/convex",
+    "packages/firebase",
     "packages/neovex",
     "packages/codegen",
+    "demos/firebase/html",
     "demos/convex/node",
     "demos/convex/html",
     "demos/convex/http"
@@ -25,6 +27,8 @@
     "convex:server:http": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/http",
     "convex:demo:node": "npm run demo --workspace convex-node",
     "convex:demo:html": "npm run dev --workspace convex-html",
-    "convex:demo:http": "npm run dev --workspace convex-http"
+    "convex:demo:http": "npm run dev --workspace convex-http",
+    "firebase:server:html": "cargo run -p neovex-bin -- start --port 8080",
+    "firebase:demo:html": "npm run dev --workspace firebase-html"
   }
 }

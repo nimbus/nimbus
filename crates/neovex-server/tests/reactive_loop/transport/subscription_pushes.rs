@@ -29,6 +29,7 @@ async fn subscribe_insert_and_receive_reactive_push() {
     assert_eq!(data.len(), 1);
     assert!(data[0]["_id"].is_string());
     assert!(data[0]["_creationTime"].is_u64());
+    assert!(data[0]["_updateTime"].is_u64());
     assert_eq!(data[0]["title"], json!("Hello"));
 }
 

@@ -1,13 +1,14 @@
 use super::*;
 
 impl TenantPersistence {
-    pub(crate) fn apply_execution_unit_batch(
+    pub(crate) fn apply_execution_unit_batch_with_origin(
         &self,
         writes: &[ResolvedWrite],
         schedule_ops: &[ResolvedScheduleOp],
+        trigger_write_origin: Option<&neovex_core::TriggerWriteOrigin>,
     ) -> Result<Option<CommitEntry>> {
         match_tenant_persistence!(self, |store| {
-            store.apply_execution_unit_batch(writes, schedule_ops)
+            store.apply_execution_unit_batch_with_origin(writes, schedule_ops, trigger_write_origin)
         })
     }
 

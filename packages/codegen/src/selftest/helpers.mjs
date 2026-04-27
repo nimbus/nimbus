@@ -33,8 +33,18 @@ async function readConvexJson(appDir, fileName) {
   return JSON.parse(await readConvexFile(appDir, fileName));
 }
 
+async function readCloudFunctionsFile(appDir, fileName) {
+  return fs.readFile(path.join(appDir, ".neovex", "firebase", fileName), "utf8");
+}
+
+async function readCloudFunctionsJson(appDir, fileName) {
+  return JSON.parse(await readCloudFunctionsFile(appDir, fileName));
+}
+
 export {
   createAppFixture,
+  readCloudFunctionsFile,
+  readCloudFunctionsJson,
   readConvexFile,
   readConvexJson,
   readGeneratedFile,

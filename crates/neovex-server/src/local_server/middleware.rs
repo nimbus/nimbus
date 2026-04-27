@@ -11,7 +11,7 @@ use super::policy::{
 };
 use super::{
     LOCAL_SESSION_COOKIE_NAME, LocalServerAuditEvent, SessionValidationResult, origin_from_headers,
-    tenant_id_from_path,
+    tenant_id_from_request,
 };
 use crate::state::{AppError, AppState};
 
@@ -82,7 +82,7 @@ pub(crate) async fn origin_allowlist_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path().to_string();
-    let route_family = LocalServerRouteFamily::classify(&path);
+    let route_family = LocalServerRouteFamily::classify_request(&path, request.headers());
     request.extensions_mut().insert(route_family);
     if route_family.requires_origin_allowlist()
         && let Err(error) = validate_origin(
@@ -94,7 +94,7 @@ pub(crate) async fn origin_allowlist_middleware(
     {
         state.record_local_server_audit(LocalServerAuditEvent {
             route_family,
-            tenant_id: tenant_id_from_path(&path),
+            tenant_id: tenant_id_from_request(&path, request.headers()),
             auth_scope: "origin",
             auth_method: None,
             success: false,
@@ -115,8 +115,10 @@ pub(crate) async fn server_access_extract_middleware(
         .extensions()
         .get::<LocalServerRouteFamily>()
         .copied()
-        .unwrap_or_else(|| LocalServerRouteFamily::classify(request.uri().path()));
-    let tenant_id = tenant_id_from_path(request.uri().path());
+        .unwrap_or_else(|| {
+            LocalServerRouteFamily::classify_request(request.uri().path(), request.headers())
+        });
+    let tenant_id = tenant_id_from_request(request.uri().path(), request.headers());
     let origin = origin_from_headers(request.headers());
     let extracted = match extract_server_access(
         request.headers(),
@@ -160,8 +162,10 @@ pub(crate) async fn route_family_gate_middleware(
         .extensions()
         .get::<LocalServerRouteFamily>()
         .copied()
-        .unwrap_or_else(|| LocalServerRouteFamily::classify(request.uri().path()));
-    let tenant_id = tenant_id_from_path(request.uri().path());
+        .unwrap_or_else(|| {
+            LocalServerRouteFamily::classify_request(request.uri().path(), request.headers())
+        });
+    let tenant_id = tenant_id_from_request(request.uri().path(), request.headers());
     let origin = origin_from_headers(request.headers());
     match extracted.status {
         ExtractedServerAccessStatus::Authorized => {

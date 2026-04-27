@@ -23,7 +23,7 @@ pub(super) fn apply_schedule_ops(
             }
             ResolvedScheduleOp::Cancel { job_id } => {
                 if !cancel_scheduled_job_in_write_txn(write_txn, job_id)? {
-                    return Err(Error::ScheduledJobNotFound(*job_id));
+                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
                 }
             }
         }

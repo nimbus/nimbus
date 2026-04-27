@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::owned_tasks::OwnedTaskSet;
 use crate::protocol::{ClientMessage, ServerMessage};
+use crate::ws::negotiation::NegotiatedWebSocketProtocol;
 
 use super::pending::PendingBootstrapCancellationRegistry;
 
@@ -66,20 +67,22 @@ pub(super) fn spawn_subscription_forwarder(
                 SubscriptionUpdate::Result {
                     subscription_id,
                     request_id,
-                    data,
+                    snapshot,
                     ..
                 } => ServerMessage::SubscriptionResult {
                     subscription_id,
                     request_id,
-                    data: serde_json::Value::Array(data),
+                    data: serde_json::Value::Array(snapshot.into_json_documents()),
                 },
                 SubscriptionUpdate::Error {
                     request_id,
                     message,
                     ..
-                } => ServerMessage::Error {
-                    request_id,
-                    message,
+                } => match request_id {
+                    Some(request_id) => {
+                        ServerMessage::request_error(request_id, "op.failed", message)
+                    }
+                    None => ServerMessage::session_error("session.subscription_error", message),
                 },
             };
             if outbound_tx.send(message).await.is_err() {
@@ -93,10 +96,11 @@ pub(super) fn spawn_socket_writer(
     tasks: &mut OwnedTaskSet,
     mut socket_tx: SplitSink<WebSocket, Message>,
     mut outbound_rx: mpsc::Receiver<ServerMessage>,
+    protocol: NegotiatedWebSocketProtocol,
 ) {
     tasks.spawn(async move {
         while let Some(message) = outbound_rx.recv().await {
-            let Ok(text) = serde_json::to_string(&message) else {
+            let Ok(text) = message.to_text(protocol) else {
                 break;
             };
             if socket_tx.send(Message::Text(text.into())).await.is_err() {

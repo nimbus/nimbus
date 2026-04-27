@@ -27,8 +27,57 @@ fn query_function(name: &str, table: &str) -> serde_json::Value {
 fn deploy_request(functions: serde_json::Value) -> serde_json::Value {
     json!({
         "artifacts": {
-            "functions_json": { "functions": functions },
-            "http_routes_json": { "routes": [] }
+            "convex": {
+                "functions_json": { "functions": functions },
+                "http_routes_json": { "routes": [] }
+            }
+        }
+    })
+}
+
+fn cloud_functions_request(bundle: &str, bundle_sha256: &str) -> serde_json::Value {
+    json!({
+        "artifacts": {
+            "cloud_functions": {
+                "artifact_json": {
+                    "version": 1,
+                    "family": "cloud_functions",
+                    "runtime_bundle": {
+                        "entry_file": "bundle.mjs",
+                        "sha256_file": "bundle.sha256"
+                    },
+                    "targets_manifest": "targets.json",
+                    "import_resolution": {
+                        "strategy": "deploy_alias_layer",
+                        "covered_specifiers": [
+                            "@google-cloud/functions-framework",
+                            "firebase-admin/app",
+                            "firebase-admin/firestore",
+                            "firebase-functions/v2",
+                            "firebase-functions/v2/firestore",
+                            "firebase-functions/v2/https"
+                        ]
+                    }
+                },
+                "targets_json": {
+                    "version": 1,
+                    "targets": [{
+                        "name": "syncUser",
+                        "entrypoint": "exports.syncUser",
+                        "authoring_surface": "firebase_v2",
+                        "signature_type": "cloud_event",
+                        "binding": {
+                            "binding_kind": "firestore_document",
+                            "event_type": "google.cloud.firestore.document.v1.written",
+                            "database": "(default)",
+                            "document": "users/{userId}",
+                            "execution": "service"
+                        }
+                    }]
+                },
+                "bundle_mjs": bundle,
+                "bundle_sha256": bundle_sha256
+            }
         }
     })
 }
@@ -88,7 +137,7 @@ async fn deploy_admin_requires_configured_token() {
         .await
         .expect("error response should be json");
     assert!(
-        body["error"]
+        body["error"]["message"]
             .as_str()
             .expect("error should be a string")
             .contains("deploy admin API is disabled")
@@ -117,7 +166,7 @@ async fn deploy_dry_run_validates_and_diffs_without_activation() {
         {
             let mut request = deploy_request(json!([query_function("notes:list", "notes")]));
             request["dry_run"] = json!(true);
-            request["artifacts"]["schema_json"] = schema_with_index("notes", "title");
+            request["artifacts"]["convex"]["schema_json"] = schema_with_index("notes", "title");
             request
         },
         Some(DEPLOY_TOKEN),
@@ -229,9 +278,11 @@ async fn deploy_validation_failure_leaves_previous_generation_live() {
         &server,
         json!({
             "artifacts": {
-                "functions_json": { "functions": [query_function("notes:list", "notes")] },
-                "bundle_mjs": "export const value = 1;\n",
-                "bundle_sha256": "definitely-not-the-sha256"
+                "convex": {
+                    "functions_json": { "functions": [query_function("notes:list", "notes")] },
+                    "bundle_mjs": "export const value = 1;\n",
+                    "bundle_sha256": "definitely-not-the-sha256"
+                }
             }
         }),
         Some(DEPLOY_TOKEN),
@@ -251,6 +302,35 @@ async fn deploy_validation_failure_leaves_previous_generation_live() {
             .status(),
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn deploy_activation_accepts_cloud_functions_artifacts() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(deploy_router(fixture.service(), None)).await;
+    let bundle_source =
+        "globalThis.__neovexInvoke = async function () { return { ok: true }; };\nexport {};\n";
+    let temp = tempfile::tempdir().expect("bundle tempdir should build");
+    let bundle_path = temp.path().join("bundle.mjs");
+    std::fs::write(&bundle_path, bundle_source).expect("bundle should write");
+    let bundle_sha256 = neovex_runtime::RuntimeBundle::compute_sha256_for_path(&bundle_path)
+        .expect("bundle hash should compute");
+
+    let response = deploy(
+        &server,
+        cloud_functions_request(bundle_source, &bundle_sha256),
+        Some(DEPLOY_TOKEN),
+    )
+    .await;
+    let status = response.status();
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("deploy response should be json");
+    assert_eq!(status, StatusCode::OK, "unexpected deploy body: {body}");
+    assert_eq!(body["activated"], json!(true));
+    assert_eq!(body["generation"], json!(1));
+    assert_eq!(body["previous_generation"], json!(0));
 }
 
 #[tokio::test]
@@ -274,7 +354,7 @@ async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
         &server,
         {
             let mut request = deploy_request(json!([query_function("notes:list", "notes")]));
-            request["artifacts"]["schema_json"] = json!({
+            request["artifacts"]["convex"]["schema_json"] = json!({
                 "tables": {
                     "notes": {
                         "fields": {

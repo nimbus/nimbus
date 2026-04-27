@@ -42,7 +42,9 @@ async fn assert_service_reload_recovers_durable_journal_before_serving_async_rea
             vec![neovex_core::WriteOp {
                 table: document.table.clone(),
                 op_type: neovex_core::WriteOpType::Insert,
-                doc_id: document.id,
+                doc_id: document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
                 previous: None,
                 current: Some(document.clone()),
             }],
@@ -1035,17 +1037,22 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
             .await
             .expect("schema should save");
         service.quiesce().await;
+        drop_service_sync(service).await;
     }
 
     {
-        let reopened_service = Arc::new(
-            Service::new_with_embedded_provider(data_dir.path(), backend)
-                .expect("service should reopen after schema write"),
-        );
+        let reopened_service = open_service_after_embedded_lock_release(
+            data_dir.path(),
+            backend,
+            "service should reopen after schema write",
+        )
+        .await;
+        wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
         reopened_service
             .get_table_schema_async(tenant_id.clone(), tasks_table())
             .await
             .expect("persisted schema should reload through the service path");
+        drop_service_sync(reopened_service).await;
     }
 
     assert_eq!(
@@ -1054,21 +1061,84 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
     );
 
     {
-        let service = Arc::new(
-            Service::new_with_embedded_provider(data_dir.path(), backend)
-                .expect("service should recreate"),
-        );
+        let service = open_service_after_embedded_lock_release(
+            data_dir.path(),
+            backend,
+            "service should recreate",
+        )
+        .await;
+        wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
         service
             .delete_table_schema_async(tenant_id.clone(), tasks_table())
             .await
             .expect("schema should delete");
         service.quiesce().await;
+        drop_service_sync(service).await;
     }
 
     assert!(
         index_scan_eq_count_for_backend(data_dir.path(), &tenant_id, backend, &json!(7)) == 0,
         "async schema deletion should clear rebuilt index entries"
     );
+}
+
+async fn drop_service_sync(service: Arc<Service>) {
+    std::thread::spawn(move || drop(service))
+        .join()
+        .expect("service drop should join");
+}
+
+async fn open_service_after_embedded_lock_release(
+    data_dir: &std::path::Path,
+    backend: EmbeddedProviderKind,
+    context: &'static str,
+) -> Arc<Service> {
+    let started = std::time::Instant::now();
+    loop {
+        match Service::new_with_embedded_provider(data_dir, backend) {
+            Ok(service) => return Arc::new(service),
+            Err(error)
+                if backend == EmbeddedProviderKind::Redb
+                    && error
+                        .storage_message()
+                        .is_some_and(|message| message.contains("Database already open"))
+                    && started.elapsed() < std::time::Duration::from_secs(2) =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("{context}: {error:?}"),
+        }
+    }
+}
+
+async fn wait_for_embedded_tenant_unlock(
+    data_dir: &std::path::Path,
+    tenant_id: &TenantId,
+    backend: EmbeddedProviderKind,
+) {
+    if backend != EmbeddedProviderKind::Redb {
+        return;
+    }
+
+    let tenant_path = tenant_storage_path(data_dir, tenant_id, backend);
+    let started = std::time::Instant::now();
+    loop {
+        match TenantStore::open(&tenant_path) {
+            Ok(store) => {
+                drop(store);
+                return;
+            }
+            Err(error)
+                if error
+                    .storage_message()
+                    .is_some_and(|message| message.contains("Database already open"))
+                    && started.elapsed() < std::time::Duration::from_secs(2) =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("tenant store should reopen after prior service drop: {error:?}"),
+        }
+    }
 }
 
 fn tenant_storage_path(
