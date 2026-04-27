@@ -14,38 +14,38 @@ and Neovex's internal document model; the storage backend is completely
 transparent to the client.
 
 ```
-+--------------------------------------+
-|          Your Application            |
-|                                      |
-|  const client = new MongoClient(...) |
-|  db.collection("users").insertOne()  |
-|  db.collection("users").find()       |
-+---------------+----------------------+
-                |  MongoDB wire protocol
-                |  (BSON over TCP, port 27017)
-                v
-+--------------------------------------+
-|        Neovex Server                 |
-|                                      |
-|  +----------+    +----------------+  |
-|  | Wire     |    | BSON Bridge    |  |
-|  | Protocol +--->| BSON <-> JSON  |  |
-|  | Parser   |    | (lossless      |  |
-|  | (OpMsg)  |    |  round-trip)   |  |
-|  +----------+    +-------+--------+  |
-|                          |           |
-|  +-----------------------v--------+  |
-|  |  Engine (Service)              |  |
-|  |  Schema validation, atomics,   |  |
-|  |  query planning, transactions  |  |
-|  +-----------------+--------------+  |
-|                    |                 |
-|  +-----------------v--------------+  |
-|  |  Storage Backend (pluggable)   |  |
-|  |  redb | SQLite | Postgres      |  |
-|  |  MySQL | libsql                |  |
-|  +--------------------------------+  |
-+--------------------------------------+
+┌──────────────────────────────────────┐
+│          Your Application            │
+│                                      │
+│  const client = new MongoClient(...) │
+│  db.collection("users").insertOne()  │
+│  db.collection("users").find()       │
+└───────────────┬──────────────────────┘
+                │  MongoDB wire protocol
+                │  (BSON over TCP, port 27017)
+                ▼
+┌──────────────────────────────────────┐
+│        Neovex Server                 │
+│                                      │
+│  ┌──────────┐    ┌────────────────┐  │
+│  │ Wire     │    │ BSON Bridge    │  │
+│  │ Protocol ├───►│ BSON <-> JSON  │  │
+│  │ Parser   │    │ (lossless      │  │
+│  │ (OpMsg)  │    │  round-trip)   │  │
+│  └──────────┘    └───────┬────────┘  │
+│                          │           │
+│  ┌───────────────────────▼────────┐  │
+│  │  Engine (Service)              │  │
+│  │  Schema validation, atomics,   │  │
+│  │  query planning, transactions  │  │
+│  └───────────────┬────────────────┘  │
+│                  │                   │
+│  ┌───────────────▼────────────────┐  │
+│  │  Storage Backend (pluggable)   │  │
+│  │  redb │ SQLite │ Postgres      │  │
+│  │  MySQL │ libsql                │  │
+│  └────────────────────────────────┘  │
+└──────────────────────────────────────┘
 ```
 
 The MongoDB adapter shares the exact same engine mutation path as Neovex's
@@ -123,25 +123,25 @@ The MongoDB adapter and the Convex/Neovex JS SDK are two different
 entry points into the same engine. Choose based on your use case:
 
 ```
-+----------------------------------+----------------------------------+
-|       MongoDB Adapter            |       Convex/Neovex SDK          |
-+----------------------------------+----------------------------------+
-| Use any MongoDB driver           | Use packages/convex or           |
-| (any language)                   | packages/neovex (JS/TS)          |
-|                                  |                                  |
-| No codegen, no .neovex dir       | Codegen + .neovex artifact dir   |
-| No schema files required         | Schema in convex/schema.ts       |
-|                                  |                                  |
-| Client sends raw operations      | Server-side functions            |
-| (insert, find, update, delete)   | (query, mutation, action)        |
-|                                  |                                  |
-| Manual change streams for        | useQuery() auto-subscribes,      |
-| real-time updates                | re-renders React on change       |
-|                                  |                                  |
-| No end-to-end type safety        | Full type safety via codegen     |
-|                                  |                                  |
-| Familiar if you know MongoDB     | Familiar if you know Convex      |
-+----------------------------------+----------------------------------+
+┌──────────────────────────────────┬──────────────────────────────────┐
+│       MongoDB Adapter            │       Convex/Neovex SDK          │
+├──────────────────────────────────┼──────────────────────────────────┤
+│ Use any MongoDB driver           │ Use packages/convex or           │
+│ (any language)                   │ packages/neovex (JS/TS)          │
+│                                  │                                  │
+│ No codegen, no .neovex dir       │ Codegen + .neovex artifact dir   │
+│ No schema files required         │ Schema in convex/schema.ts       │
+│                                  │                                  │
+│ Client sends raw operations      │ Server-side functions            │
+│ (insert, find, update, delete)   │ (query, mutation, action)        │
+│                                  │                                  │
+│ Manual change streams for        │ useQuery() auto-subscribes,      │
+│ real-time updates                │ re-renders React on change       │
+│                                  │                                  │
+│ No end-to-end type safety        │ Full type safety via codegen     │
+│                                  │                                  │
+│ Familiar if you know MongoDB     │ Familiar if you know Convex      │
+└──────────────────────────────────┴──────────────────────────────────┘
 ```
 
 Both paths go through the same engine and storage. A document written
