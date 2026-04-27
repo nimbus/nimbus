@@ -87,6 +87,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     mutation-surface narrowing, storage/provider seam tightening, adapter
     expectation docs, and focused modularity cleanup with explicit accepted
     harness exceptions
+- `docs/plans/mongodb-adapter-hardening-plan.md`
+  - completed MongoDB adapter baseline for the landed wire-protocol surface:
+    configurable auth credentials, random PBKDF2 salt, transaction-aware CRUD
+    routing, CRUD decomposition, shared tenant resolution, compound sort,
+    connection ID width, count/distinct optimization, checksum validation, and
+    documented accepted limitations
 
 ## Pending plans
 
@@ -103,15 +109,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     CI/CD workflow updates, script renames, Makefile updates, config/doc bulk
     replacement, and verification; depends on the satellite repos plan above
 
-## Active hardening plans
-
-- `docs/plans/mongodb-adapter-hardening-plan.md`
-  - canonical execution plan for post-implementation hardening of the MongoDB
-    adapter: configurable auth credentials, random PBKDF2 salt, transaction-aware
-    CRUD routing, CRUD module decomposition, shared tenant resolution, compound
-    sort, connection ID width, count/distinct optimization, checksum validation,
-    and accepted-limitation documentation
-
 ## Deferred plans with defined scope
 
 - `docs/plans/windows-machine-support-plan.md`
@@ -120,13 +117,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `neovex.exe` with WSL2 machine provider, win-sshproxy named-pipe API
     forwarding, shell-script bootstrap (not ignition), WSL2-native networking
     (not gvproxy); activation gate is macOS MAC5+ stabilization
-- `docs/plans/mongodb-adapter-plan.md`
-  - canonical execution plan for the MongoDB wire-protocol compatibility
-    adapter: TCP listener with OP_MSG framing, BSON serialization, MongoDB
-    command dispatch, CRUD/index/aggregation/transaction/change-stream support,
-    `@neovex/mongodb` JS package, and spec test integration against the
-    official `mongodb/specifications` corpus; activation gate is core CRUD
-    adapter pattern stabilization from the completed Firebase adapter
 
 ## Deferred design and experiment plans
 
@@ -165,20 +155,27 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `archive/firebase-adapter-plan.md`, and
     `archive/firebase-cloud-functions-plan.md`, and
     `runtime-capability-adapter-boundary-plan.md`, and
-    `multi-adapter-boundary-hardening-plan.md` are `done`
+    `archive/multi-adapter-boundary-hardening-plan.md` are `done`
 
 ## Archived completed plans
 
 Completed plans usually live in `docs/plans/archive/`. Do not resume
 completed plans unless explicitly asked to review historical work.
 
-- `docs/plans/multi-adapter-boundary-hardening-plan.md`
+- `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`
   - completed post-Firebase/post-Cloud-Functions architecture hardening wave;
     records Firebase principal propagation, shared runtime-host seam promotion
     out of Convex-only namespaces, stock-compatibility truth alignment,
     prelaunch WebSocket legacy cleanup, and the ownership-based decomposition
     of the largest new adapter and proof roots that now form the baseline
     before any further adapter-boundary or native-transport work
+- `docs/plans/archive/mongodb-adapter-plan.md`
+  - completed control-plane execution record for the MongoDB wire-protocol
+    compatibility adapter: TCP listener, OP_MSG framing, BSON bridge, MongoDB
+    command dispatch, CRUD/index/aggregation/transaction/change-stream support,
+    `@neovex/mongodb`, spec-test integration, and verification harness
+    coverage. Use `mongodb-adapter-hardening-plan.md` as the latest completed
+    MongoDB baseline.
 - `docs/plans/archive/firebase-adapter-plan.md`
   - completed control-plane execution record for the Firebase/Firestore
     compatibility adapter and the required Neovex primitive hardening that

@@ -31,7 +31,7 @@ Reviewed against:
 - `docs/reference/firebase-compatibility.md`
 - `docs/reference/cloud-functions-compatibility.md`
 - `docs/plans/runtime-capability-adapter-boundary-plan.md`
-- `docs/plans/multi-adapter-boundary-hardening-plan.md`
+- `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`
 - `docs/plans/native-transport-evolution-plan.md`
 - the current git worktree on `2026-04-26`
 
@@ -67,7 +67,7 @@ make direct breaking changes instead of supporting awkward historical seams.
 
 ## Relationship To Other Plans
 
-- `docs/plans/multi-adapter-boundary-hardening-plan.md`
+- `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`
   is the completed wave that fixed Firebase principal propagation,
   compatibility-truth alignment, WebSocket legacy cleanup, and the first big
   ownership-based decompositions.

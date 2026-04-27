@@ -35,7 +35,7 @@ compatibility work.
   `docs/plans/archive/firebase-adapter-plan.md`, and
   `docs/plans/archive/firebase-cloud-functions-plan.md`, and
   `docs/plans/runtime-capability-adapter-boundary-plan.md`, and
-  `docs/plans/multi-adapter-boundary-hardening-plan.md`, and
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`, and
   `docs/plans/server-runtime-canonicalization-plan.md` are `done`
 - **Execution posture:** authoring and plan refinement may happen pre-launch;
   implementation remains deferred until this plan is explicitly activated

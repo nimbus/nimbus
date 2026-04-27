@@ -17,7 +17,7 @@ Reviewed against:
 - `AGENTS.md`
 - `docs/reference/reliability-posture.md`
 - `docs/reference/ci-failure-investigation.md`
-- `docs/plans/multi-adapter-boundary-hardening-plan.md`
+- `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`
 - `docs/plans/runtime-provider-boundary-hardening-plan.md`
 - `docs/plans/native-transport-evolution-plan.md`
 - `crates/neovex-server/src/runtime_host/mod.rs`
@@ -75,7 +75,7 @@ as native transport evolution.
 
 ## Relationship To Other Plans
 
-- `docs/plans/multi-adapter-boundary-hardening-plan.md`
+- `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`
   is the completed follow-up that fixed principal propagation, stock-compat
   truth, WebSocket prelaunch cleanup, and the first runtime-host extraction
   step. This plan corrects the remaining mistake in that extraction: moving a

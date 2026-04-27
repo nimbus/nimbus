@@ -70,7 +70,7 @@ Use the repo docs for architecture and behavior details:
   `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed trust
   baseline, use `docs/plans/runtime-capability-adapter-boundary-plan.md` as
   the completed adapter/runtime ownership baseline, and use
-  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
   completed historical hardening wave.
 - For the landed krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` after the three docs above.
@@ -114,7 +114,7 @@ Use the repo docs for architecture and behavior details:
   trust, and boundary baseline, use
   `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
   completed adapter/runtime boundary baseline, and use
-  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the completed
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the completed
   historical auth, compatibility-truth, and boundary-hardening wave. Use
   `docs/plans/archive/firebase-adapter-plan.md` only as the completed
   historical execution record for the adapter and primitive-hardening wave.
@@ -132,7 +132,7 @@ Use the repo docs for architecture and behavior details:
   runtime trust and boundary baseline, use
   `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
   completed runtime-host and adapter-boundary baseline, and use
-  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
   completed cross-adapter wave. Use
   `docs/plans/archive/firebase-cloud-functions-plan.md` only as the completed
   historical execution record for Firebase v2 and standalone Functions
@@ -184,7 +184,7 @@ Use the repo docs for architecture and behavior details:
   the completed trust/boundary baseline, use
   `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
   completed adapter/runtime ownership baseline, and use
-  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
   completed wave.
 - For the current krun-backed microVM and service-control architecture, open
   `docs/reference/microvm-service-baseline.md` immediately after those three
@@ -218,7 +218,7 @@ Use the repo docs for architecture and behavior details:
   and boundary baseline, use
   `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
   completed adapter/runtime boundary baseline, and use
-  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the completed
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the completed
   historical auth, compatibility-truth, and boundary-hardening wave. Use
   `docs/plans/archive/firebase-adapter-plan.md` only when you need the
   completed execution record for the historical adapter wave.
@@ -236,7 +236,7 @@ Use the repo docs for architecture and behavior details:
   runtime trust and boundary baseline, use
   `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
   completed runtime-host and adapter-boundary baseline, and use
-  `docs/plans/multi-adapter-boundary-hardening-plan.md` only as the earlier
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
   completed cross-adapter wave. Use
   `docs/plans/archive/firebase-cloud-functions-plan.md` only when you need the
   completed execution record for the historical compatibility wave.

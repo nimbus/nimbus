@@ -1,0 +1,23 @@
+{
+  "name": "@neovex/mongodb",
+  "version": "0.1.22",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "build": "node ./src/selftest.mjs --build-only",
+    "test": "node ./src/selftest.mjs",
+    "typecheck": "node ./src/selftest.mjs --typecheck-only"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "mongodb": "^6.16.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.0",
+    "typescript": "6.0.3"
+  }
+}
