@@ -24,8 +24,10 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
                                              │
                                              ▼
                 ┌─ Machine (local dev · cloud vm · bare metal) ─────────────┐
+                │                            │                              │
                 │                            ▼                              │
                 │  ┌─ neovex (single Rust binary) ───────────────────────┐  │
+                │  │                         │                           │  │
                 │  │                         ▼                           │  │
                 │  │  ┌─ Adapters ────────────────────────────────────┐  │  │
                 │  │  │ Convex · Firebase · Cloud Functions · MongoDB │  │  │
