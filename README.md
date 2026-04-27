@@ -2,7 +2,7 @@
 
 # Neovex
 
-**BaaS in a binary. AI tested. Developer approved.**
+**BaaS in a binary. For apps and agents.**
 
 Storage, compute, and networking -- with real-time and scheduling -- in a single Rust binary.
 
