@@ -1,4 +1,6 @@
 use super::*;
+use neovex_core::{DocumentLocator, ResourcePathBinding};
+use crate::keys::{document_path_key, resource_locator_key};
 
 impl SqliteTenantStore {
     pub fn metadata_blob(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -316,6 +318,9 @@ pub(super) fn apply_durable_record_in_conn(
                         .map_err(map_sqlite_error)?;
                     }
                 }
+                if let Some(binding) = write.resource_path_binding.as_ref() {
+                    upsert_resource_path_binding_in_conn(conn, binding)?;
+                }
             }
             (Some(previous), Some(current)) => {
                 let existing = load_document_from_conn(conn, &write.table, &write.doc_id)?.ok_or(
@@ -347,6 +352,9 @@ pub(super) fn apply_durable_record_in_conn(
                     ],
                 )
                 .map_err(map_sqlite_error)?;
+                if let Some(binding) = write.resource_path_binding.as_ref() {
+                    upsert_resource_path_binding_in_conn(conn, binding)?;
+                }
             }
             (Some(previous), None) => {
                 match load_document_from_conn(conn, &write.table, &write.doc_id)? {
@@ -365,6 +373,10 @@ pub(super) fn apply_durable_record_in_conn(
                     }
                     None => continue,
                 }
+                remove_resource_path_binding_in_conn(
+                    conn,
+                    &DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
+                )?;
             }
             (None, None) => {
                 return Err(Error::Internal(
@@ -374,6 +386,54 @@ pub(super) fn apply_durable_record_in_conn(
         }
     }
 
+    Ok(())
+}
+
+fn upsert_resource_path_binding_in_conn(
+    conn: &Connection,
+    binding: &ResourcePathBinding,
+) -> Result<()> {
+    let path_key = document_path_key(&binding.document_path);
+    let locator_key = resource_locator_key(&binding.locator);
+    let encoded_binding =
+        rmp_serde::to_vec(binding).map_err(|error| Error::Serialization(error.to_string()))?;
+    let encoded_locator = rmp_serde::to_vec(&binding.locator)
+        .map_err(|error| Error::Serialization(error.to_string()))?;
+    conn.execute(
+        "INSERT INTO resource_path_bindings (
+            locator_key,
+            document_path_key,
+            collection_group,
+            binding_blob,
+            locator_blob
+         ) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(locator_key) DO UPDATE SET
+            document_path_key = excluded.document_path_key,
+            collection_group = excluded.collection_group,
+            binding_blob = excluded.binding_blob,
+            locator_blob = excluded.locator_blob",
+        params![
+            locator_key.as_slice(),
+            path_key.as_slice(),
+            binding.collection_group().as_str(),
+            encoded_binding.as_slice(),
+            encoded_locator.as_slice(),
+        ],
+    )
+    .map_err(map_sqlite_error)?;
+    Ok(())
+}
+
+fn remove_resource_path_binding_in_conn(
+    conn: &Connection,
+    locator: &DocumentLocator,
+) -> Result<()> {
+    let locator_key = resource_locator_key(locator);
+    conn.execute(
+        "DELETE FROM resource_path_bindings WHERE locator_key = ?1",
+        params![locator_key.as_slice()],
+    )
+    .map_err(map_sqlite_error)?;
     Ok(())
 }
 
