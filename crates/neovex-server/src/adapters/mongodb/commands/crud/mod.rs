@@ -896,12 +896,10 @@ pub fn distinct(
                     }
                 }
             }
-            Some(val) => {
-                if seen_keys.insert(format!("{val:?}")) {
-                    seen.push(val);
-                }
+            Some(val) if seen_keys.insert(format!("{val:?}")) => {
+                seen.push(val);
             }
-            None => {}
+            Some(_) | None => {}
         }
     }
 

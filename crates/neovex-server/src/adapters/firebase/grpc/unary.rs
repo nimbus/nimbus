@@ -608,7 +608,7 @@ pub(super) async fn handle_run_aggregation_query(
         explain_metrics: None,
     };
     let output: tonic::codegen::BoxStream<RunAggregationQueryResponse> =
-        Box::pin(stream::iter(vec![Ok::<_, Status>(response)].into_iter()));
+        Box::pin(stream::iter(vec![Ok::<_, Status>(response)]));
     Ok(Response::new(output))
 }
 
