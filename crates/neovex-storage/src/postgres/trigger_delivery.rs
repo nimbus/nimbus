@@ -1,5 +1,9 @@
 use super::*;
 
+// Trigger-delivery cursor persistence stays provider-owned because metadata
+// storage, upsert syntax, and session management are backend-specific. Share
+// the engine-facing cursor contract instead of forcing a fake generic SQL
+// layer across MySQL, Postgres, and SQLite.
 impl PostgresTenantStore {
     pub fn trigger_delivery_cursor(&self) -> Result<TriggerDeliveryCursor> {
         let provider = self.provider.clone();

@@ -125,7 +125,7 @@ where
 #[derive(Clone)]
 pub struct RedbTenantStorage {
     pub(super) executor: BlockingReadExecutor<TenantStore>,
-    pub(super) write_executor: BlockingWriteExecutor,
+    pub(super) write_executor: BlockingWriteExecutor<TenantStore>,
 }
 
 impl RedbTenantStorage {

@@ -8,6 +8,7 @@ pub struct RuntimeInvocationContext {
     pub function_name: String,
     pub kind: &'static str,
     pub is_top_level: bool,
+    pub bypasses_concurrency_limit: bool,
     pub tenant_label: Option<String>,
     pub server_request_id: Option<String>,
 }
@@ -47,8 +48,18 @@ impl RuntimeInvocationContext {
             function_name: request.function_name.clone(),
             kind: request.kind.as_str(),
             is_top_level: true,
+            bypasses_concurrency_limit: false,
             tenant_label,
             server_request_id,
         }
+    }
+
+    pub fn with_bypassed_concurrency_limit(mut self) -> Self {
+        self.bypasses_concurrency_limit = true;
+        self
+    }
+
+    pub fn bypasses_concurrency_limit(&self) -> bool {
+        self.bypasses_concurrency_limit
     }
 }

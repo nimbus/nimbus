@@ -21,19 +21,19 @@ pub enum HostCallOperation {
     CtxRunQuery,
     CtxRunMutation,
     CtxRunAction,
-    CtxDbGet,
-    CtxDbQueryStart,
-    CtxDbQueryWithIndex,
-    CtxDbQueryFilter,
-    CtxDbQueryOrder,
-    CtxDbQueryCollect,
-    CtxDbQueryTake,
-    CtxDbQueryPaginate,
-    CtxDbQueryFirst,
-    CtxDbQueryUnique,
-    CtxDbInsert,
-    CtxDbPatch,
-    CtxDbDelete,
+    DocumentGet,
+    QueryBuilderStart,
+    QueryBuilderWithIndex,
+    QueryBuilderFilter,
+    QueryBuilderOrder,
+    QueryReadCollect,
+    QueryReadTake,
+    QueryReadPaginate,
+    QueryReadFirst,
+    QueryReadUnique,
+    DocumentInsert,
+    DocumentPatch,
+    DocumentDelete,
     CtxSchedulerRunAfter,
     CtxSchedulerRunAt,
     CtxSchedulerCancel,
@@ -53,19 +53,19 @@ impl HostCallOperation {
             Self::CtxRunQuery => "ctx_run_query",
             Self::CtxRunMutation => "ctx_run_mutation",
             Self::CtxRunAction => "ctx_run_action",
-            Self::CtxDbGet => "ctx_db_get",
-            Self::CtxDbQueryStart => "ctx_db_query_start",
-            Self::CtxDbQueryWithIndex => "ctx_db_query_with_index",
-            Self::CtxDbQueryFilter => "ctx_db_query_filter",
-            Self::CtxDbQueryOrder => "ctx_db_query_order",
-            Self::CtxDbQueryCollect => "ctx_db_query_collect",
-            Self::CtxDbQueryTake => "ctx_db_query_take",
-            Self::CtxDbQueryPaginate => "ctx_db_query_paginate",
-            Self::CtxDbQueryFirst => "ctx_db_query_first",
-            Self::CtxDbQueryUnique => "ctx_db_query_unique",
-            Self::CtxDbInsert => "ctx_db_insert",
-            Self::CtxDbPatch => "ctx_db_patch",
-            Self::CtxDbDelete => "ctx_db_delete",
+            Self::DocumentGet => "document_get",
+            Self::QueryBuilderStart => "query_builder_start",
+            Self::QueryBuilderWithIndex => "query_builder_with_index",
+            Self::QueryBuilderFilter => "query_builder_filter",
+            Self::QueryBuilderOrder => "query_builder_order",
+            Self::QueryReadCollect => "query_read_collect",
+            Self::QueryReadTake => "query_read_take",
+            Self::QueryReadPaginate => "query_read_paginate",
+            Self::QueryReadFirst => "query_read_first",
+            Self::QueryReadUnique => "query_read_unique",
+            Self::DocumentInsert => "document_insert",
+            Self::DocumentPatch => "document_patch",
+            Self::DocumentDelete => "document_delete",
             Self::CtxSchedulerRunAfter => "ctx_scheduler_run_after",
             Self::CtxSchedulerRunAt => "ctx_scheduler_run_at",
             Self::CtxSchedulerCancel => "ctx_scheduler_cancel",
@@ -292,19 +292,19 @@ pub enum HostCallPayload {
     CtxRunQuery(RuntimeAsyncFunctionCallPayload),
     CtxRunMutation(RuntimeAsyncFunctionCallPayload),
     CtxRunAction(RuntimeAsyncFunctionCallPayload),
-    CtxDbGet(RuntimeAsyncDbGetPayload),
-    CtxDbQueryStart(RuntimeSyncQueryStartPayload),
-    CtxDbQueryWithIndex(RuntimeSyncQueryWithIndexPayload),
-    CtxDbQueryFilter(RuntimeSyncQueryFilterPayload),
-    CtxDbQueryOrder(RuntimeSyncQueryOrderPayload),
-    CtxDbQueryCollect(RuntimeAsyncQueryTerminalPayload),
-    CtxDbQueryTake(RuntimeAsyncQueryTakePayload),
-    CtxDbQueryPaginate(RuntimeAsyncQueryPaginatePayload),
-    CtxDbQueryFirst(RuntimeAsyncQueryTerminalPayload),
-    CtxDbQueryUnique(RuntimeAsyncQueryTerminalPayload),
-    CtxDbInsert(RuntimeAsyncDbInsertPayload),
-    CtxDbPatch(RuntimeAsyncDbPatchPayload),
-    CtxDbDelete(RuntimeAsyncDbDeletePayload),
+    DocumentGet(RuntimeAsyncDbGetPayload),
+    QueryBuilderStart(RuntimeSyncQueryStartPayload),
+    QueryBuilderWithIndex(RuntimeSyncQueryWithIndexPayload),
+    QueryBuilderFilter(RuntimeSyncQueryFilterPayload),
+    QueryBuilderOrder(RuntimeSyncQueryOrderPayload),
+    QueryReadCollect(RuntimeAsyncQueryTerminalPayload),
+    QueryReadTake(RuntimeAsyncQueryTakePayload),
+    QueryReadPaginate(RuntimeAsyncQueryPaginatePayload),
+    QueryReadFirst(RuntimeAsyncQueryTerminalPayload),
+    QueryReadUnique(RuntimeAsyncQueryTerminalPayload),
+    DocumentInsert(RuntimeAsyncDbInsertPayload),
+    DocumentPatch(RuntimeAsyncDbPatchPayload),
+    DocumentDelete(RuntimeAsyncDbDeletePayload),
     CtxSchedulerRunAfter(RuntimeAsyncSchedulerRunAfterPayload),
     CtxSchedulerRunAt(RuntimeAsyncSchedulerRunAtPayload),
     CtxSchedulerCancel(RuntimeAsyncSchedulerCancelPayload),
@@ -324,25 +324,56 @@ impl HostCallPayload {
             Self::CtxRunQuery(_) => HostCallOperation::CtxRunQuery,
             Self::CtxRunMutation(_) => HostCallOperation::CtxRunMutation,
             Self::CtxRunAction(_) => HostCallOperation::CtxRunAction,
-            Self::CtxDbGet(_) => HostCallOperation::CtxDbGet,
-            Self::CtxDbQueryStart(_) => HostCallOperation::CtxDbQueryStart,
-            Self::CtxDbQueryWithIndex(_) => HostCallOperation::CtxDbQueryWithIndex,
-            Self::CtxDbQueryFilter(_) => HostCallOperation::CtxDbQueryFilter,
-            Self::CtxDbQueryOrder(_) => HostCallOperation::CtxDbQueryOrder,
-            Self::CtxDbQueryCollect(_) => HostCallOperation::CtxDbQueryCollect,
-            Self::CtxDbQueryTake(_) => HostCallOperation::CtxDbQueryTake,
-            Self::CtxDbQueryPaginate(_) => HostCallOperation::CtxDbQueryPaginate,
-            Self::CtxDbQueryFirst(_) => HostCallOperation::CtxDbQueryFirst,
-            Self::CtxDbQueryUnique(_) => HostCallOperation::CtxDbQueryUnique,
-            Self::CtxDbInsert(_) => HostCallOperation::CtxDbInsert,
-            Self::CtxDbPatch(_) => HostCallOperation::CtxDbPatch,
-            Self::CtxDbDelete(_) => HostCallOperation::CtxDbDelete,
+            Self::DocumentGet(_) => HostCallOperation::DocumentGet,
+            Self::QueryBuilderStart(_) => HostCallOperation::QueryBuilderStart,
+            Self::QueryBuilderWithIndex(_) => HostCallOperation::QueryBuilderWithIndex,
+            Self::QueryBuilderFilter(_) => HostCallOperation::QueryBuilderFilter,
+            Self::QueryBuilderOrder(_) => HostCallOperation::QueryBuilderOrder,
+            Self::QueryReadCollect(_) => HostCallOperation::QueryReadCollect,
+            Self::QueryReadTake(_) => HostCallOperation::QueryReadTake,
+            Self::QueryReadPaginate(_) => HostCallOperation::QueryReadPaginate,
+            Self::QueryReadFirst(_) => HostCallOperation::QueryReadFirst,
+            Self::QueryReadUnique(_) => HostCallOperation::QueryReadUnique,
+            Self::DocumentInsert(_) => HostCallOperation::DocumentInsert,
+            Self::DocumentPatch(_) => HostCallOperation::DocumentPatch,
+            Self::DocumentDelete(_) => HostCallOperation::DocumentDelete,
             Self::CtxSchedulerRunAfter(_) => HostCallOperation::CtxSchedulerRunAfter,
             Self::CtxSchedulerRunAt(_) => HostCallOperation::CtxSchedulerRunAt,
             Self::CtxSchedulerCancel(_) => HostCallOperation::CtxSchedulerCancel,
             Self::CtxServiceLookup(_) => HostCallOperation::CtxServiceLookup,
             Self::CtxRuntimeEnterNestedCall(_) => HostCallOperation::CtxRuntimeEnterNestedCall,
             Self::RuntimeExtensionCall(_) => HostCallOperation::RuntimeExtensionCall,
+        }
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::HttpRoute(_) | Self::RuntimeExtensionCall(_) => None,
+            Self::CtxQuery(payload) => payload.session_id.as_deref(),
+            Self::CtxPaginatedQuery(payload) => payload.session_id.as_deref(),
+            Self::CtxMutation(payload) => payload.session_id.as_deref(),
+            Self::CtxAction(payload) => payload.session_id.as_deref(),
+            Self::CtxRunQuery(payload) => payload.session_id.as_deref(),
+            Self::CtxRunMutation(payload) => payload.session_id.as_deref(),
+            Self::CtxRunAction(payload) => payload.session_id.as_deref(),
+            Self::DocumentGet(payload) => payload.session_id.as_deref(),
+            Self::QueryBuilderStart(payload) => payload.session_id.as_deref(),
+            Self::QueryBuilderWithIndex(payload) => payload.session_id.as_deref(),
+            Self::QueryBuilderFilter(payload) => payload.session_id.as_deref(),
+            Self::QueryBuilderOrder(payload) => payload.session_id.as_deref(),
+            Self::QueryReadCollect(payload) => payload.session_id.as_deref(),
+            Self::QueryReadTake(payload) => payload.session_id.as_deref(),
+            Self::QueryReadPaginate(payload) => payload.session_id.as_deref(),
+            Self::QueryReadFirst(payload) => payload.session_id.as_deref(),
+            Self::QueryReadUnique(payload) => payload.session_id.as_deref(),
+            Self::DocumentInsert(payload) => payload.session_id.as_deref(),
+            Self::DocumentPatch(payload) => payload.session_id.as_deref(),
+            Self::DocumentDelete(payload) => payload.session_id.as_deref(),
+            Self::CtxSchedulerRunAfter(payload) => payload.session_id.as_deref(),
+            Self::CtxSchedulerRunAt(payload) => payload.session_id.as_deref(),
+            Self::CtxSchedulerCancel(payload) => payload.session_id.as_deref(),
+            Self::CtxServiceLookup(payload) => payload.session_id.as_deref(),
+            Self::CtxRuntimeEnterNestedCall(payload) => payload.session_id.as_deref(),
         }
     }
 
@@ -366,40 +397,44 @@ impl HostCallPayload {
             HostCallOperation::CtxRunAction => {
                 Ok(Self::CtxRunAction(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbGet => Ok(Self::CtxDbGet(serde_json::from_value(payload)?)),
-            HostCallOperation::CtxDbQueryStart => {
-                Ok(Self::CtxDbQueryStart(serde_json::from_value(payload)?))
+            HostCallOperation::DocumentGet => {
+                Ok(Self::DocumentGet(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryWithIndex => {
-                Ok(Self::CtxDbQueryWithIndex(serde_json::from_value(payload)?))
+            HostCallOperation::QueryBuilderStart => {
+                Ok(Self::QueryBuilderStart(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryFilter => {
-                Ok(Self::CtxDbQueryFilter(serde_json::from_value(payload)?))
+            HostCallOperation::QueryBuilderWithIndex => Ok(Self::QueryBuilderWithIndex(
+                serde_json::from_value(payload)?,
+            )),
+            HostCallOperation::QueryBuilderFilter => {
+                Ok(Self::QueryBuilderFilter(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryOrder => {
-                Ok(Self::CtxDbQueryOrder(serde_json::from_value(payload)?))
+            HostCallOperation::QueryBuilderOrder => {
+                Ok(Self::QueryBuilderOrder(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryCollect => {
-                Ok(Self::CtxDbQueryCollect(serde_json::from_value(payload)?))
+            HostCallOperation::QueryReadCollect => {
+                Ok(Self::QueryReadCollect(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryTake => {
-                Ok(Self::CtxDbQueryTake(serde_json::from_value(payload)?))
+            HostCallOperation::QueryReadTake => {
+                Ok(Self::QueryReadTake(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryPaginate => {
-                Ok(Self::CtxDbQueryPaginate(serde_json::from_value(payload)?))
+            HostCallOperation::QueryReadPaginate => {
+                Ok(Self::QueryReadPaginate(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryFirst => {
-                Ok(Self::CtxDbQueryFirst(serde_json::from_value(payload)?))
+            HostCallOperation::QueryReadFirst => {
+                Ok(Self::QueryReadFirst(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbQueryUnique => {
-                Ok(Self::CtxDbQueryUnique(serde_json::from_value(payload)?))
+            HostCallOperation::QueryReadUnique => {
+                Ok(Self::QueryReadUnique(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbInsert => {
-                Ok(Self::CtxDbInsert(serde_json::from_value(payload)?))
+            HostCallOperation::DocumentInsert => {
+                Ok(Self::DocumentInsert(serde_json::from_value(payload)?))
             }
-            HostCallOperation::CtxDbPatch => Ok(Self::CtxDbPatch(serde_json::from_value(payload)?)),
-            HostCallOperation::CtxDbDelete => {
-                Ok(Self::CtxDbDelete(serde_json::from_value(payload)?))
+            HostCallOperation::DocumentPatch => {
+                Ok(Self::DocumentPatch(serde_json::from_value(payload)?))
+            }
+            HostCallOperation::DocumentDelete => {
+                Ok(Self::DocumentDelete(serde_json::from_value(payload)?))
             }
             HostCallOperation::CtxSchedulerRunAfter => {
                 Ok(Self::CtxSchedulerRunAfter(serde_json::from_value(payload)?))
@@ -488,14 +523,14 @@ mod tests {
     #[test]
     fn host_call_request_roundtrips_operation_strings_through_serde() {
         let request = HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             json!({ "table": "messages", "id": "doc-1" }),
         );
         assert_eq!(
             serde_json::to_value(&request).expect("host call request should serialize"),
             json!({
                 "abi_version": HOST_CALL_ABI_VERSION,
-                "operation": "ctx_db_get",
+                "operation": "document_get",
                 "payload": { "table": "messages", "id": "doc-1" },
             })
         );
@@ -516,7 +551,7 @@ mod tests {
     fn host_call_envelope_rejects_unsupported_abi_versions() {
         let error = HostCallEnvelope::try_from(HostCallRequest {
             abi_version: HOST_CALL_ABI_VERSION + 1,
-            operation: HostCallOperation::CtxDbGet,
+            operation: HostCallOperation::DocumentGet,
             payload: json!({ "table": "messages", "id": "doc-1" }),
         })
         .expect_err("unknown host call ABI versions should fail");
@@ -530,7 +565,7 @@ mod tests {
     #[test]
     fn host_call_envelope_rejects_operation_payload_mismatches() {
         let error = HostCallEnvelope::try_from(HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             json!({ "mutation": { "table": "messages" } }),
         ))
         .expect_err("mismatched payloads should fail");
@@ -540,14 +575,14 @@ mod tests {
     #[test]
     fn host_call_envelope_accepts_matching_operation_payload_pairs() {
         let envelope = HostCallEnvelope::try_from(HostCallRequest::new(
-            HostCallOperation::CtxDbGet,
+            HostCallOperation::DocumentGet,
             json!({ "table": "messages", "id": "doc-1" }),
         ))
         .expect("matching payload should parse");
-        assert_eq!(envelope.operation(), HostCallOperation::CtxDbGet);
+        assert_eq!(envelope.operation(), HostCallOperation::DocumentGet);
         assert_eq!(
             envelope.payload,
-            super::HostCallPayload::CtxDbGet(RuntimeAsyncDbGetPayload {
+            super::HostCallPayload::DocumentGet(RuntimeAsyncDbGetPayload {
                 table: "messages".to_string(),
                 id: "doc-1".to_string(),
                 session_id: None,

@@ -13,16 +13,16 @@ impl QueryBuilderHostCall {
         payload: HostCallPayload,
     ) -> std::result::Result<Self, NeovexRuntimeError> {
         match payload {
-            HostCallPayload::CtxDbQueryStart(payload) => {
+            HostCallPayload::QueryBuilderStart(payload) => {
                 Ok(Self::Start(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryWithIndex(payload) => {
+            HostCallPayload::QueryBuilderWithIndex(payload) => {
                 Ok(Self::WithIndex(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryFilter(payload) => {
+            HostCallPayload::QueryBuilderFilter(payload) => {
                 Ok(Self::Filter(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryOrder(payload) => {
+            HostCallPayload::QueryBuilderOrder(payload) => {
                 Ok(Self::Order(runtime_host_payload_value(payload)?))
             }
             _ => {
@@ -75,19 +75,19 @@ impl QueryReadHostCall {
         payload: HostCallPayload,
     ) -> std::result::Result<Self, NeovexRuntimeError> {
         match payload {
-            HostCallPayload::CtxDbQueryCollect(payload) => {
+            HostCallPayload::QueryReadCollect(payload) => {
                 Ok(Self::Collect(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryTake(payload) => {
+            HostCallPayload::QueryReadTake(payload) => {
                 Ok(Self::Take(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryPaginate(payload) => {
+            HostCallPayload::QueryReadPaginate(payload) => {
                 Ok(Self::Paginate(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryFirst(payload) => {
+            HostCallPayload::QueryReadFirst(payload) => {
                 Ok(Self::First(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbQueryUnique(payload) => {
+            HostCallPayload::QueryReadUnique(payload) => {
                 Ok(Self::Unique(runtime_host_payload_value(payload)?))
             }
             _ => unreachable!("non-query-read host operation routed to query-read dispatcher"),
@@ -176,16 +176,16 @@ impl DocumentHostCall {
         payload: HostCallPayload,
     ) -> std::result::Result<Self, NeovexRuntimeError> {
         match payload {
-            HostCallPayload::CtxDbGet(payload) => {
+            HostCallPayload::DocumentGet(payload) => {
                 Ok(Self::Get(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbInsert(payload) => {
+            HostCallPayload::DocumentInsert(payload) => {
                 Ok(Self::Insert(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbPatch(payload) => {
+            HostCallPayload::DocumentPatch(payload) => {
                 Ok(Self::Patch(runtime_host_payload_value(payload)?))
             }
-            HostCallPayload::CtxDbDelete(payload) => {
+            HostCallPayload::DocumentDelete(payload) => {
                 Ok(Self::Delete(runtime_host_payload_value(payload)?))
             }
             _ => unreachable!("non-document host operation routed to document dispatcher"),

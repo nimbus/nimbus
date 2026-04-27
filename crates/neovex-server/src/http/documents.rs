@@ -19,18 +19,18 @@ pub(crate) async fn insert_document(
         }
     };
     let document_id = service
-        .insert_document_async_cancellable(
+        .insert_document_async_with(
             tenant_id,
             table,
+            None,
             request.fields,
-            cancel_wait,
-            move || {
+            neovex_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
                 if cancellation_check.is_cancelled() {
                     Err(Error::Cancelled)
                 } else {
                     Ok(())
                 }
-            },
+            }),
         )
         .await?;
 
@@ -62,19 +62,18 @@ pub(crate) async fn update_document(
         }
     };
     let document_id = service
-        .update_document_async_cancellable(
+        .update_document_async_with(
             tenant_id,
             table,
             document_id,
             request.patch,
-            cancel_wait,
-            move || {
+            neovex_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
                 if cancellation_check.is_cancelled() {
                     Err(Error::Cancelled)
                 } else {
                     Ok(())
                 }
-            },
+            }),
         )
         .await?;
 
@@ -102,13 +101,18 @@ pub(crate) async fn delete_document(
         }
     };
     service
-        .delete_document_async_cancellable(tenant_id, table, document_id, cancel_wait, move || {
-            if cancellation_check.is_cancelled() {
-                Err(Error::Cancelled)
-            } else {
-                Ok(())
-            }
-        })
+        .delete_document_async_with(
+            tenant_id,
+            table,
+            document_id,
+            neovex_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            }),
+        )
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

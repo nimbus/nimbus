@@ -673,8 +673,8 @@ async fn run_aggregation_query_for_parent_document(
 
 fn ensure_firebase_enabled(state: &Arc<AppState>) -> std::result::Result<(), AppError> {
     state
-        .firebase_config
-        .current()
+        .current_deployment()
+        .firebase_config()
         .map(|_| ())
         .ok_or_else(|| AppError::not_found("firebase adapter is disabled"))
 }

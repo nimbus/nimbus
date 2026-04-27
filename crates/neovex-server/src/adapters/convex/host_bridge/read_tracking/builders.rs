@@ -3,7 +3,7 @@ use super::*;
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) fn new_builder_id(&self) -> String {
         let mut builders = self
-            .query_builders
+            .query_builders()
             .lock()
             .expect("convex runtime query builder lock should not be poisoned");
         builders.next_builder_id += 1;
@@ -15,7 +15,7 @@ impl ConvexHostBridge {
         builder_id: String,
         state: ConvexRuntimeQueryBuilderState,
     ) {
-        self.query_builders
+        self.query_builders()
             .lock()
             .expect("convex runtime query builder lock should not be poisoned")
             .builders
@@ -28,7 +28,7 @@ impl ConvexHostBridge {
         update: impl FnOnce(&mut ConvexRuntimeQueryBuilderState) -> Result<R, Error>,
     ) -> Result<R, Error> {
         let mut builders = self
-            .query_builders
+            .query_builders()
             .lock()
             .expect("convex runtime query builder lock should not be poisoned");
         let state = builders.builders.get_mut(builder_id).ok_or_else(|| {
@@ -43,7 +43,7 @@ impl ConvexHostBridge {
         &self,
         builder_id: &str,
     ) -> Result<ConvexRuntimeQueryBuilderState, Error> {
-        self.query_builders
+        self.query_builders()
             .lock()
             .expect("convex runtime query builder lock should not be poisoned")
             .builders

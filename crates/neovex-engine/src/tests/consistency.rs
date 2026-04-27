@@ -742,14 +742,15 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
             hidden_owner.clone()
         };
         service
-            .insert_document_with_principal(
+            .insert_document_with(
                 &tenant_id,
                 table.clone(),
+                None,
                 serde_json::Map::from_iter([
                     ("owner".to_string(), json!(owner)),
                     ("body".to_string(), json!(body)),
                 ]),
-                &principal,
+                crate::MutationActor::with_principal(&principal),
             )
             .expect("seed insert should succeed");
     }

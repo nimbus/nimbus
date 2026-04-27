@@ -31,11 +31,11 @@ pub(super) async fn op_neovex_ctx_paginated_query(
 
 #[op2]
 #[serde]
-pub(super) async fn op_neovex_ctx_db_get(
+pub(super) async fn op_neovex_document_get(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbGetPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbGet, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::DocumentGet, payload).await
 }
 
 #[op2]
@@ -44,7 +44,7 @@ pub(super) async fn op_neovex_ctx_query_collect(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTerminalPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryCollect, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::QueryReadCollect, payload).await
 }
 
 #[op2]
@@ -53,7 +53,7 @@ pub(super) async fn op_neovex_ctx_query_take(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTakePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryTake, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::QueryReadTake, payload).await
 }
 
 #[op2]
@@ -62,7 +62,7 @@ pub(super) async fn op_neovex_ctx_query_paginate(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryPaginatePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryPaginate, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::QueryReadPaginate, payload).await
 }
 
 #[op2]
@@ -71,7 +71,7 @@ pub(super) async fn op_neovex_ctx_query_first(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTerminalPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryFirst, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::QueryReadFirst, payload).await
 }
 
 #[op2]
@@ -80,5 +80,5 @@ pub(super) async fn op_neovex_ctx_query_unique(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncQueryTerminalPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbQueryUnique, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::QueryReadUnique, payload).await
 }

@@ -62,17 +62,16 @@ impl ConvexHostBridgeInvocation {
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridge {
-    pub(in crate::adapters::convex) service: Arc<neovex_engine::Service>,
-    pub(in crate::adapters::convex) registry: Arc<ConvexRegistry>,
-    pub(in crate::adapters::convex) tenant_id: TenantId,
-    pub(in crate::adapters::convex) auth: Option<InvocationAuth>,
-    pub(in crate::adapters::convex) services: neovex_runtime::InvocationServices,
-    pub(in crate::adapters::convex) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    pub(in crate::adapters::convex) principal: neovex_core::PrincipalContext,
-    pub(in crate::adapters::convex) execution_unit:
-        Option<Arc<neovex_engine::MutationExecutionUnit>>,
-    pub(in crate::adapters::convex) state: Arc<RuntimeHostState>,
-    pub(in crate::adapters::convex) query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
+    service: Arc<neovex_engine::Service>,
+    registry: Arc<ConvexRegistry>,
+    tenant_id: TenantId,
+    auth: Option<InvocationAuth>,
+    services: neovex_runtime::InvocationServices,
+    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    principal: neovex_core::PrincipalContext,
+    execution_unit: Option<Arc<neovex_engine::MutationExecutionUnit>>,
+    state: Arc<RuntimeHostState>,
+    query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
 }
 
 impl ConvexHostBridge {
@@ -144,6 +143,32 @@ impl ConvexHostBridge {
 
     pub(crate) fn principal(&self) -> &neovex_core::PrincipalContext {
         &self.principal
+    }
+
+    pub(crate) fn registry(&self) -> &Arc<ConvexRegistry> {
+        &self.registry
+    }
+
+    pub(crate) fn auth(&self) -> Option<&InvocationAuth> {
+        self.auth.as_ref()
+    }
+
+    pub(crate) fn services(&self) -> &neovex_runtime::InvocationServices {
+        &self.services
+    }
+
+    pub(crate) fn runtime_service_registry(&self) -> &Arc<dyn RuntimeServiceRegistry> {
+        &self.runtime_service_registry
+    }
+
+    pub(crate) fn host_state(&self) -> &Arc<RuntimeHostState> {
+        &self.state
+    }
+
+    pub(in crate::adapters::convex) fn query_builders(
+        &self,
+    ) -> &Arc<Mutex<ConvexRuntimeQueryBuilders>> {
+        &self.query_builders
     }
 
     pub(crate) fn commit_mutation_execution_unit(&self) -> Result<(), Error> {

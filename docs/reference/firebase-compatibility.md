@@ -90,6 +90,11 @@ These are intentional, documented boundaries rather than accidental gaps:
   current public claim. The first-party SDK uses covered REST and WebSocket
   paths today, while the upstream Node Firestore smoke catalog still records
   `GrpcConnection RPC 'Write' stream ... 12 UNIMPLEMENTED`.
+- Firebase read surfaces only project Firestore-native typed scalars. Documents
+  carrying foreign adapter typed scalars such as MongoDB `ObjectId`,
+  `Decimal128`, `Binary`, `Regex`, `MongoTimestamp`, `MinKey`, `MaxKey`, or
+  `JavaScriptCode` are rejected on Firebase REST/gRPC reads rather than being
+  lossy-projected into strings.
 - Firebase route-family application auth is documented separately in
   [Firebase application auth contract](firebase-auth-contract.md). Covered
   CRUD/query/transaction/`Write`/`Listen` paths now enforce the resolved

@@ -52,7 +52,8 @@ pub(crate) async fn http_handler(
     query: AxumQuery<HashMap<String, String>>,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
-    let Some(registry) = state.cloud_functions_registry.current() else {
+    let deployment = state.current_deployment();
+    let Some(registry) = deployment.cloud_functions_registry() else {
         return Err(AppError::not_found(
             "cloud functions http handler requires an active Cloud Functions registry",
         ));
@@ -84,6 +85,7 @@ pub(crate) async fn http_handler(
         CloudFunctionsHttpExposure::Callable => {
             handle_callable_target(
                 state,
+                deployment,
                 registry,
                 tenant_id,
                 entrypoint,
@@ -860,7 +862,7 @@ export {};
             serde_json::json!({
                 "error": {
                     "status": "UNAUTHENTICATED",
-                    "message": "no auth providers are configured; check convex/auth.config.ts",
+                    "message": "no application auth providers are configured for the active deployment",
                 },
             })
         );

@@ -6,7 +6,11 @@ fn deploy_router(service: Arc<Service>, registry: Option<ConvexRegistry>) -> axu
     let mut config =
         crate::router::RouterBuildConfig::core(service).with_deploy_admin_token(DEPLOY_TOKEN);
     if let Some(registry) = registry {
-        config = config.with_convex(registry);
+        config = config
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry);
     }
     config.build()
 }
@@ -121,9 +125,13 @@ async fn deploy(
 #[tokio::test]
 async fn deploy_admin_requires_configured_token() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
+    let registry = convex_registry(json!([]));
     let server = ServerFixture::start(
         crate::router::RouterBuildConfig::core(fixture.service())
-            .with_convex(convex_registry(json!([])))
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry)
             .without_deploy_admin_token()
             .build(),
     )

@@ -25,7 +25,12 @@ use neovex_engine::Service;
 pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::firebase::FirebaseConfig;
-pub use adapters::mongodb::MongoDbConfig;
+pub use adapters::mongodb::{AuthConfig as MongoDbAuthConfig, MongoDbConfig};
+pub mod adapters_mongodb {
+    pub use super::adapters::mongodb::bson_bridge;
+    pub use super::adapters::mongodb::listener;
+    pub use super::adapters::mongodb::wire;
+}
 pub use license::{
     DEFAULT_LICENSE_PATH, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
@@ -37,7 +42,7 @@ pub use local_server::{
     ServerDiscoveryRecord, load_local_admin_token, load_or_create_local_admin_token,
     read_live_server_discovery, rotate_local_admin_token_offline,
 };
-use router::RouterBuildConfig;
+use router::{RouterBuildConfig, convex_application_auth_verifier};
 pub use router::{
     build_router, build_router_with_convex, build_router_with_convex_and_license,
     build_router_with_convex_and_license_and_sandbox_catalog,
@@ -196,7 +201,9 @@ pub async fn serve_with_options(
     let mut config =
         RouterBuildConfig::core(Arc::clone(&service)).with_license(options.license_state);
     if let Some(convex_registry) = options.convex_registry {
-        config = config.with_convex(convex_registry);
+        config = config
+            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
+            .with_convex(convex_registry);
     }
     if let Some(cloud_functions_registry) = options.cloud_functions_registry {
         config = config.with_cloud_functions(cloud_functions_registry);
@@ -219,8 +226,14 @@ pub async fn serve_with_options(
     if let Some(mongodb_config) = options.mongodb_config {
         let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
         let mongodb_service = Arc::clone(&service);
+        let mongodb_auth = mongodb_config.auth;
         let mongodb_handle = tokio::spawn(async move {
-            adapters::mongodb::listener::run_listener(mongodb_listener, mongodb_service).await;
+            adapters::mongodb::listener::run_listener_with_auth(
+                mongodb_listener,
+                mongodb_service,
+                mongodb_auth,
+            )
+            .await;
         });
         let http_result = serve_with_router_config(listener, config).await;
         mongodb_handle.abort();
@@ -238,7 +251,9 @@ pub async fn serve_with_convex(
 ) -> std::io::Result<()> {
     serve_with_router_config(
         listener,
-        RouterBuildConfig::core(service).with_convex(convex_registry),
+        RouterBuildConfig::core(service)
+            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
+            .with_convex(convex_registry),
     )
     .await
 }
@@ -266,6 +281,7 @@ pub async fn serve_with_convex_and_license(
     serve_with_router_config(
         listener,
         RouterBuildConfig::core(service)
+            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
             .with_convex(convex_registry)
             .with_license(license_state),
     )
@@ -285,6 +301,7 @@ pub async fn serve_with_convex_and_license_and_sandbox_service_manager(
     serve_with_router_config(
         listener,
         RouterBuildConfig::core(service)
+            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
             .with_convex(convex_registry)
             .with_license(license_state)
             .with_sandbox_service_manager(sandbox_service_manager),

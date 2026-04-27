@@ -13,12 +13,13 @@ use crate::ConvexRegistry;
 use crate::adapters::cloud_functions::{
     CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
     CLOUD_FUNCTIONS_RUNTIME_BUNDLE_FILE, CLOUD_FUNCTIONS_RUNTIME_BUNDLE_SHA256_FILE,
-    CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsRegistry, CloudFunctionsTriggerExecutor,
+    CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsRegistry,
 };
 use crate::adapters::convex::{
     ConvexFunctionDeploySummary, ConvexHttpRouteDeploySummary, ConvexRegistryDeploySummary,
 };
 use crate::application_auth::ApplicationAuthVerifier;
+use crate::state::DeploymentState;
 
 static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -28,9 +29,10 @@ pub(crate) async fn deploy_app(
     Json(request): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, AppError> {
     authorize_deploy(&state, &headers)?;
-    let previous_generation = state.deploy_generation.current();
-    let previous_registry = state.convex_registry.current();
-    let previous_cloud_functions_registry = state.cloud_functions_registry.current();
+    let previous_deployment = state.current_deployment();
+    let previous_generation = previous_deployment.generation;
+    let previous_registry = previous_deployment.convex_registry();
+    let previous_cloud_functions_registry = previous_deployment.cloud_functions_registry();
     let runtime_limits = previous_registry
         .as_ref()
         .map(|registry| registry.runtime_limits())
@@ -69,34 +71,28 @@ pub(crate) async fn deploy_app(
     let generation = if request.dry_run {
         previous_generation
     } else {
-        if let Some(next_registry) = next_registry {
-            let next_registry = Arc::new(next_registry);
-            let application_auth_verifier: Arc<dyn ApplicationAuthVerifier> = next_registry.clone();
-            state
-                .application_auth_verifier
-                .activate(application_auth_verifier);
-            state.convex_registry.activate_shared(next_registry);
+        let next_convex_registry = next_registry
+            .map(Arc::new)
+            .or_else(|| previous_deployment.convex_registry());
+        let next_application_auth_verifier = next_convex_registry
+            .as_ref()
+            .map(|registry| registry.clone() as Arc<dyn ApplicationAuthVerifier>)
+            .or_else(|| previous_deployment.application_auth_verifier());
+        let next_cloud_functions_registry = next_cloud_functions_registry
+            .map(Arc::new)
+            .or_else(|| previous_deployment.cloud_functions_registry());
+        let next_deployment = DeploymentState {
+            generation: previous_generation.saturating_add(1),
+            convex_registry: next_convex_registry,
+            application_auth_verifier: next_application_auth_verifier,
+            cloud_functions_registry: next_cloud_functions_registry.clone(),
+            firebase_config: previous_deployment.firebase_config(),
+        };
+        state.active_deployment.activate(next_deployment);
+        if let Some(registry) = next_cloud_functions_registry {
+            state.install_cloud_functions_runtime_hooks(registry)?;
         }
-        if let Some(next_cloud_functions_registry) = next_cloud_functions_registry {
-            state
-                .cloud_functions_registry
-                .activate(next_cloud_functions_registry);
-            let registry = state
-                .cloud_functions_registry
-                .current()
-                .expect("cloud functions registry should be active after activation");
-            state
-                .service
-                .install_trigger_registrations(registry.trigger_registrations()?)?;
-            state.service.install_trigger_invocation_executor(Arc::new(
-                CloudFunctionsTriggerExecutor::new(
-                    state.service.clone(),
-                    registry,
-                    state.runtime_service_registry(),
-                ),
-            ))?;
-        }
-        state.deploy_generation.advance().0
+        state.current_deployment().generation
     };
 
     Ok(Json(DeployResponse {

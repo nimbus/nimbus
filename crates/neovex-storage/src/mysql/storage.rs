@@ -1,5 +1,9 @@
 use super::*;
 
+// Network-backed tenant stores keep provider-owned blocking write executors for
+// now because transaction/session lifecycles are coupled to the MySQL async
+// client. The generic `async_storage::write` executor is only shared across the
+// embedded blocking-store seam in this wave.
 impl MySqlTenantStorage {
     pub fn new(store: Arc<MySqlTenantStore>, runtime_handle: TokioRuntimeHandle) -> Self {
         Self::with_max_concurrent_reads(store, runtime_handle, default_mysql_read_parallelism())

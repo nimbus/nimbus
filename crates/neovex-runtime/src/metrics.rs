@@ -406,6 +406,7 @@ mod tests {
             function_name: "messages:list".to_string(),
             kind: "query",
             is_top_level: true,
+            bypasses_concurrency_limit: false,
             tenant_label: Some("demo".to_string()),
             server_request_id: Some("req-7".to_string()),
         });

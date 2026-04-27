@@ -13,7 +13,7 @@ pub(super) fn op_neovex_ctx_query_start(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryStartPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryStart, payload)
+    op_neovex_sync_host_call(state, HostCallOperation::QueryBuilderStart, payload)
 }
 
 #[op2]
@@ -22,7 +22,7 @@ pub(super) fn op_neovex_ctx_query_with_index(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryWithIndexPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryWithIndex, payload)
+    op_neovex_sync_host_call(state, HostCallOperation::QueryBuilderWithIndex, payload)
 }
 
 #[op2]
@@ -31,7 +31,7 @@ pub(super) fn op_neovex_ctx_query_filter(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryFilterPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryFilter, payload)
+    op_neovex_sync_host_call(state, HostCallOperation::QueryBuilderFilter, payload)
 }
 
 #[op2]
@@ -40,5 +40,5 @@ pub(super) fn op_neovex_ctx_query_order(
     state: &mut OpState,
     #[serde] payload: RuntimeSyncQueryOrderPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_sync_host_call(state, HostCallOperation::CtxDbQueryOrder, payload)
+    op_neovex_sync_host_call(state, HostCallOperation::QueryBuilderOrder, payload)
 }

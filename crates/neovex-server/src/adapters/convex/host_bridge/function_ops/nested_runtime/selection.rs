@@ -7,12 +7,12 @@ impl ConvexHostBridge {
         name: &str,
         visibility: ConvexFunctionVisibility,
     ) -> Result<bool, Error> {
-        let Some(bundle) = self.registry.runtime_bundle() else {
+        let Some(bundle) = self.registry().runtime_bundle() else {
             return Ok(false);
         };
         let _ = bundle;
         let definition = self
-            .registry
+            .registry()
             .functions
             .get(name)
             .ok_or_else(|| Error::InvalidInput(format!("convex function not found: {name}")))?;

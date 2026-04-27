@@ -328,7 +328,7 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
-            "operation": "ctx_db_get",
+            "operation": "document_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -385,7 +385,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     assert_eq!(
         first,
         serde_json::json!({
-            "operation": "ctx_db_get",
+            "operation": "document_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -396,7 +396,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     assert_eq!(
         second_without_reset,
         serde_json::json!({
-            "operation": "ctx_db_get",
+            "operation": "document_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",
@@ -407,7 +407,7 @@ async fn reused_runtime_refreshes_bootstrap_session_state_before_next_invoke() {
     assert_eq!(
         third_after_reset,
         serde_json::json!({
-            "operation": "ctx_db_get",
+            "operation": "document_get",
             "payload": {
                 "table": "messages",
                 "id": "doc-1",

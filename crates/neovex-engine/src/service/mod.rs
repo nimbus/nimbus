@@ -38,6 +38,7 @@ use transactions::TransactionSessionRegistry;
 
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
+pub use mutations::{AsyncMutationContext, MutationActor};
 pub(crate) use queries::{
     evaluate_with_index_cancellable_for_principal, paginate_documents_for_store_with_principal,
     query_documents_for_store_with_principal,

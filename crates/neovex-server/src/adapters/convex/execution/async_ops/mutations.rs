@@ -21,26 +21,32 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                 }
             };
             let id = service
-                .insert_document_async_cancellable_with_principal(
+                .insert_document_async_with(
                     tenant_id.clone(),
                     table,
                     id,
                     fields,
-                    principal,
-                    cancel_wait,
-                    move || check_host_cancellation(&check_cancellation),
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        principal,
+                        cancel_wait,
+                        move || check_host_cancellation(&check_cancellation),
+                    ),
                 )
                 .await?;
             Ok(Value::String(id.to_string()))
         }
         (Mutation::Insert { table, id, fields }, None) => {
             let id = service
-                .insert_document_async_with_id_with_principal(
+                .insert_document_async_with(
                     tenant_id.clone(),
                     table,
                     id,
                     fields,
-                    principal,
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        principal,
+                        std::future::pending(),
+                        || Ok(()),
+                    ),
                 )
                 .await?;
             Ok(Value::String(id.to_string()))
@@ -54,26 +60,32 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                 }
             };
             let id = service
-                .update_document_async_cancellable_with_principal(
+                .update_document_async_with(
                     tenant_id.clone(),
                     table,
                     id,
                     patch,
-                    principal,
-                    cancel_wait,
-                    move || check_host_cancellation(&check_cancellation),
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        principal,
+                        cancel_wait,
+                        move || check_host_cancellation(&check_cancellation),
+                    ),
                 )
                 .await?;
             Ok(Value::String(id.to_string()))
         }
         (Mutation::Update { table, id, patch }, None) => {
             let id = service
-                .update_document_async_with_principal(
+                .update_document_async_with(
                     tenant_id.clone(),
                     table,
                     id,
                     patch,
-                    principal,
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        principal,
+                        std::future::pending(),
+                        || Ok(()),
+                    ),
                 )
                 .await?;
             Ok(Value::String(id.to_string()))
@@ -87,20 +99,31 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                 }
             };
             service
-                .delete_document_async_cancellable_with_principal(
+                .delete_document_async_with(
                     tenant_id.clone(),
                     table,
                     id,
-                    principal,
-                    cancel_wait,
-                    move || check_host_cancellation(&check_cancellation),
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        principal,
+                        cancel_wait,
+                        move || check_host_cancellation(&check_cancellation),
+                    ),
                 )
                 .await?;
             Ok(Value::Null)
         }
         (Mutation::Delete { table, id }, None) => {
             service
-                .delete_document_async_with_principal(tenant_id.clone(), table, id, principal)
+                .delete_document_async_with(
+                    tenant_id.clone(),
+                    table,
+                    id,
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        principal,
+                        std::future::pending(),
+                        || Ok(()),
+                    ),
+                )
                 .await?;
             Ok(Value::Null)
         }

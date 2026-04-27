@@ -22,20 +22,22 @@ impl Service {
             .transpose()?;
         let next_policy_revision = table_schema.access_policy_revision()?;
 
-        runtime.store.replace_table_schema(&table_schema)?;
+        runtime.store().replace_table_schema(&table_schema)?;
         let mut schema = runtime.schema();
         Arc::make_mut(&mut schema)
             .tables
             .insert(table.clone(), table_schema);
-        runtime.schema.store(schema);
+        runtime.replace_schema_snapshot(schema);
 
         if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
             runtime.clear_document_cache();
-            runtime.subscriptions.terminate_policy_revision_mismatches(
-                &table,
-                &next_policy_revision,
-                "authorization policy changed; resubscribe",
-            );
+            runtime
+                .subscription_registry()
+                .terminate_policy_revision_mismatches(
+                    &table,
+                    &next_policy_revision,
+                    "authorization policy changed; resubscribe",
+                );
         }
         Ok(())
     }
@@ -60,7 +62,7 @@ impl Service {
         let runtime_for_task = runtime.clone();
         let table_schema_for_task = table_schema.clone();
         runtime
-            .read_storage
+            .read_storage()
             .execute_write(move |transaction| {
                 let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
                 transaction.replace_table_schema(&table_schema_for_task)
@@ -70,15 +72,17 @@ impl Service {
         Arc::make_mut(&mut schema)
             .tables
             .insert(table.clone(), table_schema);
-        runtime.schema.store(schema);
+        runtime.replace_schema_snapshot(schema);
 
         if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
             runtime.clear_document_cache();
-            runtime.subscriptions.terminate_policy_revision_mismatches(
-                &table,
-                &next_policy_revision,
-                "authorization policy changed; resubscribe",
-            );
+            runtime
+                .subscription_registry()
+                .terminate_policy_revision_mismatches(
+                    &table,
+                    &next_policy_revision,
+                    "authorization policy changed; resubscribe",
+                );
         }
         Ok(())
     }
@@ -132,18 +136,20 @@ impl Service {
             .get_table(table)
             .map(TableSchema::access_policy_revision)
             .transpose()?;
-        runtime.store.delete_table_schema(table)?;
+        runtime.store().delete_table_schema(table)?;
         let mut schema = runtime.schema();
         Arc::make_mut(&mut schema).tables.remove(table);
-        runtime.schema.store(schema);
+        runtime.replace_schema_snapshot(schema);
         let removed_policy_revision = neovex_core::policy_revision_id(None)?;
         if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
             runtime.clear_document_cache();
-            runtime.subscriptions.terminate_policy_revision_mismatches(
-                table,
-                &removed_policy_revision,
-                "authorization policy changed; resubscribe",
-            );
+            runtime
+                .subscription_registry()
+                .terminate_policy_revision_mismatches(
+                    table,
+                    &removed_policy_revision,
+                    "authorization policy changed; resubscribe",
+                );
         }
         Ok(())
     }
@@ -164,7 +170,7 @@ impl Service {
         let runtime_for_task = runtime.clone();
         let table_for_task = table.clone();
         runtime
-            .read_storage
+            .read_storage()
             .execute_write(move |transaction| {
                 let _operation = runtime_for_task.enter_operation(&tenant_id_for_task)?;
                 transaction.delete_table_schema(&table_for_task)
@@ -172,15 +178,17 @@ impl Service {
             .await?;
         let mut schema = runtime.schema();
         Arc::make_mut(&mut schema).tables.remove(&table);
-        runtime.schema.store(schema);
+        runtime.replace_schema_snapshot(schema);
         let removed_policy_revision = neovex_core::policy_revision_id(None)?;
         if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
             runtime.clear_document_cache();
-            runtime.subscriptions.terminate_policy_revision_mismatches(
-                &table,
-                &removed_policy_revision,
-                "authorization policy changed; resubscribe",
-            );
+            runtime
+                .subscription_registry()
+                .terminate_policy_revision_mismatches(
+                    &table,
+                    &removed_policy_revision,
+                    "authorization policy changed; resubscribe",
+                );
         }
         Ok(())
     }
@@ -189,8 +197,8 @@ impl Service {
         runtime: &Arc<TenantRuntime>,
     ) -> Result<()> {
         let next_schema = runtime
-            .store
-            .load_schema_async(&runtime.read_storage)
+            .store()
+            .load_schema_async(runtime.read_storage())
             .await?;
         apply_loaded_schema_snapshot(runtime, next_schema)
     }
@@ -217,16 +225,18 @@ fn apply_loaded_schema_snapshot(runtime: &Arc<TenantRuntime>, next_schema: Schem
         }
     }
 
-    runtime.schema.store(Arc::new(next_schema));
+    runtime.replace_schema_snapshot(Arc::new(next_schema));
 
     if !changed_policy_tables.is_empty() {
         runtime.clear_document_cache();
         for (table, revision) in changed_policy_tables {
-            runtime.subscriptions.terminate_policy_revision_mismatches(
-                &table,
-                &revision,
-                "authorization policy changed; resubscribe",
-            );
+            runtime
+                .subscription_registry()
+                .terminate_policy_revision_mismatches(
+                    &table,
+                    &revision,
+                    "authorization policy changed; resubscribe",
+                );
         }
     }
 

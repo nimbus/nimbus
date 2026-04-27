@@ -47,10 +47,10 @@ impl CloudFunctionsHostBridge {
         let envelope = HostCallEnvelope::try_from(request)?;
         let operation = envelope.operation().as_str();
         match envelope.payload {
-            payload @ (HostCallPayload::CtxDbGet(_)
-            | HostCallPayload::CtxDbInsert(_)
-            | HostCallPayload::CtxDbPatch(_)
-            | HostCallPayload::CtxDbDelete(_)) => {
+            payload @ (HostCallPayload::DocumentGet(_)
+            | HostCallPayload::DocumentInsert(_)
+            | HostCallPayload::DocumentPatch(_)
+            | HostCallPayload::DocumentDelete(_)) => {
                 abi::document_calls::dispatch_document_host_call_async(
                     &self.context,
                     payload,
@@ -78,10 +78,10 @@ impl CloudFunctionsHostBridge {
         let envelope = HostCallEnvelope::try_from(request)?;
         let operation = envelope.operation().as_str();
         match envelope.payload {
-            payload @ (HostCallPayload::CtxDbGet(_)
-            | HostCallPayload::CtxDbInsert(_)
-            | HostCallPayload::CtxDbPatch(_)
-            | HostCallPayload::CtxDbDelete(_)) => {
+            payload @ (HostCallPayload::DocumentGet(_)
+            | HostCallPayload::DocumentInsert(_)
+            | HostCallPayload::DocumentPatch(_)
+            | HostCallPayload::DocumentDelete(_)) => {
                 abi::document_calls::dispatch_document_host_call_cancellable(
                     &self.context,
                     payload,
@@ -106,10 +106,10 @@ impl CloudFunctionsHostBridge {
         let envelope = HostCallEnvelope::try_from(request)?;
         let operation = envelope.operation().as_str();
         match envelope.payload {
-            payload @ (HostCallPayload::CtxDbGet(_)
-            | HostCallPayload::CtxDbInsert(_)
-            | HostCallPayload::CtxDbPatch(_)
-            | HostCallPayload::CtxDbDelete(_)) => {
+            payload @ (HostCallPayload::DocumentGet(_)
+            | HostCallPayload::DocumentInsert(_)
+            | HostCallPayload::DocumentPatch(_)
+            | HostCallPayload::DocumentDelete(_)) => {
                 abi::document_calls::dispatch_document_host_call(&self.context, payload)
             }
             HostCallPayload::RuntimeExtensionCall(payload) => {

@@ -5,8 +5,8 @@ use neovex_core::{DocumentId, Mutation, PrincipalContext, Result, TableName, Ten
 use crate::Service;
 
 use super::types::{
-    MutationExecutionMode, expect_immediate_document_id, expect_immediate_result,
-    expect_immediate_unit, expect_scheduled_applied,
+    AsyncMutationContext, MutationActor, MutationExecutionMode, expect_immediate_document_id,
+    expect_immediate_result, expect_immediate_unit, expect_scheduled_applied,
 };
 
 struct ImmediateMutationMessages {
@@ -22,13 +22,7 @@ impl Service {
         table: TableName,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.insert_document_with_id_with_principal(
-            tenant_id,
-            table,
-            None,
-            fields,
-            &PrincipalContext::anonymous(),
-        )
+        self.insert_document_with(tenant_id, table, None, fields, MutationActor::anonymous())
     }
 
     /// Inserts a document with an explicit identifier and fan-outs any resulting subscription updates.
@@ -39,35 +33,26 @@ impl Service {
         document_id: DocumentId,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.insert_document_with_id_with_principal(
+        self.insert_document_with(
             tenant_id,
             table,
             Some(document_id),
             fields,
-            &PrincipalContext::anonymous(),
+            MutationActor::anonymous(),
         )
     }
 
-    /// Inserts a document for the provided principal and fan-outs any resulting subscription updates.
-    pub fn insert_document_with_principal(
-        &self,
-        tenant_id: &TenantId,
-        table: TableName,
-        fields: serde_json::Map<String, serde_json::Value>,
-        principal: &PrincipalContext,
-    ) -> Result<DocumentId> {
-        self.insert_document_with_id_with_principal(tenant_id, table, None, fields, principal)
-    }
-
-    /// Inserts a document with an explicit identifier for the provided principal.
-    pub fn insert_document_with_id_with_principal(
+    /// Inserts a document using the provided actor and optional explicit identifier.
+    pub fn insert_document_with(
         &self,
         tenant_id: &TenantId,
         table: TableName,
         document_id: Option<DocumentId>,
         fields: serde_json::Map<String, serde_json::Value>,
-        principal: &PrincipalContext,
+        actor: MutationActor<'_>,
     ) -> Result<DocumentId> {
+        let anonymous = PrincipalContext::anonymous();
+        let principal = actor.resolve(&anonymous);
         self.execute_immediate_document_mutation(
             tenant_id,
             Mutation::Insert {
@@ -87,9 +72,13 @@ impl Service {
         table: TableName,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.insert_document_async_cancellable(tenant_id, table, fields, future::pending(), || {
-            Ok(())
-        })
+        self.insert_document_async_with(
+            tenant_id,
+            table,
+            None,
+            fields,
+            AsyncMutationContext::anonymous(future::pending(), || Ok(())),
+        )
         .await
     }
 
@@ -101,91 +90,33 @@ impl Service {
         document_id: DocumentId,
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.insert_document_async_with_id_with_principal(
+        self.insert_document_async_with(
             tenant_id,
             table,
             Some(document_id),
             fields,
-            PrincipalContext::anonymous(),
+            AsyncMutationContext::anonymous(future::pending(), || Ok(())),
         )
         .await
     }
 
-    /// Inserts a document asynchronously for the provided principal.
-    pub async fn insert_document_async_with_principal(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        fields: serde_json::Map<String, serde_json::Value>,
-        principal: PrincipalContext,
-    ) -> Result<DocumentId> {
-        self.insert_document_async_with_id_with_principal(tenant_id, table, None, fields, principal)
-            .await
-    }
-
-    /// Inserts a document asynchronously with an explicit identifier for the provided principal.
-    pub async fn insert_document_async_with_id_with_principal(
+    pub async fn insert_document_async_with<Fut, Check>(
         self: &Arc<Self>,
         tenant_id: TenantId,
         table: TableName,
         document_id: Option<DocumentId>,
         fields: serde_json::Map<String, serde_json::Value>,
-        principal: PrincipalContext,
-    ) -> Result<DocumentId> {
-        self.insert_document_async_cancellable_with_principal(
-            tenant_id,
-            table,
-            document_id,
-            fields,
-            principal,
-            future::pending(),
-            || Ok(()),
-        )
-        .await
-    }
-
-    pub async fn insert_document_async_cancellable<Fut, Check>(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        fields: serde_json::Map<String, serde_json::Value>,
-        cancel_wait: Fut,
-        check_cancel: Check,
+        context: AsyncMutationContext<Fut, Check>,
     ) -> Result<DocumentId>
     where
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.insert_document_async_cancellable_with_principal(
-            tenant_id,
-            table,
-            None,
-            fields,
-            PrincipalContext::anonymous(),
+        let AsyncMutationContext {
+            principal,
             cancel_wait,
             check_cancel,
-        )
-        .await
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "async inserts share the existing API surface while adding caller-provided document keys"
-    )]
-    pub async fn insert_document_async_cancellable_with_principal<Fut, Check>(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        document_id: Option<DocumentId>,
-        fields: serde_json::Map<String, serde_json::Value>,
-        principal: PrincipalContext,
-        cancel_wait: Fut,
-        check_cancel: Check,
-    ) -> Result<DocumentId>
-    where
-        Fut: future::Future<Output = ()> + Send + 'static,
-        Check: Fn() -> Result<()> + Send + 'static,
-    {
+        } = context;
         self.execute_immediate_document_mutation_async(
             tenant_id,
             Mutation::Insert {
@@ -212,24 +143,26 @@ impl Service {
         document_id: DocumentId,
         patch: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.update_document_with_principal(
+        self.update_document_with(
             tenant_id,
             table,
             document_id,
             patch,
-            &PrincipalContext::anonymous(),
+            MutationActor::anonymous(),
         )
     }
 
-    /// Updates a document for the provided principal and fan-outs any resulting subscription updates.
-    pub fn update_document_with_principal(
+    /// Updates a document for the provided actor and fan-outs any resulting subscription updates.
+    pub fn update_document_with(
         &self,
         tenant_id: &TenantId,
         table: TableName,
         document_id: DocumentId,
         patch: serde_json::Map<String, serde_json::Value>,
-        principal: &PrincipalContext,
+        actor: MutationActor<'_>,
     ) -> Result<DocumentId> {
+        let anonymous = PrincipalContext::anonymous();
+        let principal = actor.resolve(&anonymous);
         self.execute_immediate_document_mutation(
             tenant_id,
             Mutation::Update {
@@ -250,78 +183,34 @@ impl Service {
         document_id: DocumentId,
         patch: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
-        self.update_document_async_cancellable(
+        self.update_document_async_with(
             tenant_id,
             table,
             document_id,
             patch,
-            future::pending(),
-            || Ok(()),
-        )
-        .await
-    }
-
-    /// Updates a document asynchronously for the provided principal.
-    pub async fn update_document_async_with_principal(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        document_id: DocumentId,
-        patch: serde_json::Map<String, serde_json::Value>,
-        principal: PrincipalContext,
-    ) -> Result<DocumentId> {
-        self.update_document_async_cancellable_with_principal(
-            tenant_id,
-            table,
-            document_id,
-            patch,
-            principal,
-            future::pending(),
-            || Ok(()),
-        )
-        .await
-    }
-
-    pub async fn update_document_async_cancellable<Fut, Check>(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        document_id: DocumentId,
-        patch: serde_json::Map<String, serde_json::Value>,
-        cancel_wait: Fut,
-        check_cancel: Check,
-    ) -> Result<DocumentId>
-    where
-        Fut: future::Future<Output = ()> + Send + 'static,
-        Check: Fn() -> Result<()> + Send + 'static,
-    {
-        self.update_document_async_cancellable_with_principal(
-            tenant_id,
-            table,
-            document_id,
-            patch,
-            PrincipalContext::anonymous(),
-            cancel_wait,
-            check_cancel,
+            AsyncMutationContext::anonymous(future::pending(), || Ok(())),
         )
         .await
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn update_document_async_cancellable_with_principal<Fut, Check>(
+    pub async fn update_document_async_with<Fut, Check>(
         self: &Arc<Self>,
         tenant_id: TenantId,
         table: TableName,
         document_id: DocumentId,
         patch: serde_json::Map<String, serde_json::Value>,
-        principal: PrincipalContext,
-        cancel_wait: Fut,
-        check_cancel: Check,
+        context: AsyncMutationContext<Fut, Check>,
     ) -> Result<DocumentId>
     where
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        let AsyncMutationContext {
+            principal,
+            cancel_wait,
+            check_cancel,
+        } = context;
         self.execute_immediate_document_mutation_async(
             tenant_id,
             Mutation::Update {
@@ -347,23 +236,20 @@ impl Service {
         table: TableName,
         document_id: DocumentId,
     ) -> Result<()> {
-        self.delete_document_with_principal(
-            tenant_id,
-            table,
-            document_id,
-            &PrincipalContext::anonymous(),
-        )?;
+        self.delete_document_with(tenant_id, table, document_id, MutationActor::anonymous())?;
         Ok(())
     }
 
-    /// Deletes a document for the provided principal and fan-outs any resulting subscription updates.
-    pub fn delete_document_with_principal(
+    /// Deletes a document for the provided actor and fan-outs any resulting subscription updates.
+    pub fn delete_document_with(
         &self,
         tenant_id: &TenantId,
         table: TableName,
         document_id: DocumentId,
-        principal: &PrincipalContext,
+        actor: MutationActor<'_>,
     ) -> Result<()> {
+        let anonymous = PrincipalContext::anonymous();
+        let principal = actor.resolve(&anonymous);
         self.execute_immediate_unit_mutation(
             tenant_id,
             Mutation::Delete {
@@ -382,71 +268,31 @@ impl Service {
         table: TableName,
         document_id: DocumentId,
     ) -> Result<()> {
-        self.delete_document_async_cancellable(
+        self.delete_document_async_with(
             tenant_id,
             table,
             document_id,
-            future::pending(),
-            || Ok(()),
+            AsyncMutationContext::anonymous(future::pending(), || Ok(())),
         )
         .await
     }
 
-    /// Deletes a document asynchronously for the provided principal.
-    pub async fn delete_document_async_with_principal(
+    pub async fn delete_document_async_with<Fut, Check>(
         self: &Arc<Self>,
         tenant_id: TenantId,
         table: TableName,
         document_id: DocumentId,
-        principal: PrincipalContext,
-    ) -> Result<()> {
-        self.delete_document_async_cancellable_with_principal(
-            tenant_id,
-            table,
-            document_id,
-            principal,
-            future::pending(),
-            || Ok(()),
-        )
-        .await
-    }
-
-    pub async fn delete_document_async_cancellable<Fut, Check>(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        document_id: DocumentId,
-        cancel_wait: Fut,
-        check_cancel: Check,
+        context: AsyncMutationContext<Fut, Check>,
     ) -> Result<()>
     where
         Fut: future::Future<Output = ()> + Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        self.delete_document_async_cancellable_with_principal(
-            tenant_id,
-            table,
-            document_id,
-            PrincipalContext::anonymous(),
+        let AsyncMutationContext {
+            principal,
             cancel_wait,
             check_cancel,
-        )
-        .await
-    }
-
-    pub async fn delete_document_async_cancellable_with_principal<Fut, Check>(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        table: TableName,
-        document_id: DocumentId,
-        principal: PrincipalContext,
-        cancel_wait: Fut,
-        check_cancel: Check,
-    ) -> Result<()>
-    where
-        Fut: future::Future<Output = ()> + Send + 'static,
-        Check: Fn() -> Result<()> + Send + 'static,
-    {
+        } = context;
         self.execute_immediate_unit_mutation_async(
             tenant_id,
             Mutation::Delete {

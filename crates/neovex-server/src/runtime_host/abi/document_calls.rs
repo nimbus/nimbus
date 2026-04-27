@@ -20,10 +20,10 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     match payload {
-        HostCallPayload::CtxDbGet(payload) => invoke_ctx_db_get(host, payload),
-        HostCallPayload::CtxDbInsert(payload) => invoke_ctx_db_insert(host, payload),
-        HostCallPayload::CtxDbPatch(payload) => invoke_ctx_db_patch(host, payload),
-        HostCallPayload::CtxDbDelete(payload) => invoke_ctx_db_delete(host, payload),
+        HostCallPayload::DocumentGet(payload) => invoke_document_get(host, payload),
+        HostCallPayload::DocumentInsert(payload) => invoke_document_insert(host, payload),
+        HostCallPayload::DocumentPatch(payload) => invoke_document_patch(host, payload),
+        HostCallPayload::DocumentDelete(payload) => invoke_document_delete(host, payload),
         _ => unreachable!("non-document host operation routed to document host dispatcher"),
     }
 }
@@ -37,17 +37,17 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     match payload {
-        HostCallPayload::CtxDbGet(payload) => {
-            invoke_ctx_db_get_cancellable(host, payload, cancellation)
+        HostCallPayload::DocumentGet(payload) => {
+            invoke_document_get_cancellable(host, payload, cancellation)
         }
-        HostCallPayload::CtxDbInsert(payload) => {
-            invoke_ctx_db_insert_cancellable(host, payload, cancellation)
+        HostCallPayload::DocumentInsert(payload) => {
+            invoke_document_insert_cancellable(host, payload, cancellation)
         }
-        HostCallPayload::CtxDbPatch(payload) => {
-            invoke_ctx_db_patch_cancellable(host, payload, cancellation)
+        HostCallPayload::DocumentPatch(payload) => {
+            invoke_document_patch_cancellable(host, payload, cancellation)
         }
-        HostCallPayload::CtxDbDelete(payload) => {
-            invoke_ctx_db_delete_cancellable(host, payload, cancellation)
+        HostCallPayload::DocumentDelete(payload) => {
+            invoke_document_delete_cancellable(host, payload, cancellation)
         }
         _ => unreachable!("non-document host operation routed to document host dispatcher"),
     }
@@ -62,23 +62,23 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     match payload {
-        HostCallPayload::CtxDbGet(payload) => {
-            invoke_ctx_db_get_async_cancellable(host, payload, cancellation).await
+        HostCallPayload::DocumentGet(payload) => {
+            invoke_document_get_async_cancellable(host, payload, cancellation).await
         }
-        HostCallPayload::CtxDbInsert(payload) => {
-            invoke_ctx_db_insert_async_cancellable(host, payload, cancellation).await
+        HostCallPayload::DocumentInsert(payload) => {
+            invoke_document_insert_async_cancellable(host, payload, cancellation).await
         }
-        HostCallPayload::CtxDbPatch(payload) => {
-            invoke_ctx_db_patch_async_cancellable(host, payload, cancellation).await
+        HostCallPayload::DocumentPatch(payload) => {
+            invoke_document_patch_async_cancellable(host, payload, cancellation).await
         }
-        HostCallPayload::CtxDbDelete(payload) => {
-            invoke_ctx_db_delete_async_cancellable(host, payload, cancellation).await
+        HostCallPayload::DocumentDelete(payload) => {
+            invoke_document_delete_async_cancellable(host, payload, cancellation).await
         }
         _ => unreachable!("non-document host operation routed to document host dispatcher"),
     }
 }
 
-fn invoke_ctx_db_get<H>(
+fn invoke_document_get<H>(
     host: &H,
     payload: RuntimeAsyncDbGetPayload,
 ) -> std::result::Result<Value, NeovexRuntimeError>
@@ -86,10 +86,10 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     let cancellation = HostCallCancellation::default();
-    invoke_ctx_db_get_cancellable(host, payload, &cancellation)
+    invoke_document_get_cancellable(host, payload, &cancellation)
 }
 
-fn invoke_ctx_db_get_cancellable<H>(
+fn invoke_document_get_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbGetPayload,
     cancellation: &HostCallCancellation,
@@ -109,7 +109,7 @@ where
     )
 }
 
-async fn invoke_ctx_db_get_async_cancellable<H>(
+async fn invoke_document_get_async_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbGetPayload,
     cancellation: &HostCallCancellation,
@@ -130,7 +130,7 @@ where
     )
 }
 
-fn invoke_ctx_db_insert<H>(
+fn invoke_document_insert<H>(
     host: &H,
     payload: RuntimeAsyncDbInsertPayload,
 ) -> std::result::Result<Value, NeovexRuntimeError>
@@ -138,10 +138,10 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     let cancellation = HostCallCancellation::default();
-    invoke_ctx_db_insert_cancellable(host, payload, &cancellation)
+    invoke_document_insert_cancellable(host, payload, &cancellation)
 }
 
-fn invoke_ctx_db_insert_cancellable<H>(
+fn invoke_document_insert_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbInsertPayload,
     cancellation: &HostCallCancellation,
@@ -164,7 +164,7 @@ where
     )
 }
 
-async fn invoke_ctx_db_insert_async_cancellable<H>(
+async fn invoke_document_insert_async_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbInsertPayload,
     cancellation: &HostCallCancellation,
@@ -189,7 +189,7 @@ where
     )
 }
 
-fn invoke_ctx_db_patch<H>(
+fn invoke_document_patch<H>(
     host: &H,
     payload: RuntimeAsyncDbPatchPayload,
 ) -> std::result::Result<Value, NeovexRuntimeError>
@@ -197,10 +197,10 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     let cancellation = HostCallCancellation::default();
-    invoke_ctx_db_patch_cancellable(host, payload, &cancellation)
+    invoke_document_patch_cancellable(host, payload, &cancellation)
 }
 
-fn invoke_ctx_db_patch_cancellable<H>(
+fn invoke_document_patch_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbPatchPayload,
     cancellation: &HostCallCancellation,
@@ -226,7 +226,7 @@ where
     )
 }
 
-async fn invoke_ctx_db_patch_async_cancellable<H>(
+async fn invoke_document_patch_async_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbPatchPayload,
     cancellation: &HostCallCancellation,
@@ -254,7 +254,7 @@ where
     )
 }
 
-fn invoke_ctx_db_delete<H>(
+fn invoke_document_delete<H>(
     host: &H,
     payload: RuntimeAsyncDbDeletePayload,
 ) -> std::result::Result<Value, NeovexRuntimeError>
@@ -262,10 +262,10 @@ where
     H: RuntimeCapabilityHost + ?Sized,
 {
     let cancellation = HostCallCancellation::default();
-    invoke_ctx_db_delete_cancellable(host, payload, &cancellation)
+    invoke_document_delete_cancellable(host, payload, &cancellation)
 }
 
-fn invoke_ctx_db_delete_cancellable<H>(
+fn invoke_document_delete_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbDeletePayload,
     cancellation: &HostCallCancellation,
@@ -285,7 +285,7 @@ where
     encode_runtime_core_result(delete_document(host, table, id).map(|_| Value::Null))
 }
 
-async fn invoke_ctx_db_delete_async_cancellable<H>(
+async fn invoke_document_delete_async_cancellable<H>(
     host: &H,
     payload: RuntimeAsyncDbDeletePayload,
     cancellation: &HostCallCancellation,

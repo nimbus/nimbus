@@ -41,29 +41,29 @@ pub(super) async fn op_neovex_http_route(
 
 #[op2]
 #[serde]
-pub(super) async fn op_neovex_ctx_db_insert(
+pub(super) async fn op_neovex_document_insert(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbInsertPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbInsert, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::DocumentInsert, payload).await
 }
 
 #[op2]
 #[serde]
-pub(super) async fn op_neovex_ctx_db_patch(
+pub(super) async fn op_neovex_document_patch(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbPatchPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbPatch, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::DocumentPatch, payload).await
 }
 
 #[op2]
 #[serde]
-pub(super) async fn op_neovex_ctx_db_delete(
+pub(super) async fn op_neovex_document_delete(
     state: Rc<RefCell<OpState>>,
     #[serde] payload: RuntimeAsyncDbDeletePayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
-    op_neovex_async_host_call(state, HostCallOperation::CtxDbDelete, payload).await
+    op_neovex_async_host_call(state, HostCallOperation::DocumentDelete, payload).await
 }
 
 #[op2]

@@ -28,7 +28,7 @@ async fn async_host_call_records_precancel_metric() {
     let result = execute_async_host_call(
         RuntimeAsyncHostCallTrace::new(tracing::Span::none(), "convex runtime async host call"),
         policy.metrics(),
-        convex_host_operation_name(HostCallOperation::CtxDbGet),
+        convex_host_operation_name(HostCallOperation::DocumentGet),
         cancellation,
         async { Ok(json!("unexpected")) },
     )
@@ -42,7 +42,7 @@ async fn async_host_call_records_precancel_metric() {
     assert_eq!(
         host_operation_metrics(
             &policy,
-            convex_host_operation_name(HostCallOperation::CtxDbGet)
+            convex_host_operation_name(HostCallOperation::DocumentGet)
         ),
         RuntimeHostOperationMetricsSnapshot {
             started: 0,
@@ -71,7 +71,7 @@ async fn async_host_call_records_cooperative_read_cancellation() {
                     "convex runtime async host call",
                 ),
                 metrics,
-                convex_host_operation_name(HostCallOperation::CtxDbGet),
+                convex_host_operation_name(HostCallOperation::DocumentGet),
                 cancellation.clone(),
                 async move {
                     started.notify_one();
@@ -100,7 +100,7 @@ async fn async_host_call_records_cooperative_read_cancellation() {
     assert_eq!(
         host_operation_metrics(
             &policy,
-            convex_host_operation_name(HostCallOperation::CtxDbGet)
+            convex_host_operation_name(HostCallOperation::DocumentGet)
         ),
         RuntimeHostOperationMetricsSnapshot {
             started: 1,
@@ -131,7 +131,7 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
                     "convex runtime async host call",
                 ),
                 metrics,
-                convex_host_operation_name(HostCallOperation::CtxDbInsert),
+                convex_host_operation_name(HostCallOperation::DocumentInsert),
                 cancellation,
                 async move {
                     started.notify_one();
@@ -164,7 +164,7 @@ async fn async_host_call_waits_for_write_completion_after_cancellation() {
     assert_eq!(
         host_operation_metrics(
             &policy,
-            convex_host_operation_name(HostCallOperation::CtxDbInsert)
+            convex_host_operation_name(HostCallOperation::DocumentInsert)
         ),
         RuntimeHostOperationMetricsSnapshot {
             started: 1,

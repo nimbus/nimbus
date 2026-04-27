@@ -153,11 +153,12 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.insert_document(table, fields)
     } else {
-        host.service().insert_document_with_principal(
+        host.service().insert_document_with(
             host.tenant_id(),
             table,
+            None,
             fields,
-            host.principal(),
+            neovex_engine::MutationActor::with_principal(host.principal()),
         )
     }
 }
@@ -183,14 +184,16 @@ where
         }
     };
     host.service()
-        .insert_document_async_cancellable_with_principal(
+        .insert_document_async_with(
             host.tenant_id().clone(),
             table,
             None,
             fields,
-            host.principal().clone(),
-            cancel_wait,
-            move || check_host_cancellation(&check_cancellation),
+            neovex_engine::AsyncMutationContext::with_principal(
+                host.principal().clone(),
+                cancel_wait,
+                move || check_host_cancellation(&check_cancellation),
+            ),
         )
         .await
 }
@@ -207,12 +210,12 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.update_document(table, document_id, patch)
     } else {
-        host.service().update_document_with_principal(
+        host.service().update_document_with(
             host.tenant_id(),
             table,
             document_id,
             patch,
-            host.principal(),
+            neovex_engine::MutationActor::with_principal(host.principal()),
         )
     }
 }
@@ -239,14 +242,16 @@ where
         }
     };
     host.service()
-        .update_document_async_cancellable_with_principal(
+        .update_document_async_with(
             host.tenant_id().clone(),
             table,
             document_id,
             patch,
-            host.principal().clone(),
-            cancel_wait,
-            move || check_host_cancellation(&check_cancellation),
+            neovex_engine::AsyncMutationContext::with_principal(
+                host.principal().clone(),
+                cancel_wait,
+                move || check_host_cancellation(&check_cancellation),
+            ),
         )
         .await
 }
@@ -262,11 +267,11 @@ where
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.delete_document(table, document_id)
     } else {
-        host.service().delete_document_with_principal(
+        host.service().delete_document_with(
             host.tenant_id(),
             table,
             document_id,
-            host.principal(),
+            neovex_engine::MutationActor::with_principal(host.principal()),
         )
     }
 }
@@ -292,13 +297,15 @@ where
         }
     };
     host.service()
-        .delete_document_async_cancellable_with_principal(
+        .delete_document_async_with(
             host.tenant_id().clone(),
             table,
             document_id,
-            host.principal().clone(),
-            cancel_wait,
-            move || check_host_cancellation(&check_cancellation),
+            neovex_engine::AsyncMutationContext::with_principal(
+                host.principal().clone(),
+                cancel_wait,
+                move || check_host_cancellation(&check_cancellation),
+            ),
         )
         .await
 }

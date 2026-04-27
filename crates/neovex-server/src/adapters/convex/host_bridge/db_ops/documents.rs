@@ -34,12 +34,12 @@ impl ConvexHostBridge {
             None => {
                 let check_cancellation = cancellation.clone();
                 match self
-                    .service
+                    .service()
                     .get_document_async_cancellable_with_principal(
-                        self.tenant_id.clone(),
+                        self.tenant_id().clone(),
                         table.clone(),
                         document_id.clone(),
-                        self.principal.clone(),
+                        self.principal().clone(),
                         cancellation.cancelled(),
                         move || check_host_cancellation(&check_cancellation),
                     )
@@ -79,11 +79,11 @@ impl ConvexHostBridge {
         let document_id = payload.id.clone();
         let response = match self.mutation_execution_unit().map_or_else(
             || {
-                self.service.get_document_with_principal(
-                    &self.tenant_id,
+                self.service().get_document_with_principal(
+                    self.tenant_id(),
                     &table,
                     document_id.clone(),
-                    &self.principal,
+                    self.principal(),
                 )
             },
             |execution_unit| {
@@ -124,15 +124,17 @@ impl ConvexHostBridge {
                     cancellation.cancelled().await;
                 }
             };
-            self.service
-                .insert_document_async_cancellable_with_principal(
-                    self.tenant_id.clone(),
+            self.service()
+                .insert_document_async_with(
+                    self.tenant_id().clone(),
                     table,
                     None,
                     fields,
-                    self.principal.clone(),
-                    cancel_wait,
-                    move || check_host_cancellation(&check_cancellation),
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        self.principal().clone(),
+                        cancel_wait,
+                        move || check_host_cancellation(&check_cancellation),
+                    ),
                 )
                 .await
         }
@@ -161,11 +163,12 @@ impl ConvexHostBridge {
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.insert_document(table, fields)
         } else {
-            self.service.insert_document_with_principal(
-                &self.tenant_id,
+            self.service().insert_document_with(
+                self.tenant_id(),
                 table,
+                None,
                 fields,
-                &self.principal,
+                neovex_engine::MutationActor::with_principal(self.principal()),
             )
         }
         .map(|id| Value::String(id.to_string()));
@@ -193,15 +196,17 @@ impl ConvexHostBridge {
                     cancellation.cancelled().await;
                 }
             };
-            self.service
-                .update_document_async_cancellable_with_principal(
-                    self.tenant_id.clone(),
+            self.service()
+                .update_document_async_with(
+                    self.tenant_id().clone(),
                     table,
                     id,
                     patch,
-                    self.principal.clone(),
-                    cancel_wait,
-                    move || check_host_cancellation(&check_cancellation),
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        self.principal().clone(),
+                        cancel_wait,
+                        move || check_host_cancellation(&check_cancellation),
+                    ),
                 )
                 .await
         }
@@ -231,12 +236,12 @@ impl ConvexHostBridge {
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.update_document(table, id, patch)
         } else {
-            self.service.update_document_with_principal(
-                &self.tenant_id,
+            self.service().update_document_with(
+                self.tenant_id(),
                 table,
                 id,
                 patch,
-                &self.principal,
+                neovex_engine::MutationActor::with_principal(self.principal()),
             )
         }
         .map(|id| Value::String(id.to_string()));
@@ -263,14 +268,16 @@ impl ConvexHostBridge {
                     cancellation.cancelled().await;
                 }
             };
-            self.service
-                .delete_document_async_cancellable_with_principal(
-                    self.tenant_id.clone(),
+            self.service()
+                .delete_document_async_with(
+                    self.tenant_id().clone(),
                     table,
                     id,
-                    self.principal.clone(),
-                    cancel_wait,
-                    move || check_host_cancellation(&check_cancellation),
+                    neovex_engine::AsyncMutationContext::with_principal(
+                        self.principal().clone(),
+                        cancel_wait,
+                        move || check_host_cancellation(&check_cancellation),
+                    ),
                 )
                 .await
         }
@@ -299,8 +306,12 @@ impl ConvexHostBridge {
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.delete_document(table, id)
         } else {
-            self.service
-                .delete_document_with_principal(&self.tenant_id, table, id, &self.principal)
+            self.service().delete_document_with(
+                self.tenant_id(),
+                table,
+                id,
+                neovex_engine::MutationActor::with_principal(self.principal()),
+            )
         }
         .map(|_| Value::Null);
         encode_runtime_core_result(response)

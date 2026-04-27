@@ -18,7 +18,8 @@ pub(crate) async fn license_status(
 pub(crate) async fn runtime_diagnostics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RuntimeDiagnosticsResponse>, AppError> {
-    let registry = state.convex_registry.current().ok_or_else(|| {
+    let deployment = state.current_deployment();
+    let registry = deployment.convex_registry().ok_or_else(|| {
         AppError::not_found("runtime diagnostics require an active app generation")
     })?;
     let limits = registry.runtime_limits();

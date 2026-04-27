@@ -499,7 +499,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
             typeof tableOrId.table === "string" &&
             typeof tableOrId.id === "string"
           ) {
-            return globalThis.__neovexAsyncHostValue("op_neovex_ctx_db_get", {
+            return globalThis.__neovexAsyncHostValue("op_neovex_document_get", {
               table: tableOrId.table,
               id: tableOrId.id,
               session_id: sessionId,
@@ -509,7 +509,7 @@ globalThis.__neovexCreateContext = function(options = {}) {
             "Neovex runtime ctx.db.get currently requires table and id at runtime",
           );
         }
-        return globalThis.__neovexAsyncHostValue("op_neovex_ctx_db_get", {
+        return globalThis.__neovexAsyncHostValue("op_neovex_document_get", {
           table: tableOrId,
           id: maybeId,
           session_id: sessionId,
@@ -520,20 +520,20 @@ globalThis.__neovexCreateContext = function(options = {}) {
         return __neovexCreateQueryBuilder(syncHostValue, asyncHostValue, builderId, sessionId);
       },
       insert(table, fields) {
-        return asyncHostValue("op_neovex_ctx_db_insert", {
+        return asyncHostValue("op_neovex_document_insert", {
           table,
           fields,
         });
       },
       patch(table, id, patch) {
-        return asyncHostValue("op_neovex_ctx_db_patch", {
+        return asyncHostValue("op_neovex_document_patch", {
           table,
           id,
           patch,
         });
       },
       delete(table, id) {
-        return asyncHostValue("op_neovex_ctx_db_delete", {
+        return asyncHostValue("op_neovex_document_delete", {
           table,
           id,
         });

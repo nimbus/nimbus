@@ -15,7 +15,7 @@ impl ConvexHostBridge {
                 self.record_builder_read(&builder, &query);
                 self.execute_query_with_execution_context_async_cancellable(
                     ConvexExecutableQuery::Query(query),
-                    self.auth.as_ref(),
+                    self.auth(),
                     cancellation,
                 )
                 .await
@@ -47,7 +47,7 @@ impl ConvexHostBridge {
             self.record_builder_read(&builder, &query);
             self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Query(query),
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .inspect(|value| self.record_result_documents(&builder.table, value))
@@ -71,7 +71,7 @@ impl ConvexHostBridge {
                     query.clone(),
                     payload.page_size,
                     after.clone(),
-                    &self.principal,
+                    self.principal(),
                     cancellation,
                 )
                 .await
@@ -117,7 +117,7 @@ impl ConvexHostBridge {
                 query.clone(),
                 payload.page_size,
                 after.clone(),
-                &self.principal,
+                self.principal(),
                 cancellation,
             )
             .and_then(|mut page| {

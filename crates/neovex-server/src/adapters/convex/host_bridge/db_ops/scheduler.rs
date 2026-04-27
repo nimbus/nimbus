@@ -14,7 +14,7 @@ impl ConvexHostBridge {
                     visibility,
                     args,
                 } => {
-                    let mutation = self.registry.resolve_scheduled_mutation_for_visibility(
+                    let mutation = self.registry().resolve_scheduled_mutation_for_visibility(
                         &name,
                         &args,
                         visibility.unwrap_or(ConvexFunctionVisibility::Public),
@@ -29,7 +29,7 @@ impl ConvexHostBridge {
                     visibility,
                     args,
                 } => {
-                    let mutation = self.registry.resolve_scheduled_mutation_for_visibility(
+                    let mutation = self.registry().resolve_scheduled_mutation_for_visibility(
                         &name,
                         &args,
                         visibility.unwrap_or(ConvexFunctionVisibility::Public),
@@ -49,9 +49,9 @@ impl ConvexHostBridge {
         }
 
         execute_schedule_command_async(
-            &self.service,
-            &self.registry,
-            &self.tenant_id,
+            self.service(),
+            self.registry(),
+            self.tenant_id(),
             command,
             Some(cancellation.clone()),
         )
@@ -70,7 +70,7 @@ impl ConvexHostBridge {
                     visibility,
                     args,
                 } => {
-                    let mutation = self.registry.resolve_scheduled_mutation_for_visibility(
+                    let mutation = self.registry().resolve_scheduled_mutation_for_visibility(
                         &name,
                         &args,
                         visibility.unwrap_or(ConvexFunctionVisibility::Public),
@@ -85,7 +85,7 @@ impl ConvexHostBridge {
                     visibility,
                     args,
                 } => {
-                    let mutation = self.registry.resolve_scheduled_mutation_for_visibility(
+                    let mutation = self.registry().resolve_scheduled_mutation_for_visibility(
                         &name,
                         &args,
                         visibility.unwrap_or(ConvexFunctionVisibility::Public),
@@ -104,7 +104,7 @@ impl ConvexHostBridge {
             };
         }
 
-        execute_schedule_command(&self.service, &self.registry, &self.tenant_id, command)
+        execute_schedule_command(self.service(), self.registry(), self.tenant_id(), command)
     }
 
     pub(in crate::adapters::convex) async fn invoke_ctx_scheduler_run_after_async_cancellable(

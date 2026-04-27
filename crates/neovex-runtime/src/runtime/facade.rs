@@ -23,19 +23,6 @@ impl NeovexRuntime {
         Self {
             host,
             policy,
-            bypass_concurrency_limit: false,
-            owned_executor: Arc::default(),
-        }
-    }
-
-    pub fn with_policy_bypassing_limit(
-        host: Arc<dyn HostBridge>,
-        policy: Arc<RuntimePolicy>,
-    ) -> Self {
-        Self {
-            host,
-            policy,
-            bypass_concurrency_limit: true,
             owned_executor: Arc::default(),
         }
     }
@@ -103,10 +90,6 @@ impl NeovexRuntime {
             RuntimeInvocationContext::top_level(request),
             cancellation,
         )
-    }
-
-    pub(crate) fn bypasses_concurrency_limit(&self) -> bool {
-        self.bypass_concurrency_limit
     }
 
     pub(crate) fn policy(&self) -> Arc<RuntimePolicy> {

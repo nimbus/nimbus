@@ -526,14 +526,15 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
     let hidden_owner = principal_with_subject("user-456");
 
     let hidden_id = service
-        .insert_document_with_principal(
+        .insert_document_with(
             &tenant_id,
             table.clone(),
+            None,
             serde_json::Map::from_iter([
                 ("owner".to_string(), json!("user-456")),
                 ("body".to_string(), json!("Hidden")),
             ]),
-            &hidden_owner,
+            crate::MutationActor::with_principal(&hidden_owner),
         )
         .expect("hidden document insert should succeed");
 
@@ -565,12 +566,12 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
         .expect("authorized staged insert should succeed");
 
     service
-        .update_document_with_principal(
+        .update_document_with(
             &tenant_id,
             table.clone(),
             hidden_id,
             serde_json::Map::from_iter([("owner".to_string(), json!("user-123"))]),
-            &hidden_owner,
+            crate::MutationActor::with_principal(&hidden_owner),
         )
         .expect("external update should make the hidden row visible");
 

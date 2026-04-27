@@ -50,7 +50,7 @@ export {};
         .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
-        "operation": "ctx_db_get",
+        "operation": "document_get",
         "payload": {
             "table": "messages",
             "id": "doc-1",
@@ -168,7 +168,7 @@ export {};
         .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
-        "operation": "ctx_db_get",
+        "operation": "document_get",
         "payload": {
             "table": "messages",
             "id": "doc-1",
@@ -297,7 +297,7 @@ export {};
                 .create_runtime(&bundle, Some(snapshot), false)
                 .expect("snapshot-born runtime should build");
             let expected = serde_json::json!({
-                "operation": "ctx_db_get",
+                "operation": "document_get",
                 "payload": {
                     "table": "messages",
                     "id": "doc-1",

@@ -282,15 +282,43 @@ impl FirestoreDouble {
 fn encode_proto_json_typed_scalar(
     value: &TypedScalarValue,
 ) -> Result<Value, FirestoreProtoJsonError> {
+    firestore_value_from_typed_scalar(value).map(|value| value.to_proto_json())
+}
+
+pub(crate) fn firestore_value_from_typed_scalar(
+    value: &TypedScalarValue,
+) -> Result<FirestoreValue, FirestoreProtoJsonError> {
     match value {
-        TypedScalarValue::Timestamp { value } => {
-            Ok(FirestoreValue::Timestamp(format_firestore_timestamp(*value)?).to_proto_json())
-        }
+        TypedScalarValue::Timestamp { value } => Ok(FirestoreValue::Timestamp(
+            format_firestore_timestamp(*value)?,
+        )),
         TypedScalarValue::SpecialDouble { value } => Ok(FirestoreValue::Double(
             firestore_double_from_special_double(*value),
-        )
-        .to_proto_json()),
-        _ => Ok(FirestoreValue::String(value.projected_json().to_string()).to_proto_json()),
+        )),
+        TypedScalarValue::ObjectId { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:ObjectId",
+        )),
+        TypedScalarValue::Binary { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:Binary",
+        )),
+        TypedScalarValue::Decimal128 { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:Decimal128",
+        )),
+        TypedScalarValue::Regex { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:Regex",
+        )),
+        TypedScalarValue::MongoTimestamp { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:MongoTimestamp",
+        )),
+        TypedScalarValue::MinKey => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:MinKey",
+        )),
+        TypedScalarValue::MaxKey => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:MaxKey",
+        )),
+        TypedScalarValue::JavaScriptCode { .. } => Err(FirestoreProtoJsonError::UnsupportedType(
+            "typedScalar:JavaScriptCode",
+        )),
     }
 }
 
@@ -559,6 +587,44 @@ mod tests {
             json!({ "pipelineValue": { "stages": [] } }),
         ] {
             assert!(FirestoreValue::from_proto_json(&case).is_err());
+        }
+    }
+
+    #[test]
+    fn firestore_value_from_typed_scalar_rejects_foreign_provider_scalars() {
+        let cases = [
+            TypedScalarValue::ObjectId {
+                hex: "507f1f77bcf86cd799439011".to_string(),
+            },
+            TypedScalarValue::Binary {
+                subtype: 0,
+                data: vec![0xCA, 0xFE],
+            },
+            TypedScalarValue::Decimal128 {
+                repr: "1.25".to_string(),
+            },
+            TypedScalarValue::Regex {
+                pattern: "^test$".to_string(),
+                options: "i".to_string(),
+            },
+            TypedScalarValue::MongoTimestamp {
+                seconds: 1,
+                increment: 2,
+            },
+            TypedScalarValue::MinKey,
+            TypedScalarValue::MaxKey,
+            TypedScalarValue::JavaScriptCode {
+                code: "1 + 1".to_string(),
+            },
+        ];
+
+        for value in cases {
+            let error = firestore_value_from_typed_scalar(&value)
+                .expect_err("foreign typed scalars should be rejected by the Firebase adapter");
+            assert!(
+                matches!(error, FirestoreProtoJsonError::UnsupportedType(kind) if kind.starts_with("typedScalar:")),
+                "unexpected typed scalar rejection: {error:?}"
+            );
         }
     }
 }

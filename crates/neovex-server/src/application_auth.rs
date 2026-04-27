@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use tonic::{Status, metadata::MetadataMap};
 
-use crate::state::{AppError, AppState};
+use crate::state::{AppError, AppState, DeploymentState};
 
 pub(crate) trait ApplicationAuthVerifier: Send + Sync {
     fn verify_bearer_token<'a>(
@@ -37,18 +37,27 @@ pub(crate) async fn resolve_application_auth_from_headers(
     headers: &HeaderMap,
 ) -> Result<ResolvedApplicationAuth, AppError> {
     let bearer = extract_bearer_token(headers)?;
-    resolve_application_auth_from_bearer(state, bearer.as_deref()).await
+    let deployment = state.current_deployment();
+    resolve_application_auth_from_bearer_in_deployment(deployment.as_ref(), bearer.as_deref()).await
 }
 
 pub(crate) async fn resolve_application_auth_from_bearer(
     state: &Arc<AppState>,
     bearer: Option<&str>,
 ) -> Result<ResolvedApplicationAuth, AppError> {
+    let deployment = state.current_deployment();
+    resolve_application_auth_from_bearer_in_deployment(deployment.as_ref(), bearer).await
+}
+
+pub(crate) async fn resolve_application_auth_from_bearer_in_deployment(
+    deployment: &DeploymentState,
+    bearer: Option<&str>,
+) -> Result<ResolvedApplicationAuth, AppError> {
     let Some(bearer) = bearer else {
         return Ok(ResolvedApplicationAuth::anonymous());
     };
 
-    if firebase_emulator_mock_auth_enabled(state)
+    if firebase_emulator_mock_auth_enabled(deployment)
         && let Some(principal) = emulator_principal_from_bearer(bearer)
     {
         return Ok(ResolvedApplicationAuth {
@@ -57,7 +66,9 @@ pub(crate) async fn resolve_application_auth_from_bearer(
         });
     }
 
-    let Some(auth) = verify_optional_application_auth_from_bearer(state, Some(bearer)).await?
+    let Some(auth) =
+        verify_optional_application_auth_from_bearer_in_deployment(deployment, Some(bearer))
+            .await?
     else {
         return Ok(ResolvedApplicationAuth::anonymous());
     };
@@ -68,10 +79,9 @@ pub(crate) async fn resolve_application_auth_from_bearer(
     })
 }
 
-fn firebase_emulator_mock_auth_enabled(state: &Arc<AppState>) -> bool {
-    state
-        .firebase_config
-        .current()
+fn firebase_emulator_mock_auth_enabled(deployment: &DeploymentState) -> bool {
+    deployment
+        .firebase_config()
         .as_deref()
         .is_some_and(|config| config.allows_emulator_mock_user_token_auth())
 }
@@ -154,23 +164,25 @@ pub(crate) fn grpc_status_from_app_error(error: AppError) -> Status {
     }
 }
 
-pub(crate) async fn verify_optional_application_auth_from_headers(
-    state: &Arc<AppState>,
+pub(crate) async fn verify_optional_application_auth_from_headers_in_deployment(
+    deployment: &DeploymentState,
     headers: &HeaderMap,
 ) -> Result<Option<InvocationAuth>, AppError> {
     let bearer = extract_bearer_token(headers)?;
-    verify_optional_application_auth_from_bearer(state, bearer.as_deref()).await
+    verify_optional_application_auth_from_bearer_in_deployment(deployment, bearer.as_deref()).await
 }
 
-pub(crate) async fn verify_optional_application_auth_from_bearer(
-    state: &Arc<AppState>,
+pub(crate) async fn verify_optional_application_auth_from_bearer_in_deployment(
+    deployment: &DeploymentState,
     bearer: Option<&str>,
 ) -> Result<Option<InvocationAuth>, AppError> {
     let Some(bearer) = bearer else {
         return Ok(None);
     };
-    let verifier = state.application_auth_verifier.current().ok_or_else(|| {
-        AppError::unauthorized("no auth providers are configured; check convex/auth.config.ts")
+    let verifier = deployment.application_auth_verifier().ok_or_else(|| {
+        AppError::unauthorized(
+            "no application auth providers are configured for the active deployment",
+        )
     })?;
     verifier.verify_bearer_token(bearer).await.map(Some)
 }

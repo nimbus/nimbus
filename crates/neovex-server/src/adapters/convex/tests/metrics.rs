@@ -12,7 +12,7 @@ fn runtime_cancellable_query_builder_start_short_circuits_before_dispatch() {
     let result = neovex_runtime::HostBridge::call_cancellable(
         &bridge,
         HostCallRequest::new(
-            HostCallOperation::CtxDbQueryStart,
+            HostCallOperation::QueryBuilderStart,
             json!({
                 "table": "messages",
             }),
@@ -21,7 +21,7 @@ fn runtime_cancellable_query_builder_start_short_circuits_before_dispatch() {
     );
 
     assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
-    let metrics = bridge.registry.runtime_metrics_snapshot();
+    let metrics = bridge.registry().runtime_metrics_snapshot();
     assert_eq!(metrics.precanceled_host_ops, 1);
     assert_eq!(
         metrics
@@ -49,7 +49,7 @@ async fn runtime_async_db_get_precancel_records_canceled_host_op_metric() {
     let result = bridge
         .call_async(
             HostCallRequest::new(
-                HostCallOperation::CtxDbGet,
+                HostCallOperation::DocumentGet,
                 json!({
                     "table": "messages",
                     "id": document_id.to_string(),
@@ -60,7 +60,7 @@ async fn runtime_async_db_get_precancel_records_canceled_host_op_metric() {
         .await;
 
     assert!(matches!(result, Err(NeovexRuntimeError::Cancelled)));
-    let metrics = bridge.registry.runtime_metrics_snapshot();
+    let metrics = bridge.registry().runtime_metrics_snapshot();
     assert_eq!(metrics.canceled_host_ops, 1);
     assert_eq!(metrics.precanceled_host_ops, 1);
     assert_eq!(metrics.in_flight_canceled_host_ops, 0);
@@ -78,12 +78,12 @@ fn runtime_metrics_snapshot_surfaces_rejected_invocation_counts() {
     let (_tempdir, _service, _tenant_id, bridge) = host_bridge_fixture();
 
     bridge
-        .registry
+        .registry()
         .runtime_policy()
         .metrics()
         .record_rejected_invocation_for_tenant(Some("demo"));
 
-    let metrics = bridge.registry.runtime_metrics_snapshot();
+    let metrics = bridge.registry().runtime_metrics_snapshot();
     assert_eq!(metrics.rejected_invocations, 1);
     assert_eq!(
         metrics

@@ -5,16 +5,19 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
     runtime: NeovexRuntime,
     bundle: RuntimeBundle,
     request: InvocationRequest,
-    tenant_id: &TenantId,
-    server_request_id: Option<&str>,
-    cancellation: Option<HostCallCancellation>,
+    options: RuntimeBundleInvocationOptions<'_>,
 ) -> std::result::Result<serde_json::Value, NeovexRuntimeError> {
     runtime_executor.invoke_blocking_with_cancellation(
         runtime,
         bundle,
         request.clone(),
-        top_level_runtime_invocation_context(&request, tenant_id, server_request_id),
-        cancellation,
+        top_level_runtime_invocation_context(
+            &request,
+            options.tenant_id,
+            options.server_request_id,
+            options.concurrency_mode,
+        ),
+        options.cancellation,
     )
 }
 
@@ -28,12 +31,10 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_host(
 ) -> std::result::Result<serde_json::Value, NeovexRuntimeError> {
     invoke_runtime_bundle_blocking_with_cancellation(
         runtime_executor,
-        runtime_for_host(host_bridge, runtime_policy, options.concurrency_mode),
+        runtime_for_host(host_bridge, runtime_policy),
         bundle,
         request,
-        options.tenant_id,
-        options.server_request_id,
-        options.cancellation,
+        options,
     )
 }
 

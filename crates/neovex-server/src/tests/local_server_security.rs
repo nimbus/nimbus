@@ -333,6 +333,9 @@ async fn convex_routes_keep_application_auth_and_reject_local_admin_bearers() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_local_server_security(local_server_security)
             .build(),
@@ -386,6 +389,9 @@ async fn convex_websocket_bad_origin_is_rejected_before_auth() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_local_server_security(local_server_security)
             .build(),

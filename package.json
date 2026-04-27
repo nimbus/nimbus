@@ -8,6 +8,7 @@
     "packages/firebase",
     "packages/neovex",
     "packages/codegen",
+    "packages/mongodb",
     "demos/firebase/html",
     "demos/convex/node",
     "demos/convex/html",

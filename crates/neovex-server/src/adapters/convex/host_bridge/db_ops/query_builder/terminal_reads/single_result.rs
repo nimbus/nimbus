@@ -18,7 +18,7 @@ impl ConvexHostBridge {
                 }
                 self.execute_query_with_execution_context_async_cancellable(
                     ConvexExecutableQuery::Query(query),
-                    self.auth.as_ref(),
+                    self.auth(),
                     cancellation,
                 )
                 .await
@@ -57,7 +57,7 @@ impl ConvexHostBridge {
             }
             self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Query(query),
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .and_then(|value| {
@@ -86,7 +86,7 @@ impl ConvexHostBridge {
                 }
                 self.execute_query_with_execution_context_async_cancellable(
                     ConvexExecutableQuery::Read(ConvexReadCommand::First { query }),
-                    self.auth.as_ref(),
+                    self.auth(),
                     cancellation,
                 )
                 .await
@@ -125,7 +125,7 @@ impl ConvexHostBridge {
             }
             self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Read(ConvexReadCommand::First { query }),
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .and_then(|value| {
@@ -154,7 +154,7 @@ impl ConvexHostBridge {
                 }
                 self.execute_query_with_execution_context_async_cancellable(
                     ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }),
-                    self.auth.as_ref(),
+                    self.auth(),
                     cancellation,
                 )
                 .await
@@ -193,7 +193,7 @@ impl ConvexHostBridge {
             }
             self.execute_query_with_execution_context_cancellable(
                 ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }),
-                self.auth.as_ref(),
+                self.auth(),
                 cancellation,
             )
             .and_then(|value| {

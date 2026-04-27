@@ -355,6 +355,9 @@ async fn tenant_application_auth_audit_keeps_application_scope() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
             .with_convex(registry)
             .with_local_server_security(local_server_security)
             .build(),

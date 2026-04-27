@@ -25,17 +25,32 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
     let principal = normalize_principal_context(auth);
     match mutation {
         Mutation::Insert { table, id, fields } => {
-            let id = service
-                .insert_document_with_id_with_principal(tenant_id, table, id, fields, &principal)?;
+            let id = service.insert_document_with(
+                tenant_id,
+                table,
+                id,
+                fields,
+                neovex_engine::MutationActor::with_principal(&principal),
+            )?;
             Ok(Value::String(id.to_string()))
         }
         Mutation::Update { table, id, patch } => {
-            let id =
-                service.update_document_with_principal(tenant_id, table, id, patch, &principal)?;
+            let id = service.update_document_with(
+                tenant_id,
+                table,
+                id,
+                patch,
+                neovex_engine::MutationActor::with_principal(&principal),
+            )?;
             Ok(Value::String(id.to_string()))
         }
         Mutation::Delete { table, id } => {
-            service.delete_document_with_principal(tenant_id, table, id, &principal)?;
+            service.delete_document_with(
+                tenant_id,
+                table,
+                id,
+                neovex_engine::MutationActor::with_principal(&principal),
+            )?;
             Ok(Value::Null)
         }
     }

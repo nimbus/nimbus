@@ -271,7 +271,7 @@ impl HostBridge for PaginateHost {
             .expect("paginate host sync lock should not be poisoned")
             .push(request.clone());
         let value = match request.operation {
-            HostCallOperation::CtxDbQueryStart => Value::String("builder-1".to_string()),
+            HostCallOperation::QueryBuilderStart => Value::String("builder-1".to_string()),
             _ => Value::Null,
         };
         Ok(serde_json::json!({
@@ -310,7 +310,7 @@ pub(super) struct PaginateContinuationHost;
 impl HostBridge for PaginateContinuationHost {
     fn call(&self, request: HostCallRequest) -> Result<Value> {
         let value = match request.operation {
-            HostCallOperation::CtxDbQueryStart => Value::String("builder-1".to_string()),
+            HostCallOperation::QueryBuilderStart => Value::String("builder-1".to_string()),
             _ => Value::Null,
         };
         Ok(serde_json::json!({
@@ -351,7 +351,7 @@ impl HostBridge for SyncOnlyHost {
             .expect("sync-only host lock should not be poisoned")
             .push(request.clone());
         let value = match request.operation {
-            HostCallOperation::CtxDbQueryStart => Value::String("builder-1".to_string()),
+            HostCallOperation::QueryBuilderStart => Value::String("builder-1".to_string()),
             _ => Value::Null,
         };
         Ok(serde_json::json!({

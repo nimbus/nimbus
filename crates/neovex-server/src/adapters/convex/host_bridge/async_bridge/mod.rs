@@ -10,7 +10,7 @@ mod tests;
 
 impl HostBridge for ConvexHostBridge {
     fn call(&self, request: HostCallRequest) -> std::result::Result<Value, NeovexRuntimeError> {
-        let metrics = self.registry.runtime_policy().metrics();
+        let metrics = self.registry().runtime_policy().metrics();
         let operation = convex_host_operation_name(request.operation);
         execute_host_call(metrics.as_ref(), operation, || {
             self.dispatch_host_call(request)
@@ -22,7 +22,7 @@ impl HostBridge for ConvexHostBridge {
         request: HostCallRequest,
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NeovexRuntimeError> {
-        let metrics = self.registry.runtime_policy().metrics();
+        let metrics = self.registry().runtime_policy().metrics();
         let operation = convex_host_operation_name(request.operation);
         execute_host_call_cancellable(metrics.as_ref(), operation, cancellation, || {
             self.dispatch_host_call_cancellable(request, cancellation)
@@ -39,7 +39,7 @@ impl HostBridge for ConvexHostBridge {
         let trace = RuntimeAsyncHostCallTrace::new(
             tracing::debug_span!(
                 "convex_runtime_async_host_call",
-                tenant = %bridge.tenant_id,
+                tenant = %bridge.tenant_id(),
                 server_request_id = ?bridge.server_request_id(),
                 session_id = %bridge.session_id(),
                 operation = %convex_host_operation_name(request.operation),
@@ -47,7 +47,7 @@ impl HostBridge for ConvexHostBridge {
             ),
             "convex runtime async host call",
         );
-        let metrics = bridge.registry.runtime_policy().metrics();
+        let metrics = bridge.registry().runtime_policy().metrics();
         let operation = convex_host_operation_name(request.operation);
         Box::pin(execute_async_host_call(
             trace,

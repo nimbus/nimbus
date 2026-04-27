@@ -33,7 +33,7 @@ impl ServerVerificationHarnessCase {
     }
 }
 
-const PR_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 5] = [
+const PR_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
     ServerVerificationHarnessCase::new(
         super::auth::websocket_auth::WEBSOCKET_DISCONNECT_CLEANUP_CASE,
         run_websocket_disconnect_cleanup_case,
@@ -53,10 +53,18 @@ const PR_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 5] = [
     ServerVerificationHarnessCase::new(
         super::convex_runtime::fairness::FAIRNESS_WEBSOCKET_REJECTION_CASE,
         run_fairness_websocket_rejection_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::mongodb_wire::MONGODB_WIRE_CRUD_ROUNDTRIP_CASE,
+        run_mongodb_wire_crud_roundtrip_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::mongodb_wire::MONGODB_WIRE_HANDSHAKE_CASE,
+        run_mongodb_wire_handshake_case,
     ),
 ];
 
-const NIGHTLY_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 5] = [
+const NIGHTLY_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
     ServerVerificationHarnessCase::new(
         super::auth::websocket_auth::WEBSOCKET_DISCONNECT_CLEANUP_CASE,
         run_websocket_disconnect_cleanup_case,
@@ -76,6 +84,14 @@ const NIGHTLY_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 5] = [
     ServerVerificationHarnessCase::new(
         super::convex_runtime::fairness::FAIRNESS_WEBSOCKET_REJECTION_CASE,
         run_fairness_websocket_rejection_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::mongodb_wire::MONGODB_WIRE_CRUD_ROUNDTRIP_CASE,
+        run_mongodb_wire_crud_roundtrip_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::mongodb_wire::MONGODB_WIRE_HANDSHAKE_CASE,
+        run_mongodb_wire_handshake_case,
     ),
 ];
 
@@ -125,6 +141,22 @@ fn run_fairness_websocket_rejection_case() {
         .block_on(
             super::convex_runtime::fairness::convex_runtime_websocket_bootstrap_rejections_send_error_frames_inner(),
         );
+}
+
+fn run_mongodb_wire_crud_roundtrip_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::mongodb_wire::mongodb_wire_crud_roundtrip_inner());
+}
+
+fn run_mongodb_wire_handshake_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::mongodb_wire::mongodb_wire_handshake_inner());
 }
 
 fn server_verification_corpus(

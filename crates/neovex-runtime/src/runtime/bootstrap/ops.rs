@@ -7,14 +7,14 @@ mod shared;
 mod sync_query_builder;
 
 use self::async_effects::{
-    op_neovex_ctx_action, op_neovex_ctx_db_delete, op_neovex_ctx_db_insert, op_neovex_ctx_db_patch,
-    op_neovex_ctx_mutation, op_neovex_ctx_scheduler_cancel, op_neovex_ctx_scheduler_run_after,
-    op_neovex_ctx_scheduler_run_at, op_neovex_http_route,
+    op_neovex_ctx_action, op_neovex_ctx_mutation, op_neovex_ctx_scheduler_cancel,
+    op_neovex_ctx_scheduler_run_after, op_neovex_ctx_scheduler_run_at, op_neovex_document_delete,
+    op_neovex_document_insert, op_neovex_document_patch, op_neovex_http_route,
 };
 use self::async_query::{
-    op_neovex_ctx_db_get, op_neovex_ctx_paginated_query, op_neovex_ctx_query,
-    op_neovex_ctx_query_collect, op_neovex_ctx_query_first, op_neovex_ctx_query_paginate,
-    op_neovex_ctx_query_take, op_neovex_ctx_query_unique,
+    op_neovex_ctx_paginated_query, op_neovex_ctx_query, op_neovex_ctx_query_collect,
+    op_neovex_ctx_query_first, op_neovex_ctx_query_paginate, op_neovex_ctx_query_take,
+    op_neovex_ctx_query_unique, op_neovex_document_get,
 };
 use self::async_runtime_extension::op_neovex_runtime_extension_call;
 use self::async_services::op_neovex_ctx_service_lookup;
@@ -40,10 +40,10 @@ extension!(
         op_neovex_ctx_mutation,
         op_neovex_ctx_action,
         op_neovex_http_route,
-        op_neovex_ctx_db_get,
-        op_neovex_ctx_db_insert,
-        op_neovex_ctx_db_patch,
-        op_neovex_ctx_db_delete,
+        op_neovex_document_get,
+        op_neovex_document_insert,
+        op_neovex_document_patch,
+        op_neovex_document_delete,
         op_neovex_runtime_extension_call,
         op_neovex_ctx_query_collect,
         op_neovex_ctx_query_take,
