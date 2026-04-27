@@ -473,9 +473,9 @@ Files to update (non-exhaustive):
 - `docs/plans/encryption-at-rest-plan.md`
 - `docs/plans/raw-v8-warm-backend-plan.md`
 - `docs/plans/archive/*.md` (all archived plans)
-- `docs/research/*.md` (all research docs)
-- `docs/prompts/*.md`
-- `docs/security/*.md`
+- `docs/plans/research/*.md` (all research docs)
+- `docs/plans/prompts/*.md`
+- `docs/plans/security/*.md`
 - `docs/architecture/*.md`
 
 ---

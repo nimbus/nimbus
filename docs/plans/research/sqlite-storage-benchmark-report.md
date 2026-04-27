@@ -1,26 +1,19 @@
-# Encryption-at-Rest Embedded Storage Benchmark Report (Plaintext)
-
-Captured via the repo-owned embedded-provider benchmark harness for the
-2026-04-21 evidence bundle summarized in
-[Encryption-at-Rest Benchmark Report](./encryption-at-rest-benchmark-report.md).
+# SQLite Storage Backend Benchmark Report
 
 Generated with:
 
 ```bash
-make bench-embedded-providers \
-  REPORT=docs/research/encryption-at-rest-embedded-plaintext-benchmark-report.md
+make bench-embedded-providers REPORT=docs/plans/research/sqlite-storage-benchmark-report.md
 ```
 
 ## Methodology
 
-- local encryption mode: `disabled`
-- backend order alternates every round inside each workload and lane: round 1 runs `redb -> sqlite`, round 2 runs `sqlite -> redb`, then repeats
+- provider order alternates every round inside each workload and lane: round 1 runs `redb -> sqlite`, round 2 runs `sqlite -> redb`, then repeats
 - steady-state warmup rounds: `2`; steady-state measured rounds: `12`
 - cold-start warmup rounds: `1`; cold-start measured rounds: `10`
-- cold-start read/query/journal lanes seed one canonical on-disk dataset per backend, clone that dataset before each sample, and then time only the fresh open plus first representative execution
+- cold-start read/query/journal lanes seed one canonical on-disk dataset per provider, clone that dataset before each sample, and then time only the fresh open plus first representative execution
 - 95% confidence intervals use a two-sided Student-t interval on mean per-operation latency
 - subscription cold-start includes fresh subscription registration/bootstrap because subscriptions are in-memory and do not survive reopen
-- when encryption is enabled, benchmark-only runs write a 32-byte master key file into each temporary dataset root so cloned cold-start samples reopen through the same manifest-backed key path
 
 ## Configuration
 
@@ -30,9 +23,7 @@ make bench-embedded-providers \
 - journal dataset size: `1000` writes with stream page limit `256`
 - subscription fan-out count: `24`
 - mixed-load tenants: `4` with `120` ops per tenant per sample
-- local encryption posture: `plaintext local files`
-- local encryption notes: uses the current plaintext local-file path with no manifest or DEK unwrap work
-- report path: `docs/research/encryption-at-rest-embedded-plaintext-benchmark-report.md`
+- report path: `docs/plans/research/sqlite-storage-benchmark-report.md`
 
 ## Winner Scorecard
 
@@ -43,35 +34,35 @@ median per-op latency.
 
 | Workload | SQLite vs redb | Winner |
 | --- | ---: | --- |
-| document CRUD throughput | 23.16x | sqlite |
-| point read latency | 1.01x | sqlite |
+| document CRUD throughput | 24.50x | sqlite |
+| point read latency | 1.00x | sqlite |
 | indexed query latency | 1.12x | sqlite |
-| composite indexed query latency | 1.10x | sqlite |
-| durable journal stream latency | 1.03x | sqlite |
-| durable journal bootstrap latency | 0.78x | redb |
-| subscription fan-out latency | 5.61x | sqlite |
-| concurrent multi-tenant mixed read/write load | 15.14x | sqlite |
-| Total lanes won | sqlite 7, redb 1 | sqlite |
+| composite indexed query latency | 1.09x | sqlite |
+| durable journal stream latency | 0.98x | redb |
+| durable journal bootstrap latency | 0.74x | redb |
+| subscription fan-out latency | 6.64x | sqlite |
+| concurrent multi-tenant mixed read/write load | 16.53x | sqlite |
+| Total lanes won | sqlite 6, redb 2 | sqlite |
 
 ### Cold-Start summary
 
 | Workload | SQLite vs redb | Winner |
 | --- | ---: | --- |
-| document CRUD throughput | 20.70x | sqlite |
-| point read latency | 1.46x | sqlite |
-| indexed query latency | 1.29x | sqlite |
-| composite indexed query latency | 1.36x | sqlite |
-| durable journal stream latency | 1.66x | sqlite |
-| durable journal bootstrap latency | 1.44x | sqlite |
-| subscription fan-out latency | 2.00x | sqlite |
-| concurrent multi-tenant mixed read/write load | 13.13x | sqlite |
+| document CRUD throughput | 21.44x | sqlite |
+| point read latency | 1.41x | sqlite |
+| indexed query latency | 1.41x | sqlite |
+| composite indexed query latency | 1.59x | sqlite |
+| durable journal stream latency | 1.60x | sqlite |
+| durable journal bootstrap latency | 1.52x | sqlite |
+| subscription fan-out latency | 2.17x | sqlite |
+| concurrent multi-tenant mixed read/write load | 14.83x | sqlite |
 | Total lanes won | sqlite 8, redb 0 | sqlite |
 
 ### Overall total
 
 | Scope | SQLite lanes won | redb lanes won | Overall winner |
 | --- | ---: | ---: | --- |
-| All measured lanes | 15 | 1 | sqlite |
+| All measured lanes | 14 | 2 | sqlite |
 
 ## document CRUD throughput
 
@@ -83,10 +74,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 8.99 ms | 11.86 ms | 9.42 ms | 1.16 ms | 12.31% | 8.68 ms - 10.16 ms | 111.23 |
-| sqlite | 12 | 388.23 us | 413.98 us | 392.62 us | 17.00 us | 4.33% | 381.81 us - 403.42 us | 2575.81 |
+| redb | 12 | 9.20 ms | 9.68 ms | 9.25 ms | 310.06 us | 3.35% | 9.05 ms - 9.45 ms | 108.64 |
+| sqlite | 12 | 375.76 us | 408.08 us | 385.66 us | 32.71 us | 8.48% | 364.88 us - 406.45 us | 2661.28 |
 
-SQLite vs redb on the steady-state lane: `23.16x` median ops/s, `23.16x` median per-op latency
+SQLite vs redb on the steady-state lane: `24.50x` median ops/s, `24.50x` median per-op latency
 
 ### Cold-Start lane
 
@@ -94,10 +85,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 8.94 ms | 9.21 ms | 9.21 ms | 903.85 us | 9.81% | 8.56 ms - 9.86 ms | 111.84 |
-| sqlite | 10 | 431.86 us | 457.68 us | 437.41 us | 16.59 us | 3.79% | 425.54 us - 449.27 us | 2315.55 |
+| redb | 10 | 9.07 ms | 9.15 ms | 9.04 ms | 111.49 us | 1.23% | 8.96 ms - 9.12 ms | 110.26 |
+| sqlite | 10 | 423.00 us | 440.03 us | 422.76 us | 24.65 us | 5.83% | 405.13 us - 440.39 us | 2364.09 |
 
-SQLite vs redb on the cold-start lane: `20.70x` median ops/s, `20.70x` median per-op latency
+SQLite vs redb on the cold-start lane: `21.44x` median ops/s, `21.44x` median per-op latency
 
 ## point read latency
 
@@ -109,10 +100,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 786.00 ns | 839.00 ns | 795.00 ns | 28.00 ns | 3.55% | 777.00 ns - 813.00 ns | 1272264.63 |
-| sqlite | 12 | 779.00 ns | 806.00 ns | 790.00 ns | 27.00 ns | 3.47% | 772.00 ns - 807.00 ns | 1283697.05 |
+| redb | 12 | 795.00 ns | 814.00 ns | 795.00 ns | 14.00 ns | 1.81% | 786.00 ns - 804.00 ns | 1257861.64 |
+| sqlite | 12 | 794.00 ns | 843.00 ns | 809.00 ns | 38.00 ns | 4.73% | 785.00 ns - 834.00 ns | 1259445.84 |
 
-SQLite vs redb on the steady-state lane: `1.01x` median ops/s, `1.01x` median per-op latency
+SQLite vs redb on the steady-state lane: `1.00x` median ops/s, `1.00x` median per-op latency
 
 ### Cold-Start lane
 
@@ -120,10 +111,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 116.22 us | 121.88 us | 116.07 us | 4.02 us | 3.46% | 113.20 us - 118.95 us | 8604.22 |
-| sqlite | 10 | 79.44 us | 83.42 us | 79.20 us | 3.66 us | 4.62% | 76.58 us - 81.81 us | 12588.12 |
+| redb | 10 | 107.26 us | 115.86 us | 107.14 us | 6.50 us | 6.07% | 102.48 us - 111.79 us | 9323.14 |
+| sqlite | 10 | 75.84 us | 80.98 us | 78.15 us | 7.44 us | 9.52% | 72.83 us - 83.47 us | 13185.83 |
 
-SQLite vs redb on the cold-start lane: `1.46x` median ops/s, `1.46x` median per-op latency
+SQLite vs redb on the cold-start lane: `1.41x` median ops/s, `1.41x` median per-op latency
 
 ## indexed query latency
 
@@ -135,8 +126,8 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 1.25 ms | 1.26 ms | 1.24 ms | 12.53 us | 1.01% | 1.24 ms - 1.25 ms | 803.07 |
-| sqlite | 12 | 1.11 ms | 1.13 ms | 1.11 ms | 18.74 us | 1.69% | 1.10 ms - 1.12 ms | 900.45 |
+| redb | 12 | 1.25 ms | 1.27 ms | 1.24 ms | 18.46 us | 1.48% | 1.23 ms - 1.26 ms | 802.69 |
+| sqlite | 12 | 1.11 ms | 1.15 ms | 1.12 ms | 19.87 us | 1.78% | 1.11 ms - 1.13 ms | 899.15 |
 
 SQLite vs redb on the steady-state lane: `1.12x` median ops/s, `1.12x` median per-op latency
 
@@ -146,10 +137,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 2.47 ms | 2.51 ms | 2.48 ms | 25.51 us | 1.03% | 2.46 ms - 2.49 ms | 405.05 |
-| sqlite | 10 | 1.91 ms | 1.94 ms | 1.92 ms | 24.44 us | 1.28% | 1.90 ms - 1.93 ms | 522.62 |
+| redb | 10 | 2.49 ms | 2.53 ms | 2.48 ms | 58.85 us | 2.38% | 2.43 ms - 2.52 ms | 401.53 |
+| sqlite | 10 | 1.76 ms | 1.83 ms | 1.77 ms | 45.37 us | 2.57% | 1.73 ms - 1.80 ms | 567.30 |
 
-SQLite vs redb on the cold-start lane: `1.29x` median ops/s, `1.29x` median per-op latency
+SQLite vs redb on the cold-start lane: `1.41x` median ops/s, `1.41x` median per-op latency
 
 ### SQLite EXPLAIN QUERY PLAN
 
@@ -176,10 +167,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 682.83 us | 694.47 us | 682.14 us | 16.83 us | 2.47% | 671.45 us - 692.83 us | 1464.50 |
-| sqlite | 12 | 619.47 us | 648.02 us | 623.57 us | 17.86 us | 2.86% | 612.22 us - 634.91 us | 1614.27 |
+| redb | 12 | 682.02 us | 694.21 us | 720.89 us | 155.70 us | 21.60% | 621.97 us - 819.82 us | 1466.23 |
+| sqlite | 12 | 625.72 us | 640.50 us | 628.25 us | 9.12 us | 1.45% | 622.46 us - 634.04 us | 1598.16 |
 
-SQLite vs redb on the steady-state lane: `1.10x` median ops/s, `1.10x` median per-op latency
+SQLite vs redb on the steady-state lane: `1.09x` median ops/s, `1.09x` median per-op latency
 
 ### Cold-Start lane
 
@@ -187,10 +178,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 1.56 ms | 1.61 ms | 1.56 ms | 43.83 us | 2.80% | 1.53 ms - 1.59 ms | 640.22 |
-| sqlite | 10 | 1.15 ms | 1.18 ms | 1.15 ms | 29.56 us | 2.58% | 1.13 ms - 1.17 ms | 871.36 |
+| redb | 10 | 1.75 ms | 1.80 ms | 1.75 ms | 34.70 us | 1.98% | 1.73 ms - 1.78 ms | 573.03 |
+| sqlite | 10 | 1.10 ms | 1.20 ms | 1.10 ms | 90.09 us | 8.22% | 1.03 ms - 1.16 ms | 912.70 |
 
-SQLite vs redb on the cold-start lane: `1.36x` median ops/s, `1.36x` median per-op latency
+SQLite vs redb on the cold-start lane: `1.59x` median ops/s, `1.59x` median per-op latency
 
 ### SQLite EXPLAIN QUERY PLAN
 
@@ -217,10 +208,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 658.94 us | 678.29 us | 652.31 us | 35.71 us | 5.47% | 629.63 us - 675.00 us | 1517.59 |
-| sqlite | 12 | 636.90 us | 664.71 us | 642.51 us | 24.64 us | 3.83% | 626.86 us - 658.16 us | 1570.12 |
+| redb | 12 | 619.62 us | 662.42 us | 630.01 us | 24.04 us | 3.82% | 614.74 us - 645.29 us | 1613.88 |
+| sqlite | 12 | 634.81 us | 652.08 us | 645.27 us | 29.54 us | 4.58% | 626.50 us - 664.04 us | 1575.27 |
 
-SQLite vs redb on the steady-state lane: `1.03x` median ops/s, `1.03x` median per-op latency
+SQLite vs redb on the steady-state lane: `0.98x` median ops/s, `0.98x` median per-op latency
 
 ### Cold-Start lane
 
@@ -228,10 +219,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 12.79 ms | 13.52 ms | 12.79 ms | 796.68 us | 6.23% | 12.22 ms - 13.36 ms | 78.21 |
-| sqlite | 10 | 7.68 ms | 8.04 ms | 7.68 ms | 378.30 us | 4.93% | 7.41 ms - 7.95 ms | 130.19 |
+| redb | 10 | 15.24 ms | 16.81 ms | 15.07 ms | 1.49 ms | 9.90% | 14.00 ms - 16.14 ms | 65.60 |
+| sqlite | 10 | 9.54 ms | 10.66 ms | 9.70 ms | 1.12 ms | 11.51% | 8.90 ms - 10.50 ms | 104.82 |
 
-SQLite vs redb on the cold-start lane: `1.66x` median ops/s, `1.66x` median per-op latency
+SQLite vs redb on the cold-start lane: `1.60x` median ops/s, `1.60x` median per-op latency
 
 ## durable journal bootstrap latency
 
@@ -243,10 +234,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 543.42 us | 570.42 us | 539.20 us | 29.54 us | 5.48% | 520.44 us - 557.97 us | 1840.21 |
-| sqlite | 12 | 694.06 us | 715.25 us | 698.88 us | 25.37 us | 3.63% | 682.76 us - 715.00 us | 1440.79 |
+| redb | 12 | 525.54 us | 544.75 us | 527.43 us | 12.75 us | 2.42% | 519.33 us - 535.53 us | 1902.80 |
+| sqlite | 12 | 710.38 us | 773.67 us | 719.62 us | 38.63 us | 5.37% | 695.08 us - 744.17 us | 1407.71 |
 
-SQLite vs redb on the steady-state lane: `0.78x` median ops/s, `0.78x` median per-op latency
+SQLite vs redb on the steady-state lane: `0.74x` median ops/s, `0.74x` median per-op latency
 
 ### Cold-Start lane
 
@@ -254,10 +245,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 15.12 ms | 16.51 ms | 14.86 ms | 1.78 ms | 11.98% | 13.58 ms - 16.13 ms | 66.14 |
-| sqlite | 10 | 10.52 ms | 10.85 ms | 10.41 ms | 1.80 ms | 17.27% | 9.13 ms - 11.70 ms | 95.03 |
+| redb | 10 | 14.20 ms | 15.54 ms | 14.29 ms | 1.29 ms | 9.00% | 13.37 ms - 15.21 ms | 70.42 |
+| sqlite | 10 | 9.35 ms | 10.49 ms | 9.51 ms | 1.09 ms | 11.48% | 8.73 ms - 10.29 ms | 106.94 |
 
-SQLite vs redb on the cold-start lane: `1.44x` median ops/s, `1.44x` median per-op latency
+SQLite vs redb on the cold-start lane: `1.52x` median ops/s, `1.52x` median per-op latency
 
 ## subscription fan-out latency
 
@@ -269,10 +260,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 385.58 us | 451.68 us | 396.19 us | 32.12 us | 8.11% | 375.79 us - 416.60 us | 2593.52 |
-| sqlite | 12 | 68.70 us | 99.01 us | 71.09 us | 22.48 us | 31.61% | 56.81 us - 85.37 us | 14555.83 |
+| redb | 12 | 410.31 us | 434.25 us | 402.75 us | 27.83 us | 6.91% | 385.07 us - 420.44 us | 2437.21 |
+| sqlite | 12 | 61.75 us | 73.31 us | 61.20 us | 11.40 us | 18.63% | 53.95 us - 68.44 us | 16195.12 |
 
-SQLite vs redb on the steady-state lane: `5.61x` median ops/s, `5.61x` median per-op latency
+SQLite vs redb on the steady-state lane: `6.64x` median ops/s, `6.64x` median per-op latency
 
 ### Cold-Start lane
 
@@ -280,10 +271,10 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 2.08 ms | 2.21 ms | 2.11 ms | 116.82 us | 5.53% | 2.03 ms - 2.19 ms | 481.24 |
-| sqlite | 10 | 1.04 ms | 1.09 ms | 1.04 ms | 49.29 us | 4.74% | 1.00 ms - 1.07 ms | 960.12 |
+| redb | 10 | 2.09 ms | 2.21 ms | 2.07 ms | 136.81 us | 6.61% | 1.97 ms - 2.17 ms | 478.52 |
+| sqlite | 10 | 964.90 us | 1.03 ms | 935.53 us | 116.46 us | 12.45% | 852.22 us - 1.02 ms | 1036.38 |
 
-SQLite vs redb on the cold-start lane: `2.00x` median ops/s, `2.00x` median per-op latency
+SQLite vs redb on the cold-start lane: `2.17x` median ops/s, `2.17x` median per-op latency
 
 ## concurrent multi-tenant mixed read/write load
 
@@ -295,10 +286,10 @@ reuses preseeded services and alternates backend order on every round so both ba
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 12 | 2.98 ms | 3.13 ms | 2.99 ms | 79.59 us | 2.66% | 2.94 ms - 3.04 ms | 336.11 |
-| sqlite | 12 | 196.56 us | 215.26 us | 195.14 us | 18.16 us | 9.31% | 183.60 us - 206.68 us | 5087.38 |
+| redb | 12 | 3.13 ms | 3.28 ms | 3.15 ms | 111.70 us | 3.55% | 3.08 ms - 3.22 ms | 319.82 |
+| sqlite | 12 | 189.13 us | 213.58 us | 191.78 us | 16.82 us | 8.77% | 181.10 us - 202.47 us | 5287.34 |
 
-SQLite vs redb on the steady-state lane: `15.14x` median ops/s, `15.14x` median per-op latency
+SQLite vs redb on the steady-state lane: `16.53x` median ops/s, `16.53x` median per-op latency
 
 ### Cold-Start lane
 
@@ -306,7 +297,7 @@ measures a fresh service/runtime plus the first representative workload executio
 
 | Backend | Samples | Median per op | P95 per op | Mean per op | Stddev per op | CV | 95% CI of mean | Median ops/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| redb | 10 | 2.96 ms | 3.07 ms | 3.26 ms | 959.47 us | 29.48% | 2.57 ms - 3.94 ms | 337.47 |
-| sqlite | 10 | 225.61 us | 266.84 us | 230.56 us | 29.66 us | 12.86% | 209.35 us - 251.78 us | 4432.35 |
+| redb | 10 | 3.36 ms | 3.62 ms | 3.39 ms | 148.38 us | 4.37% | 3.29 ms - 3.50 ms | 297.78 |
+| sqlite | 10 | 226.52 us | 243.47 us | 225.91 us | 18.33 us | 8.11% | 212.80 us - 239.03 us | 4414.66 |
 
-SQLite vs redb on the cold-start lane: `13.13x` median ops/s, `13.13x` median per-op latency
+SQLite vs redb on the cold-start lane: `14.83x` median ops/s, `14.83x` median per-op latency

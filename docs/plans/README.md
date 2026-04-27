@@ -490,5 +490,5 @@ completed plans unless explicitly asked to review historical work.
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
   before starting a new roadmap item inside the owning plan.
-- Use `docs/research/` for north-star architecture and background research, not
-  execution sequencing.
+- Use `docs/plans/research/` for north-star architecture and background research,
+  not execution sequencing.

@@ -27,7 +27,7 @@ release artifact. The binary must be built for linux/amd64 and linux/arm64.
   **Bug:** workflow pins `CRUN_VERSION: "1.22"` but scripts target 1.27.
 
 **Documentation:**
-- `docs/research/krun-ci-build-and-distribution.md` — full build process,
+- `docs/plans/research/krun-ci-build-and-distribution.md` — full build process,
   deps, timing estimates, validated on Debian 13
 
 ### Pinned versions
@@ -109,7 +109,7 @@ build needed.
 
 ### Reference files to read first
 1. `CLAUDE.md` — repo rules and verification commands
-2. `docs/research/krun-ci-build-and-distribution.md` — full build walkthrough
+2. `docs/plans/research/krun-ci-build-and-distribution.md` — full build walkthrough
 3. `scripts/build-neovex-crun.sh` — existing build script
 4. `scripts/verify-neovex-crun-fedora-userspace.sh` — Fedora container build pattern
 5. `.github/workflows/verify-neovex-crun-patch.yml` — existing CI (verify only)

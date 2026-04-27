@@ -5,7 +5,7 @@ Generated with:
 ```bash
 NEOVEX_SQLITE_URL='http://127.0.0.1:18080' \
 NEOVEX_SQLITE_ADMIN_URL='http://127.0.0.1:18081' \
-make bench-sqlite-replica-provider REPORT=docs/research/sqlite-replica-provider-benchmark-report.md
+make bench-sqlite-replica-provider REPORT=docs/plans/research/sqlite-replica-provider-benchmark-report.md
 ```
 
 ## Methodology
@@ -25,7 +25,7 @@ make bench-sqlite-replica-provider REPORT=docs/research/sqlite-replica-provider-
 - indexed queries per sample: `12` over `1000` seeded documents
 - mixed-load tenants: `2` with `40` ops per tenant per sample
 - peer catch-up timeout: `6` with `25.00 ms` polling interval
-- report path: `docs/research/sqlite-replica-provider-benchmark-report.md`
+- report path: `docs/plans/research/sqlite-replica-provider-benchmark-report.md`
 
 ## SQLite Contrast Scorecard
 

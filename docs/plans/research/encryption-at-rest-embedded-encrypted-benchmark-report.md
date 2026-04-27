@@ -9,7 +9,7 @@ Generated with:
 ```bash
 make bench-embedded-providers \
   ENCRYPTION=temp-master-key-file \
-  REPORT=docs/research/encryption-at-rest-embedded-encrypted-benchmark-report.md
+  REPORT=docs/plans/research/encryption-at-rest-embedded-encrypted-benchmark-report.md
 ```
 
 ## Methodology
@@ -33,7 +33,7 @@ make bench-embedded-providers \
 - mixed-load tenants: `4` with `120` ops per tenant per sample
 - local encryption posture: `manifest-backed local encryption`
 - local encryption notes: enables the real startup path with a benchmark-only master key file so every local database still uses a manifest-backed random DEK
-- report path: `docs/research/encryption-at-rest-embedded-encrypted-benchmark-report.md`
+- report path: `docs/plans/research/encryption-at-rest-embedded-encrypted-benchmark-report.md`
 
 ## Winner Scorecard
 

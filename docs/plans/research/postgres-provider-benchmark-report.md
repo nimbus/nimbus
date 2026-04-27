@@ -3,7 +3,7 @@
 Generated with:
 
 ```bash
-NEOVEX_BENCH_POSTGRES_URL='<connection-string>' make bench-postgres-provider REPORT=docs/research/postgres-provider-benchmark-report.md
+NEOVEX_BENCH_POSTGRES_URL='<connection-string>' make bench-postgres-provider REPORT=docs/plans/research/postgres-provider-benchmark-report.md
 ```
 
 ## Methodology
@@ -30,7 +30,7 @@ NEOVEX_BENCH_POSTGRES_URL='<connection-string>' make bench-postgres-provider REP
 - notification model assumption: one additional Postgres listener connection per live service process, outside the measured pool
 - control-plane assumption: tenant persistence may be Postgres-backed while the global usage/control path remains local redb
 - tenant-lifecycle sqlite contrast uses same-service open verification because the embedded redb control plane is single-open within one process; the Postgres lane uses a distinct peer service
-- report path: `docs/research/postgres-provider-benchmark-report.md`
+- report path: `docs/plans/research/postgres-provider-benchmark-report.md`
 
 ## SQLite Contrast Scorecard
 

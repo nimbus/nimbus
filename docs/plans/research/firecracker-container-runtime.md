@@ -212,7 +212,7 @@ since v1.0.0 (SemVer guaranteed).
 As of March 2026, libkrun can be used as a **direct Rust crate dependency**
 (no FFI needed) — a commit added `lib` crate type alongside `cdylib`.
 
-**See `docs/research/libkrun-evaluation.md` for full analysis.**
+**See `docs/plans/research/libkrun-evaluation.md` for full analysis.**
 
 **Unique features:** virtiofs (built-in), TSI (Transparent Socket
 Impersonation — guest sockets transparently proxied through host, no TAP/

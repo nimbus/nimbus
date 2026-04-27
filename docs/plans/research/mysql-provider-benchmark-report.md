@@ -3,7 +3,7 @@
 Generated with:
 
 ```bash
-NEOVEX_MYSQL_URL='<connection-string>' make bench-mysql-provider REPORT=docs/research/mysql-provider-benchmark-report.md
+NEOVEX_MYSQL_URL='<connection-string>' make bench-mysql-provider REPORT=docs/plans/research/mysql-provider-benchmark-report.md
 ```
 
 ## Methodology
@@ -30,7 +30,7 @@ NEOVEX_MYSQL_URL='<connection-string>' make bench-mysql-provider REPORT=docs/res
 - background poll model assumption: no dedicated listener connection is measured; MySQL catch-up uses the provider poll worker outside the measured workload
 - control-plane assumption: tenant persistence may be MySQL-backed while the global usage/control path remains local redb
 - tenant-lifecycle sqlite contrast uses same-service open verification because the embedded redb control plane is single-open within one process; the MySQL lane uses a distinct peer service
-- report path: `docs/research/mysql-provider-benchmark-report.md`
+- report path: `docs/plans/research/mysql-provider-benchmark-report.md`
 
 ## SQLite Contrast Scorecard
 
