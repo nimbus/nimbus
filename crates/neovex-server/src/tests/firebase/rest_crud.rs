@@ -1,7 +1,42 @@
 use super::*;
 
+fn workspace_firebase_selftest_dependencies_available(repo_root: &Path) -> bool {
+    let root_node_modules = repo_root.join("node_modules");
+    let package_node_modules = repo_root.join("packages/firebase/node_modules");
+    let has_dependency = |node_modules: &Path, scoped_segments: &[&str]| {
+        let mut path = node_modules.to_path_buf();
+        for segment in scoped_segments {
+            path.push(segment);
+        }
+        path.is_dir()
+    };
+
+    repo_root
+        .join("packages/firebase/src/selftest.mjs")
+        .is_file()
+        && (has_dependency(&root_node_modules, &["esbuild"])
+            || has_dependency(&package_node_modules, &["esbuild"]))
+        && (has_dependency(&root_node_modules, &["@connectrpc", "connect"])
+            || has_dependency(&package_node_modules, &["@connectrpc", "connect"]))
+        && (has_dependency(&root_node_modules, &["@connectrpc", "connect-web"])
+            || has_dependency(&package_node_modules, &["@connectrpc", "connect-web"]))
+        && (has_dependency(&root_node_modules, &["@bufbuild", "protobuf"])
+            || has_dependency(&package_node_modules, &["@bufbuild", "protobuf"]))
+}
+
 #[tokio::test]
 async fn firebase_sdk_crud_selftest_smoke() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root should exist");
+    if !workspace_firebase_selftest_dependencies_available(repo_root) {
+        eprintln!(
+            "skipping firebase SDK smoke selftest because JS workspace dependencies are unavailable"
+        );
+        return;
+    }
+
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
@@ -17,10 +52,6 @@ async fn firebase_sdk_crud_selftest_smoke() {
     ))
     .await;
 
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root should exist");
     let output = Command::new("node")
         .current_dir(repo_root)
         .arg("./packages/firebase/src/selftest.mjs")
