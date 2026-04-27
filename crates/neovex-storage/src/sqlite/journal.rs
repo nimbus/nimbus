@@ -1,6 +1,6 @@
 use super::*;
-use neovex_core::{DocumentLocator, ResourcePathBinding};
 use crate::keys::{document_path_key, resource_locator_key};
+use neovex_core::{DocumentLocator, ResourcePathBinding};
 
 impl SqliteTenantStore {
     pub fn metadata_blob(&self, key: &str) -> Result<Option<Vec<u8>>> {
