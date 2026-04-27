@@ -123,7 +123,7 @@ Neovex speaks the protocols of platforms developers already use, so migration is
 | **Convex** | `convex` | Convex WebSocket + HTTP | [docs/adapters/convex.md](docs/adapters/convex.md) |
 | **Firebase / Firestore** | `@neovex/firebase` | REST, gRPC-Web, WebSocket Listen | [docs/adapters/firebase.md](docs/adapters/firebase.md) |
 | **Cloud Functions** | *(server-side)* | Firebase v2 + Functions Framework | [docs/adapters/cloud-functions.md](docs/adapters/cloud-functions.md) |
-| **MongoDB** | `@neovex/mongodb` | MongoDB Wire Protocol | [docs/adapters/mongodb.md](docs/adapters/mongodb.md) |
+| **MongoDB** | `@neovex/mongodb` | MongoDB Wire Protocol | [docs/adapters/mongodb/](docs/adapters/mongodb/) |
 | **Native HTTP/WS** | `neovex` | REST + WebSocket | [docs/adapters/native.md](docs/adapters/native.md) |
 
 All adapters share the same engine -- every mutation flows through the same write path, the same storage transactions, and the same subscription fan-out. Choosing an adapter is a client-side decision, not a server-side fork.
@@ -205,7 +205,7 @@ To build from source, see [build from source](#build-from-source).
 | [Convex adapter](docs/adapters/convex.md) | Convex-compatible queries, mutations, React hooks |
 | [Firebase adapter](docs/adapters/firebase.md) | Firestore REST/gRPC-Web/WebSocket Listen |
 | [Cloud Functions adapter](docs/adapters/cloud-functions.md) | Firebase v2 triggers and HTTP handlers |
-| [MongoDB adapter](docs/adapters/mongodb.md) | MongoDB wire protocol compatibility |
+| [MongoDB adapter](docs/adapters/mongodb/) | MongoDB wire protocol compatibility |
 | [Native adapter](docs/adapters/native.md) | Direct REST and WebSocket API |
 | [Storage backends](docs/guides/storage-backends.md) | Choosing and configuring SQLite, Postgres, MySQL, libSQL |
 | [HTTP & WebSocket API](docs/reference/http-api.md) | Full route catalog |

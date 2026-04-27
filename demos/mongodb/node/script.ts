@@ -1,4 +1,5 @@
-import { connectNeovex } from "@neovex/mongodb";
+import { MongoClient } from "mongodb";
+import { uri } from "@neovex/mongodb";
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -13,7 +14,8 @@ const port = process.env.NEOVEX_MONGODB_PORT
 async function main() {
   console.log(`Connecting to Neovex MongoDB at ${host}:${port}...`);
 
-  const client = await connectNeovex({ host, port });
+  const client = new MongoClient(uri({ host, port }));
+  await client.connect();
 
   try {
     const db = client.db("demo");

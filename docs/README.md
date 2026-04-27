@@ -12,7 +12,7 @@ and where to go next.
   Firestore-compatible REST, gRPC-Web, and WebSocket Listen surface
 - [Cloud Functions adapter](adapters/cloud-functions.md):
   Firebase v2 triggers, HTTP handlers, and standalone Functions Framework
-- [MongoDB adapter](adapters/mongodb.md):
+- [MongoDB adapter](adapters/mongodb/):
   MongoDB wire protocol compatibility with stock drivers
 - [Native HTTP/WS adapter](adapters/native.md):
   Direct REST and WebSocket API with the `neovex` SDK

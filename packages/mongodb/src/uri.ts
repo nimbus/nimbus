@@ -1,4 +1,4 @@
-export interface ConnectionStringOptions {
+export interface UriOptions {
   host?: string;
   port?: number;
   database?: string;
@@ -9,9 +9,7 @@ export interface ConnectionStringOptions {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 27017;
 
-export function buildConnectionString(
-  options: ConnectionStringOptions = {},
-): string {
+export function uri(options: UriOptions = {}): string {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const db = options.database ?? "default";
