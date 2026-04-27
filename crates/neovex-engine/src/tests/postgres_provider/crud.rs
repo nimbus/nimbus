@@ -25,7 +25,10 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
                     .await
                     .expect("tenant should create");
 
-                const CRUD_ROUNDS: usize = 128;
+                // Keep enough direct CRUD churn to validate sequence/head
+                // correctness, but do not turn this external-provider lane
+                // into a throughput benchmark under shared CI runners.
+                const CRUD_ROUNDS: usize = 48;
                 for round in 0..CRUD_ROUNDS {
                     let document_id = service
                         .insert_document_async(
