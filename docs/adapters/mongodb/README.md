@@ -4,8 +4,8 @@
 
 The MongoDB adapter is a wire protocol listener built into the Neovex server.
 It speaks the MongoDB binary protocol (OP_MSG) natively, so any standard
-MongoDB client -- `mongosh`, Compass, the `mongodb` npm package, `pymongo`,
-the Go driver, etc. -- can connect to Neovex as if it were a MongoDB instance.
+MongoDB client can connect to Neovex as if it were a MongoDB instance.
+See [Compatible Drivers](drivers.md) for the full list by language.
 
 **Data never touches MongoDB.** Every operation flows through the Neovex
 engine and lands in whichever storage backend you configured (redb, SQLite,
@@ -96,7 +96,9 @@ confusing timeout. `uri()` always includes it, along with sensible defaults
 (`127.0.0.1:27017`, database `"default"`).
 
 You do not need the helper. The stock `mongodb` driver works directly as long
-as you include `?directConnection=true` in your connection string.
+as you include `?directConnection=true` in your connection string. See
+[Examples](examples.md) for CRUD, aggregation, transactions, and
+authentication patterns in multiple languages.
 
 ## Project Layout
 
