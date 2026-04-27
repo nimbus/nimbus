@@ -32,6 +32,7 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
                  │   │  ┌─ Adapters ──────────────────────────────────────────┐  │  │
                  │   │  │ Convex · Firebase · Cloud Functions · MongoDB       │  │  │
                  │   │  └───────┬─────────────────┬──────────────────┬────────┘  │  │
+                 │   │          │                 │                  │           │  │
                  │   │          ▼                 ▼                  ▼           │  │
   (optional)     │   │  ┌─ Storage ────┐  ┌─ Compute ────┐  ┌─ Networking ────┐  │  │
 ┌─ DB Conn ─┐    │   │  │ • SQLite     │  │ • V8 Runtime │  │ • HTTP / WS     │  │  │
@@ -39,8 +40,10 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 │ MySQL     │    │   │  │ • redb       │  │ • Crons      │  │ • Auth          │  │  │
 └───────────┘    │   │  └──────────────┘  └───────┬──────┘  └─────────────────┘  │  │
                  │   └────────────────────────────┼──────────────────────────────┘  │
+                 │                                │                                 │
                  │                                ▼                                 │
                  │  ┌─ krun (compose.yml · programtic) ──────────────────────────┐  │
+                 │  │                             │                              │  │
                  │  │          ┌──────────────────┼─────────────────┐            │  │
                  │  │          ▼                  ▼                 ▼            │  │
                  │  │   ┌─ MicroVM #1 ─┐  ┌─ MicroVM #2 ─┐  ┌─ MicroVM #3 ─┐     │  │ 
