@@ -20,19 +20,22 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 ---
 
 ```
-                        Apps & Agents
-                              │
-                              ▼
-        ┌─ neovex ────────────────────────────────┐
-        │                                          │
-        │   Storage    ·  Compute   ·  Networking  │
-        │                                          │
-        │   SQLite       V8 Runtime    REST / WS   │
-        │   Postgres     Scheduling    Convex      │
-        │   MySQL        Cron          Firebase    │
-        │   libSQL                     MongoDB     │
-        │                                          │
-        └─────────── single Rust binary ───────────┘
+                       Apps & Agents
+                             │
+                             ▼
+  ┌─ neovex ───────────────────────────────────────────┐
+  │                                                     │
+  │  Native · Convex · Firebase · Functions · MongoDB   │
+  │                                                     │
+  │  ─────────────────────────────────────────────────  │
+  │                                                     │
+  │  Storage        ·   Compute       ·   Networking    │
+  │  SQLite            V8 Runtime         HTTP / WS     │
+  │  Postgres          Scheduling         Real-time     │
+  │  MySQL             Cron               Auth          │
+  │  libSQL                                             │
+  │                                                     │
+  └───────────────── single Rust binary ────────────────┘
 ```
 
 Neovex packages the three backend primitives -- storage, compute, and networking -- into a single binary you run on your own infrastructure. It gives you the developer experience of a managed BaaS -- document storage, server-side JavaScript, real-time subscriptions, durable scheduling -- without the SaaS lock-in, the per-request billing, or the *"this is a dev tool, don't run it in production"* disclaimer that comes with most self-hosted alternatives.
