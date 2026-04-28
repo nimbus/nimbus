@@ -18,6 +18,10 @@ neovex codegen [--app PATH]
 ```
 
 ```bash
+neovex init [DIRECTORY] [--template backend] [--source-root convex]
+```
+
+```bash
 neovex token rotate
 ```
 
@@ -133,7 +137,8 @@ cargo run -p neovex-bin -- start [flags]
 Current command taxonomy:
 
 - `neovex dev`
-  shipped local development server with one-shot startup codegen, debounced
+  shipped local development server with auto-scaffold when no source root
+  exists, auto-tenant creation (`demo`), one-shot startup codegen, debounced
   watched codegen reruns, local generation activation, and development
   persistence defaults
 - `neovex deploy`
@@ -141,6 +146,11 @@ Current command taxonomy:
   activating generated app artifacts on a running server
 - `neovex codegen`
   shipped first-party code generation for `neovex/` or `convex/` source roots
+- `neovex init`
+  shipped project scaffold command; creates a starter project with schema,
+  example functions, `package.json`, `tsconfig.json`, and `.gitignore` in the
+  target directory. Skips existing files without overwriting. `neovex dev`
+  calls the same scaffold logic automatically when no source root exists.
 - `neovex token rotate`
   shipped local admin token lifecycle command for rotating the localhost server
   access token using live-server semantics when a server is discoverable and
@@ -287,6 +297,13 @@ watch-loop slice it:
 
 - auto-detects the app directory from the current directory by looking for a
   `neovex/` or `convex/` source root, falling back to the current directory
+- when no source root exists and `--skip-codegen` is not set, scaffolds a
+  starter project (schema, example functions, `package.json`, `tsconfig.json`,
+  `.gitignore`) using the same logic as `neovex init`, then prompts for
+  `npm install` if `node_modules/convex` is missing
+- auto-creates a `demo` tenant on startup so a Convex client can connect to
+  `http://localhost:3210/convex/demo` immediately; silently reuses the tenant
+  on subsequent runs
 - runs one initial codegen pass unless `--skip-codegen` is set
 - starts the same local server path as `neovex start`
 - watches the selected `neovex/` or `convex/` source root for source changes
@@ -318,6 +335,43 @@ Flags:
 | `--skip-codegen` | `false` | skip the initial codegen pass and use already-generated artifacts |
 | `--tail-logs` | `pause-on-sync` | accepted log-tail mode (`always`, `pause-on-sync`, or `disable`); live runtime log multiplexing remains pending runtime log plumbing |
 | `--compose-file` | unset | optional explicit ordered Compose path list for local service dependencies; repeat the flag to merge overlays in order. When omitted, `dev` uses `COMPOSE_FILE` if set, then the shared cwd/parent discovery rule |
+
+## Init Command
+
+`neovex init` scaffolds a new Neovex project in the target directory. It
+creates starter files without overwriting anything that already exists:
+
+- `convex/schema.ts` — messages table with author and body fields
+- `convex/messages.ts` — list query and send mutation
+- `package.json` — project dependencies (`convex`, `@neovex/codegen`)
+- `tsconfig.json` — TypeScript configuration for ESNext/bundler
+- `.gitignore` — ignores `.neovex/` and `node_modules/`
+
+If the target directory has an existing `convex/` or `neovex/` directory, `init`
+exits with an error and suggests `neovex dev` instead.
+
+Flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `DIRECTORY` | `.` | target directory (created if it does not exist) |
+| `--template` | `backend` | scaffold template to use |
+| `--source-root` | `convex` | source root directory name; `neovex` is experimental and not yet supported |
+
+Examples:
+
+```bash
+neovex init my-app     # scaffold into ./my-app/
+cd my-app
+npm install
+neovex dev
+```
+
+```bash
+neovex init             # scaffold into the current directory
+npm install
+neovex dev
+```
 
 ## Codegen Behavior
 
