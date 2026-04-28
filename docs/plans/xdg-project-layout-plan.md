@@ -9,7 +9,7 @@ establishes the deployment-target model that `neovex deploy` will use.
 ## Status
 
 - **Plan status:** `in_progress`
-- **Control item:** `H2`
+- **Control item:** `H3`
 - **Status values:** `pending`, `in_progress`, `done`, `blocked`
 - **Primary source of truth:** this file plus the current git worktree.
 - **Checkpoint rule:** every work session that changes implementation state
@@ -413,7 +413,7 @@ rather than adding compatibility shims.
 |-------|--------|-------|-----------|
 | P1: Shared dirs module | `done` | H1 | `dirs.rs` module with `global_config_dir()` and `deployment_slug()` |
 | P2: Deployment identity | `done` | H2 | `neovex dev` writes `NEOVEX_DEPLOYMENT=local:<slug>` to `.env.local` |
-| P3: License migration | `pending` | H3 | License default path is `~/.config/neovex/license.json` |
+| P3: License migration | `done` | H3 | License default path is `~/.config/neovex/license.json` |
 | P4: Gitignore + docs | `pending` | H4 | `.env.local` in gitignore templates, docs updated |
 
 ## Roadmap Items
@@ -434,7 +434,7 @@ rather than adding compatibility shims.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H3 | `pending` | H1 | License default resolution moved to `neovex-bin`: in `start/boot.rs:47`, resolves the default license path via `dirs::global_config_dir().join("license.json")` when `command.license_file` is `None` and `NEOVEX_LICENSE_FILE` is not set. Passes the resolved path to `LicenseState::load()`. `DEFAULT_LICENSE_PATH` removed from `neovex-server/src/license/mod.rs:15`. Default-path fallback removed from `neovex-server/src/license/loading.rs:43-46` so the server crate has no XDG knowledge — it receives an explicit path or returns `community()`. `start/mod.rs:143` help text updated to say `~/.config/neovex/license.json`. `ARCHITECTURE.md:693` updated. Existing license tests pass. |
+| H3 | `done` | H1 | License default resolution moved to `neovex-bin`: in `start/boot.rs:47`, resolves the default license path via `dirs::global_config_dir().join("license.json")` when `command.license_file` is `None` and `NEOVEX_LICENSE_FILE` is not set. Passes the resolved path to `LicenseState::load()`. `DEFAULT_LICENSE_PATH` removed from `neovex-server/src/license/mod.rs:15`. Default-path fallback removed from `neovex-server/src/license/loading.rs:43-46` so the server crate has no XDG knowledge — it receives an explicit path or returns `community()`. `start/mod.rs:143` help text updated to say `~/.config/neovex/license.json`. `ARCHITECTURE.md:693` updated. Existing license tests pass. |
 
 ### P4 Work Queue: Gitignore And Docs
 
@@ -580,3 +580,4 @@ by this plan's `global_config_dir()`. Not in scope here.
 | — | — | — | Plan created | — |
 | 2026-04-28 | H1 | `done` | Created `crates/neovex-bin/src/dirs.rs` with `global_config_dir()` (XDG_CONFIG_HOME + HOME fallback), `deployment_slug()` (SHA-256 canonical path, 8 hex chars, sanitized dir name), `sanitize_dir_name()` (strip non-alphanumeric except hyphens, lowercase, empty→"app"). Added `mod dirs` to `main.rs`. Files: `dirs.rs` (new), `main.rs` (mod added). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dirs::`: 14 passed, 0 failed (5 consecutive parallel runs, no races). `cargo test -p neovex-bin`: 380 passed, 0 failed. |
 | 2026-04-28 | H2 | `done` | Updated `dev.rs`: added `write_env_local_deployment()` handling 4 `.env.local` states (absent, no var, correct value, different value); added `deployment_slug` field to `DevPlan`; `resolve_dev_plan` computes slug via `dirs::deployment_slug()`; dev banner shows `Deployment: local:<slug>` line with aligned column widths; removed `#[allow(dead_code)]` from `main.rs` `mod dirs`. Files: `dev.rs` (modified), `main.rs` (allow removed), `dirs.rs` (allow on `global_config_dir`). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dev::tests::env_local`: 6 passed, 0 failed. `cargo test -p neovex-bin -- dev::tests::dev_banner_includes_deployment_line`: 1 passed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |
+| 2026-04-28 | H3 | `done` | Moved license default from `.neovex/license.json` to `~/.config/neovex/license.json`. Added `resolve_license_path()` in `start/boot.rs` (explicit → env var → XDG default). Removed `DEFAULT_LICENSE_PATH` from `neovex-server/license/mod.rs`. Removed default-path fallback from `loading.rs`. Removed `DefaultPath` variant from `LicenseSourceKind` enum. Removed unused `PathBuf` import from `license/mod.rs`. Updated re-exports in `neovex-server/lib.rs` and `neovex/lib.rs`. Updated help text in `start/mod.rs`. Updated `ARCHITECTURE.md:693`. Removed `#[allow(dead_code)]` from `dirs.rs::global_config_dir`. | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin -p neovex-server -p neovex --all-targets -- -D warnings`: clean. `cargo test -p neovex-server -- license`: 11 passed, 0 failed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |

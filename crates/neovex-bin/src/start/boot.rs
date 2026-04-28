@@ -20,6 +20,7 @@ use crate::compose::discovery::{
 };
 use crate::compose::load_host_backed_sandbox_service_manager_for_selection;
 use crate::deploy::resolve_deploy_app_dir;
+use crate::dirs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ResolvedStartAppDir {
@@ -44,7 +45,8 @@ pub(crate) async fn run_start_command(
     let resolved_app_dir = resolve_start_app_dir(&command)?;
     run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
-    let license_state = LicenseState::load(command.license_file.as_deref())?;
+    let license_file = resolve_license_path(command.license_file.as_deref());
+    let license_state = LicenseState::load(license_file.as_deref())?;
     let license_snapshot = license_state.snapshot();
     let deploy_admin_enabled =
         command.deploy_admin_token.is_some() || std::env::var_os("NEOVEX_DEPLOY_TOKEN").is_some();
@@ -453,4 +455,16 @@ fn cloud_functions_manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) ->
             app_dir.display()
         )
     }
+}
+
+fn resolve_license_path(explicit: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        return Some(path.to_path_buf());
+    }
+    if std::env::var_os(neovex::LICENSE_FILE_ENV).is_some() {
+        return None;
+    }
+    let config_dir = dirs::global_config_dir().ok()?;
+    let default_path = config_dir.join("license.json");
+    default_path.exists().then_some(default_path)
 }

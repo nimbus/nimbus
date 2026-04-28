@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use neovex_engine::MonthlyActiveUsersSnapshot;
@@ -12,7 +12,6 @@ mod snapshot;
 #[cfg(test)]
 mod tests;
 
-pub const DEFAULT_LICENSE_PATH: &str = ".neovex/license.json";
 pub const LICENSE_FILE_ENV: &str = "NEOVEX_LICENSE_FILE";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,7 +38,6 @@ pub enum LicenseSourceKind {
     CommunityDefault,
     ExplicitFile,
     EnvironmentFile,
-    DefaultPath,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

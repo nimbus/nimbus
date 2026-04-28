@@ -32,9 +32,9 @@ pub mod adapters_mongodb {
     pub use super::adapters::mongodb::wire;
 }
 pub use license::{
-    DEFAULT_LICENSE_PATH, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
-    LicenseStatus, LicenseUsageSnapshot,
+    LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
+    LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus,
+    LicenseUsageSnapshot,
 };
 pub use local_server::{
     LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord, LocalServerPaths, LocalServerPlatform,

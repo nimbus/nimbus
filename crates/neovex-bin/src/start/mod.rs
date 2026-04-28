@@ -140,7 +140,7 @@ pub(crate) struct StartCommand {
     #[arg(long)]
     pub(crate) compose_file: Vec<PathBuf>,
 
-    /// Optional path to a Neovex license file. Defaults to ./.neovex/license.json when present.
+    /// Optional path to a Neovex license file. Defaults to ~/.config/neovex/license.json when present.
     #[arg(long)]
     pub(crate) license_file: Option<PathBuf>,
 
