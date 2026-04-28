@@ -64,12 +64,21 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 
 ```bash
 brew install agentstation/tap/neovex
+mkdir my-app && cd my-app
+neovex dev
 ```
 
-### Server-side functions
+That's it. `neovex dev` scaffolds a starter project with a schema and example
+functions, installs a `demo` tenant, and starts the server on `localhost:3210`.
+No files to create first — run `npm install` when prompted, then `neovex dev`
+again.
+
+### What you get
+
+`neovex dev` creates a `convex/` directory with starter functions:
 
 ```typescript
-// convex/messages.ts
+// convex/messages.ts — auto-scaffolded
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
@@ -83,10 +92,6 @@ export const send = mutation({
   handler: async (ctx, { author, body }) =>
     await ctx.db.insert("messages", { author, body }),
 });
-```
-
-```bash
-neovex dev
 ```
 
 ```tsx
