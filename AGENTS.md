@@ -141,8 +141,11 @@ Use the repo docs for architecture and behavior details:
   `docs/adapters/convex/ai-guidelines.md`, open `docs/operating/cli.md` and
   `docs/adapters/convex/compatibility.md` for `packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
-  contract. Promote a new active plan before landing another CLI/codegen
-  workflow wave unless one already owns the slice. Use
+  contract. `docs/plans/neovex-init-plan.md` is the active control plan for
+  `neovex init`, `neovex dev` auto-scaffold, and dev-mode auto-tenant
+  creation. Use it as the execution owner for onboarding workflow work.
+  Promote a new active plan before landing another CLI/codegen workflow wave
+  unless one already owns the slice. Use
   `docs/plans/archive/codegen-and-facade-hardening-plan.md` only for the
   completed cleanup wave's execution record.
 
@@ -242,8 +245,11 @@ Use the repo docs for architecture and behavior details:
   completed execution record for the historical compatibility wave.
 - For Convex or Neovex CLI/codegen workflow work, open
   `docs/adapters/convex/ai-guidelines.md`, `docs/operating/cli.md`, and
-  `docs/adapters/convex/compatibility.md` after the three top-level docs. Promote a
-  new active plan before landing another CLI/codegen workflow wave unless one
+  `docs/adapters/convex/compatibility.md` after the three top-level docs.
+  `docs/plans/neovex-init-plan.md` is the active control plan for `neovex
+  init`, `neovex dev` auto-scaffold, and dev-mode auto-tenant creation. Use
+  it as the execution owner for onboarding workflow work. Promote a new
+  active plan before landing another CLI/codegen workflow wave unless one
   already owns the slice. Use
   `docs/plans/archive/codegen-and-facade-hardening-plan.md` only when you
   need the completed cleanup wave's execution record.

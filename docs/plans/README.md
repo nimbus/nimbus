@@ -26,9 +26,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     verification helper, and the libkrun gap on Debian/Ubuntu.
 - `docs/plans/neovex-init-plan.md`
   - canonical execution plan for the `neovex init` project scaffolder and
-    zero-friction `neovex dev` onboarding flow: embedded backend template,
-    improved no-source-root messaging, dev-mode auto-tenant creation, and
-    a future React template and `npm create neovex` package
+    zero-friction `neovex dev` onboarding flow: `build.rs` version
+    embedding, shared scaffold module with embedded backend templates,
+    `neovex dev` auto-init when no source root found, `neovex init`
+    standalone command, dev-mode auto-tenant creation via server-internal
+    boot path, and onboarding doc updates; Phase 2+ covers the React
+    template and `npm create neovex` package
 
 ## Stable implementation baselines
 

@@ -4,15 +4,74 @@ Canonical execution plan for zero-friction `neovex dev` onboarding.
 The goal: a developer who has never seen Neovex can go from `brew install`
 to live reactive data in under 3 minutes with no manual file creation.
 
----
-
 ## Status
 
-- **Status:** `not_started`
-- **Primary owner:** this plan
-- **Hard deps:** `neovex dev` watch loop (landed), `neovex codegen` (landed),
-  `@neovex/codegen` package (landed)
-- **Soft deps:** `neovex/` source root (experimental, not required for MVP)
+- **Plan status:** `pending`
+- **Control item:** `—`
+- **Status values:** `pending`, `in_progress`, `done`, `blocked`
+- **Primary source of truth:** this file plus the current git worktree.
+- **Checkpoint rule:** every work session that changes implementation state
+  must update the roadmap item status and the execution log before stopping.
+
+## Plan Ownership And Canonical Inputs
+
+This plan owns `neovex init`, `neovex dev` auto-scaffold, and dev-mode
+auto-tenant creation. Phase 2+ (React template, `npm create neovex`) are
+scoped here but not owned until Phase 1 is `done`.
+
+Hard deps (all landed):
+- `neovex dev` watch loop
+- `neovex codegen`
+- `@neovex/codegen` package (v0.1.22)
+
+Soft deps:
+- `neovex/` source root (experimental, not required for Phase 1)
+
+Implementation work must keep these source inputs open:
+
+- Top-level repo references: `README.md`, `ARCHITECTURE.md`, `docs/README.md`,
+  `docs/plans/README.md`.
+- CLI reference: `docs/operating/cli.md`.
+- Convex compatibility: `docs/adapters/convex/compatibility.md`,
+  `docs/adapters/convex/ai-guidelines.md`.
+- Module structure: `crates/neovex-bin/src/` (dev.rs, start/, codegen.rs,
+  main.rs).
+- JS packages: `packages/convex/package.json`, `packages/codegen/package.json`.
+- Server tenant API: `crates/neovex-server/src/http/tenants.rs`,
+  `crates/neovex-server/src/router.rs`.
+
+## Autonomous Execution Contract
+
+This plan is designed for agent-driven execution with minimal human
+intervention. Each roadmap item must be completable in a single context window
+using only the plan, the git worktree, and the source files.
+
+## Control Plan Rules
+
+1. Read `AGENTS.md`, `README.md`, `ARCHITECTURE.md`, `docs/README.md`,
+   `docs/plans/README.md`, and this plan before starting a roadmap item.
+2. Run `git status --short` before choosing work. If the worktree is dirty,
+   reconcile before editing.
+3. If any roadmap item is `in_progress`, resume it. If none, pick the first
+   `pending` item in roadmap order whose hard deps are `done`.
+4. Mark exactly one item `in_progress` before implementation. Do not advance
+   another item until the active item is `done` or `blocked`.
+5. A roadmap item is not `done` until its verification is recorded in the
+   execution log.
+
+## Verification Contract
+
+Every completed item must leave durable evidence:
+
+- The roadmap item status is updated.
+- The execution log records the date, item, files touched, and verification.
+- Focused tests cover the changed behavior.
+- Run `cargo fmt --all --check` and `make clippy` after each item.
+- Run `make test` for items that change Rust behavior.
+- Run `npm run typecheck` and `npm run test` for items that change JS
+  templates or codegen output.
+
+---
 
 ## Problem
 
@@ -222,10 +281,10 @@ node_modules/
   "private": true,
   "type": "module",
   "dependencies": {
-    "convex": "^0.1.0"
+    "convex": "^{{CONVEX_VERSION}}"
   },
   "devDependencies": {
-    "@neovex/codegen": "^0.1.0"
+    "@neovex/codegen": "^{{CODEGEN_VERSION}}"
   }
 }
 ```
@@ -234,7 +293,11 @@ node_modules/
 `@neovex/codegen` is required for `neovex dev` to run codegen outside the
 monorepo — the Rust binary invokes `node` which imports `@neovex/codegen`
 from `node_modules`. The template uses a `.tmpl` extension so the scaffold
-logic can fill in current package versions at embed time.
+logic can fill in current package versions at embed time. A `build.rs` in
+`neovex-bin` reads the version from `packages/convex/package.json` and
+`packages/codegen/package.json` at compile time and emits
+`env!("NEOVEX_CONVEX_VERSION")` / `env!("NEOVEX_CODEGEN_VERSION")` for
+substitution (see Decision 5).
 
 ### React template (Phase 2)
 
@@ -274,22 +337,31 @@ When `neovex dev` runs and no `convex/` or `neovex/` source root is found:
 4. **If dependencies are installed, continue normally.** Run codegen, start
    server, start watch loop.
 
-### Existing project (has `package.json`, no `convex/`)
+### Existing project (has some files, no `convex/`)
 
-If the directory has a `package.json` but no `convex/` or `neovex/` source
-root, `neovex dev` should still scaffold the `convex/` directory but skip
-writing `package.json`, `tsconfig.json`, and `.gitignore`. Instead, print
-a message telling the developer to add the `convex` dependency manually:
+If the directory has no `convex/` or `neovex/` source root but already
+contains some project files, `neovex dev` still scaffolds the `convex/`
+directory and its contents. For root-level config files (`package.json`,
+`tsconfig.json`, `.gitignore`), the scaffold logic checks each output path
+individually and skips any file that already exists. Skipped files are
+reported so the developer knows what was preserved:
 
 ```
 No convex/ source root found. Creating starter functions...
   convex/schema.ts
   convex/messages.ts
+  skipped: package.json (already exists)
+  skipped: tsconfig.json (already exists)
+  skipped: .gitignore (already exists)
 
 Add the convex dependency to your existing project:
-  npm install convex
+  npm install convex @neovex/codegen
 Then run `neovex dev` again.
 ```
+
+If the scaffold wrote a new `package.json` (no existing one was found),
+the message says `npm install` instead, since the template already
+includes both dependencies.
 
 This handles the common case of adding Neovex to an existing React or
 Node.js project without clobbering the developer's existing config files.
@@ -307,21 +379,27 @@ the wrong directory.
 
 ### Skip scaffolding
 
-When `neovex dev` is used with protocol adapters (MongoDB, Firebase, Native)
-that don't need a source root, the developer runs `neovex start` instead.
+Scaffolding only applies to `neovex dev`. Protocol adapters (MongoDB,
+Firebase, Cloud Functions, Native) use `neovex start`, which is a separate
+command that never scaffolds, never watches, and never auto-creates tenants.
+`neovex start` is the operator path; `neovex dev` is the developer inner
+loop for the Convex-style function authoring workflow.
 
-If the developer passes `--skip-codegen`, the init flow is also suppressed —
-scaffolded files need codegen to produce `_generated/`, so scaffolding
-without codegen would leave the project in a broken state. If the developer
-wants to scaffold without starting the server, use `neovex init` instead.
+If the developer passes `--skip-codegen` to `neovex dev`, the init flow is
+also suppressed — scaffolded files need codegen to produce `_generated/`,
+so scaffolding without codegen would leave the project in a broken state.
+If the developer wants to scaffold without starting the server, use
+`neovex init` instead.
 
 A dedicated `--no-init` flag may be added later if there's demand, but
 `--skip-codegen` covers the known use case (running `neovex dev` as a
 lightweight server without the function authoring flow).
 
-If the developer explicitly passes `--app-dir` pointing to a directory
-without a source root, `neovex dev` should error rather than scaffold into
-an unexpected location.
+If the developer explicitly passes `--app-dir` pointing to a non-empty
+directory that has no source root, `neovex dev` should error rather than
+scaffold into an unexpected location. If the `--app-dir` target is empty
+(or doesn't exist yet), scaffold normally — the developer clearly intended
+to create a project there.
 
 ---
 
@@ -335,7 +413,7 @@ neovex init [directory] [--template <name>] [--source-root convex|neovex]
 |------|---------|---------|
 | `directory` | `.` (current directory) | Where to create the project |
 | `--template` | `backend` | Which template to scaffold (`backend`, `react` in Phase 2) |
-| `--source-root` | `convex` | Whether to use `convex/` or `neovex/` source root |
+| `--source-root` | `convex` | Whether to use `convex/` or `neovex/` source root (Phase 1: only `convex` is implemented; `neovex` exits with an advisory message) |
 
 ### Behavior
 
@@ -377,12 +455,31 @@ In dev mode this is unnecessary friction.
 
 **Change:** `neovex dev` auto-creates a `demo` tenant on startup.
 
-**Recommended approach:** The dev watch loop (which already waits for the
-server to be listening before running codegen) should POST to
-`/api/tenants` to create `"demo"` after the server is ready. This keeps
-tenant creation in the existing HTTP API path — no new internal flags, no
-special server-side bootstrapping code. If the tenant already exists (409),
-ignore the error silently.
+**Recommended approach:** Add an `auto_tenant: Option<String>` field to
+`StartCommand` with `#[arg(skip)]` so it is not exposed as a CLI flag on
+`neovex start` (same pattern as the existing `deploy_admin_token` field).
+The dev command sets it to `Some("demo".to_string())` when constructing
+the `StartCommand`; `neovex start` never populates it.
+
+In `start/boot.rs`, after `Service::new_with_persistence_config` succeeds
+and before the HTTP listener binds, check `command.auto_tenant`. If set,
+call `service.create_tenant_async(tenant_id).await` directly. If the
+Convex registry is loaded, also call
+`registry.apply_schema_to_tenant_async()` on the new tenant — the same
+two calls that `http/tenants.rs::create_tenant` makes. If the tenant
+already exists, ignore the error silently.
+
+This is server-internal: no HTTP round-trip, no admin token, no
+server-readiness wait. The tenant is guaranteed to exist before the first
+client request arrives.
+
+**Why not POST from the watch loop?** The `/api/tenants` route lives behind
+`build_local_admin_router` and requires the `x-neovex-admin-token` header
+(a local-server credential, separate from the deploy token the dev command
+generates). The watch loop also races with `run_start_command` via
+`tokio::select!` and has no server-readiness signal — there is no existing
+mechanism for the watch loop to know the HTTP listener is bound. Both
+problems disappear when tenant creation happens inside the server boot path.
 
 This eliminates the gap between `neovex dev` starting and a Convex client
 being able to connect to `http://localhost:3210/convex/demo`.
@@ -558,57 +655,13 @@ After auto-tenant, this becomes:
 
 ---
 
-## Phases
-
-### Phase 1 — `neovex dev` auto-init + `neovex init` + auto-tenant
-
-1. Add shared scaffold module with embedded backend template
-2. `neovex dev` scaffolds when no source root found, checks for node_modules
-3. Add `neovex init` as standalone command using the same scaffold module
-4. Auto-create `demo` tenant in dev mode on startup
-5. Update docs (see "Documentation updates" section below)
-
-**Target UX after Phase 1:**
-
-```bash
-brew install agentstation/tap/neovex
-mkdir my-app && cd my-app
-neovex dev          # scaffolds on first run
-npm install         # install dependencies
-neovex dev          # codegen + server + watch
-```
-
-### Phase 2 — React template
-
-1. Add `--template react` with Vite + React + ConvexProvider scaffold
-2. The template includes a working `App.tsx` with `useQuery` and `useMutation`
-3. `npm run dev` starts Vite alongside `neovex dev`
-
-**Target UX** (either `neovex dev` or `neovex init` works):
-
-```bash
-mkdir my-app && cd my-app
-neovex dev --template react   # scaffolds React + Convex project
-npm install
-neovex dev         # terminal 1: backend on :3210
-npm run dev        # terminal 2: Vite frontend on :5173
-```
-
-### Phase 3 — `npm create neovex` (stretch)
-
-1. Publish `create-neovex` to npm
-2. `npm create neovex@latest my-app` scaffolds + runs `npm install`
-3. Interactive prompt for template selection (like `create-hono`)
-
----
-
 ## Neovex CLI subcommand comparison with Convex
 
 Current Neovex CLI surface mapped against the Convex CLI:
 
 | Convex | Neovex | Status |
 |--------|--------|--------|
-| `convex dev` | `neovex dev` | Landed (watch + codegen + server). Missing: auto-init, auto-tenant. |
+| `convex dev` | `neovex dev` | Landed (codegen + server + watch). Port 3210. Missing: auto-init scaffold, auto-tenant (this plan). |
 | `convex init` | `neovex init` | **Not implemented.** This plan. |
 | `convex deploy` | `neovex deploy` | Landed. |
 | `convex codegen` | `neovex codegen` | Landed. |
@@ -620,7 +673,7 @@ Current Neovex CLI surface mapped against the Convex CLI:
 | `convex env` | — | Not implemented. Manage environment variables. |
 | `convex dashboard` | — | Not planned (desktop UI plan covers this). |
 | `convex docs` | — | Not needed (static docs). |
-| — | `neovex start` | Neovex-specific. Operator server-start without codegen. |
+| — | `neovex start` | Neovex-specific. Operator server-start (one-shot codegen preflight if `--app-dir` set, no watch, no scaffold, no auto-tenant). Port 8080 by default. |
 | — | `neovex compose ...` | Neovex-specific. Service lifecycle management. |
 | — | `neovex machine ...` | Neovex-specific. macOS VM management. |
 | — | `neovex token rotate` | Neovex-specific. Admin token lifecycle. |
@@ -663,32 +716,112 @@ commands that complete the developer inner loop.
    Package publishing and npm registry naming are distribution concerns
    resolved separately from this plan.
 
+5. **Template versions are baked in at compile time.** The
+   `package.json.tmpl` template uses `{{CONVEX_VERSION}}` and
+   `{{CODEGEN_VERSION}}` placeholders. A `build.rs` in `neovex-bin` reads
+   the `"version"` field from `packages/convex/package.json` and
+   `packages/codegen/package.json` at compile time and emits them as
+   `env!("NEOVEX_CONVEX_VERSION")` / `env!("NEOVEX_CODEGEN_VERSION")`. The
+   scaffold module substitutes these into the template when writing
+   `package.json`. This works for both workspace builds and release builds
+   (the `packages/` directories are present in the source tree at build
+   time). The `.tmpl` extension prevents the file from being treated as a
+   real `package.json` by tooling.
+
+6. **`--source-root neovex` is deferred to Phase 2.** The `neovex/` source
+   root is experimental and the template imports (`convex/server`,
+   `convex/values`) only match the `convex/` root. The `--source-root` flag
+   on `neovex init` is accepted in Phase 1 but only `convex` is
+   implemented; passing `neovex` prints "The neovex/ source root is
+   experimental and not yet supported by the scaffold templates." and exits.
+
+7. **Scaffold skips files that already exist.** Rather than checking only
+   for `package.json` to decide which files to skip, the scaffold logic
+   checks each output path individually. If a file already exists at the
+   target path, that file is skipped and the developer is told. This covers
+   all edge cases (existing `.gitignore`, existing `tsconfig.json` without
+   `package.json`, etc.) without special-case heuristics.
+
 ---
 
-## Validation
+## Phase Status Ledger
 
-### Implementation
+| Phase | Status | Items | Done when |
+|-------|--------|-------|-----------|
+| P1: Build infrastructure | `pending` | I1 | `build.rs` emits package versions as compile-time env vars |
+| P2: Scaffold module | `pending` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
+| P3: `neovex dev` auto-init | `pending` | I3, I4 | `neovex dev` scaffolds when no source root, checks for node_modules, handles existing projects and edge cases |
+| P4: `neovex init` command | `pending` | I5 | Standalone `neovex init` command using shared scaffold module |
+| P5: Auto-tenant | `pending` | I6 | `neovex dev` auto-creates `demo` tenant via server-internal boot path |
+| P6: Documentation | `pending` | I7 | README, getting-started, and Convex adapter docs updated |
+| P7: CLI reference | `pending` | I8 | `docs/operating/cli.md` updated with `neovex init` and auto-init behavior |
 
-- [ ] `neovex dev` in an empty directory scaffolds all expected files (including `.gitignore`)
-- [ ] `neovex dev` after scaffold but before `npm install` prints install prompt and exits
-- [ ] `neovex dev` after `npm install` runs codegen, starts server, starts watch
-- [ ] `neovex dev` auto-creates the `demo` tenant
-- [ ] `neovex dev` in a directory with existing `convex/` skips scaffold, runs normally
-- [ ] `neovex dev` in a directory with `package.json` but no `convex/` scaffolds `convex/` only
-- [ ] `neovex dev` in `$HOME` or `/` refuses to scaffold with clear error
-- [ ] `neovex dev --skip-codegen` suppresses scaffold
-- [ ] `neovex init` in an empty directory creates all expected files
-- [ ] `neovex init` in a directory with existing `convex/` errors cleanly
-- [ ] `neovex init my-app` creates the directory if it doesn't exist
-- [ ] Codegen creates `_generated/` successfully from the template files
-- [ ] A Convex client can connect to `localhost:3210/convex/demo` immediately
-- [ ] The `list` query returns an empty array; `send` mutation inserts a document;
-  `list` reactively returns the new document
+## Roadmap Items
 
-### Documentation
+### P1 Work Queue: Build Infrastructure
 
-- [ ] README quick start shows zero-file-creation path (install → mkdir → dev → npm install → dev)
-- [ ] README "Or try it with curl" section unchanged (uses `neovex start`, still needs manual tenant)
-- [ ] `docs/getting-started.md` server-side functions path shows scaffold flow
-- [ ] `docs/adapters/convex/README.md` quick start uses auto-init instead of manual file creation
-- [ ] `docs/adapters/convex/README.md` configuration section reflects auto-tenant in dev mode
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I1: `build.rs` version embedding | `pending` | none | `build.rs` in `neovex-bin` reads `"version"` from `packages/convex/package.json` and `packages/codegen/package.json`, emits `NEOVEX_CONVEX_VERSION` and `NEOVEX_CODEGEN_VERSION` as compile-time env vars. `cargo build -p neovex-bin` succeeds. Template placeholder substitution confirmed via unit test. |
+
+### P2 Work Queue: Scaffold Module
+
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I2: Shared scaffold module with embedded templates | `pending` | I1 | `init.rs` module in `neovex-bin` with: embedded backend templates via `include_str!()`, `scaffold_project()` function that writes files with per-file skip logic (Decision 7), safety check for `$HOME`/`/`/`/tmp`, `package.json.tmpl` version substitution using `env!()` vars, `--source-root neovex` advisory exit (Decision 6). Unit tests for: all files written to empty dir, per-file skip when file exists, safety refusal for `$HOME`, version substitution in `package.json`. |
+
+### P3 Work Queue: `neovex dev` Auto-Init
+
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I3: `neovex dev` scaffold integration | `pending` | I2 | When `neovex dev` finds no `convex/` or `neovex/` source root and `--skip-codegen` is not set: calls `scaffold_project()`, checks for `node_modules/convex`, prints install prompt and exits if missing, otherwise continues to codegen + server + watch. Existing behavior unchanged when source root exists. |
+| I4: `neovex dev --app-dir` edge cases | `pending` | I3 | `--app-dir` pointing to empty or nonexistent dir scaffolds normally. `--app-dir` pointing to non-empty dir without source root errors with clear message. Existing `--app-dir` behavior unchanged when source root exists. |
+
+### P4 Work Queue: `neovex init` Command
+
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I5: `neovex init` standalone command | `pending` | I2 | `Command::Init` added to `main.rs`. `InitCommand` struct with `directory`, `--template`, `--source-root` args. Creates target directory if absent. Errors if `convex/` or `neovex/` already exists. Calls shared `scaffold_project()`. Prints next steps. `neovex init my-app` creates `my-app/` with all template files. `neovex init` in current dir works. |
+
+### P5 Work Queue: Auto-Tenant
+
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I6: Dev-mode auto-tenant creation | `pending` | none | `auto_tenant: Option<String>` added to `StartCommand` with `#[arg(skip)]`. Dev command sets `Some("demo")`. In `start/boot.rs`, after `Service::new_with_persistence_config` and before listener bind: creates tenant, applies Convex schema if registry loaded, silently ignores already-exists. A Convex client can connect to `localhost:3210/convex/demo` immediately after `neovex dev` starts. Test: `neovex dev` with app dir creates tenant and serves query. |
+
+### P6 Work Queue: Documentation
+
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I7: Update onboarding docs | `pending` | I3, I6 | README quick start shows zero-file-creation path. `docs/getting-started.md` server-side functions shows scaffold flow. `docs/adapters/convex/README.md` quick start uses auto-init. Convex adapter configuration section reflects auto-tenant. README "Or try it with curl" section unchanged (uses `neovex start`). |
+
+### P7 Work Queue: CLI Reference
+
+| Item | Status | Hard deps | Completion gate |
+|------|--------|-----------|-----------------| 
+| I8: Update `docs/operating/cli.md` | `pending` | I5, I6 | `neovex init` command documented with flags, defaults, and examples. `neovex dev` section updated to describe auto-init scaffold behavior and auto-tenant. Dev command taxonomy entry updated. |
+
+---
+
+## Phase 2+ (Out of Scope for Phase 1)
+
+### Phase 2 — React template
+
+1. Add `--template react` with Vite + React + ConvexProvider scaffold
+2. The template includes a working `App.tsx` with `useQuery` and `useMutation`
+3. `npm run dev` starts Vite alongside `neovex dev`
+4. `--source-root neovex` template support
+
+### Phase 3 — `npm create neovex` (stretch)
+
+1. Publish `create-neovex` to npm
+2. `npm create neovex@latest my-app` scaffolds + runs `npm install`
+3. Interactive prompt for template selection (like `create-hono`)
+
+---
+
+## Execution Log
+
+| Date | Item | Status | Description | Verification |
+|------|------|--------|-------------|--------------|
+| 2026-04-27 | — | — | Plan created and audited against codebase | — |
