@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use neovex::{ConvexRegistry, Error, LicenseState, Service, run_scheduler};
+use neovex::{ConvexRegistry, Error, LicenseState, Service, TenantId, run_scheduler};
 use neovex_server::{
     CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
     ServerDiscoveryLease, load_or_create_local_admin_token, serve_with_options,
@@ -64,6 +64,9 @@ pub(crate) async fn run_start_command(
     let service = Arc::new(Service::new_with_persistence_config(persistence_config).await?);
     let shutdown_service = service.clone();
     service.recover_scheduled_work_on_startup_async().await?;
+    if let Some(tenant_name) = &command.auto_tenant {
+        ensure_auto_tenant(&service, tenant_name)?;
+    }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler_service = service.clone();
     let scheduler_handle = tokio::spawn(async move {
@@ -407,6 +410,21 @@ fn package_declares_functions_framework(package_json_path: &Path) -> bool {
             .and_then(serde_json::Value::as_object)
             .is_some_and(|deps| deps.contains_key("@google-cloud/functions-framework"))
     })
+}
+
+fn ensure_auto_tenant(
+    service: &Service,
+    tenant_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tenant_id = TenantId::new(tenant_name)?;
+    match service.create_tenant(tenant_id) {
+        Ok(()) => {
+            emit_start_info(format!("auto-created tenant \"{tenant_name}\""));
+        }
+        Err(Error::AlreadyExists(_)) => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }
 
 fn manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) -> String {

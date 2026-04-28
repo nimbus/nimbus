@@ -90,6 +90,15 @@ fn cli_defaults_to_embedded_sqlite() {
 }
 
 #[test]
+fn start_command_default_has_no_auto_tenant() {
+    let command = StartCommand::default();
+    assert!(
+        command.auto_tenant.is_none(),
+        "start should not auto-create a tenant by default"
+    );
+}
+
+#[test]
 fn cli_requires_explicit_start_subcommand_for_server_flags() {
     assert!(Cli::try_parse_from(["neovex"]).is_err());
     assert!(Cli::try_parse_from(["neovex", "--compose-file", "./compose.dev.yaml"]).is_err());
