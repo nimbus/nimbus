@@ -43,5 +43,8 @@ flate2 = "1"
 oci-client = "0.16"
 zstd = "0.13"
 
+[build-dependencies]
+serde_json.workspace = true
+
 [dev-dependencies]
 neovex-testing = { path = "../neovex-testing" }

@@ -6,7 +6,7 @@ to live reactive data in under 3 minutes with no manual file creation.
 
 ## Status
 
-- **Plan status:** `pending`
+- **Plan status:** `in_progress`
 - **Control item:** `—`
 - **Status values:** `pending`, `in_progress`, `done`, `blocked`
 - **Primary source of truth:** this file plus the current git worktree.
@@ -748,7 +748,7 @@ commands that complete the developer inner loop.
 
 | Phase | Status | Items | Done when |
 |-------|--------|-------|-----------|
-| P1: Build infrastructure | `pending` | I1 | `build.rs` emits package versions as compile-time env vars |
+| P1: Build infrastructure | `done` | I1 | `build.rs` emits package versions as compile-time env vars |
 | P2: Scaffold module | `pending` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
 | P3: `neovex dev` auto-init | `pending` | I3, I4 | `neovex dev` scaffolds when no source root, checks for node_modules, handles existing projects and edge cases |
 | P4: `neovex init` command | `pending` | I5 | Standalone `neovex init` command using shared scaffold module |
@@ -762,7 +762,7 @@ commands that complete the developer inner loop.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| I1: `build.rs` version embedding | `pending` | none | `build.rs` in `neovex-bin` reads `"version"` from `packages/convex/package.json` and `packages/codegen/package.json`, emits `NEOVEX_CONVEX_VERSION` and `NEOVEX_CODEGEN_VERSION` as compile-time env vars. `cargo build -p neovex-bin` succeeds. Template placeholder substitution confirmed via unit test. |
+| I1: `build.rs` version embedding | `done` | none | `build.rs` in `neovex-bin` reads `"version"` from `packages/convex/package.json` and `packages/codegen/package.json`, emits `NEOVEX_CONVEX_VERSION` and `NEOVEX_CODEGEN_VERSION` as compile-time env vars. `cargo build -p neovex-bin` succeeds. Template placeholder substitution confirmed via unit test. |
 
 ### P2 Work Queue: Scaffold Module
 
@@ -825,3 +825,4 @@ commands that complete the developer inner loop.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | 2026-04-27 | — | — | Plan created and audited against codebase | — |
+| 2026-04-27 | I1 | `done` | `build.rs` reads versions from `packages/convex/package.json` and `packages/codegen/package.json`, emits `NEOVEX_CONVEX_VERSION` (0.1.22) and `NEOVEX_CODEGEN_VERSION` (0.1.22). Created `init.rs` with constants, template, and `render_package_json()`. Created `templates/backend/` with all 5 template files. | `cargo build -p neovex-bin` succeeds, `cargo test -p neovex-bin -- init::tests` 2/2 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |
