@@ -12,16 +12,20 @@ See [Install](../README.md#install) for other platforms or building from source.
 
 ## Server-side functions
 
+**1. Go to your project root** (or scaffold a new one with `neovex init convex my-app`):
+
 ```bash
-mkdir my-app && cd my-app
-neovex init
+cd my-app
+```
+
+**2. Start the dev server:**
+
+```bash
 neovex dev
 ```
 
-`neovex init` scaffolds a starter project with a schema, example functions,
-and a `package.json`. `neovex dev` auto-runs `npm install` when dependencies
-are missing, creates a `demo` tenant, and starts the server on
-`localhost:3210`.
+`neovex dev` auto-runs `npm install` when dependencies are missing, creates a
+`demo` tenant, and starts the server on `localhost:3210`.
 
 From there, edit the TypeScript files in `convex/` and `neovex dev` watches
 for changes, re-runs codegen, and activates updated functions with reactive

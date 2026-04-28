@@ -62,16 +62,29 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 
 ## Quick start
 
+**1. Install Neovex:**
+
 ```bash
 brew install agentstation/tap/neovex
-mkdir my-app && cd my-app
-neovex init
+```
+
+See [Install](#install) for other platforms or building from source.
+
+**2. Go to your project root** (or scaffold a new one with `neovex init convex my-app`):
+
+```bash
+cd my-app
+```
+
+**3. Start the dev server:**
+
+```bash
 neovex dev
 ```
 
-`neovex init` scaffolds a starter project with a schema and example functions.
-`neovex dev` auto-runs `npm install`, creates a `demo` tenant, and starts the
-server on `localhost:3210`.
+> [!TIP]
+> `neovex dev` auto-runs `npm install` when dependencies are missing, creates a
+> `demo` tenant, and starts the server on `localhost:3210`.
 
 ### Server-side functions
 
@@ -101,21 +114,33 @@ Write TypeScript functions, run `neovex dev`, and your frontend gets reactive
 queries and mutations — no REST endpoints, no GraphQL, no polling. Everything
 runs locally in a single process. See the [full tutorial](docs/adapters/convex/).
 
-### Or try it with curl
+### Or use it with curl
+
+Start the server:
 
 ```bash
 neovex start --port 8080 --data-dir ./data
 ```
 
+Create a tenant:
+
 ```bash
 curl -s -X POST http://localhost:8080/api/tenants \
   -H "Content-Type: application/json" \
   -d '{"id": "demo"}'
+```
 
+Insert a document:
+
+```bash
 curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
   -H "Content-Type: application/json" \
   -d '{"table": "messages", "fields": {"text": "hello world", "author": "you"}}'
+```
 
+Query it back:
+
+```bash
 curl -s -X POST http://localhost:8080/api/tenants/demo/query \
   -H "Content-Type: application/json" \
   -d '{"table": "messages", "filters": []}'

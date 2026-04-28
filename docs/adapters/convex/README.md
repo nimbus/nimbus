@@ -27,23 +27,27 @@ machine. ~3 minutes from install to live data in the browser.
 
 ## Quick start
 
-**1. Scaffold and start:**
+**1. Go to your project root** (or scaffold a new one with `neovex init convex my-app`):
 
 ```bash
-mkdir my-app && cd my-app
-neovex init
-neovex dev
+cd my-app
 ```
 
-`neovex init` creates a starter project: a schema, example query and mutation,
-`package.json` with the right dependencies, and a `tsconfig.json`.
+`neovex init convex` creates a starter project: a schema, example query and
+mutation, `package.json` with the right dependencies, and a `tsconfig.json`.
+
+**2. Start the dev server:**
+
+```bash
+neovex dev
+```
 
 `neovex dev` auto-runs `npm install` when dependencies are missing,
 auto-creates a `demo` tenant so a Convex client can connect immediately,
 watches your `convex/` directory, runs codegen, and starts on port 3210.
 Changes rebuild automatically.
 
-**5. Connect your frontend:**
+**3. Connect your frontend:**
 
 ```tsx
 import { ConvexReactClient } from "convex/react";

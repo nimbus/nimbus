@@ -18,7 +18,7 @@ neovex codegen [--app PATH]
 ```
 
 ```bash
-neovex init [DIRECTORY] [--template backend] [--source-root convex]
+neovex init <ADAPTER> [DIRECTORY] [--source-root convex]
 ```
 
 ```bash
@@ -145,11 +145,11 @@ Current command taxonomy:
   activating generated app artifacts on a running server
 - `neovex codegen`
   shipped first-party code generation for `neovex/` or `convex/` source roots
-- `neovex init`
-  shipped project scaffold command; creates a starter project with schema,
-  example functions, `package.json`, `tsconfig.json`, and `.gitignore` in the
-  target directory. Skips existing files without overwriting. `neovex dev`
-  calls the same scaffold logic automatically when no source root exists.
+- `neovex init <adapter>`
+  shipped project scaffold command; requires an adapter argument (e.g.
+  `convex`). Creates a starter project with schema, example functions,
+  `package.json`, `tsconfig.json`, and `.gitignore` in the target directory.
+  Skips existing files without overwriting.
 - `neovex token rotate`
   shipped local admin token lifecycle command for rotating the localhost server
   access token using live-server semantics when a server is discoverable and
@@ -291,15 +291,18 @@ discovery rule:
 
 ## Dev Command
 
-`neovex dev` is the Convex-migration happy path for local work. In the current
-watch-loop slice it:
+`neovex dev` is the local development happy path. In the current watch-loop
+slice it:
 
 - auto-detects the app directory from the current directory by looking for a
-  `neovex/` or `convex/` source root, falling back to the current directory
-- when no source root exists and `--skip-codegen` is not set, exits with
-  guidance to run `neovex init` first
+  `neovex/` or `convex/` source root, `firebase.json`, or
+  `@google-cloud/functions-framework` in `package.json`, falling back to the
+  current directory
+- when no compatible adapter is detected and `--skip-codegen` is not set, exits
+  with guidance to run `neovex init convex` or `neovex init cloud-functions`
 - when `package.json` exists but `node_modules/` does not, automatically runs
-  `npm install` before codegen
+  `npm install` before codegen (for Cloud Functions, this runs in the
+  `functions/` subdirectory)
 - auto-creates a `demo` tenant on startup so a Convex client can connect to
   `http://localhost:3210/convex/demo` immediately; silently reuses the tenant
   on subsequent runs
@@ -337,8 +340,11 @@ Flags:
 
 ## Init Command
 
-`neovex init` scaffolds a new Neovex project in the target directory. It
-creates starter files without overwriting anything that already exists:
+`neovex init` scaffolds a new Neovex project in the target directory. The
+adapter argument is required — it selects which project template to create.
+Starter files are written without overwriting anything that already exists.
+
+**Convex adapter** (`neovex init convex`):
 
 - `convex/schema.ts` — messages table with author and body fields
 - `convex/messages.ts` — list query and send mutation
@@ -346,29 +352,45 @@ creates starter files without overwriting anything that already exists:
 - `tsconfig.json` — TypeScript configuration for ESNext/bundler
 - `.gitignore` — ignores `.neovex/` and `node_modules/`
 
-If the target directory has an existing `convex/` or `neovex/` directory, `init`
-exits with an error and suggests `neovex dev` instead.
+**Cloud Functions adapter** (`neovex init cloud-functions`):
 
-Flags:
+- `firebase.json` — Firebase project config pointing to `functions/`
+- `functions/package.json` — dependencies (`firebase-functions`, `firebase-admin`, `@neovex/codegen`)
+- `functions/tsconfig.json` — TypeScript configuration for Node.js
+- `functions/src/index.ts` — starter HTTP and Firestore trigger handlers
+- `.gitignore` — ignores `.neovex/`, `node_modules/`, and `lib/`
 
-| Flag | Default | Meaning |
+Both adapters auto-run `npm install` when dependencies are missing. For
+Cloud Functions, npm install runs in the `functions/` subdirectory.
+
+If the target directory already has the adapter's marker files (`convex/` or
+`neovex/` for Convex, `firebase.json` for Cloud Functions), `init` exits with
+an error and suggests `neovex dev` instead.
+
+Arguments and flags:
+
+| Argument / Flag | Default | Meaning |
 | --- | --- | --- |
+| `ADAPTER` | *(required)* | adapter to scaffold (`convex`, `cloud-functions`) |
 | `DIRECTORY` | `.` | target directory (created if it does not exist) |
-| `--template` | `backend` | scaffold template to use |
-| `--source-root` | `convex` | source root directory name; `neovex` is experimental and not yet supported |
+| `--source-root` | `convex` | source root directory name (convex adapter only); `neovex` is experimental and not yet supported |
 
 Examples:
 
 ```bash
-neovex init my-app     # scaffold into ./my-app/
+neovex init convex my-app
 cd my-app
-npm install
 neovex dev
 ```
 
 ```bash
-neovex init             # scaffold into the current directory
-npm install
+neovex init cloud-functions my-functions-app
+cd my-functions-app
+neovex dev
+```
+
+```bash
+neovex init convex
 neovex dev
 ```
 

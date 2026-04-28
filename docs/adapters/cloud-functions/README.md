@@ -24,6 +24,22 @@ with at-least-once delivery, durable retry, and Firestore document triggers.
 
 ## Quick start
 
+**New project:**
+
+```bash
+neovex init cloud-functions my-functions-app
+```
+
+```bash
+cd my-functions-app
+```
+
+```bash
+neovex dev
+```
+
+**Existing Firebase project:**
+
 **1. Keep your existing Firebase functions code unchanged.**
 
 **2. Generate artifacts and start:**
