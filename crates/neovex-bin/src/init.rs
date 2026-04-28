@@ -11,21 +11,28 @@ pub(crate) const CODEGEN_VERSION: &str = env!("NEOVEX_CODEGEN_VERSION");
 #[derive(Debug, Args)]
 #[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
 pub(crate) struct InitCommand {
+    /// Adapter to scaffold (e.g. convex, cloud-functions).
+    #[arg(value_parser = ["convex", "cloud-functions"])]
+    pub(crate) adapter: String,
+
     /// Target directory (created if it does not exist).
     #[arg(default_value = ".")]
     pub(crate) directory: PathBuf,
 
-    /// Template to scaffold.
-    #[arg(long, default_value = "backend")]
-    pub(crate) template: String,
-
-    /// Source root directory name.
+    /// Source root directory name (convex adapter only).
     #[arg(long, default_value = "convex")]
     pub(crate) source_root: String,
 }
 
-pub(crate) fn run_init_command(command: InitCommand) -> Result<(), Box<dyn std::error::Error>> {
-    check_source_root_flag(&command.source_root)?;
+pub(crate) async fn run_init_command(
+    command: InitCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let adapter = crate::node::Adapter::from_cli_arg(&command.adapter)
+        .ok_or_else(|| format!("unknown adapter: {}", command.adapter))?;
+
+    if adapter == crate::node::Adapter::Convex {
+        check_source_root_flag(&command.source_root)?;
+    }
 
     let target = if command.directory.is_absolute() {
         command.directory.clone()
@@ -42,13 +49,10 @@ pub(crate) fn run_init_command(command: InitCommand) -> Result<(), Box<dyn std::
         .canonicalize()
         .map_err(|e| format!("failed to resolve {}: {e}", target.display()))?;
 
-    if canonical.join("convex").is_dir() || canonical.join("neovex").is_dir() {
-        return Err(
-            "Source root already exists. Run `neovex dev` to start the development server.".into(),
-        );
-    }
+    check_adapter_already_exists(adapter, &canonical)?;
 
-    let result = scaffold_project(&canonical)?;
+    let templates = adapter_templates(adapter);
+    let result = scaffold_project(&canonical, templates)?;
 
     cli_ux::write_stderr_line("")?;
     cli_ux::write_stderr_line("Created starter project:")?;
@@ -62,6 +66,13 @@ pub(crate) fn run_init_command(command: InitCommand) -> Result<(), Box<dyn std::
             }
         }
     }
+
+    if adapter.needs_node_dependencies() {
+        let npm_dir = adapter_npm_install_dir(adapter, &canonical);
+        cli_ux::write_stderr_line("")?;
+        crate::node::auto_install_node_dependencies(&npm_dir).await?;
+    }
+
     cli_ux::write_stderr_line("")?;
     cli_ux::write_stderr_line("Next steps:")?;
     if command.directory != Path::new(".") {
@@ -72,14 +83,23 @@ pub(crate) fn run_init_command(command: InitCommand) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-const SCHEMA_TS: &str = include_str!("../templates/backend/convex/schema.ts");
-const MESSAGES_TS: &str = include_str!("../templates/backend/convex/messages.ts");
-const GITIGNORE: &str = include_str!("../templates/backend/gitignore");
-const TSCONFIG_JSON: &str = include_str!("../templates/backend/tsconfig.json");
-const PACKAGE_JSON_TEMPLATE: &str = include_str!("../templates/backend/package.json.tmpl");
+const CONVEX_SCHEMA_TS: &str = include_str!("../templates/convex/convex/schema.ts");
+const CONVEX_MESSAGES_TS: &str = include_str!("../templates/convex/convex/messages.ts");
+const CONVEX_GITIGNORE: &str = include_str!("../templates/convex/gitignore");
+const CONVEX_TSCONFIG_JSON: &str = include_str!("../templates/convex/tsconfig.json");
+const CONVEX_PACKAGE_JSON_TMPL: &str = include_str!("../templates/convex/package.json.tmpl");
 
-pub(crate) fn render_package_json(project_name: &str) -> String {
-    PACKAGE_JSON_TEMPLATE
+const CF_FIREBASE_JSON: &str = include_str!("../templates/cloud-functions/firebase.json");
+const CF_FUNCTIONS_PACKAGE_JSON_TMPL: &str =
+    include_str!("../templates/cloud-functions/functions/package.json.tmpl");
+const CF_FUNCTIONS_TSCONFIG_JSON: &str =
+    include_str!("../templates/cloud-functions/functions/tsconfig.json");
+const CF_FUNCTIONS_INDEX_TS: &str =
+    include_str!("../templates/cloud-functions/functions/src/index.ts");
+const CF_GITIGNORE: &str = include_str!("../templates/cloud-functions/gitignore");
+
+pub(crate) fn render_template(template: &str, project_name: &str) -> String {
+    template
         .replace("{{PROJECT_NAME}}", project_name)
         .replace("{{CONVEX_VERSION}}", CONVEX_VERSION)
         .replace("{{CODEGEN_VERSION}}", CODEGEN_VERSION)
@@ -92,41 +112,64 @@ struct TemplateFile {
 
 enum TemplateContent {
     Static(&'static str),
-    PackageJson,
+    Template(&'static str),
 }
 
-const BACKEND_TEMPLATE: &[TemplateFile] = &[
+const CONVEX_TEMPLATE: &[TemplateFile] = &[
     TemplateFile {
         relative_path: "convex/schema.ts",
-        content: TemplateContent::Static(SCHEMA_TS),
+        content: TemplateContent::Static(CONVEX_SCHEMA_TS),
     },
     TemplateFile {
         relative_path: "convex/messages.ts",
-        content: TemplateContent::Static(MESSAGES_TS),
+        content: TemplateContent::Static(CONVEX_MESSAGES_TS),
     },
     TemplateFile {
         relative_path: ".gitignore",
-        content: TemplateContent::Static(GITIGNORE),
+        content: TemplateContent::Static(CONVEX_GITIGNORE),
     },
     TemplateFile {
         relative_path: "tsconfig.json",
-        content: TemplateContent::Static(TSCONFIG_JSON),
+        content: TemplateContent::Static(CONVEX_TSCONFIG_JSON),
     },
     TemplateFile {
         relative_path: "package.json",
-        content: TemplateContent::PackageJson,
+        content: TemplateContent::Template(CONVEX_PACKAGE_JSON_TMPL),
+    },
+];
+
+const CLOUD_FUNCTIONS_TEMPLATE: &[TemplateFile] = &[
+    TemplateFile {
+        relative_path: "firebase.json",
+        content: TemplateContent::Static(CF_FIREBASE_JSON),
+    },
+    TemplateFile {
+        relative_path: "functions/package.json",
+        content: TemplateContent::Template(CF_FUNCTIONS_PACKAGE_JSON_TMPL),
+    },
+    TemplateFile {
+        relative_path: "functions/tsconfig.json",
+        content: TemplateContent::Static(CF_FUNCTIONS_TSCONFIG_JSON),
+    },
+    TemplateFile {
+        relative_path: "functions/src/index.ts",
+        content: TemplateContent::Static(CF_FUNCTIONS_INDEX_TS),
+    },
+    TemplateFile {
+        relative_path: ".gitignore",
+        content: TemplateContent::Static(CF_GITIGNORE),
     },
 ];
 
 #[derive(Debug)]
-pub(crate) enum ScaffoldAction {
+enum ScaffoldAction {
     Created(String),
     Skipped(String),
 }
 
 #[derive(Debug)]
-pub(crate) struct ScaffoldResult {
-    pub(crate) actions: Vec<ScaffoldAction>,
+struct ScaffoldResult {
+    actions: Vec<ScaffoldAction>,
 }
 
 fn is_unsafe_directory(dir: &Path) -> Option<&'static str> {
@@ -160,7 +203,49 @@ fn is_unsafe_directory(dir: &Path) -> Option<&'static str> {
     None
 }
 
-pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, String> {
+fn adapter_templates(adapter: crate::node::Adapter) -> &'static [TemplateFile] {
+    match adapter {
+        crate::node::Adapter::Convex => CONVEX_TEMPLATE,
+        crate::node::Adapter::CloudFunctions => CLOUD_FUNCTIONS_TEMPLATE,
+    }
+}
+
+fn check_adapter_already_exists(
+    adapter: crate::node::Adapter,
+    target_dir: &Path,
+) -> Result<(), String> {
+    match adapter {
+        crate::node::Adapter::Convex => {
+            if target_dir.join("convex").is_dir() || target_dir.join("neovex").is_dir() {
+                return Err(
+                    "Source root already exists. Run `neovex dev` to start the development server."
+                        .to_string(),
+                );
+            }
+        }
+        crate::node::Adapter::CloudFunctions => {
+            if target_dir.join("firebase.json").is_file() {
+                return Err(
+                    "firebase.json already exists. Run `neovex dev` to start the development server."
+                        .to_string(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn adapter_npm_install_dir(adapter: crate::node::Adapter, target_dir: &Path) -> PathBuf {
+    match adapter {
+        crate::node::Adapter::Convex => target_dir.to_path_buf(),
+        crate::node::Adapter::CloudFunctions => target_dir.join("functions"),
+    }
+}
+
+fn scaffold_project(
+    target_dir: &Path,
+    templates: &[TemplateFile],
+) -> Result<ScaffoldResult, String> {
     if let Some(msg) = is_unsafe_directory(target_dir) {
         return Err(msg.to_string());
     }
@@ -172,7 +257,7 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
 
     let mut actions = Vec::new();
 
-    for template in BACKEND_TEMPLATE {
+    for template in templates {
         let dest = target_dir.join(template.relative_path);
 
         if dest.exists() {
@@ -189,7 +274,7 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
 
         let content = match &template.content {
             TemplateContent::Static(s) => (*s).to_string(),
-            TemplateContent::PackageJson => render_package_json(project_name),
+            TemplateContent::Template(tmpl) => render_template(tmpl, project_name),
         };
 
         std::fs::write(&dest, content)
@@ -237,8 +322,8 @@ mod tests {
     }
 
     #[test]
-    fn package_json_template_substitution() {
-        let rendered = render_package_json("my-app");
+    fn convex_package_json_template_substitution() {
+        let rendered = render_template(CONVEX_PACKAGE_JSON_TMPL, "my-app");
         assert!(
             rendered.contains(&format!("\"convex\": \"^{CONVEX_VERSION}\"")),
             "rendered package.json should contain convex version"
@@ -258,9 +343,34 @@ mod tests {
     }
 
     #[test]
-    fn scaffold_writes_all_files_to_empty_dir() {
+    fn cloud_functions_package_json_template_substitution() {
+        let rendered = render_template(CF_FUNCTIONS_PACKAGE_JSON_TMPL, "my-app");
+        assert!(
+            rendered.contains("\"name\": \"my-app-functions\""),
+            "rendered package.json should contain the project name"
+        );
+        assert!(
+            rendered.contains(&format!("\"@neovex/codegen\": \"^{CODEGEN_VERSION}\"")),
+            "rendered package.json should contain codegen version"
+        );
+        assert!(
+            rendered.contains("\"firebase-functions\""),
+            "rendered package.json should contain firebase-functions"
+        );
+        assert!(
+            rendered.contains("\"firebase-admin\""),
+            "rendered package.json should contain firebase-admin"
+        );
+        assert!(
+            !rendered.contains("{{"),
+            "rendered package.json should not contain unresolved placeholders"
+        );
+    }
+
+    #[test]
+    fn scaffold_convex_writes_all_files_to_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = scaffold_project(tmp.path()).unwrap();
+        let result = scaffold_project(tmp.path(), CONVEX_TEMPLATE).unwrap();
 
         assert_eq!(result.actions.len(), 5);
         for action in &result.actions {
@@ -288,14 +398,44 @@ mod tests {
     }
 
     #[test]
-    fn scaffold_skips_existing_files() {
+    fn scaffold_cloud_functions_writes_all_files_to_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = scaffold_project(tmp.path(), CLOUD_FUNCTIONS_TEMPLATE).unwrap();
+
+        assert_eq!(result.actions.len(), 5);
+        for action in &result.actions {
+            assert!(
+                matches!(action, ScaffoldAction::Created(_)),
+                "all files should be created in empty dir"
+            );
+        }
+
+        assert!(tmp.path().join("firebase.json").exists());
+        assert!(tmp.path().join("functions/package.json").exists());
+        assert!(tmp.path().join("functions/tsconfig.json").exists());
+        assert!(tmp.path().join("functions/src/index.ts").exists());
+        assert!(tmp.path().join(".gitignore").exists());
+
+        let pkg = std::fs::read_to_string(tmp.path().join("functions/package.json")).unwrap();
+        assert!(
+            pkg.contains("\"firebase-functions\""),
+            "functions/package.json should contain firebase-functions"
+        );
+        assert!(
+            !pkg.contains("{{"),
+            "functions/package.json should not have unresolved placeholders"
+        );
+    }
+
+    #[test]
+    fn scaffold_convex_skips_existing_files() {
         let tmp = tempfile::tempdir().unwrap();
 
         std::fs::write(tmp.path().join("package.json"), "{}").unwrap();
         std::fs::write(tmp.path().join("tsconfig.json"), "{}").unwrap();
         std::fs::write(tmp.path().join(".gitignore"), "node_modules/\n").unwrap();
 
-        let result = scaffold_project(tmp.path()).unwrap();
+        let result = scaffold_project(tmp.path(), CONVEX_TEMPLATE).unwrap();
 
         let created: Vec<_> = result
             .actions
@@ -328,12 +468,37 @@ mod tests {
     }
 
     #[test]
+    fn scaffold_cloud_functions_skips_existing_firebase_json() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        std::fs::write(tmp.path().join("firebase.json"), "{}").unwrap();
+
+        let result = scaffold_project(tmp.path(), CLOUD_FUNCTIONS_TEMPLATE).unwrap();
+
+        let skipped: Vec<_> = result
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                ScaffoldAction::Skipped(p) => Some(p.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert!(skipped.contains(&"firebase.json"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("firebase.json")).unwrap(),
+            "{}",
+            "existing firebase.json should not be overwritten"
+        );
+    }
+
+    #[test]
     fn scaffold_refuses_home_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let original_home = std::env::var("HOME").ok();
         // SAFETY: this test runs single-threaded for env mutation; restored below.
         unsafe { std::env::set_var("HOME", tmp.path()) };
-        let result = scaffold_project(tmp.path());
+        let result = scaffold_project(tmp.path(), CONVEX_TEMPLATE);
         match original_home {
             Some(h) => unsafe { std::env::set_var("HOME", h) },
             None => unsafe { std::env::remove_var("HOME") },
@@ -347,7 +512,7 @@ mod tests {
 
     #[test]
     fn scaffold_refuses_root_directory() {
-        let result = scaffold_project(Path::new("/"));
+        let result = scaffold_project(Path::new("/"), CONVEX_TEMPLATE);
         assert!(result.is_err());
         assert!(
             result.unwrap_err().contains("root directory"),
@@ -357,7 +522,7 @@ mod tests {
 
     #[test]
     fn scaffold_refuses_tmp_directory() {
-        let result = scaffold_project(Path::new("/tmp"));
+        let result = scaffold_project(Path::new("/tmp"), CONVEX_TEMPLATE);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("/tmp"), "should mention /tmp");
     }
@@ -374,29 +539,31 @@ mod tests {
         assert!(check_source_root_flag("convex").is_ok());
     }
 
-    #[test]
-    fn init_command_scaffolds_empty_directory() {
+    #[tokio::test]
+    async fn init_command_scaffolds_empty_directory() {
         let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("node_modules")).unwrap();
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
-            template: "backend".to_string(),
+            adapter: "convex".to_string(),
             source_root: "convex".to_string(),
         };
-        run_init_command(command).unwrap();
+        run_init_command(command).await.unwrap();
         assert!(tmp.path().join("convex/schema.ts").exists());
         assert!(tmp.path().join("package.json").exists());
     }
 
-    #[test]
-    fn init_command_creates_target_directory() {
+    #[tokio::test]
+    async fn init_command_creates_target_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("my-app");
+        std::fs::create_dir_all(target.join("node_modules")).unwrap();
         let command = InitCommand {
             directory: target.clone(),
-            template: "backend".to_string(),
+            adapter: "convex".to_string(),
             source_root: "convex".to_string(),
         };
-        run_init_command(command).unwrap();
+        run_init_command(command).await.unwrap();
         assert!(target.join("convex/schema.ts").exists());
         assert!(target.join("package.json").exists());
         let pkg = std::fs::read_to_string(target.join("package.json")).unwrap();
@@ -406,34 +573,98 @@ mod tests {
         );
     }
 
-    #[test]
-    fn init_command_errors_when_source_root_exists() {
+    #[tokio::test]
+    async fn init_command_errors_when_source_root_exists() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("convex")).unwrap();
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
-            template: "backend".to_string(),
+            adapter: "convex".to_string(),
             source_root: "convex".to_string(),
         };
-        let err = run_init_command(command).unwrap_err();
+        let err = run_init_command(command).await.unwrap_err();
         assert!(
             err.to_string().contains("already exists"),
             "should mention source root already exists"
         );
     }
 
-    #[test]
-    fn init_command_rejects_neovex_source_root() {
+    #[tokio::test]
+    async fn init_command_rejects_neovex_source_root() {
         let tmp = tempfile::tempdir().unwrap();
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
-            template: "backend".to_string(),
+            adapter: "convex".to_string(),
             source_root: "neovex".to_string(),
         };
-        let err = run_init_command(command).unwrap_err();
+        let err = run_init_command(command).await.unwrap_err();
         assert!(
             err.to_string().contains("experimental"),
             "should mention neovex source root is experimental"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_cloud_functions_scaffolds_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("functions")).unwrap();
+        std::fs::create_dir(tmp.path().join("functions").join("node_modules")).unwrap();
+        let command = InitCommand {
+            directory: tmp.path().to_path_buf(),
+            adapter: "cloud-functions".to_string(),
+            source_root: "convex".to_string(),
+        };
+        run_init_command(command).await.unwrap();
+        assert!(tmp.path().join("firebase.json").exists());
+        assert!(tmp.path().join("functions/src/index.ts").exists());
+        assert!(tmp.path().join("functions/package.json").exists());
+    }
+
+    #[tokio::test]
+    async fn init_cloud_functions_errors_when_firebase_json_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("firebase.json"), "{}").unwrap();
+        let command = InitCommand {
+            directory: tmp.path().to_path_buf(),
+            adapter: "cloud-functions".to_string(),
+            source_root: "convex".to_string(),
+        };
+        let err = run_init_command(command).await.unwrap_err();
+        assert!(
+            err.to_string().contains("firebase.json already exists"),
+            "should mention firebase.json already exists"
+        );
+    }
+
+    #[test]
+    fn adapter_npm_install_dir_convex_is_project_root() {
+        let dir = Path::new("/project");
+        assert_eq!(
+            adapter_npm_install_dir(crate::node::Adapter::Convex, dir),
+            PathBuf::from("/project")
+        );
+    }
+
+    #[test]
+    fn adapter_npm_install_dir_cloud_functions_is_functions_subdir() {
+        let dir = Path::new("/project");
+        assert_eq!(
+            adapter_npm_install_dir(crate::node::Adapter::CloudFunctions, dir),
+            PathBuf::from("/project/functions")
+        );
+    }
+
+    #[test]
+    fn check_adapter_already_exists_convex_ok_for_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(check_adapter_already_exists(crate::node::Adapter::Convex, tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn check_adapter_already_exists_cloud_functions_ok_for_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(
+            check_adapter_already_exists(crate::node::Adapter::CloudFunctions, tmp.path()).is_ok()
         );
     }
 }

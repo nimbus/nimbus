@@ -13,6 +13,7 @@ use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
 use crate::deploy::{DeployRequest, post_deploy_request};
+use crate::node;
 use crate::start::{CliTenantProvider, StartCommand, run_start_command};
 
 const DEFAULT_DEV_PORT: u16 = 3210;
@@ -30,7 +31,7 @@ pub(crate) struct DevCommand {
     #[arg(long, default_value_t = DEFAULT_DEV_PORT)]
     pub(crate) port: u16,
 
-    /// App directory containing a neovex/ or convex/ source root.
+    /// App directory containing an adapter source root.
     #[arg(long)]
     pub(crate) app_dir: Option<PathBuf>,
 
@@ -80,18 +81,22 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
 
     let plan = resolve_dev_plan(command, &cwd)?;
 
-    if plan.source_root.is_none() && !skip_codegen {
+    if plan.adapter.is_none() && !skip_codegen {
         cli_ux::write_stderr_line("")?;
-        cli_ux::write_stderr_line("No convex/ or neovex/ source root found.")?;
+        cli_ux::write_stderr_line("No compatible adapter detected.")?;
         cli_ux::write_stderr_line("")?;
         cli_ux::write_stderr_line("To get started:")?;
-        cli_ux::write_stderr_line("  neovex init")?;
+        cli_ux::write_stderr_line("  neovex init convex          # Convex adapter")?;
+        cli_ux::write_stderr_line("  neovex init cloud-functions # Cloud Functions adapter")?;
         cli_ux::write_stderr_line("  neovex dev")?;
         return Ok(());
     }
 
-    if !skip_codegen {
-        auto_install_node_dependencies(&plan.app_dir).await?;
+    if let Some(adapter) = &plan.adapter
+        && !skip_codegen
+        && adapter.needs_node_dependencies()
+    {
+        node::auto_install_node_dependencies(&adapter.npm_install_dir(&plan.app_dir)).await?;
     }
 
     emit_dev_banner(&plan)?;
@@ -120,7 +125,7 @@ struct DevPlan {
     data_dir: PathBuf,
     compose_selection: Option<ResolvedComposeSelection>,
     local_url: String,
-    source_root: Option<PathBuf>,
+    adapter: Option<DevAdapter>,
     once: bool,
     tail_logs: DevTailLogsMode,
     start_command: StartCommand,
@@ -139,7 +144,7 @@ impl DevPlan {
     fn watch_plan(&self) -> DevWatchPlan {
         DevWatchPlan {
             app_dir: self.app_dir.clone(),
-            source_root: self.source_root.clone(),
+            source_root: self.adapter.as_ref().map(|a| a.source_root().to_path_buf()),
             tail_logs: self.tail_logs,
             local_url: self.local_url.clone(),
             deploy_admin_token: self
@@ -153,7 +158,7 @@ impl DevPlan {
 
 fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
-    let source_root = detect_source_root(&app_dir);
+    let adapter = detect_dev_adapter(&app_dir);
     let explicit_compose_files = command.compose_file.as_slice();
     let compose_selection = resolve_compose_selection(explicit_compose_files, cwd)
         .map_err(|error| io::Error::other(error.to_string()))?;
@@ -182,7 +187,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         data_dir,
         compose_selection,
         local_url,
-        source_root,
+        adapter,
         once: command.once,
         tail_logs: command.tail_logs,
         start_command,
@@ -205,6 +210,7 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
                 .join("convex")
                 .join("functions.json")
                 .is_file()
+            || candidate.join("firebase.json").is_file()
         {
             return candidate.to_path_buf();
         }
@@ -212,40 +218,125 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
     cwd.to_path_buf()
 }
 
-fn detect_source_root(app_dir: &Path) -> Option<PathBuf> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DevAdapter {
+    Convex { source_root: PathBuf },
+    CloudFunctions { source_root: PathBuf },
+}
+
+impl DevAdapter {
+    fn adapter(&self) -> node::Adapter {
+        match self {
+            Self::Convex { .. } => node::Adapter::Convex,
+            Self::CloudFunctions { .. } => node::Adapter::CloudFunctions,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        self.adapter().name()
+    }
+
+    fn source_root(&self) -> &Path {
+        match self {
+            Self::Convex { source_root } | Self::CloudFunctions { source_root } => source_root,
+        }
+    }
+
+    fn needs_node_dependencies(&self) -> bool {
+        self.adapter().needs_node_dependencies()
+    }
+
+    fn npm_install_dir(&self, app_dir: &Path) -> PathBuf {
+        match self {
+            Self::Convex { .. } => app_dir.to_path_buf(),
+            Self::CloudFunctions { source_root } => source_root.clone(),
+        }
+    }
+}
+
+fn detect_dev_adapter(app_dir: &Path) -> Option<DevAdapter> {
     let neovex_root = app_dir.join("neovex");
     if neovex_root.is_dir() {
-        return Some(neovex_root);
+        return Some(DevAdapter::Convex {
+            source_root: neovex_root,
+        });
     }
 
     let convex_root = app_dir.join("convex");
     if convex_root.is_dir() {
-        return Some(convex_root);
+        return Some(DevAdapter::Convex {
+            source_root: convex_root,
+        });
+    }
+
+    if let Some(adapter) = detect_cloud_functions_adapter(app_dir) {
+        return Some(adapter);
     }
 
     None
 }
 
-async fn auto_install_node_dependencies(app_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !app_dir.join("package.json").is_file() || app_dir.join("node_modules").is_dir() {
-        return Ok(());
+fn detect_cloud_functions_adapter(app_dir: &Path) -> Option<DevAdapter> {
+    let firebase_json_path = app_dir.join("firebase.json");
+    if firebase_json_path.is_file() {
+        let source_dir = read_firebase_functions_source(&firebase_json_path)
+            .unwrap_or_else(|| "functions".to_string());
+        let source_root = app_dir.join(&source_dir);
+        if !source_root.is_dir() {
+            tracing::warn!(
+                "firebase.json references functions source `{source_dir}` \
+                 but directory does not exist; skipping Cloud Functions detection"
+            );
+            return None;
+        }
+        return Some(DevAdapter::CloudFunctions { source_root });
     }
 
-    emit_dev_info("running npm install");
-    let status = tokio::process::Command::new("npm")
-        .arg("install")
-        .current_dir(app_dir)
-        .status()
-        .await
-        .map_err(|e| io::Error::other(format!("failed to run npm install: {e}")))?;
-
-    if !status.success() {
-        return Err(io::Error::other(
-            "npm install failed. Install dependencies manually, then run `neovex dev` again.",
-        )
-        .into());
+    if has_functions_framework_dependency(app_dir) {
+        return Some(DevAdapter::CloudFunctions {
+            source_root: app_dir.to_path_buf(),
+        });
     }
-    Ok(())
+
+    None
+}
+
+fn read_firebase_functions_source(firebase_json_path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(firebase_json_path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let functions = &parsed["functions"];
+    if let Some(source) = functions["source"].as_str() {
+        return Some(source.to_string());
+    }
+    if let Some(arr) = functions.as_array()
+        && let Some(first) = arr.first()
+        && let Some(source) = first["source"].as_str()
+    {
+        return Some(source.to_string());
+    }
+    None
+}
+
+fn has_functions_framework_dependency(app_dir: &Path) -> bool {
+    let package_json_path = app_dir.join("package.json");
+    let Ok(content) = std::fs::read_to_string(&package_json_path) else {
+        return false;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let package_name = "@google-cloud/functions-framework";
+    for key in [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ] {
+        if parsed[key].get(package_name).is_some() {
+            return true;
+        }
+    }
+    false
 }
 
 fn resolve_unchecked_path(path: &Path, cwd: &Path) -> PathBuf {
@@ -294,22 +385,25 @@ fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
         format!("App dir: {}", plan.app_dir.display()),
         format!("Data:    {}", plan.data_dir.display()),
     ];
+    if let Some(adapter) = &plan.adapter {
+        lines.push(format!("Adapter: {}", adapter.name()));
+    }
     if let Some(selection) = plan.compose_selection.as_ref() {
         lines.push(format!("Compose: {}", compose_selection_summary(selection)));
     }
-    match &plan.source_root {
-        Some(source_root) if plan.once => lines.push(format!(
+    match plan.adapter.as_ref() {
+        Some(adapter) if plan.once => lines.push(format!(
             "Watch:   disabled by --once; detected {}",
-            source_root.display()
+            adapter.source_root().display()
         )),
-        Some(source_root) => {
-            lines.push(format!("Watch:   {}", source_root.display()));
+        Some(adapter) => {
+            lines.push(format!("Watch:   {}", adapter.source_root().display()));
         }
         None if plan.once => {
-            lines.push("Watch:   disabled by --once; no source root detected".to_string());
+            lines.push("Watch:   disabled by --once; no adapter detected".to_string());
         }
         None => {
-            lines.push("Watch:   disabled; no neovex/ or convex/ root detected".to_string());
+            lines.push("Watch:   disabled; no adapter detected".to_string());
         }
     }
     lines.push(format!("Logs:    {}", plan.tail_logs.as_str()));
@@ -634,7 +728,12 @@ mod tests {
         assert_eq!(plan.app_dir, app_dir);
         assert_eq!(plan.data_dir, expected_data_dir);
         assert_eq!(plan.local_url, "http://localhost:3210/");
-        assert_eq!(plan.source_root, Some(plan.app_dir.join("convex")));
+        assert_eq!(
+            plan.adapter,
+            Some(DevAdapter::Convex {
+                source_root: plan.app_dir.join("convex"),
+            })
+        );
         assert!(!plan.once);
         assert_eq!(plan.tail_logs, DevTailLogsMode::PauseOnSync);
         assert_eq!(plan.start_command.port, 3210);
@@ -784,7 +883,7 @@ mod tests {
             data_dir: PathBuf::from("/workspace/.neovex/dev"),
             compose_selection: Some(selection),
             local_url: "http://localhost:3210/".to_owned(),
-            source_root: None,
+            adapter: None,
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             start_command: StartCommand::default(),
@@ -924,7 +1023,12 @@ mod tests {
         let plan = resolve_dev_plan(parse_dev(["neovex", "dev"]), temp.path())
             .expect("dev plan should resolve");
 
-        assert_eq!(plan.source_root, Some(plan.app_dir.join("neovex")));
+        assert_eq!(
+            plan.adapter,
+            Some(DevAdapter::Convex {
+                source_root: plan.app_dir.join("neovex"),
+            })
+        );
     }
 
     #[test]
@@ -975,7 +1079,7 @@ mod tests {
         )
         .expect("dev plan should resolve");
         assert!(
-            plan.source_root.is_none(),
+            plan.adapter.is_none(),
             "empty dir should have no source root"
         );
     }
@@ -992,7 +1096,7 @@ mod tests {
         )
         .expect("dev plan should resolve");
         assert!(
-            plan.source_root.is_some(),
+            plan.adapter.is_some(),
             "existing source root should be detected"
         );
     }
@@ -1005,7 +1109,7 @@ mod tests {
         assert!(command.skip_codegen);
 
         let plan = resolve_dev_plan(command, temp.path()).expect("dev plan should resolve");
-        assert!(plan.source_root.is_none());
+        assert!(plan.adapter.is_none());
     }
 
     #[test]
@@ -1037,7 +1141,7 @@ mod tests {
         )
         .expect("dev plan should resolve for empty --app-dir");
 
-        assert!(plan.source_root.is_none());
+        assert!(plan.adapter.is_none());
     }
 
     #[test]
@@ -1054,7 +1158,7 @@ mod tests {
         )
         .expect("dev plan should resolve");
 
-        assert!(plan.source_root.is_none());
+        assert!(plan.adapter.is_none());
     }
 
     #[test]
@@ -1072,30 +1176,157 @@ mod tests {
         .expect("dev plan should resolve");
 
         assert!(
-            plan.source_root.is_some(),
+            plan.adapter.is_some(),
             "should detect source root in non-empty dir"
         );
     }
 
-    #[tokio::test]
-    async fn auto_install_skips_when_no_package_json() {
+    #[test]
+    fn detect_cloud_functions_firebase_json() {
         let temp = tempdir().expect("tempdir should build");
-        auto_install_node_dependencies(temp.path())
-            .await
-            .expect("should be a no-op without package.json");
-        assert!(
-            !temp.path().join("node_modules").exists(),
-            "should not create node_modules"
+        fs::create_dir_all(temp.path().join("functions")).unwrap();
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions": {"source": "functions"}}"#,
+        )
+        .unwrap();
+
+        let adapter = detect_dev_adapter(temp.path());
+        assert_eq!(
+            adapter,
+            Some(DevAdapter::CloudFunctions {
+                source_root: temp.path().join("functions"),
+            })
         );
     }
 
-    #[tokio::test]
-    async fn auto_install_skips_when_node_modules_exists() {
+    #[test]
+    fn detect_cloud_functions_firebase_json_custom_source() {
         let temp = tempdir().expect("tempdir should build");
-        fs::write(temp.path().join("package.json"), "{}").unwrap();
-        fs::create_dir(temp.path().join("node_modules")).unwrap();
-        auto_install_node_dependencies(temp.path())
-            .await
-            .expect("should be a no-op when node_modules exists");
+        fs::create_dir_all(temp.path().join("backend")).unwrap();
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions": {"source": "backend"}}"#,
+        )
+        .unwrap();
+
+        let adapter = detect_dev_adapter(temp.path());
+        assert_eq!(
+            adapter,
+            Some(DevAdapter::CloudFunctions {
+                source_root: temp.path().join("backend"),
+            })
+        );
+    }
+
+    #[test]
+    fn detect_cloud_functions_firebase_json_array() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("api")).unwrap();
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions": [{"source": "api", "codebase": "api"}]}"#,
+        )
+        .unwrap();
+
+        let adapter = detect_dev_adapter(temp.path());
+        assert_eq!(
+            adapter,
+            Some(DevAdapter::CloudFunctions {
+                source_root: temp.path().join("api"),
+            })
+        );
+    }
+
+    #[test]
+    fn detect_cloud_functions_skips_missing_source_dir() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions": {"source": "functions"}}"#,
+        )
+        .unwrap();
+
+        let adapter = detect_dev_adapter(temp.path());
+        assert_eq!(adapter, None, "should skip when source dir does not exist");
+    }
+
+    #[test]
+    fn detect_cloud_functions_framework_package() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies": {"@google-cloud/functions-framework": "^3.0.0"}}"#,
+        )
+        .unwrap();
+
+        let adapter = detect_dev_adapter(temp.path());
+        assert_eq!(
+            adapter,
+            Some(DevAdapter::CloudFunctions {
+                source_root: temp.path().to_path_buf(),
+            })
+        );
+    }
+
+    #[test]
+    fn convex_adapter_takes_priority_over_cloud_functions() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("convex")).unwrap();
+        fs::write(temp.path().join("firebase.json"), "{}").unwrap();
+
+        let adapter = detect_dev_adapter(temp.path());
+        assert!(
+            matches!(adapter, Some(DevAdapter::Convex { .. })),
+            "convex should take priority over cloud-functions"
+        );
+    }
+
+    #[test]
+    fn cloud_functions_adapter_npm_install_dir() {
+        let adapter = DevAdapter::CloudFunctions {
+            source_root: PathBuf::from("/project/functions"),
+        };
+        assert_eq!(
+            adapter.npm_install_dir(Path::new("/project")),
+            PathBuf::from("/project/functions")
+        );
+    }
+
+    #[test]
+    fn convex_adapter_npm_install_dir() {
+        let adapter = DevAdapter::Convex {
+            source_root: PathBuf::from("/project/convex"),
+        };
+        assert_eq!(
+            adapter.npm_install_dir(Path::new("/project")),
+            PathBuf::from("/project")
+        );
+    }
+
+    #[test]
+    fn dev_plan_detects_cloud_functions_adapter() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("functions")).unwrap();
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions": {"source": "functions"}}"#,
+        )
+        .unwrap();
+        let app_dir_str = temp.path().to_str().unwrap();
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--app-dir", app_dir_str]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve");
+
+        let canonical = temp.path().canonicalize().unwrap();
+        assert_eq!(
+            plan.adapter,
+            Some(DevAdapter::CloudFunctions {
+                source_root: canonical.join("functions"),
+            })
+        );
     }
 }
