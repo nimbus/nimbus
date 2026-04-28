@@ -24,6 +24,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
+- `docs/plans/neovex-init-plan.md`
+  - canonical execution plan for the `neovex init` project scaffolder and
+    zero-friction `neovex dev` onboarding flow: embedded backend template,
+    improved no-source-root messaging, dev-mode auto-tenant creation, and
+    a future React template and `npm create neovex` package
+
 ## Stable implementation baselines
 
 - `docs/architecture/sandbox/microvm-service-baseline.md`
