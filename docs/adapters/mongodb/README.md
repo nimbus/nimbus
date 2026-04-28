@@ -1,17 +1,23 @@
 # MongoDB Adapter
 
-## Overview
+```bash
+neovex start --port 8080
+mongosh mongodb://127.0.0.1:27017/default?directConnection=true
+```
 
-The MongoDB adapter is a wire protocol listener built into the Neovex server.
-It speaks the MongoDB binary protocol (OP_MSG) natively, so any standard
-MongoDB client can connect to Neovex as if it were a MongoDB instance.
+```javascript
+db.messages.insertOne({ author: "Alice", body: "Hello from Neovex" })
+db.messages.find()
+```
+
+That's it. Stock MongoDB drivers, any language, no codegen, no schema files.
+Data lives in Neovex (SQLite by default), not MongoDB. ~2 minutes from install to query.
+
+## How it works
+
+The adapter speaks the MongoDB binary protocol (OP_MSG) natively. Any standard
+MongoDB client connects to Neovex as if it were a MongoDB instance.
 See [Compatible Drivers](drivers.md) for the full list by language.
-
-**Data never touches MongoDB.** Every operation flows through the Neovex
-engine and lands in whichever storage backend you configured (redb, SQLite,
-Postgres, MySQL, or libsql). The adapter translates between BSON on the wire
-and Neovex's internal document model; the storage backend is completely
-transparent to the client.
 
 ```
 ┌──────────────────────────────────────┐
@@ -48,23 +54,64 @@ transparent to the client.
 └──────────────────────────────────────┘
 ```
 
-The MongoDB adapter shares the exact same engine mutation path as Neovex's
-HTTP and WebSocket interfaces. There is no separate code path -- a document
-inserted via `mongosh` is immediately visible through the HTTP API and
-vice versa.
+The adapter shares the same engine mutation path as Neovex's HTTP and
+WebSocket interfaces. A document inserted via `mongosh` is immediately
+visible through the HTTP API and vice versa.
 
-## Quick Start
+## Quick start by language
+
+### mongosh (zero install)
 
 ```bash
-# 1. Start Neovex with the MongoDB listener enabled
 neovex start --port 8080
-
-# 2. Connect with mongosh (port 27017 is the default)
 mongosh mongodb://127.0.0.1:27017/default?directConnection=true
+```
 
-# 3. Try it out
+```javascript
 db.messages.insertOne({ author: "Alice", body: "Hello from mongosh" })
 db.messages.find()
+```
+
+### TypeScript
+
+```bash
+mkdir my-app && cd my-app
+npm init -y
+npm install mongodb @neovex/mongodb
+```
+
+```typescript
+import { MongoClient } from "mongodb";
+import { uri } from "@neovex/mongodb";
+
+const client = new MongoClient(uri());
+await client.connect();
+
+const db = client.db("default");
+await db.collection("messages").insertOne({ author: "Alice", text: "Hello from Neovex" });
+console.log(await db.collection("messages").find().toArray());
+
+await client.close();
+```
+
+```bash
+npx tsx index.ts
+```
+
+### Python
+
+```bash
+pip install pymongo
+```
+
+```python
+from pymongo import MongoClient
+
+client = MongoClient("mongodb://127.0.0.1:27017/default?directConnection=true")
+db = client["default"]
+
+db.messages.insert_one({"author": "Bob", "text": "Hello from Python"})
+print(list(db.messages.find()))
 ```
 
 > **Note:** The MongoDB wire protocol listener is currently configured at the

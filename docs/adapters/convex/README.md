@@ -1,29 +1,113 @@
 # Convex Adapter
 
-## Overview
+```typescript
+// convex/messages.ts
+import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
 
-Convex-compatible server-side function runtime. Teams with existing Convex apps can run them on Neovex by changing the deployment URL. Supports queries, mutations, actions, paginated queries, scheduled execution, HTTP routes, and React hooks.
+export const list = query({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("messages").take(20),
+});
 
-## Client Package
+export const send = mutation({
+  args: { author: v.string(), body: v.string() },
+  handler: async (ctx, { author, body }) =>
+    await ctx.db.insert("messages", { author, body }),
+});
+```
+
+```bash
+neovex dev
+```
+
+Write TypeScript functions, run `neovex dev`, and your frontend gets reactive
+queries, mutations, and real-time subscriptions -- all running on your own
+machine. ~3 minutes from install to live data in the browser.
+
+## Quick start
+
+**1. Create a project with server functions:**
+
+```
+my-app/
+├── convex/
+│   ├── schema.ts
+│   └── messages.ts
+├── src/
+│   └── App.tsx
+└── package.json
+```
+
+**2. Define your schema:**
+
+```typescript
+// convex/schema.ts
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  messages: defineTable({
+    author: v.string(),
+    body: v.string(),
+  }).index("by_author", ["author"]),
+});
+```
+
+**3. Write a query and mutation** (shown at the top of this page).
+
+**4. Start the dev server:**
+
+```bash
+neovex dev
+```
+
+This watches your `convex/` directory, runs codegen, and starts the server on
+port 3210. Changes rebuild automatically.
+
+**5. Connect your frontend:**
+
+```tsx
+import { ConvexReactClient } from "convex/react";
+import { useQuery, useMutation, ConvexProvider } from "convex/react";
+import { api } from "../convex/_generated/api";
+
+const client = new ConvexReactClient("http://localhost:3210/convex/demo");
+
+function App() {
+  const messages = useQuery(api.messages.list, {});
+  const send = useMutation(api.messages.send);
+
+  return (
+    <div>
+      {messages?.map((m) => <div key={m._id}>{m.author}: {m.body}</div>)}
+      <button onClick={() => send({ author: "Me", body: "Hello" })}>Send</button>
+    </div>
+  );
+}
+
+export default function Root() {
+  return <ConvexProvider client={client}><App /></ConvexProvider>;
+}
+```
+
+Open your app in the browser. Messages appear in real time -- no polling, no
+REST endpoints, no GraphQL schema.
+
+## How it works
+
+Convex-compatible server-side function runtime. Teams with existing Convex apps
+can run them on Neovex by changing the deployment URL. Supports queries,
+mutations, actions, paginated queries, scheduled execution, HTTP routes, and
+React hooks.
+
+## Client package
 
 `convex` (in-repo workspace package wrapping `neovex`)
 
 - Exports: `convex/react`, `convex/browser`, `convex/server`, `convex/values`
 
-## Quick Start
-
-```bash
-# Generate artifacts from your convex/ source
-neovex codegen --app ./my-app
-
-# Start Neovex server
-neovex start --app-dir ./my-app --port 8080
-
-# Or use dev mode (watches for changes, port 3210)
-neovex dev
-```
-
-## Project Layout
+## Project layout
 
 ```
 my-app/
@@ -45,60 +129,7 @@ my-app/
 └── vite.config.ts
 ```
 
-## Example Code
-
-### Schema
-
-```typescript
-// convex/schema.ts
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
-
-export default defineSchema({
-  messages: defineTable({
-    author: v.string(),
-    body: v.string(),
-  }).index("by_author", ["author"]),
-});
-```
-
-### Server functions
-
-```typescript
-// convex/messages.ts
-import { v } from "convex/values";
-import { mutation, paginatedQuery, query } from "./_generated/server";
-
-export const list = query({
-  args: {},
-  handler: async (ctx) => await ctx.db.query("messages").take(20),
-});
-
-export const send = mutation({
-  args: { author: v.string(), body: v.string() },
-  returns: v.string(),
-  handler: async (ctx, { author, body }) =>
-    await ctx.db.insert("messages", { author, body }),
-});
-
-export const listPage = paginatedQuery({
-  args: { author: v.union(v.string(), v.null()) },
-  returns: v.object({
-    _id: v.id("messages"),
-    _creationTime: v.number(),
-    _updateTime: v.number(),
-    author: v.string(),
-    body: v.string(),
-  }),
-  handler: async (ctx, { author }) => {
-    if (author?.trim()) {
-      return ctx.db.query("messages")
-        .filter((q) => q.eq(q.field("author"), author.trim()));
-    }
-    return ctx.db.query("messages");
-  },
-});
-```
+## More examples
 
 ### HTTP routes
 
@@ -123,34 +154,41 @@ http.route({
 export default http;
 ```
 
-### React client
+### Paginated queries
+
+```typescript
+// convex/messages.ts
+import { v } from "convex/values";
+import { paginatedQuery } from "./_generated/server";
+
+export const listPage = paginatedQuery({
+  args: { author: v.union(v.string(), v.null()) },
+  returns: v.object({
+    _id: v.id("messages"),
+    _creationTime: v.number(),
+    _updateTime: v.number(),
+    author: v.string(),
+    body: v.string(),
+  }),
+  handler: async (ctx, { author }) => {
+    if (author?.trim()) {
+      return ctx.db.query("messages")
+        .filter((q) => q.eq(q.field("author"), author.trim()));
+    }
+    return ctx.db.query("messages");
+  },
+});
+```
 
 ```tsx
-import { ConvexReactClient } from "convex/react";
-import { useQuery, useMutation, usePaginatedQuery, ConvexProvider } from "convex/react";
+import { usePaginatedQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 
-const client = new ConvexReactClient("http://localhost:8080/convex/demo");
+const paged = usePaginatedQuery(api.messages.listPage, { author: null }, { initialNumItems: 10 });
 
-function App() {
-  const messages = useQuery(api.messages.list, {});
-  const sendMessage = useMutation(api.messages.send);
-  const paged = usePaginatedQuery(api.messages.listPage, { author: null }, { initialNumItems: 10 });
-
-  return (
-    <div>
-      {messages?.map((m) => <div key={m._id}>{m.author}: {m.body}</div>)}
-      <button onClick={() => sendMessage({ author: "Me", body: "Hello" })}>Send</button>
-      <button disabled={paged.status !== "CanLoadMore"} onClick={() => paged.loadMore(5)}>
-        Load More
-      </button>
-    </div>
-  );
-}
-
-export default function Root() {
-  return <ConvexProvider client={client}><App /></ConvexProvider>;
-}
+<button disabled={paged.status !== "CanLoadMore"} onClick={() => paged.loadMore(5)}>
+  Load More
+</button>
 ```
 
 ### Node.js client
@@ -159,8 +197,8 @@ export default function Root() {
 import { ConvexClient, ConvexHttpClient } from "convex/browser";
 import { api } from "./convex/_generated/api.ts";
 
-const http = new ConvexHttpClient("http://localhost:8080/convex/demo");
-const live = new ConvexClient("http://localhost:8080/convex/demo", {
+const http = new ConvexHttpClient("http://localhost:3210/convex/demo");
+const live = new ConvexClient("http://localhost:3210/convex/demo", {
   webSocket: globalThis.WebSocket,
 });
 
@@ -187,14 +225,14 @@ await live.mutation(api.messages.send, { author: "Node", body: "Hello" });
 
 ## `neovex/` source root
 
-Neovex also supports a first-party `neovex/` source root alongside the Convex-compatible `convex/` root. When both directories exist, `neovex/` takes priority. This is experimental. See the [source directory story](../stories/support-neovex-source-directory.md) for the full contract.
+Neovex also supports a first-party `neovex/` source root alongside the Convex-compatible `convex/` root. When both directories exist, `neovex/` takes priority. This is experimental. See the [source directory story](../../plans/stories/support-neovex-source-directory.md) for the full contract.
 
 ## Known Limitations
 
-Convex compatibility is intentionally partial. See the [Convex compatibility matrix](../convex/compatibility.md) for the full scope.
+Convex compatibility is intentionally partial. See the [Convex compatibility matrix](compatibility.md) for the full scope.
 
 ## Related Docs
 
-- [Convex compatibility matrix](../convex/compatibility.md)
+- [Convex compatibility matrix](compatibility.md)
 - [Convex AI guidelines](ai-guidelines.md)
 - [Demos: convex/html](../../demos/convex/html/), [convex/http](../../demos/convex/http/), [convex/node](../../demos/convex/node/)

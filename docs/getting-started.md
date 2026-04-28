@@ -1,73 +1,57 @@
 # Getting Started
 
-Install Neovex, start the server, and run your first queries in under 5 minutes.
+Install Neovex, then pick how you want to build.
 
 ## Install
 
 ```bash
-# macOS / Linux via Homebrew
 brew install agentstation/tap/neovex
 ```
 
-Or download a binary from [GitHub Releases](https://github.com/agentstation/neovex/releases/latest). See the root [README](../README.md#install) for all platforms and build-from-source instructions.
+See [Install](../README.md#install) for other platforms or building from source.
 
-## Start the server
+## Server-side functions
 
-```bash
-neovex start --port 8080 --data-dir ./data
-```
-
-Storage, compute, and networking are now running on `http://localhost:8080`.
-
-## Create a tenant and insert data
+Write TypeScript queries and mutations. `neovex dev` watches for changes,
+runs codegen, and serves your functions with reactive subscriptions on
+`localhost:3210`.
 
 ```bash
-# Create a tenant
-curl -s -X POST http://localhost:8080/api/tenants \
-  -H "Content-Type: application/json" \
-  -d '{"id": "demo"}'
-
-# Insert a document
-curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
-  -H "Content-Type: application/json" \
-  -d '{"table": "messages", "fields": {"text": "hello world", "author": "you"}}'
-
-# Query it back
-curl -s -X POST http://localhost:8080/api/tenants/demo/query \
-  -H "Content-Type: application/json" \
-  -d '{"table": "messages", "filters": []}'
+neovex dev
 ```
 
-## Pick an adapter
+This is the recommended path for new projects. Your frontend connects with
+`useQuery` and `useMutation` — data updates in real time without REST
+endpoints, GraphQL, or polling.
 
-Neovex speaks the protocols of platforms you already use. Choose the one that matches your existing client code:
+**[Full tutorial →](adapters/convex/)**
 
-| Adapter | When to use it | Guide |
-|---------|---------------|-------|
-| **MongoDB** | You have a MongoDB app or want a familiar document API | [adapters/mongodb/](adapters/mongodb/) |
-| **Convex** | You're migrating from Convex or want reactive queries + React hooks | [adapters/convex/](adapters/convex/) |
-| **Firebase** | You're migrating from Firestore | [adapters/firebase/](adapters/firebase/) |
-| **Cloud Functions** | You have Firebase v2 or Functions Framework handlers | [adapters/cloud-functions/](adapters/cloud-functions/) |
-| **Native** | You want the direct REST and WebSocket API | [adapters/native/](adapters/native/) |
+## Existing drivers and SDKs
 
-## Example: MongoDB adapter
-
-The MongoDB adapter runs on port 27017 by default. Connect with any standard MongoDB driver:
+Run `neovex start` and connect with drivers you already know. No codegen, no
+schema files, no special project layout.
 
 ```bash
-# Connect with mongosh
-mongosh mongodb://127.0.0.1:27017/default?directConnection=true
-
-# Insert and query
-db.messages.insertOne({ author: "Alice", body: "Hello from mongosh" })
-db.messages.find()
+neovex start --port 8080
 ```
 
-See the [MongoDB adapter guide](adapters/mongodb/) for TypeScript, Python, and Go examples.
+| Adapter | What it gives you | Time to first query |
+|---------|-------------------|---------------------|
+| [**MongoDB**](adapters/mongodb/) | Stock MongoDB drivers in any language | ~2 min |
+| [**Firebase**](adapters/firebase/) | Firestore-compatible SDK with real-time listeners | ~3 min |
+| [**Cloud Functions**](adapters/cloud-functions/) | Firebase v2 triggers and Functions Framework handlers | ~5 min |
+| [**Native HTTP/WS**](adapters/native/) | Direct REST + WebSocket — just curl | ~1 min |
+
+**Not sure?** Start with [MongoDB](adapters/mongodb/). It uses drivers you
+already have, works in every language, and requires nothing beyond
+`neovex start`.
+
+**Just want to kick the tires?** The [README quick start](../README.md#quick-start)
+has a curl walkthrough you can copy-paste.
 
 ## Next steps
 
-- [Storage backends](operating/storage-backends.md) -- configure Postgres, MySQL, or other backends
+- [Current capabilities](current-capabilities.md) -- what works today
+- [Storage backends](operating/storage-backends.md) -- switch to Postgres, MySQL, or other backends
 - [CLI reference](operating/cli.md) -- all server flags and commands
-- [Current capabilities](current-capabilities.md) -- what's implemented today
 - [Demos](../demos/README.md) -- working example applications

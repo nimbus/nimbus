@@ -1,39 +1,48 @@
 # Native HTTP / WebSocket Adapter
 
-## Overview
+```bash
+neovex start --port 8080
 
-The most direct path to Neovex -- a REST API for document operations and a WebSocket API (neovex.v2 protocol) for live subscriptions. No compatibility framing, no codegen required for HTTP-only usage.
+curl -s -X POST http://localhost:8080/api/tenants -H "Content-Type: application/json" -d '{"id": "demo"}'
+curl -s -X POST http://localhost:8080/api/tenants/demo/documents -H "Content-Type: application/json" \
+  -d '{"table": "messages", "fields": {"text": "hello", "author": "you"}}'
+curl -s http://localhost:8080/api/tenants/demo/query -H "Content-Type: application/json" \
+  -d '{"table": "messages", "filters": []}'
+```
 
-## Client Package
+The most direct path to Neovex. REST for documents, WebSocket for live
+subscriptions. No SDK needed -- just curl or any HTTP client. ~1 minute
+from install to query.
+
+## Quick start
+
+```bash
+# 1. Start the server
+neovex start --port 8080
+
+# 2. Create a tenant
+curl -s -X POST http://localhost:8080/api/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"id": "demo"}'
+
+# 3. Insert a document
+curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
+  -H "Content-Type: application/json" \
+  -d '{"table": "messages", "fields": {"text": "hello", "author": "you"}}'
+
+# 4. Query it back
+curl -s -X POST http://localhost:8080/api/tenants/demo/query \
+  -H "Content-Type: application/json" \
+  -d '{"table": "messages", "filters": []}'
+```
+
+## Client package
 
 `neovex`
 
 - `neovex/rest` -- `NeovexRestClient` (HTTP) and `NeovexSubscriptionClient` (WebSocket) for the native REST API
 - `neovex/browser` -- `NeovexHttpClient` and `NeovexClient` for server-function references (Convex-style)
 - `neovex/server`, `neovex/react`, `neovex/values` -- server functions, React hooks, value types
-
-## Quick Start
-
-```bash
-neovex start --port 8080
-```
-
-```bash
-# Create a tenant
-curl -s -X POST http://localhost:8080/api/tenants \
-  -H "Content-Type: application/json" \
-  -d '{"id": "demo"}'
-
-# Insert a document
-curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
-  -H "Content-Type: application/json" \
-  -d '{"table": "messages", "fields": {"text": "hello", "author": "you"}}'
-
-# Query it back
-curl -s -X POST http://localhost:8080/api/tenants/demo/query \
-  -H "Content-Type: application/json" \
-  -d '{"table": "messages", "filters": []}'
-```
 
 ## Project Layout
 
@@ -195,7 +204,7 @@ See the [HTTP and WebSocket API reference](http-api.md) for the full route catal
 
 The native `neovex/` source root is the preferred authoring mode for new Neovex-native projects. When codegen detects both `neovex/` and `convex/` directories, `neovex/` takes priority. Generated files import from `neovex/*` instead of `convex/*`.
 
-This is experimental. See the [source directory story](../stories/support-neovex-source-directory.md) for the full contract.
+This is experimental. See the [source directory story](../../plans/stories/support-neovex-source-directory.md) for the full contract.
 
 ## Related Docs
 

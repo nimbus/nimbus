@@ -1,20 +1,47 @@
 # Cloud Functions Adapter
 
-## Overview
+```typescript
+// functions/src/index.ts
+import { onRequest } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 
-Firebase Cloud Functions v2 and standalone Functions Framework compatibility. Server-side handlers written with `firebase-functions/v2` imports run on Neovex with at-least-once delivery, durable retry, and Firestore document triggers.
+export const hello = onRequest(async (req, res) => {
+  res.json({ message: "Hello from Neovex Cloud Functions!" });
+});
 
-## Quick Start
+export const onMessageCreated = onDocumentCreated("messages/{messageId}", async (event) => {
+  console.log("New message:", event.data?.data());
+});
+```
 
 ```bash
-# Keep existing firebase-functions/v2 imports unchanged
-# Generate artifacts
+neovex codegen && neovex start
+```
+
+Your existing `firebase-functions/v2` handlers run on Neovex unchanged --
+with at-least-once delivery, durable retry, and Firestore document triggers.
+~5 minutes from install to a working trigger.
+
+## Quick start
+
+**1. Keep your existing Firebase functions code unchanged.**
+
+**2. Generate artifacts and start:**
+
+```bash
 neovex codegen
-
-# Run locally
 neovex start
+```
 
-# Deploy to a self-hosted instance
+**3. Test it:**
+
+```bash
+curl http://localhost:8080/hello
+```
+
+**4. Deploy to production:**
+
+```bash
 neovex deploy --url http://production:8080 --token <deploy-token>
 ```
 
