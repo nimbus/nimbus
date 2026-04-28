@@ -91,6 +91,7 @@ No convex/ or neovex/ source root found in /Users/dev/my-app.
 Creating starter project...
   convex/schema.ts
   convex/messages.ts
+  .gitignore
   package.json
   tsconfig.json
 
@@ -113,9 +114,8 @@ Watch:   /Users/dev/my-app/convex
 ✓ Server listening on http://localhost:3210
 
 Try it:
-  curl localhost:3210/api/tenants/demo/query \
-    -H "Content-Type: application/json" \
-    -d '{"table":"messages","filters":[]}'
+  curl localhost:3210/convex/demo/api/query \
+    -d '{"path":"messages:list","args":{}}'
 ```
 
 ### `neovex init` as standalone
@@ -152,6 +152,7 @@ my-app/
 ├── convex/
 │   ├── schema.ts          # messages table with author + body
 │   └── messages.ts        # list query + send mutation
+├── .gitignore             # .neovex/, node_modules/
 ├── package.json           # { "type": "module", dependencies: { "convex": "..." } }
 └── tsconfig.json          # moduleResolution: bundler, target: esnext
 ```
@@ -187,6 +188,47 @@ export const send = mutation({
     await ctx.db.insert("messages", { author, body }),
 });
 ```
+
+#### `.gitignore`
+
+```
+.neovex/
+node_modules/
+```
+
+#### `tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["convex"]
+}
+```
+
+#### `package.json`
+
+```json
+{
+  "name": "my-app",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "convex": "^0.1.0"
+  }
+}
+```
+
+The `convex` dependency refers to the Neovex-published `convex` compatibility
+package (see open question 4 below). The template uses a `.tmpl` extension
+so the scaffold logic can fill in the current package version at embed time.
 
 ### React template (Phase 2)
 
@@ -226,11 +268,50 @@ When `neovex dev` runs and no `convex/` or `neovex/` source root is found:
 4. **If dependencies are installed, continue normally.** Run codegen, start
    server, start watch loop.
 
+### Existing project (has `package.json`, no `convex/`)
+
+If the directory has a `package.json` but no `convex/` or `neovex/` source
+root, `neovex dev` should still scaffold the `convex/` directory but skip
+writing `package.json`, `tsconfig.json`, and `.gitignore`. Instead, print
+a message telling the developer to add the `convex` dependency manually:
+
+```
+No convex/ source root found. Creating starter functions...
+  convex/schema.ts
+  convex/messages.ts
+
+Add the convex dependency to your existing project:
+  npm install convex
+Then run `neovex dev` again.
+```
+
+This handles the common case of adding Neovex to an existing React or
+Node.js project without clobbering the developer's existing config files.
+
+### Safety: refuse to scaffold into suspicious directories
+
+Before scaffolding, check that the current directory looks intentional:
+
+- If the directory is `$HOME`, error: "Refusing to scaffold into your home
+  directory. Create a project directory first: `mkdir my-app && cd my-app`"
+- If the directory is `/`, `/tmp`, or a system path, error similarly.
+
+This prevents accidental scaffolding when a developer runs `neovex dev` from
+the wrong directory.
+
 ### Skip scaffolding
 
 When `neovex dev` is used with protocol adapters (MongoDB, Firebase, Native)
 that don't need a source root, the developer runs `neovex start` instead.
-The `--skip-codegen` flag on `neovex dev` also suppresses the init flow.
+
+If the developer passes `--skip-codegen`, the init flow is also suppressed —
+scaffolded files need codegen to produce `_generated/`, so scaffolding
+without codegen would leave the project in a broken state. If the developer
+wants to scaffold without starting the server, use `neovex init` instead.
+
+A dedicated `--no-init` flag may be added later if there's demand, but
+`--skip-codegen` covers the known use case (running `neovex dev` as a
+lightweight server without the function authoring flow).
 
 If the developer explicitly passes `--app-dir` pointing to a directory
 without a source root, `neovex dev` should error rather than scaffold into
@@ -276,7 +357,8 @@ crates/neovex-bin/
         ├── convex/
         │   ├── schema.ts
         │   └── messages.ts
-        ├── package.json.tmpl
+        ├── gitignore          # installed as .gitignore (no dot in source tree)
+        ├── package.json.tmpl  # version filled at embed time via build.rs
         └── tsconfig.json
 ```
 
@@ -287,10 +369,14 @@ crates/neovex-bin/
 Today, the Convex adapter requires tenants to exist before clients connect.
 In dev mode this is unnecessary friction.
 
-**Change:** `neovex dev` auto-creates a `demo` tenant on startup. The dev
-command should POST to create the tenant after the server is listening, or
-the server should accept an internal flag that creates the tenant at startup
-before accepting connections.
+**Change:** `neovex dev` auto-creates a `demo` tenant on startup.
+
+**Recommended approach:** The dev watch loop (which already waits for the
+server to be listening before running codegen) should POST to
+`/api/tenants` to create `"demo"` after the server is ready. This keeps
+tenant creation in the existing HTTP API path — no new internal flags, no
+special server-side bootstrapping code. If the tenant already exists (409),
+ignore the error silently.
 
 This eliminates the gap between `neovex dev` starting and a Convex client
 being able to connect to `http://localhost:3210/convex/demo`.
@@ -331,6 +417,7 @@ neovex dev
 No convex/ source root found. Creating starter project...
   convex/schema.ts
   convex/messages.ts
+  .gitignore
   package.json
   tsconfig.json
 
@@ -348,13 +435,12 @@ neovex dev
 ✓ Server listening on http://localhost:3210
 ```
 
-Then show what you can do with it — a curl command against the auto-created
-`demo` tenant and a React `useQuery` one-liner:
+Then show what you can do with it — call the scaffolded Convex function
+via curl and a React `useQuery` one-liner:
 
 ```bash
-curl localhost:3210/api/tenants/demo/query \
-  -H "Content-Type: application/json" \
-  -d '{"table":"messages","filters":[]}'
+curl localhost:3210/convex/demo/api/query \
+  -d '{"path":"messages:list","args":{}}'
 ```
 
 ```tsx
@@ -368,9 +454,10 @@ the developer sees the code they can now edit. This is the hook — they see
 real TypeScript they can modify and immediately re-run `neovex dev` to see
 changes.
 
-The "Or try it with curl" section should drop the manual
-`POST /api/tenants` call since the `demo` tenant is auto-created. The curl
-section becomes just `neovex start` + insert + query (no tenant creation).
+The "Or try it with curl" section uses `neovex start` (not `neovex dev`),
+so it does NOT get auto-tenant. Keep the manual `POST /api/tenants` call
+in that section — it's the correct flow for `neovex start`. No changes
+needed to the curl section.
 
 ### `docs/getting-started.md` — Server-side functions path
 
@@ -490,13 +577,14 @@ neovex dev          # codegen + server + watch
 2. The template includes a working `App.tsx` with `useQuery` and `useMutation`
 3. `npm run dev` starts Vite alongside `neovex dev`
 
-**Target UX:**
+**Target UX** (either `neovex dev` or `neovex init` works):
 
 ```bash
-neovex init --template react
+mkdir my-app && cd my-app
+neovex dev --template react   # scaffolds React + Convex project
 npm install
-neovex dev         # terminal 1
-npm run dev        # terminal 2
+neovex dev         # terminal 1: backend on :3210
+npm run dev        # terminal 2: Vite frontend on :5173
 ```
 
 ### Phase 3 — `npm create neovex` (stretch)
@@ -566,15 +654,36 @@ commands that complete the developer inner loop.
    required for codegen. Install it from https://nodejs.org/" — same as
    `convex dev` requires Node.js.
 
+4. **What npm package name for the `convex` dependency?** The in-repo
+   `packages/convex/` is `convex@0.1.22` — a Neovex-published compatibility
+   package, not the Convex Inc `convex` package on npm. Before launch, this
+   package name needs to be resolved:
+   - If published as `convex` to npm, it conflicts with the official Convex
+     package. Developers who have both would collide.
+   - If published as `@neovex/convex`, the import paths change (`import
+     from "@neovex/convex/server"` instead of `import from "convex/server"`).
+     The `_generated/` files would need to import from the correct package.
+   - If the template should use the real Convex npm package (`convex` from
+     Convex Inc) pointed at a Neovex server, codegen needs to be compatible
+     with that package's type definitions.
+
+   **This must be resolved before implementing Phase 1.** The scaffolded
+   `package.json` dependency and the codegen import paths must agree.
+
 ---
 
 ## Validation
 
-- [ ] `neovex dev` in an empty directory scaffolds all expected files
+### Implementation
+
+- [ ] `neovex dev` in an empty directory scaffolds all expected files (including `.gitignore`)
 - [ ] `neovex dev` after scaffold but before `npm install` prints install prompt and exits
 - [ ] `neovex dev` after `npm install` runs codegen, starts server, starts watch
 - [ ] `neovex dev` auto-creates the `demo` tenant
 - [ ] `neovex dev` in a directory with existing `convex/` skips scaffold, runs normally
+- [ ] `neovex dev` in a directory with `package.json` but no `convex/` scaffolds `convex/` only
+- [ ] `neovex dev` in `$HOME` or `/` refuses to scaffold with clear error
+- [ ] `neovex dev --skip-codegen` suppresses scaffold
 - [ ] `neovex init` in an empty directory creates all expected files
 - [ ] `neovex init` in a directory with existing `convex/` errors cleanly
 - [ ] `neovex init my-app` creates the directory if it doesn't exist
@@ -582,8 +691,11 @@ commands that complete the developer inner loop.
 - [ ] A Convex client can connect to `localhost:3210/convex/demo` immediately
 - [ ] The `list` query returns an empty array; `send` mutation inserts a document;
   `list` reactively returns the new document
+
+### Documentation
+
 - [ ] README quick start shows zero-file-creation path (install → mkdir → dev → npm install → dev)
-- [ ] README curl section drops manual `POST /api/tenants`
+- [ ] README "Or try it with curl" section unchanged (uses `neovex start`, still needs manual tenant)
 - [ ] `docs/getting-started.md` server-side functions path shows scaffold flow
 - [ ] `docs/adapters/convex/README.md` quick start uses auto-init instead of manual file creation
 - [ ] `docs/adapters/convex/README.md` configuration section reflects auto-tenant in dev mode
