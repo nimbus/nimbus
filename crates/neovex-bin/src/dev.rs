@@ -13,7 +13,6 @@ use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
 use crate::deploy::{DeployRequest, post_deploy_request};
-use crate::init::{ScaffoldAction, scaffold_project};
 use crate::start::{CliTenantProvider, StartCommand, run_start_command};
 
 const DEFAULT_DEV_PORT: u16 = 3210;
@@ -62,7 +61,6 @@ pub(crate) struct DevCommand {
 pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
     let skip_codegen = command.skip_codegen;
-    let explicit_app_dir = command.app_dir.is_some();
 
     if let Some(app_dir) = command.app_dir.as_deref() {
         let resolved = if app_dir.is_absolute() {
@@ -80,63 +78,20 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         }
     }
 
-    let mut plan = resolve_dev_plan(command, &cwd)?;
+    let plan = resolve_dev_plan(command, &cwd)?;
 
     if plan.source_root.is_none() && !skip_codegen {
-        if explicit_app_dir && !is_dir_empty(&plan.app_dir) {
-            return Err(io::Error::other(format!(
-                "--app-dir {} has existing files but no convex/ or neovex/ source root. \
-                 Use an empty directory or add a convex/ directory manually.",
-                plan.app_dir.display()
-            ))
-            .into());
-        }
-        let result = scaffold_project(&plan.app_dir)
-            .map_err(|e| io::Error::other(format!("scaffold failed: {e}")))?;
-
         cli_ux::write_stderr_line("")?;
-        if result
-            .actions
-            .iter()
-            .any(|a| matches!(a, ScaffoldAction::Skipped(_)))
-        {
-            cli_ux::write_stderr_line(
-                "No convex/ source root found. Creating starter functions...",
-            )?;
-        } else {
-            cli_ux::write_stderr_line(
-                "No convex/ or neovex/ source root found in the current directory.",
-            )?;
-            cli_ux::write_stderr_line("")?;
-            cli_ux::write_stderr_line("Creating starter project...")?;
-        }
-        for action in &result.actions {
-            match action {
-                ScaffoldAction::Created(path) => {
-                    cli_ux::write_stderr_line(&format!("  {path}"))?;
-                }
-                ScaffoldAction::Skipped(path) => {
-                    cli_ux::write_stderr_line(&format!("  skipped: {path} (already exists)"))?;
-                }
-            }
-        }
+        cli_ux::write_stderr_line("No convex/ or neovex/ source root found.")?;
         cli_ux::write_stderr_line("")?;
+        cli_ux::write_stderr_line("To get started:")?;
+        cli_ux::write_stderr_line("  neovex init")?;
+        cli_ux::write_stderr_line("  neovex dev")?;
+        return Ok(());
+    }
 
-        let convex_resolvable = plan.app_dir.join("node_modules/convex").is_dir();
-        if !convex_resolvable {
-            if result.wrote_package_json {
-                cli_ux::write_stderr_line(
-                    "Run `npm install` to install dependencies, then `neovex dev` again.",
-                )?;
-            } else {
-                cli_ux::write_stderr_line("Add the convex dependency to your existing project:")?;
-                cli_ux::write_stderr_line("  npm install convex @neovex/codegen")?;
-                cli_ux::write_stderr_line("Then run `neovex dev` again.")?;
-            }
-            return Ok(());
-        }
-
-        plan.source_root = detect_source_root(&plan.app_dir);
+    if !skip_codegen {
+        auto_install_node_dependencies(&plan.app_dir).await?;
     }
 
     emit_dev_banner(&plan)?;
@@ -271,8 +226,26 @@ fn detect_source_root(app_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn is_dir_empty(path: &Path) -> bool {
-    std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
+async fn auto_install_node_dependencies(app_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !app_dir.join("package.json").is_file() || app_dir.join("node_modules").is_dir() {
+        return Ok(());
+    }
+
+    emit_dev_info("running npm install");
+    let status = tokio::process::Command::new("npm")
+        .arg("install")
+        .current_dir(app_dir)
+        .status()
+        .await
+        .map_err(|e| io::Error::other(format!("failed to run npm install: {e}")))?;
+
+    if !status.success() {
+        return Err(io::Error::other(
+            "npm install failed. Install dependencies manually, then run `neovex dev` again.",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn resolve_unchecked_path(path: &Path, cwd: &Path) -> PathBuf {
@@ -992,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_plan_no_source_root_triggers_scaffold_path() {
+    fn dev_plan_empty_dir_has_no_source_root() {
         let temp = tempdir().expect("tempdir should build");
         let app_dir_str = temp.path().to_str().unwrap();
 
@@ -1005,23 +978,10 @@ mod tests {
             plan.source_root.is_none(),
             "empty dir should have no source root"
         );
-
-        let result = crate::init::scaffold_project(&plan.app_dir).expect("scaffold should succeed");
-        assert_eq!(result.actions.len(), 5);
-
-        let canonical = temp.path().canonicalize().unwrap();
-        assert!(canonical.join("convex/schema.ts").exists());
-        assert!(canonical.join("convex/messages.ts").exists());
-
-        let source_root = detect_source_root(&plan.app_dir);
-        assert!(
-            source_root.is_some(),
-            "scaffold should create convex/ source root"
-        );
     }
 
     #[test]
-    fn dev_plan_with_source_root_skips_scaffold() {
+    fn dev_plan_with_source_root_resolves() {
         let temp = tempdir().expect("tempdir should build");
         create_source_root(temp.path(), "convex");
         let app_dir_str = temp.path().to_str().unwrap();
@@ -1038,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_skip_codegen_suppresses_scaffold() {
+    fn dev_skip_codegen_allows_no_source_root() {
         let temp = tempdir().expect("tempdir should build");
         let app_dir_str = temp.path().to_str().unwrap();
         let command = parse_dev(["neovex", "dev", "--skip-codegen", "--app-dir", app_dir_str]);
@@ -1049,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn app_dir_nonexistent_is_created_for_scaffold() {
+    fn app_dir_nonexistent_errors_in_resolve() {
         let temp = tempdir().expect("tempdir should build");
         let new_dir = temp.path().join("new-project");
         let dir_str = new_dir.to_str().unwrap();
@@ -1065,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn app_dir_empty_allows_scaffold() {
+    fn app_dir_empty_has_no_source_root() {
         let temp = tempdir().expect("tempdir should build");
         let empty_dir = temp.path().join("empty");
         fs::create_dir_all(&empty_dir).unwrap();
@@ -1078,7 +1038,6 @@ mod tests {
         .expect("dev plan should resolve for empty --app-dir");
 
         assert!(plan.source_root.is_none());
-        assert!(is_dir_empty(&plan.app_dir));
     }
 
     #[test]
@@ -1096,7 +1055,6 @@ mod tests {
         .expect("dev plan should resolve");
 
         assert!(plan.source_root.is_none());
-        assert!(!is_dir_empty(&plan.app_dir));
     }
 
     #[test]
@@ -1117,5 +1075,27 @@ mod tests {
             plan.source_root.is_some(),
             "should detect source root in non-empty dir"
         );
+    }
+
+    #[tokio::test]
+    async fn auto_install_skips_when_no_package_json() {
+        let temp = tempdir().expect("tempdir should build");
+        auto_install_node_dependencies(temp.path())
+            .await
+            .expect("should be a no-op without package.json");
+        assert!(
+            !temp.path().join("node_modules").exists(),
+            "should not create node_modules"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_install_skips_when_node_modules_exists() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(temp.path().join("package.json"), "{}").unwrap();
+        fs::create_dir(temp.path().join("node_modules")).unwrap();
+        auto_install_node_dependencies(temp.path())
+            .await
+            .expect("should be a no-op when node_modules exists");
     }
 }

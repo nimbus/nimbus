@@ -812,11 +812,10 @@ commands that complete the developer inner loop.
 3. `npm run dev` starts Vite alongside `neovex dev`
 4. `--source-root neovex` template support
 
-### Phase 3 — `npm create neovex` (stretch)
+### ~~Phase 3 — `npm create neovex`~~ (dropped)
 
-1. Publish `create-neovex` to npm
-2. `npm create neovex@latest my-app` scaffolds + runs `npm install`
-3. Interactive prompt for template selection (like `create-hono`)
+Dropped. `neovex init` already scaffolds from the binary. A separate npm
+package would be a second entry point to maintain for the same job.
 
 ---
 

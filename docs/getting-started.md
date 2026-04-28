@@ -14,13 +14,14 @@ See [Install](../README.md#install) for other platforms or building from source.
 
 ```bash
 mkdir my-app && cd my-app
+neovex init
 neovex dev
 ```
 
-`neovex dev` scaffolds a starter project with a schema and example functions
-when no `convex/` directory exists. It creates a `demo` tenant automatically
-and starts the server on `localhost:3210`. Run `npm install` when prompted,
-then `neovex dev` again — your functions are live.
+`neovex init` scaffolds a starter project with a schema, example functions,
+and a `package.json`. `neovex dev` auto-runs `npm install` when dependencies
+are missing, creates a `demo` tenant, and starts the server on
+`localhost:3210`.
 
 From there, edit the TypeScript files in `convex/` and `neovex dev` watches
 for changes, re-runs codegen, and activates updated functions with reactive

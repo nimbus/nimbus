@@ -137,10 +137,9 @@ cargo run -p neovex-bin -- start [flags]
 Current command taxonomy:
 
 - `neovex dev`
-  shipped local development server with auto-scaffold when no source root
-  exists, auto-tenant creation (`demo`), one-shot startup codegen, debounced
-  watched codegen reruns, local generation activation, and development
-  persistence defaults
+  shipped local development server with auto `npm install`, auto-tenant
+  creation (`demo`), one-shot startup codegen, debounced watched codegen
+  reruns, local generation activation, and development persistence defaults
 - `neovex deploy`
   shipped explicit-target deploy command for validating, diffing, and
   activating generated app artifacts on a running server
@@ -297,10 +296,10 @@ watch-loop slice it:
 
 - auto-detects the app directory from the current directory by looking for a
   `neovex/` or `convex/` source root, falling back to the current directory
-- when no source root exists and `--skip-codegen` is not set, scaffolds a
-  starter project (schema, example functions, `package.json`, `tsconfig.json`,
-  `.gitignore`) using the same logic as `neovex init`, then prompts for
-  `npm install` if `node_modules/convex` is missing
+- when no source root exists and `--skip-codegen` is not set, exits with
+  guidance to run `neovex init` first
+- when `package.json` exists but `node_modules/` does not, automatically runs
+  `npm install` before codegen
 - auto-creates a `demo` tenant on startup so a Convex client can connect to
   `http://localhost:3210/convex/demo` immediately; silently reuses the tenant
   on subsequent runs

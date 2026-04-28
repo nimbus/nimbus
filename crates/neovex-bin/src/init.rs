@@ -63,18 +63,11 @@ pub(crate) fn run_init_command(command: InitCommand) -> Result<(), Box<dyn std::
         }
     }
     cli_ux::write_stderr_line("")?;
-    if result.wrote_package_json {
-        cli_ux::write_stderr_line("Next steps:")?;
-        if command.directory != Path::new(".") {
-            cli_ux::write_stderr_line(&format!("  cd {}", command.directory.display()))?;
-        }
-        cli_ux::write_stderr_line("  npm install")?;
-        cli_ux::write_stderr_line("  neovex dev")?;
-    } else {
-        cli_ux::write_stderr_line("Next steps:")?;
-        cli_ux::write_stderr_line("  npm install convex @neovex/codegen")?;
-        cli_ux::write_stderr_line("  neovex dev")?;
+    cli_ux::write_stderr_line("Next steps:")?;
+    if command.directory != Path::new(".") {
+        cli_ux::write_stderr_line(&format!("  cd {}", command.directory.display()))?;
     }
+    cli_ux::write_stderr_line("  neovex dev")?;
 
     Ok(())
 }
@@ -134,7 +127,6 @@ pub(crate) enum ScaffoldAction {
 #[derive(Debug)]
 pub(crate) struct ScaffoldResult {
     pub(crate) actions: Vec<ScaffoldAction>,
-    pub(crate) wrote_package_json: bool,
 }
 
 fn is_unsafe_directory(dir: &Path) -> Option<&'static str> {
@@ -179,7 +171,6 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
         .unwrap_or("my-app");
 
     let mut actions = Vec::new();
-    let mut wrote_package_json = false;
 
     for template in BACKEND_TEMPLATE {
         let dest = target_dir.join(template.relative_path);
@@ -198,10 +189,7 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
 
         let content = match &template.content {
             TemplateContent::Static(s) => (*s).to_string(),
-            TemplateContent::PackageJson => {
-                wrote_package_json = true;
-                render_package_json(project_name)
-            }
+            TemplateContent::PackageJson => render_package_json(project_name),
         };
 
         std::fs::write(&dest, content)
@@ -210,10 +198,7 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
         actions.push(ScaffoldAction::Created(template.relative_path.to_string()));
     }
 
-    Ok(ScaffoldResult {
-        actions,
-        wrote_package_json,
-    })
+    Ok(ScaffoldResult { actions })
 }
 
 pub(crate) fn check_source_root_flag(source_root: &str) -> Result<(), String> {
@@ -284,7 +269,6 @@ mod tests {
                 "all files should be created in empty dir"
             );
         }
-        assert!(result.wrote_package_json);
 
         assert!(tmp.path().join("convex/schema.ts").exists());
         assert!(tmp.path().join("convex/messages.ts").exists());
@@ -335,7 +319,6 @@ mod tests {
         assert!(skipped.contains(&"package.json"));
         assert!(skipped.contains(&"tsconfig.json"));
         assert!(skipped.contains(&".gitignore"));
-        assert!(!result.wrote_package_json);
 
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("package.json")).unwrap(),
