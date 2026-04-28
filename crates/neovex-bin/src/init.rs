@@ -140,6 +140,7 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
     })
 }
 
+#[allow(dead_code)] // used by `neovex init` (I5)
 pub(crate) fn check_source_root_flag(source_root: &str) -> Result<(), String> {
     if source_root == "neovex" {
         return Err(

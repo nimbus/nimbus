@@ -13,6 +13,7 @@ use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
 use crate::deploy::{DeployRequest, post_deploy_request};
+use crate::init::{ScaffoldAction, scaffold_project};
 use crate::start::{CliTenantProvider, StartCommand, run_start_command};
 
 const DEFAULT_DEV_PORT: u16 = 3210;
@@ -60,7 +61,58 @@ pub(crate) struct DevCommand {
 
 pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
-    let plan = resolve_dev_plan(command, &cwd)?;
+    let skip_codegen = command.skip_codegen;
+    let mut plan = resolve_dev_plan(command, &cwd)?;
+
+    if plan.source_root.is_none() && !skip_codegen {
+        let result = scaffold_project(&plan.app_dir)
+            .map_err(|e| io::Error::other(format!("scaffold failed: {e}")))?;
+
+        cli_ux::write_stderr_line("")?;
+        if result
+            .actions
+            .iter()
+            .any(|a| matches!(a, ScaffoldAction::Skipped(_)))
+        {
+            cli_ux::write_stderr_line(
+                "No convex/ source root found. Creating starter functions...",
+            )?;
+        } else {
+            cli_ux::write_stderr_line(
+                "No convex/ or neovex/ source root found in the current directory.",
+            )?;
+            cli_ux::write_stderr_line("")?;
+            cli_ux::write_stderr_line("Creating starter project...")?;
+        }
+        for action in &result.actions {
+            match action {
+                ScaffoldAction::Created(path) => {
+                    cli_ux::write_stderr_line(&format!("  {path}"))?;
+                }
+                ScaffoldAction::Skipped(path) => {
+                    cli_ux::write_stderr_line(&format!("  skipped: {path} (already exists)"))?;
+                }
+            }
+        }
+        cli_ux::write_stderr_line("")?;
+
+        let convex_resolvable = plan.app_dir.join("node_modules/convex").is_dir();
+        if !convex_resolvable {
+            if result.wrote_package_json {
+                cli_ux::write_stderr_line(
+                    "Run `npm install` to install dependencies, then `neovex dev` again.",
+                )?;
+            } else {
+                cli_ux::write_stderr_line("Add the convex dependency to your existing project:")?;
+                cli_ux::write_stderr_line("  npm install convex @neovex/codegen")?;
+                cli_ux::write_stderr_line("Then run `neovex dev` again.")?;
+            }
+            return Ok(());
+        }
+
+        plan.source_root = detect_source_root(&plan.app_dir);
+    }
+
     emit_dev_banner(&plan)?;
     if plan.once {
         return run_start_command(plan.start_command).await;
@@ -901,5 +953,62 @@ mod tests {
         let after = collect_source_snapshot(&root).expect("snapshot should recollect");
 
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn dev_plan_no_source_root_triggers_scaffold_path() {
+        let temp = tempdir().expect("tempdir should build");
+        let app_dir_str = temp.path().to_str().unwrap();
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--app-dir", app_dir_str]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve");
+        assert!(
+            plan.source_root.is_none(),
+            "empty dir should have no source root"
+        );
+
+        let result = crate::init::scaffold_project(&plan.app_dir).expect("scaffold should succeed");
+        assert_eq!(result.actions.len(), 5);
+
+        let canonical = temp.path().canonicalize().unwrap();
+        assert!(canonical.join("convex/schema.ts").exists());
+        assert!(canonical.join("convex/messages.ts").exists());
+
+        let source_root = detect_source_root(&plan.app_dir);
+        assert!(
+            source_root.is_some(),
+            "scaffold should create convex/ source root"
+        );
+    }
+
+    #[test]
+    fn dev_plan_with_source_root_skips_scaffold() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        let app_dir_str = temp.path().to_str().unwrap();
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--app-dir", app_dir_str]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve");
+        assert!(
+            plan.source_root.is_some(),
+            "existing source root should be detected"
+        );
+    }
+
+    #[test]
+    fn dev_skip_codegen_suppresses_scaffold() {
+        let temp = tempdir().expect("tempdir should build");
+        let app_dir_str = temp.path().to_str().unwrap();
+        let command = parse_dev(["neovex", "dev", "--skip-codegen", "--app-dir", app_dir_str]);
+        assert!(command.skip_codegen);
+
+        let plan = resolve_dev_plan(command, temp.path()).expect("dev plan should resolve");
+        assert!(plan.source_root.is_none());
     }
 }
