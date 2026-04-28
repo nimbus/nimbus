@@ -8,8 +8,8 @@ establishes the deployment-target model that `neovex deploy` will use.
 
 ## Status
 
-- **Plan status:** `in_progress`
-- **Control item:** `H3`
+- **Plan status:** `done`
+- **Control item:** `—`
 - **Status values:** `pending`, `in_progress`, `done`, `blocked`
 - **Primary source of truth:** this file plus the current git worktree.
 - **Checkpoint rule:** every work session that changes implementation state
@@ -414,7 +414,7 @@ rather than adding compatibility shims.
 | P1: Shared dirs module | `done` | H1 | `dirs.rs` module with `global_config_dir()` and `deployment_slug()` |
 | P2: Deployment identity | `done` | H2 | `neovex dev` writes `NEOVEX_DEPLOYMENT=local:<slug>` to `.env.local` |
 | P3: License migration | `done` | H3 | License default path is `~/.config/neovex/license.json` |
-| P4: Gitignore + docs | `pending` | H4 | `.env.local` in gitignore templates, docs updated |
+| P4: Gitignore + docs | `done` | H4 | `.env.local` in gitignore templates, docs updated |
 
 ## Roadmap Items
 
@@ -440,7 +440,7 @@ rather than adding compatibility shims.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H4 | `pending` | H2, H3 | `.env.local` added to gitignore templates (`templates/convex/gitignore`, `templates/cloud-functions/gitignore`). `.env.local` and `**/.env.local` added to root `.gitignore`. `docs/operating/cli.md` updated with deployment identity behavior and license path change. `docs/plans/neovex-init-plan.md` updated with `.env.local` in template listings (lines 87, 105). `README.md` updated if it references license path. |
+| H4 | `done` | H2, H3 | `.env.local` added to gitignore templates (`templates/convex/gitignore`, `templates/cloud-functions/gitignore`). `.env.local` and `**/.env.local` added to root `.gitignore`. `docs/operating/cli.md` updated with deployment identity behavior and license path change. `docs/plans/neovex-init-plan.md` updated with `.env.local` in template listings (lines 87, 105). `README.md` updated if it references license path. |
 
 ---
 
@@ -581,3 +581,4 @@ by this plan's `global_config_dir()`. Not in scope here.
 | 2026-04-28 | H1 | `done` | Created `crates/neovex-bin/src/dirs.rs` with `global_config_dir()` (XDG_CONFIG_HOME + HOME fallback), `deployment_slug()` (SHA-256 canonical path, 8 hex chars, sanitized dir name), `sanitize_dir_name()` (strip non-alphanumeric except hyphens, lowercase, empty→"app"). Added `mod dirs` to `main.rs`. Files: `dirs.rs` (new), `main.rs` (mod added). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dirs::`: 14 passed, 0 failed (5 consecutive parallel runs, no races). `cargo test -p neovex-bin`: 380 passed, 0 failed. |
 | 2026-04-28 | H2 | `done` | Updated `dev.rs`: added `write_env_local_deployment()` handling 4 `.env.local` states (absent, no var, correct value, different value); added `deployment_slug` field to `DevPlan`; `resolve_dev_plan` computes slug via `dirs::deployment_slug()`; dev banner shows `Deployment: local:<slug>` line with aligned column widths; removed `#[allow(dead_code)]` from `main.rs` `mod dirs`. Files: `dev.rs` (modified), `main.rs` (allow removed), `dirs.rs` (allow on `global_config_dir`). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dev::tests::env_local`: 6 passed, 0 failed. `cargo test -p neovex-bin -- dev::tests::dev_banner_includes_deployment_line`: 1 passed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |
 | 2026-04-28 | H3 | `done` | Moved license default from `.neovex/license.json` to `~/.config/neovex/license.json`. Added `resolve_license_path()` in `start/boot.rs` (explicit → env var → XDG default). Removed `DEFAULT_LICENSE_PATH` from `neovex-server/license/mod.rs`. Removed default-path fallback from `loading.rs`. Removed `DefaultPath` variant from `LicenseSourceKind` enum. Removed unused `PathBuf` import from `license/mod.rs`. Updated re-exports in `neovex-server/lib.rs` and `neovex/lib.rs`. Updated help text in `start/mod.rs`. Updated `ARCHITECTURE.md:693`. Removed `#[allow(dead_code)]` from `dirs.rs::global_config_dir`. | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin -p neovex-server -p neovex --all-targets -- -D warnings`: clean. `cargo test -p neovex-server -- license`: 11 passed, 0 failed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |
+| 2026-04-28 | H4 | `done` | Added `.env.local` to `templates/convex/gitignore` and `templates/cloud-functions/gitignore`. Added `.env.local` and `**/.env.local` to root `.gitignore`. Updated `docs/operating/cli.md` with deployment identity behavior (`.env.local` write on `neovex dev`) and license path change (`~/.config/neovex/license.json`). Updated `docs/plans/neovex-init-plan.md` template listings. `README.md` checked — no license path reference found. | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- init`: 34 passed, 0 failed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |

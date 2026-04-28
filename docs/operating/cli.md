@@ -173,8 +173,8 @@ Current command taxonomy:
 | `--license-file` | unset | optional explicit path to a Neovex license file |
 
 If `--license-file` is not provided, Neovex next checks
-`NEOVEX_LICENSE_FILE`, then `./.neovex/license.json`, and otherwise falls back
-to the built-in community license.
+`NEOVEX_LICENSE_FILE`, then `~/.config/neovex/license.json`, and otherwise
+falls back to the built-in community license.
 
 ## Encryption Flags
 
@@ -315,8 +315,12 @@ slice it:
 - listens on port `3210` by default
 - uses a shared project-local persistence root at `./.neovex/dev/` by default
   for both tenant data and local control state
-- prints the local URL, app directory, persistence root, watched source root,
-  and resolved Compose selection when one is active
+- writes `NEOVEX_DEPLOYMENT=local:<slug>` to `.env.local` in the app directory
+  on startup, where `<slug>` is derived from the directory name and a hash of
+  the canonical path; respects existing `.env.local` content and only updates
+  the `NEOVEX_DEPLOYMENT` line
+- prints the local URL, deployment identity, app directory, persistence root,
+  watched source root, and resolved Compose selection when one is active
 
 Current watch-loop scope:
 

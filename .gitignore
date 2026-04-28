@@ -31,6 +31,8 @@ dist
 .claude/settings.local.json
 .neovex
 **/.neovex
+.env.local
+**/.env.local
 demos/convex/vendor/browser.bundle.js
 # Local runtime and machine state
 data/

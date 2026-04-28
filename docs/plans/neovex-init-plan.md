@@ -84,7 +84,7 @@ my-app/
 ├── convex/
 │   ├── schema.ts          # messages table with author + body
 │   └── messages.ts        # list query + send mutation
-├── .gitignore             # .neovex/, node_modules/
+├── .gitignore             # .neovex/, .env.local, node_modules/
 ├── package.json           # convex + @neovex/codegen
 └── tsconfig.json          # ESNext/bundler
 ```
@@ -102,7 +102,7 @@ my-app/
 │   ├── tsconfig.json      # Node.js TypeScript config
 │   └── src/
 │       └── index.ts       # starter HTTP + Firestore trigger handlers
-└── .gitignore             # .neovex/, node_modules/, lib/
+└── .gitignore             # .neovex/, .env.local, node_modules/, lib/
 ```
 
 `functions/package.json` uses `{{PROJECT_NAME}}` and `{{CODEGEN_VERSION}}`
