@@ -1,7 +1,83 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use clap::Args;
+
+use crate::cli_ux;
 
 pub(crate) const CONVEX_VERSION: &str = env!("NEOVEX_CONVEX_VERSION");
 pub(crate) const CODEGEN_VERSION: &str = env!("NEOVEX_CODEGEN_VERSION");
+
+/// Scaffold a new Neovex project.
+#[derive(Debug, Args)]
+#[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(crate) struct InitCommand {
+    /// Target directory (created if it does not exist).
+    #[arg(default_value = ".")]
+    pub(crate) directory: PathBuf,
+
+    /// Template to scaffold.
+    #[arg(long, default_value = "backend")]
+    pub(crate) template: String,
+
+    /// Source root directory name.
+    #[arg(long, default_value = "convex")]
+    pub(crate) source_root: String,
+}
+
+pub(crate) fn run_init_command(command: InitCommand) -> Result<(), Box<dyn std::error::Error>> {
+    check_source_root_flag(&command.source_root)?;
+
+    let target = if command.directory.is_absolute() {
+        command.directory.clone()
+    } else {
+        std::env::current_dir()?.join(&command.directory)
+    };
+
+    if !target.exists() {
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
+    }
+
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", target.display()))?;
+
+    if canonical.join("convex").is_dir() || canonical.join("neovex").is_dir() {
+        return Err(
+            "Source root already exists. Run `neovex dev` to start the development server.".into(),
+        );
+    }
+
+    let result = scaffold_project(&canonical)?;
+
+    cli_ux::write_stderr_line("")?;
+    cli_ux::write_stderr_line("Created starter project:")?;
+    for action in &result.actions {
+        match action {
+            ScaffoldAction::Created(path) => {
+                cli_ux::write_stderr_line(&format!("  {path}"))?;
+            }
+            ScaffoldAction::Skipped(path) => {
+                cli_ux::write_stderr_line(&format!("  skipped: {path} (already exists)"))?;
+            }
+        }
+    }
+    cli_ux::write_stderr_line("")?;
+    if result.wrote_package_json {
+        cli_ux::write_stderr_line("Next steps:")?;
+        if command.directory != Path::new(".") {
+            cli_ux::write_stderr_line(&format!("  cd {}", command.directory.display()))?;
+        }
+        cli_ux::write_stderr_line("  npm install")?;
+        cli_ux::write_stderr_line("  neovex dev")?;
+    } else {
+        cli_ux::write_stderr_line("Next steps:")?;
+        cli_ux::write_stderr_line("  npm install convex @neovex/codegen")?;
+        cli_ux::write_stderr_line("  neovex dev")?;
+    }
+
+    Ok(())
+}
 
 const SCHEMA_TS: &str = include_str!("../templates/backend/convex/schema.ts");
 const MESSAGES_TS: &str = include_str!("../templates/backend/convex/messages.ts");
@@ -140,7 +216,6 @@ pub(crate) fn scaffold_project(target_dir: &Path) -> Result<ScaffoldResult, Stri
     })
 }
 
-#[allow(dead_code)] // used by `neovex init` (I5)
 pub(crate) fn check_source_root_flag(source_root: &str) -> Result<(), String> {
     if source_root == "neovex" {
         return Err(
@@ -314,5 +389,68 @@ mod tests {
     #[test]
     fn source_root_convex_is_accepted() {
         assert!(check_source_root_flag("convex").is_ok());
+    }
+
+    #[test]
+    fn init_command_scaffolds_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let command = InitCommand {
+            directory: tmp.path().to_path_buf(),
+            template: "backend".to_string(),
+            source_root: "convex".to_string(),
+        };
+        run_init_command(command).unwrap();
+        assert!(tmp.path().join("convex/schema.ts").exists());
+        assert!(tmp.path().join("package.json").exists());
+    }
+
+    #[test]
+    fn init_command_creates_target_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("my-app");
+        let command = InitCommand {
+            directory: target.clone(),
+            template: "backend".to_string(),
+            source_root: "convex".to_string(),
+        };
+        run_init_command(command).unwrap();
+        assert!(target.join("convex/schema.ts").exists());
+        assert!(target.join("package.json").exists());
+        let pkg = std::fs::read_to_string(target.join("package.json")).unwrap();
+        assert!(
+            pkg.contains("\"name\": \"my-app\""),
+            "project name should come from the directory name"
+        );
+    }
+
+    #[test]
+    fn init_command_errors_when_source_root_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("convex")).unwrap();
+        let command = InitCommand {
+            directory: tmp.path().to_path_buf(),
+            template: "backend".to_string(),
+            source_root: "convex".to_string(),
+        };
+        let err = run_init_command(command).unwrap_err();
+        assert!(
+            err.to_string().contains("already exists"),
+            "should mention source root already exists"
+        );
+    }
+
+    #[test]
+    fn init_command_rejects_neovex_source_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let command = InitCommand {
+            directory: tmp.path().to_path_buf(),
+            template: "backend".to_string(),
+            source_root: "neovex".to_string(),
+        };
+        let err = run_init_command(command).unwrap_err();
+        assert!(
+            err.to_string().contains("experimental"),
+            "should mention neovex source root is experimental"
+        );
     }
 }
