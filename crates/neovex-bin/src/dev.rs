@@ -13,12 +13,14 @@ use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
 use crate::deploy::{DeployRequest, post_deploy_request};
+use crate::dirs;
 use crate::node;
 use crate::start::{CliTenantProvider, StartCommand, run_start_command};
 
 const DEFAULT_DEV_PORT: u16 = 3210;
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const WATCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(300);
+const NEOVEX_DEPLOYMENT_KEY: &str = "NEOVEX_DEPLOYMENT";
 
 /// Start a local development server with watched codegen and dev defaults.
 #[derive(Debug, Args)]
@@ -92,6 +94,8 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         return Ok(());
     }
 
+    write_env_local_deployment(&plan.app_dir, &plan.deployment_slug)?;
+
     if let Some(adapter) = &plan.adapter
         && !skip_codegen
         && adapter.needs_node_dependencies()
@@ -123,6 +127,7 @@ pub(crate) enum DevTailLogsMode {
 struct DevPlan {
     app_dir: PathBuf,
     data_dir: PathBuf,
+    deployment_slug: String,
     compose_selection: Option<ResolvedComposeSelection>,
     local_url: String,
     adapter: Option<DevAdapter>,
@@ -159,6 +164,8 @@ impl DevPlan {
 fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
     let adapter = detect_dev_adapter(&app_dir);
+    let deployment_slug =
+        dirs::deployment_slug(&app_dir).map_err(|error| io::Error::other(error.to_string()))?;
     let explicit_compose_files = command.compose_file.as_slice();
     let compose_selection = resolve_compose_selection(explicit_compose_files, cwd)
         .map_err(|error| io::Error::other(error.to_string()))?;
@@ -185,6 +192,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
     Ok(DevPlan {
         app_dir,
         data_dir,
+        deployment_slug,
         compose_selection,
         local_url,
         adapter,
@@ -192,6 +200,57 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         tail_logs: command.tail_logs,
         start_command,
     })
+}
+
+fn write_env_local_deployment(app_dir: &Path, slug: &str) -> io::Result<()> {
+    let env_path = app_dir.join(".env.local");
+    let deployment_value = format!("local:{slug}");
+    let target_line = format!("{NEOVEX_DEPLOYMENT_KEY}={deployment_value}");
+
+    let content = match std::fs::read_to_string(&env_path) {
+        Ok(existing) => {
+            let mut found = false;
+            let mut already_correct = false;
+            let updated: Vec<String> = existing
+                .lines()
+                .map(|line| {
+                    if line.starts_with(&format!("{NEOVEX_DEPLOYMENT_KEY}=")) {
+                        found = true;
+                        if line == target_line {
+                            already_correct = true;
+                        }
+                        target_line.clone()
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect();
+            if already_correct {
+                return Ok(());
+            }
+            if found {
+                let mut result = updated.join("\n");
+                if existing.ends_with('\n') {
+                    result.push('\n');
+                }
+                result
+            } else {
+                let mut result = existing;
+                if !result.ends_with('\n') && !result.is_empty() {
+                    result.push('\n');
+                }
+                result.push_str(&target_line);
+                result.push('\n');
+                result
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            format!("{target_line}\n")
+        }
+        Err(e) => return Err(e),
+    };
+
+    std::fs::write(&env_path, content)
 }
 
 fn resolve_app_dir(explicit_app_dir: Option<&Path>, cwd: &Path) -> io::Result<PathBuf> {
@@ -381,32 +440,36 @@ fn emit_dev_banner(plan: &DevPlan) -> io::Result<()> {
 fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     let mut lines = vec![
         "Neovex dev ready to start".to_string(),
-        format!("Local:   {}", plan.local_url),
-        format!("App dir: {}", plan.app_dir.display()),
-        format!("Data:    {}", plan.data_dir.display()),
+        format!("Local:      {}", plan.local_url),
+        format!("Deployment: local:{}", plan.deployment_slug),
+        format!("App dir:    {}", plan.app_dir.display()),
+        format!("Data:       {}", plan.data_dir.display()),
     ];
     if let Some(adapter) = &plan.adapter {
-        lines.push(format!("Adapter: {}", adapter.name()));
+        lines.push(format!("Adapter:    {}", adapter.name()));
     }
     if let Some(selection) = plan.compose_selection.as_ref() {
-        lines.push(format!("Compose: {}", compose_selection_summary(selection)));
+        lines.push(format!(
+            "Compose:    {}",
+            compose_selection_summary(selection)
+        ));
     }
     match plan.adapter.as_ref() {
         Some(adapter) if plan.once => lines.push(format!(
-            "Watch:   disabled by --once; detected {}",
+            "Watch:      disabled by --once; detected {}",
             adapter.source_root().display()
         )),
         Some(adapter) => {
-            lines.push(format!("Watch:   {}", adapter.source_root().display()));
+            lines.push(format!("Watch:      {}", adapter.source_root().display()));
         }
         None if plan.once => {
-            lines.push("Watch:   disabled by --once; no adapter detected".to_string());
+            lines.push("Watch:      disabled by --once; no adapter detected".to_string());
         }
         None => {
-            lines.push("Watch:   disabled; no adapter detected".to_string());
+            lines.push("Watch:      disabled; no adapter detected".to_string());
         }
     }
-    lines.push(format!("Logs:    {}", plan.tail_logs.as_str()));
+    lines.push(format!("Logs:       {}", plan.tail_logs.as_str()));
     lines.push(
         "Note: watched codegen activates regenerated artifacts locally after validation; runtime log multiplexing is still pending.".to_string(),
     );
@@ -833,7 +896,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line == "Compose: ./compose.custom.yaml")
+                .any(|line| line == "Compose:    ./compose.custom.yaml")
         );
     }
 
@@ -857,7 +920,7 @@ mod tests {
 
         let lines = dev_banner_lines(&plan);
         let expected = format!(
-            "Compose: auto-discovered {} (+ compose.override.yaml)",
+            "Compose:    auto-discovered {} (+ compose.override.yaml)",
             temp.path().join("compose.yaml").display()
         );
 
@@ -881,6 +944,7 @@ mod tests {
         let plan = DevPlan {
             app_dir: PathBuf::from("/workspace"),
             data_dir: PathBuf::from("/workspace/.neovex/dev"),
+            deployment_slug: "workspace-abcd1234".to_owned(),
             compose_selection: Some(selection),
             local_url: "http://localhost:3210/".to_owned(),
             adapter: None,
@@ -892,7 +956,7 @@ mod tests {
         let lines = dev_banner_lines(&plan);
 
         assert!(lines.iter().any(|line| {
-            line == "Compose: COMPOSE_FILE=./compose.yaml (+ 1 extra Compose files)"
+            line == "Compose:    COMPOSE_FILE=./compose.yaml (+ 1 extra Compose files)"
         }));
     }
 
@@ -1327,6 +1391,98 @@ mod tests {
             Some(DevAdapter::CloudFunctions {
                 source_root: canonical.join("functions"),
             })
+        );
+    }
+
+    #[test]
+    fn env_local_created_when_absent() {
+        let temp = tempdir().expect("tempdir should build");
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(content, "NEOVEX_DEPLOYMENT=local:myapp-abcd1234\n");
+    }
+
+    #[test]
+    fn env_local_appends_when_no_deployment_var() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(temp.path().join(".env.local"), "OTHER_VAR=hello\n").unwrap();
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content,
+            "OTHER_VAR=hello\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\n"
+        );
+    }
+
+    #[test]
+    fn env_local_noop_when_correct_value() {
+        let temp = tempdir().expect("tempdir should build");
+        let original = "OTHER_VAR=hello\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\n";
+        fs::write(temp.path().join(".env.local"), original).unwrap();
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content, original,
+            "file must not be rewritten when already correct"
+        );
+    }
+
+    #[test]
+    fn env_local_overwrites_different_deployment_value() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join(".env.local"),
+            "OTHER_VAR=hello\nNEOVEX_DEPLOYMENT=local:old-slug-12345678\nANOTHER=world\n",
+        )
+        .unwrap();
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content,
+            "OTHER_VAR=hello\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\nANOTHER=world\n"
+        );
+    }
+
+    #[test]
+    fn env_local_preserves_other_content() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join(".env.local"),
+            "FIRST=1\nSECOND=2\nTHIRD=3\n",
+        )
+        .unwrap();
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content,
+            "FIRST=1\nSECOND=2\nTHIRD=3\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\n"
+        );
+    }
+
+    #[test]
+    fn env_local_handles_file_without_trailing_newline() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(temp.path().join(".env.local"), "OTHER=val").unwrap();
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content,
+            "OTHER=val\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\n"
+        );
+    }
+
+    #[test]
+    fn dev_banner_includes_deployment_line() {
+        let temp = tempdir().expect("tempdir should build");
+        create_source_root(temp.path(), "convex");
+        let plan = resolve_dev_plan(parse_dev(["neovex", "dev"]), temp.path())
+            .expect("dev plan should resolve");
+        let lines = dev_banner_lines(&plan);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Deployment: local:")),
+            "banner must include Deployment line, got: {lines:?}"
         );
     }
 }

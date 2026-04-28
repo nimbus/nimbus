@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 const SLUG_HASH_HEX_LEN: usize = 8;
 
+#[allow(dead_code)]
 pub(crate) fn global_config_dir() -> Result<PathBuf, Error> {
     if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(path).join("neovex"));
