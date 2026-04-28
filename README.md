@@ -84,49 +84,81 @@ Neovex is designed from day one to be the thing you actually deploy.
 ## Quick start
 
 ```bash
-# macOS / Linux via Homebrew
 brew install agentstation/tap/neovex
 ```
 
+### Server-side functions
+
+```typescript
+// convex/messages.ts
+import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const list = query({
+  args: {},
+  handler: async (ctx) => await ctx.db.query("messages").take(20),
+});
+
+export const send = mutation({
+  args: { author: v.string(), body: v.string() },
+  handler: async (ctx, { author, body }) =>
+    await ctx.db.insert("messages", { author, body }),
+});
+```
+
 ```bash
-# Start the server
+neovex dev
+```
+
+```tsx
+// In your React app — data updates in real time
+const messages = useQuery(api.messages.list);
+```
+
+Write TypeScript functions, run `neovex dev`, and your frontend gets reactive
+queries and mutations — no REST endpoints, no GraphQL, no polling. Everything
+runs locally in a single process. See the [full tutorial](docs/adapters/convex/).
+
+### Or try it with curl
+
+```bash
 neovex start --port 8080 --data-dir ./data
 ```
 
-That's it. Storage, compute, and networking running on `http://localhost:8080` -- document storage, a V8 runtime, HTTP and WebSocket APIs, and durable scheduling -- in a single process, writing to a single directory.
-
 ```bash
-# Create a tenant
 curl -s -X POST http://localhost:8080/api/tenants \
   -H "Content-Type: application/json" \
   -d '{"id": "demo"}'
 
-# Insert a document
 curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
   -H "Content-Type: application/json" \
   -d '{"table": "messages", "fields": {"text": "hello world", "author": "you"}}'
 
-# Query it back
 curl -s -X POST http://localhost:8080/api/tenants/demo/query \
   -H "Content-Type: application/json" \
   -d '{"table": "messages", "filters": []}'
 ```
 
-Live query subscriptions are available over WebSocket at `/ws`. See the [HTTP & WebSocket API reference](docs/adapters/native/http-api.md) for the full route catalog.
+`neovex start` runs the same engine without codegen — connect with
+[stock MongoDB drivers](docs/adapters/mongodb/),
+[Firebase SDKs](docs/adapters/firebase/), or any HTTP client.
+See the [getting started guide](docs/getting-started.md) to pick your adapter.
 
 ## Adapters
 
-Neovex speaks the protocols of platforms developers already use, so migration is a configuration change, not a rewrite.
+Build with server-side TypeScript functions, or connect existing drivers and
+SDKs. Every adapter shares the same engine — same storage, same mutations, same
+real-time subscriptions.
 
-| Adapter | Client Package | Protocol | Guide |
-|---------|---------------|----------|-------|
-| **Convex** | `convex` | Convex WebSocket + HTTP | [docs/adapters/convex/](docs/adapters/convex/) |
-| **Firebase / Firestore** | `@neovex/firebase` | REST, gRPC-Web, WebSocket Listen | [docs/adapters/firebase/](docs/adapters/firebase/) |
-| **Cloud Functions** | *(server-side)* | Firebase v2 + Functions Framework | [docs/adapters/cloud-functions/](docs/adapters/cloud-functions/) |
-| **MongoDB** | `@neovex/mongodb` | MongoDB Wire Protocol | [docs/adapters/mongodb/](docs/adapters/mongodb/) |
-| **Native HTTP/WS** | `neovex` | REST + WebSocket | [docs/adapters/native/](docs/adapters/native/) |
+| Adapter | What you get | Guide |
+|---------|-------------|-------|
+| **Convex** | Server-side TypeScript functions, reactive queries, React hooks | [docs/adapters/convex/](docs/adapters/convex/) |
+| **MongoDB** | Stock MongoDB drivers in any language — no codegen, no schema | [docs/adapters/mongodb/](docs/adapters/mongodb/) |
+| **Firebase / Firestore** | Firestore-compatible SDK, real-time listeners | [docs/adapters/firebase/](docs/adapters/firebase/) |
+| **Cloud Functions** | Firebase v2 triggers and Functions Framework handlers | [docs/adapters/cloud-functions/](docs/adapters/cloud-functions/) |
+| **Native HTTP/WS** | Direct REST + WebSocket API — just curl | [docs/adapters/native/](docs/adapters/native/) |
 
-All adapters share the same engine -- every mutation flows through the same write path, the same storage transactions, and the same subscription fan-out. Choosing an adapter is a client-side decision, not a server-side fork.
+All adapters share the same engine — every mutation flows through the same write path, the same storage transactions, and the same subscription fan-out. Choosing an adapter is a client-side decision, not a server-side fork.
 
 > [!TIP]
 > Running on one of these today and the bill, the lock-in, or the compliance gap has you looking for the door? [Open an issue](https://github.com/agentstation/neovex/issues) -- we want to hear about your migration scenario.

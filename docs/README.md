@@ -6,7 +6,7 @@ how the system is built.
 
 ## Getting Started
 
-- [Quick start](getting-started.md) -- install, start, insert, query in 5 minutes
+- [Getting started](getting-started.md) -- install, pick your adapter, start building
 - [Current capabilities](current-capabilities.md) -- what works today
 
 ## Adapters
