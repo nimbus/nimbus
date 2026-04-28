@@ -6,7 +6,6 @@ mod compose;
 mod deploy;
 mod dev;
 mod encryption;
-#[allow(dead_code)]
 mod init;
 mod machine;
 mod start;
