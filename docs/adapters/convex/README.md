@@ -27,43 +27,21 @@ machine. ~3 minutes from install to live data in the browser.
 
 ## Quick start
 
-**1. Create a project with server functions:**
-
-```
-my-app/
-├── convex/
-│   ├── schema.ts
-│   └── messages.ts
-├── src/
-│   └── App.tsx
-└── package.json
-```
-
-**2. Define your schema:**
-
-```typescript
-// convex/schema.ts
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
-
-export default defineSchema({
-  messages: defineTable({
-    author: v.string(),
-    body: v.string(),
-  }).index("by_author", ["author"]),
-});
-```
-
-**3. Write a query and mutation** (shown at the top of this page).
-
-**4. Start the dev server:**
+**1. Create a project and run `neovex dev`:**
 
 ```bash
+mkdir my-app && cd my-app
 neovex dev
 ```
 
-This watches your `convex/` directory, runs codegen, and starts the server on
-port 3210. Changes rebuild automatically.
+`neovex dev` scaffolds a starter project when no `convex/` directory exists:
+a schema, example query and mutation, `package.json` with the right
+dependencies, and a `tsconfig.json`. It also auto-creates a `demo` tenant so
+a Convex client can connect immediately.
+
+Run `npm install` when prompted, then `neovex dev` again. The dev server
+watches your `convex/` directory, runs codegen, and starts on port 3210.
+Changes rebuild automatically.
 
 **5. Connect your frontend:**
 
@@ -216,12 +194,13 @@ await live.mutation(api.messages.send, { author: "Node", body: "Hello" });
 
 - `--app-dir <path>`: Point to the directory containing your `convex/` source root
 - `--skip-codegen`: Skip the startup codegen pass
-- Convex URL pattern: `http://localhost:8080/convex/{tenant_id}`
-- Tenants must exist before the Convex client connects. Create via `POST /api/tenants`.
+- Convex URL pattern: `http://localhost:{port}/convex/{tenant_id}`
+- `neovex dev` auto-creates a `demo` tenant on startup, so `http://localhost:3210/convex/demo` is ready immediately.
+- `neovex start` does not auto-create tenants. Create them via `POST /api/tenants` before connecting a Convex client.
 
 ### Tenant creation security
 
-> **Important:** `POST /api/tenants` currently creates tenants on demand without authentication. This is convenient for local development but is a security concern in production. Pre-provision tenants via the admin API or CLI before exposing Neovex to untrusted clients. A `--auto-create-tenants` flag (default off, opt-in for development) is planned.
+> **Important:** `POST /api/tenants` currently creates tenants on demand without authentication. This is convenient for local development but is a security concern in production. Pre-provision tenants via the admin API or CLI before exposing Neovex to untrusted clients.
 
 ## `neovex/` source root
 

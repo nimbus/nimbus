@@ -12,13 +12,19 @@ See [Install](../README.md#install) for other platforms or building from source.
 
 ## Server-side functions
 
-Write TypeScript queries and mutations. `neovex dev` watches for changes,
-runs codegen, and serves your functions with reactive subscriptions on
-`localhost:3210`.
-
 ```bash
+mkdir my-app && cd my-app
 neovex dev
 ```
+
+`neovex dev` scaffolds a starter project with a schema and example functions
+when no `convex/` directory exists. It creates a `demo` tenant automatically
+and starts the server on `localhost:3210`. Run `npm install` when prompted,
+then `neovex dev` again — your functions are live.
+
+From there, edit the TypeScript files in `convex/` and `neovex dev` watches
+for changes, re-runs codegen, and activates updated functions with reactive
+subscriptions.
 
 This is the recommended path for new projects. Your frontend connects with
 `useQuery` and `useMutation` — data updates in real time without REST
