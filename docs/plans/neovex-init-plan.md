@@ -7,7 +7,7 @@ to live reactive data in under 3 minutes with no manual file creation.
 ## Status
 
 - **Plan status:** `in_progress`
-- **Control item:** `I3`
+- **Control item:** `—`
 - **Status values:** `pending`, `in_progress`, `done`, `blocked`
 - **Primary source of truth:** this file plus the current git worktree.
 - **Checkpoint rule:** every work session that changes implementation state
@@ -750,7 +750,7 @@ commands that complete the developer inner loop.
 |-------|--------|-------|-----------|
 | P1: Build infrastructure | `done` | I1 | `build.rs` emits package versions as compile-time env vars |
 | P2: Scaffold module | `done` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
-| P3: `neovex dev` auto-init | `in_progress` | I3, I4 | `neovex dev` scaffolds when no source root, checks for node_modules, handles existing projects and edge cases |
+| P3: `neovex dev` auto-init | `done` | I3, I4 | `neovex dev` scaffolds when no source root, checks for node_modules, handles existing projects and edge cases |
 | P4: `neovex init` command | `pending` | I5 | Standalone `neovex init` command using shared scaffold module |
 | P5: Auto-tenant | `pending` | I6 | `neovex dev` auto-creates `demo` tenant via server-internal boot path |
 | P6: Documentation | `pending` | I7 | README, getting-started, and Convex adapter docs updated |
@@ -775,7 +775,7 @@ commands that complete the developer inner loop.
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
 | I3: `neovex dev` scaffold integration | `done` | I2 | When `neovex dev` finds no `convex/` or `neovex/` source root and `--skip-codegen` is not set: calls `scaffold_project()`, checks for `node_modules/convex`, prints install prompt and exits if missing, otherwise continues to codegen + server + watch. Existing behavior unchanged when source root exists. |
-| I4: `neovex dev --app-dir` edge cases | `pending` | I3 | `--app-dir` pointing to empty or nonexistent dir scaffolds normally. `--app-dir` pointing to non-empty dir without source root errors with clear message. Existing `--app-dir` behavior unchanged when source root exists. |
+| I4: `neovex dev --app-dir` edge cases | `done` | I3 | `--app-dir` pointing to empty or nonexistent dir scaffolds normally. `--app-dir` pointing to non-empty dir without source root errors with clear message. Existing `--app-dir` behavior unchanged when source root exists. |
 
 ### P4 Work Queue: `neovex init` Command
 
@@ -825,6 +825,7 @@ commands that complete the developer inner loop.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | 2026-04-27 | — | — | Plan created and audited against codebase | — |
+| 2026-04-27 | I4 | `done` | `--app-dir` nonexistent: pre-created before plan resolve. `--app-dir` non-empty without source root: errors. `--app-dir` empty: scaffolds normally. Added `is_dir_empty()` helper. 4 new edge-case tests. | `cargo test -p neovex-bin -- init::tests dev::tests` 31/31 pass, clippy clean |
 | 2026-04-27 | I3 | `done` | `run_dev_command()` calls `scaffold_project()` when no source root and `--skip-codegen` not set. Prints file creation/skip output. Checks `node_modules/convex`, prints install prompt and exits if missing. Re-detects source root after scaffold. 3 new dev tests. | `cargo test -p neovex-bin -- init::tests dev::tests` 27/27 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |
 | 2026-04-27 | I2 | `done` | `scaffold_project()` with per-file skip logic, safety checks ($HOME, /, /tmp), version substitution, `check_source_root_flag()`. 9 unit tests: empty dir, skip existing, refuse $HOME/root/tmp, source-root advisory, version substitution. | `cargo test -p neovex-bin -- init::tests` 9/9 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |
 | 2026-04-27 | I1 | `done` | `build.rs` reads versions from `packages/convex/package.json` and `packages/codegen/package.json`, emits `NEOVEX_CONVEX_VERSION` (0.1.22) and `NEOVEX_CODEGEN_VERSION` (0.1.22). Created `init.rs` with constants, template, and `render_package_json()`. Created `templates/backend/` with all 5 template files. | `cargo build -p neovex-bin` succeeds, `cargo test -p neovex-bin -- init::tests` 2/2 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |

@@ -62,9 +62,35 @@ pub(crate) struct DevCommand {
 pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
     let skip_codegen = command.skip_codegen;
+    let explicit_app_dir = command.app_dir.is_some();
+
+    if let Some(app_dir) = command.app_dir.as_deref() {
+        let resolved = if app_dir.is_absolute() {
+            app_dir.to_path_buf()
+        } else {
+            cwd.join(app_dir)
+        };
+        if !resolved.exists() {
+            std::fs::create_dir_all(&resolved).map_err(|e| {
+                io::Error::other(format!(
+                    "failed to create --app-dir {}: {e}",
+                    resolved.display()
+                ))
+            })?;
+        }
+    }
+
     let mut plan = resolve_dev_plan(command, &cwd)?;
 
     if plan.source_root.is_none() && !skip_codegen {
+        if explicit_app_dir && !is_dir_empty(&plan.app_dir) {
+            return Err(io::Error::other(format!(
+                "--app-dir {} has existing files but no convex/ or neovex/ source root. \
+                 Use an empty directory or add a convex/ directory manually.",
+                plan.app_dir.display()
+            ))
+            .into());
+        }
         let result = scaffold_project(&plan.app_dir)
             .map_err(|e| io::Error::other(format!("scaffold failed: {e}")))?;
 
@@ -242,6 +268,10 @@ fn detect_source_root(app_dir: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+fn is_dir_empty(path: &Path) -> bool {
+    std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
 
 fn resolve_unchecked_path(path: &Path, cwd: &Path) -> PathBuf {
@@ -1010,5 +1040,76 @@ mod tests {
 
         let plan = resolve_dev_plan(command, temp.path()).expect("dev plan should resolve");
         assert!(plan.source_root.is_none());
+    }
+
+    #[test]
+    fn app_dir_nonexistent_is_created_for_scaffold() {
+        let temp = tempdir().expect("tempdir should build");
+        let new_dir = temp.path().join("new-project");
+        let dir_str = new_dir.to_str().unwrap();
+
+        let command = parse_dev(["neovex", "dev", "--app-dir", dir_str]);
+        assert!(!new_dir.exists());
+
+        let plan = resolve_dev_plan(command, temp.path());
+        assert!(
+            plan.is_err(),
+            "nonexistent --app-dir should error in resolve_dev_plan without pre-creation"
+        );
+    }
+
+    #[test]
+    fn app_dir_empty_allows_scaffold() {
+        let temp = tempdir().expect("tempdir should build");
+        let empty_dir = temp.path().join("empty");
+        fs::create_dir_all(&empty_dir).unwrap();
+        let dir_str = empty_dir.to_str().unwrap();
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--app-dir", dir_str]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve for empty --app-dir");
+
+        assert!(plan.source_root.is_none());
+        assert!(is_dir_empty(&plan.app_dir));
+    }
+
+    #[test]
+    fn app_dir_nonempty_without_source_root_detected() {
+        let temp = tempdir().expect("tempdir should build");
+        let nonempty = temp.path().join("existing");
+        fs::create_dir_all(&nonempty).unwrap();
+        fs::write(nonempty.join("index.js"), "console.log('hi')").unwrap();
+        let dir_str = nonempty.to_str().unwrap();
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--app-dir", dir_str]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve");
+
+        assert!(plan.source_root.is_none());
+        assert!(!is_dir_empty(&plan.app_dir));
+    }
+
+    #[test]
+    fn app_dir_with_source_root_skips_edge_case_check() {
+        let temp = tempdir().expect("tempdir should build");
+        let project = temp.path().join("project");
+        fs::create_dir_all(project.join("convex")).unwrap();
+        fs::write(project.join("index.js"), "console.log('hi')").unwrap();
+        let dir_str = project.to_str().unwrap();
+
+        let plan = resolve_dev_plan(
+            parse_dev(["neovex", "dev", "--app-dir", dir_str]),
+            temp.path(),
+        )
+        .expect("dev plan should resolve");
+
+        assert!(
+            plan.source_root.is_some(),
+            "should detect source root in non-empty dir"
+        );
     }
 }
