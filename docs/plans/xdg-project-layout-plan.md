@@ -8,8 +8,8 @@ establishes the deployment-target model that `neovex deploy` will use.
 
 ## Status
 
-- **Plan status:** `pending`
-- **Control item:** `—`
+- **Plan status:** `in_progress`
+- **Control item:** `H1`
 - **Status values:** `pending`, `in_progress`, `done`, `blocked`
 - **Primary source of truth:** this file plus the current git worktree.
 - **Checkpoint rule:** every work session that changes implementation state
@@ -411,7 +411,7 @@ rather than adding compatibility shims.
 
 | Phase | Status | Items | Done when |
 |-------|--------|-------|-----------|
-| P1: Shared dirs module | `pending` | H1 | `dirs.rs` module with `global_config_dir()` and `deployment_slug()` |
+| P1: Shared dirs module | `done` | H1 | `dirs.rs` module with `global_config_dir()` and `deployment_slug()` |
 | P2: Deployment identity | `pending` | H2 | `neovex dev` writes `NEOVEX_DEPLOYMENT=local:<slug>` to `.env.local` |
 | P3: License migration | `pending` | H3 | License default path is `~/.config/neovex/license.json` |
 | P4: Gitignore + docs | `pending` | H4 | `.env.local` in gitignore templates, docs updated |
@@ -422,7 +422,7 @@ rather than adding compatibility shims.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H1 | `pending` | none | `crates/neovex-bin/src/dirs.rs` created with `global_config_dir()` (XDG_CONFIG_HOME with fallback to `~/.config/neovex/`) and `deployment_slug(app_dir)` (SHA-256 of canonical path, truncated to 8 hex chars, prefixed with sanitized dir name — strip non-alphanumeric chars except hyphens, lowercase). `mod dirs` added to `main.rs`. Tests pass for slug derivation determinism, XDG override, default paths, and dir names with spaces/special chars/non-ASCII. Follows the pattern from `machine/record.rs` for XDG env var resolution. `sha2` is already a workspace dependency. |
+| H1 | `done` | none | `crates/neovex-bin/src/dirs.rs` created with `global_config_dir()` (XDG_CONFIG_HOME with fallback to `~/.config/neovex/`) and `deployment_slug(app_dir)` (SHA-256 of canonical path, truncated to 8 hex chars, prefixed with sanitized dir name — strip non-alphanumeric chars except hyphens, lowercase). `mod dirs` added to `main.rs`. Tests pass for slug derivation determinism, XDG override, default paths, and dir names with spaces/special chars/non-ASCII. Follows the pattern from `machine/record.rs` for XDG env var resolution. `sha2` is already a workspace dependency. |
 
 ### P2 Work Queue: Deployment Identity
 
@@ -578,3 +578,4 @@ by this plan's `global_config_dir()`. Not in scope here.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | — | — | — | Plan created | — |
+| 2026-04-28 | H1 | `done` | Created `crates/neovex-bin/src/dirs.rs` with `global_config_dir()` (XDG_CONFIG_HOME + HOME fallback), `deployment_slug()` (SHA-256 canonical path, 8 hex chars, sanitized dir name), `sanitize_dir_name()` (strip non-alphanumeric except hyphens, lowercase, empty→"app"). Added `mod dirs` to `main.rs`. Files: `dirs.rs` (new), `main.rs` (mod added). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dirs::`: 14 passed, 0 failed (5 consecutive parallel runs, no races). `cargo test -p neovex-bin`: 380 passed, 0 failed. |
