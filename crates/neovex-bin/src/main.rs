@@ -5,7 +5,6 @@ mod codegen;
 mod compose;
 mod deploy;
 mod dev;
-#[allow(dead_code)]
 mod dirs;
 mod encryption;
 mod init;
