@@ -204,6 +204,10 @@ pub(crate) struct StartCommand {
     /// Internal bearer token used by development workflows to activate local app generations.
     #[arg(skip)]
     pub(crate) deploy_admin_token: Option<String>,
+
+    /// Tenant to create automatically on startup (used by `neovex dev`).
+    #[arg(skip)]
+    pub(crate) auto_tenant: Option<String>,
 }
 
 impl Default for StartCommand {
@@ -249,6 +253,7 @@ impl Default for StartCommand {
             encryption_aws_region: None,
             encryption_aws_endpoint_url: None,
             deploy_admin_token: None,
+            auto_tenant: None,
         }
     }
 }

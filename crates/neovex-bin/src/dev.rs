@@ -218,6 +218,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         skip_codegen: command.skip_codegen,
         compose_file: command.compose_file,
         deploy_admin_token: Some(deploy_admin_token),
+        auto_tenant: Some("demo".to_string()),
         ..StartCommand::default()
     };
 
@@ -677,6 +678,11 @@ mod tests {
                 .deploy_admin_token
                 .as_deref()
                 .is_some_and(|token| token.len() == 64)
+        );
+        assert_eq!(
+            plan.start_command.auto_tenant,
+            Some("demo".to_string()),
+            "dev plan should auto-create the demo tenant"
         );
     }
 
