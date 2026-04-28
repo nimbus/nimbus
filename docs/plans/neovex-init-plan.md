@@ -114,8 +114,9 @@ Watch:   /Users/dev/my-app/convex
 ✓ Server listening on http://localhost:3210
 
 Try it:
-  curl localhost:3210/convex/demo/api/query \
-    -d '{"path":"messages:list","args":{}}'
+  curl -X POST localhost:3210/convex/demo/query \
+    -H "Content-Type: application/json" \
+    -d '{"name":"messages:list","args":{}}'
 ```
 
 ### `neovex init` as standalone
@@ -222,13 +223,18 @@ node_modules/
   "type": "module",
   "dependencies": {
     "convex": "^0.1.0"
+  },
+  "devDependencies": {
+    "@neovex/codegen": "^0.1.0"
   }
 }
 ```
 
-The `convex` dependency refers to the Neovex-published `convex` compatibility
-package (see open question 4 below). The template uses a `.tmpl` extension
-so the scaffold logic can fill in the current package version at embed time.
+`convex` provides the server function types (`convex/server`, `convex/values`).
+`@neovex/codegen` is required for `neovex dev` to run codegen outside the
+monorepo — the Rust binary invokes `node` which imports `@neovex/codegen`
+from `node_modules`. The template uses a `.tmpl` extension so the scaffold
+logic can fill in current package versions at embed time.
 
 ### React template (Phase 2)
 
@@ -439,8 +445,9 @@ Then show what you can do with it — call the scaffolded Convex function
 via curl and a React `useQuery` one-liner:
 
 ```bash
-curl localhost:3210/convex/demo/api/query \
-  -d '{"path":"messages:list","args":{}}'
+curl -X POST localhost:3210/convex/demo/query \
+  -H "Content-Type: application/json" \
+  -d '{"name":"messages:list","args":{}}'
 ```
 
 ```tsx
@@ -634,41 +641,27 @@ commands that complete the developer inner loop.
 
 ---
 
-## Open questions
+## Decisions
 
-1. **`convex/` vs `neovex/` as default source root:** The `neovex/` source root
-   is experimental. Should `neovex dev` default to `convex/` (stable,
-   compatible with Convex migration) or `neovex/` (forward-looking, native
-   branding)? Recommendation: default to `convex/` until the `neovex/` root
-   is promoted from experimental.
+1. **Default source root: `convex/`.** The `neovex/` source root is
+   experimental. Scaffold into `convex/` until `neovex/` is promoted.
 
-2. **`npm install` as a separate step:** `convex dev` does not run
-   `npm install` either. The Rust binary should not depend on a specific
-   package manager. Scaffold the files, tell the developer to install, exit.
-   On the second `neovex dev` run, dependencies are present and everything
-   works.
+2. **`npm install` is a separate step.** The Rust binary does not depend on
+   any package manager. Scaffold the files, tell the developer to install,
+   exit. On the second `neovex dev` run, dependencies are present and
+   everything works. Same pattern as `convex dev`.
 
-3. **What if Node.js is not installed?** `neovex dev` needs Node.js for
-   codegen (the `@neovex/codegen` package runs via `node`). If Node.js is
-   missing, `neovex dev` should fail with a clear message: "Node.js is
-   required for codegen. Install it from https://nodejs.org/" — same as
-   `convex dev` requires Node.js.
+3. **Node.js is required.** `neovex dev` calls `node` to run
+   `@neovex/codegen`. If Node.js is missing, fail with a clear message:
+   "Node.js is required for codegen. Install it from https://nodejs.org/"
 
-4. **What npm package name for the `convex` dependency?** The in-repo
-   `packages/convex/` is `convex@0.1.22` — a Neovex-published compatibility
-   package, not the Convex Inc `convex` package on npm. Before launch, this
-   package name needs to be resolved:
-   - If published as `convex` to npm, it conflicts with the official Convex
-     package. Developers who have both would collide.
-   - If published as `@neovex/convex`, the import paths change (`import
-     from "@neovex/convex/server"` instead of `import from "convex/server"`).
-     The `_generated/` files would need to import from the correct package.
-   - If the template should use the real Convex npm package (`convex` from
-     Convex Inc) pointed at a Neovex server, codegen needs to be compatible
-     with that package's type definitions.
-
-   **This must be resolved before implementing Phase 1.** The scaffolded
-   `package.json` dependency and the codegen import paths must agree.
+4. **Scaffold uses `convex` + `@neovex/codegen` as dependency names.** These
+   match the current `packages/convex/` and `packages/codegen/` package
+   names. `@neovex/codegen` is required because outside the monorepo the
+   Rust binary falls back to `import("@neovex/codegen")` from
+   `node_modules` (no workspace `packages/codegen/src/main.mjs` to find).
+   Package publishing and npm registry naming are distribution concerns
+   resolved separately from this plan.
 
 ---
 
