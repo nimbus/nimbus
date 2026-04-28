@@ -18,7 +18,7 @@ neovex codegen [--app PATH]
 ```
 
 ```bash
-neovex init <ADAPTER> [DIRECTORY] [--source-root convex]
+neovex init <ADAPTER> [DIRECTORY] [--source-root convex] [--install]
 ```
 
 ```bash
@@ -137,7 +137,8 @@ cargo run -p neovex-bin -- start [flags]
 Current command taxonomy:
 
 - `neovex dev`
-  shipped local development server with auto `npm install`, auto-tenant
+  shipped local development server with Node.js-backed codegen, auto
+  `npm install` when declared packages are missing locally, auto-tenant
   creation (`demo`), one-shot startup codegen, debounced watched codegen
   reruns, local generation activation, and development persistence defaults
 - `neovex deploy`
@@ -149,7 +150,8 @@ Current command taxonomy:
   shipped project scaffold command; requires an adapter argument (e.g.
   `convex`). Creates a starter project with schema, example functions,
   `package.json`, `tsconfig.json`, and `.gitignore` in the target directory.
-  Skips existing files without overwriting.
+  Skips existing files without overwriting and stops after scaffolding by
+  default. Pass `--install` to bootstrap adapter dependencies immediately.
 - `neovex token rotate`
   shipped local admin token lifecycle command for rotating the localhost server
   access token using live-server semantics when a server is discoverable and
@@ -294,15 +296,17 @@ discovery rule:
 `neovex dev` is the local development happy path. In the current watch-loop
 slice it:
 
+- requires Node.js with `npm` for Convex and Cloud Functions authoring because
+  startup codegen runs through `node`
 - auto-detects the app directory from the current directory by looking for a
   `neovex/` or `convex/` source root, `firebase.json`, or
   `@google-cloud/functions-framework` in `package.json`, falling back to the
   current directory
 - when no compatible adapter is detected and `--skip-codegen` is not set, exits
   with guidance to run `neovex init convex` or `neovex init cloud-functions`
-- when `package.json` exists but `node_modules/` does not, automatically runs
-  `npm install` before codegen (for Cloud Functions, this runs in the
-  `functions/` subdirectory)
+- when `package.json` exists and declared dependencies or devDependencies are
+  missing from `node_modules/`, automatically runs `npm install` before
+  codegen (for Cloud Functions, this runs in the `functions/` subdirectory)
 - auto-creates a `demo` tenant on startup so a Convex client can connect to
   `http://localhost:3210/convex/demo` immediately; silently reuses the tenant
   on subsequent runs
@@ -346,11 +350,13 @@ Flags:
 
 `neovex init` scaffolds a new Neovex project in the target directory. The
 adapter argument is required — it selects which project template to create.
-Starter files are written without overwriting anything that already exists.
+Starter files are written without overwriting anything that already exists. By
+default, `init` stops after scaffolding. Pass `--install` to bootstrap adapter
+dependencies immediately.
 
 **Convex adapter** (`neovex init convex`):
 
-- `convex/schema.ts` — messages table with author and body fields
+- `convex/schema.ts` — messages table with author/body fields and a `by_author` index
 - `convex/messages.ts` — list query and send mutation
 - `package.json` — project dependencies (`convex`, `@neovex/codegen`)
 - `tsconfig.json` — TypeScript configuration for ESNext/bundler
@@ -364,8 +370,11 @@ Starter files are written without overwriting anything that already exists.
 - `functions/src/index.ts` — starter HTTP and Firestore trigger handlers
 - `.gitignore` — ignores `.neovex/`, `node_modules/`, and `lib/`
 
-Both adapters auto-run `npm install` when dependencies are missing. For
-Cloud Functions, npm install runs in the `functions/` subdirectory.
+With `--install`, both adapters run `npm install` after scaffolding when
+declared packages are missing locally. For Cloud Functions, npm install runs in
+the `functions/` subdirectory. If the optional install step fails, the
+scaffolded project is preserved and you can recover by running `neovex dev` or
+`npm install` manually from the project directory.
 
 If the target directory already has the adapter's marker files (`convex/` or
 `neovex/` for Convex, `firebase.json` for Cloud Functions), `init` exits with
@@ -378,6 +387,7 @@ Arguments and flags:
 | `ADAPTER` | *(required)* | adapter to scaffold (`convex`, `cloud-functions`) |
 | `DIRECTORY` | `.` | target directory (created if it does not exist) |
 | `--source-root` | `convex` | source root directory name (convex adapter only); `neovex` is experimental and not yet supported |
+| `--install` | `false` | install adapter dependencies after scaffolding |
 
 Examples:
 

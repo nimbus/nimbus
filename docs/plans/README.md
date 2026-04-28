@@ -38,6 +38,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     state to `~/.config/neovex/` (license, future auth), add deployment
     identity via `.env.local` with `NEOVEX_DEPLOYMENT=local:<slug>`;
     follows the Convex hybrid pattern verified from source
+- `docs/plans/node-compatible-runtime-plan.md`
+  - canonical execution plan for a deliberate Node-compatible runtime on top
+    of Neovex's `deno_core`/V8 backend: version-family alignment with Deno's
+    Node compatibility crates, explicit runtime compatibility profiles,
+    capability-scoped fs/env/net/process/ffi policy, package.json and npm
+    resolution, Node-API addon support for tooling, and an embedded-codegen
+    pilot before any removal of the external Node.js prerequisite
 
 ## Stable implementation baselines
 

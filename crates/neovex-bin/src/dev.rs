@@ -1,11 +1,12 @@
 use std::env;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::time::SystemTime;
 
 use clap::{Args, ValueEnum};
 use rand::RngCore;
+use tempfile::NamedTempFile;
 
 use crate::cli_ux;
 use crate::codegen::run_codegen_for_app_dir;
@@ -209,49 +210,81 @@ fn write_env_local_deployment(app_dir: &Path, slug: &str) -> io::Result<()> {
     let key_prefix = format!("{NEOVEX_DEPLOYMENT_KEY}=");
 
     let content = match std::fs::read_to_string(&env_path) {
-        Ok(existing) => {
-            let mut found = false;
-            let mut already_correct = false;
-            let updated: Vec<String> = existing
-                .lines()
-                .map(|line| {
-                    if line.starts_with(&key_prefix) {
-                        found = true;
-                        if line == target_line {
-                            already_correct = true;
-                        }
-                        target_line.clone()
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect();
-            if already_correct {
-                return Ok(());
-            }
-            if found {
-                let mut result = updated.join("\n");
-                if existing.ends_with('\n') {
-                    result.push('\n');
-                }
-                result
-            } else {
-                let mut result = existing;
-                if !result.ends_with('\n') && !result.is_empty() {
-                    result.push('\n');
-                }
-                result.push_str(&target_line);
-                result.push('\n');
-                result
-            }
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            format!("{target_line}\n")
-        }
+        Ok(existing) => normalize_env_local_content(&existing, &target_line, &key_prefix),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Some(format!("{target_line}\n")),
         Err(e) => return Err(e),
     };
 
-    std::fs::write(&env_path, content)
+    if let Some(content) = content {
+        write_text_file_atomically(&env_path, &content)?;
+    }
+    Ok(())
+}
+
+fn normalize_env_local_content(
+    existing: &str,
+    target_line: &str,
+    key_prefix: &str,
+) -> Option<String> {
+    let line_ending = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let had_trailing_newline = existing.ends_with('\n');
+    let mut found = false;
+    let mut updated = Vec::new();
+
+    for line in existing.lines() {
+        if line.starts_with(key_prefix) {
+            if !found {
+                updated.push(target_line.to_owned());
+                found = true;
+            }
+        } else {
+            updated.push(line.to_owned());
+        }
+    }
+
+    let normalized = if found {
+        let mut result = updated.join(line_ending);
+        if had_trailing_newline {
+            result.push_str(line_ending);
+        }
+        result
+    } else {
+        let mut result = existing.to_owned();
+        if !result.ends_with('\n') && !result.is_empty() {
+            result.push_str(line_ending);
+        }
+        result.push_str(target_line);
+        result.push_str(line_ending);
+        result
+    };
+
+    (normalized != existing).then_some(normalized)
+}
+
+fn write_text_file_atomically(path: &Path, content: &str) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("path {} does not have a parent directory", path.display()),
+        )
+    })?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp_file = NamedTempFile::new_in(parent)?;
+    temp_file.write_all(content.as_bytes())?;
+    temp_file.flush()?;
+    temp_file.as_file().sync_all()?;
+    temp_file.into_temp_path().persist(path).map_err(|error| {
+        io::Error::other(format!(
+            "failed to atomically replace {}: {}",
+            path.display(),
+            error.error
+        ))
+    })
 }
 
 fn resolve_app_dir(explicit_app_dir: Option<&Path>, cwd: &Path) -> io::Result<PathBuf> {
@@ -1445,6 +1478,24 @@ mod tests {
     }
 
     #[test]
+    fn env_local_deduplicates_deployment_entries() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join(".env.local"),
+            "FIRST=1\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\nSECOND=2\nNEOVEX_DEPLOYMENT=local:old-slug-12345678\nTHIRD=3\n",
+        )
+        .unwrap();
+
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content,
+            "FIRST=1\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\nSECOND=2\nTHIRD=3\n"
+        );
+    }
+
+    #[test]
     fn env_local_preserves_other_content() {
         let temp = tempdir().expect("tempdir should build");
         fs::write(
@@ -1469,6 +1520,24 @@ mod tests {
         assert_eq!(
             content,
             "OTHER=val\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\n"
+        );
+    }
+
+    #[test]
+    fn env_local_preserves_crlf_when_rewriting() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::write(
+            temp.path().join(".env.local"),
+            "FIRST=1\r\nNEOVEX_DEPLOYMENT=local:old-slug-12345678\r\nSECOND=2\r\n",
+        )
+        .unwrap();
+
+        write_env_local_deployment(temp.path(), "myapp-abcd1234").unwrap();
+
+        let content = fs::read_to_string(temp.path().join(".env.local")).unwrap();
+        assert_eq!(
+            content,
+            "FIRST=1\r\nNEOVEX_DEPLOYMENT=local:myapp-abcd1234\r\nSECOND=2\r\n"
         );
     }
 

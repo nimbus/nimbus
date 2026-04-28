@@ -2,6 +2,10 @@
 
 Install Neovex, then pick how you want to build.
 
+If you're authoring Convex or Cloud Functions code locally, install Node.js
+with `npm` first. If you're connecting MongoDB, Firebase client, or native
+HTTP/WebSocket clients to `neovex start`, Node.js is not required.
+
 ## Install
 
 ```bash
@@ -12,11 +16,16 @@ See [Install](../README.md#install) for other platforms or building from source.
 
 ## Server-side functions
 
-**1. Go to your project root** (or scaffold a new one with `neovex init convex my-app`):
+**1. Scaffold a Convex app:**
 
 ```bash
+neovex init convex my-app
 cd my-app
 ```
+
+`neovex init convex` scaffolds backend files only: a schema, example query and
+mutation, `package.json`, `tsconfig.json`, and `.gitignore`. Add your frontend
+separately or point an existing frontend at the local deployment URL.
 
 **2. Start the dev server:**
 
@@ -24,8 +33,8 @@ cd my-app
 neovex dev
 ```
 
-`neovex dev` auto-runs `npm install` when dependencies are missing, creates a
-`demo` tenant, and starts the server on `localhost:3210`.
+`neovex dev` auto-runs `npm install` when declared packages are missing
+locally, creates a `demo` tenant, and starts the server on `localhost:3210`.
 
 From there, edit the TypeScript files in `convex/` and `neovex dev` watches
 for changes, re-runs codegen, and activates updated functions with reactive
@@ -52,6 +61,10 @@ neovex start --port 8080
 | [**Firebase**](adapters/firebase/) | Firestore-compatible SDK with real-time listeners | ~3 min |
 | [**Cloud Functions**](adapters/cloud-functions/) | Firebase v2 triggers and Functions Framework handlers | ~5 min |
 | [**Native HTTP/WS**](adapters/native/) | Direct REST + WebSocket — just curl | ~1 min |
+
+For MongoDB, Firebase client, and native HTTP/WS, `neovex start` is enough and
+Node.js is not required. Cloud Functions authoring still requires Node.js
+because `neovex codegen` runs through the Node toolchain.
 
 **Not sure?** Start with [MongoDB](adapters/mongodb/). It uses drivers you
 already have, works in every language, and requires nothing beyond

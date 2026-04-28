@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 
@@ -32,12 +33,12 @@ impl Adapter {
     }
 }
 
-/// Install Node.js dependencies when `package.json` exists but `node_modules/`
-/// does not.
+/// Install Node.js dependencies when declared authoring packages are missing.
 pub(crate) async fn auto_install_node_dependencies(
     app_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !app_dir.join("package.json").is_file() || app_dir.join("node_modules").is_dir() {
+    let missing_packages = missing_required_node_packages(app_dir)?;
+    if missing_packages.is_empty() {
         return Ok(());
     }
 
@@ -47,15 +48,87 @@ pub(crate) async fn auto_install_node_dependencies(
         .current_dir(app_dir)
         .status()
         .await
-        .map_err(|e| io::Error::other(format!("failed to run npm install: {e}")))?;
+        .map_err(|e| {
+            io::Error::other(format!(
+                "failed to run npm install in {}: {e}. Install Node.js with npm to use Neovex authoring flows.",
+                app_dir.display()
+            ))
+        })?;
 
     if !status.success() {
-        return Err(io::Error::other(
-            "npm install failed. Install dependencies manually and try again.",
-        )
+        return Err(io::Error::other(format!(
+            "npm install failed in {}. Resolve the npm error above, then rerun the Neovex command or run `npm install` manually.",
+            app_dir.display()
+        ))
         .into());
     }
     Ok(())
+}
+
+fn missing_required_node_packages(app_dir: &Path) -> io::Result<Vec<String>> {
+    let package_json_path = app_dir.join("package.json");
+    if !package_json_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&package_json_path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to read package.json at {}: {error}",
+                package_json_path.display()
+            ),
+        )
+    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
+        io::Error::other(format!(
+            "package.json at {} is not valid JSON: {error}",
+            package_json_path.display()
+        ))
+    })?;
+
+    let mut packages = BTreeSet::new();
+    collect_dependency_names(&parsed, "dependencies", &package_json_path, &mut packages)?;
+    collect_dependency_names(
+        &parsed,
+        "devDependencies",
+        &package_json_path,
+        &mut packages,
+    )?;
+
+    Ok(packages
+        .into_iter()
+        .filter(|package_name| !node_package_manifest_path(app_dir, package_name).is_file())
+        .collect())
+}
+
+fn collect_dependency_names(
+    parsed: &serde_json::Value,
+    field_name: &str,
+    package_json_path: &Path,
+    packages: &mut BTreeSet<String>,
+) -> io::Result<()> {
+    let Some(value) = parsed.get(field_name) else {
+        return Ok(());
+    };
+    if value.is_null() {
+        return Ok(());
+    }
+    let Some(object) = value.as_object() else {
+        return Err(io::Error::other(format!(
+            "package.json field `{field_name}` at {} must be an object",
+            package_json_path.display()
+        )));
+    };
+    packages.extend(object.keys().cloned());
+    Ok(())
+}
+
+fn node_package_manifest_path(app_dir: &Path, package_name: &str) -> std::path::PathBuf {
+    app_dir
+        .join("node_modules")
+        .join(package_name)
+        .join("package.json")
 }
 
 #[cfg(test)]
@@ -106,12 +179,100 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_install_skips_when_node_modules_exists() {
+    async fn auto_install_skips_when_no_packages_are_declared() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("package.json"), "{}").unwrap();
-        std::fs::create_dir(temp.path().join("node_modules")).unwrap();
         auto_install_node_dependencies(temp.path())
             .await
-            .expect("should be a no-op when node_modules exists");
+            .expect("should be a no-op when no packages are declared");
+    }
+
+    #[test]
+    fn missing_required_node_packages_reports_declared_packages_without_install() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{
+  "dependencies": {
+    "convex": "^1.0.0"
+  },
+  "devDependencies": {
+    "@neovex/codegen": "^1.0.0"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let missing = missing_required_node_packages(temp.path()).unwrap();
+
+        assert_eq!(
+            missing,
+            vec!["@neovex/codegen".to_string(), "convex".to_string()]
+        );
+    }
+
+    #[test]
+    fn missing_required_node_packages_ignores_installed_packages() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{
+  "dependencies": {
+    "convex": "^1.0.0"
+  },
+  "devDependencies": {
+    "@neovex/codegen": "^1.0.0"
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(temp.path().join("node_modules/convex")).unwrap();
+        std::fs::write(temp.path().join("node_modules/convex/package.json"), "{}").unwrap();
+        std::fs::create_dir_all(temp.path().join("node_modules/@neovex/codegen")).unwrap();
+        std::fs::write(
+            temp.path()
+                .join("node_modules/@neovex/codegen/package.json"),
+            "{}",
+        )
+        .unwrap();
+
+        let missing = missing_required_node_packages(temp.path()).unwrap();
+
+        assert!(
+            missing.is_empty(),
+            "all declared packages should be present"
+        );
+    }
+
+    #[test]
+    fn missing_required_node_packages_does_not_trust_node_modules_directory_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{
+  "dependencies": {
+    "convex": "^1.0.0"
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+
+        let missing = missing_required_node_packages(temp.path()).unwrap();
+
+        assert_eq!(missing, vec!["convex".to_string()]);
+    }
+
+    #[test]
+    fn missing_required_node_packages_errors_on_invalid_package_json() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("package.json"), "{not-json").unwrap();
+
+        let error = missing_required_node_packages(temp.path()).unwrap_err();
+
+        assert!(
+            error.to_string().contains("not valid JSON"),
+            "error should mention invalid JSON, got: {error}"
+        );
     }
 }

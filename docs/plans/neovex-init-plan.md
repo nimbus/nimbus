@@ -52,7 +52,7 @@ Scaffolds a new Neovex project for the selected adapter. The adapter argument
 is a required positional argument — there is no silent default.
 
 ```bash
-neovex init <ADAPTER> [DIRECTORY] [--source-root convex]
+neovex init <ADAPTER> [DIRECTORY] [--source-root convex] [--install]
 ```
 
 | Argument / Flag | Default | Meaning |
@@ -60,6 +60,7 @@ neovex init <ADAPTER> [DIRECTORY] [--source-root convex]
 | `ADAPTER` | *(required)* | Adapter to scaffold: `convex`, `cloud-functions` |
 | `DIRECTORY` | `.` (current directory) | Target directory (created if absent) |
 | `--source-root` | `convex` | Source root directory name (convex adapter only); `neovex` exits with advisory |
+| `--install` | `false` | Bootstrap adapter dependencies after scaffolding |
 
 #### Behavior
 
@@ -72,9 +73,10 @@ neovex init <ADAPTER> [DIRECTORY] [--source-root convex]
 4. Select adapter-specific template set.
 5. Write template files with per-file skip logic (never overwrites existing
    files).
-6. Auto-run `npm install` when the adapter needs Node.js dependencies and
-   `package.json` exists but `node_modules/` does not. For Cloud Functions,
-   npm install runs in the `functions/` subdirectory.
+6. When `--install` is set, run `npm install` if the adapter needs Node.js
+   dependencies and `package.json` declares packages that are missing from the
+   local `node_modules/` tree. For Cloud Functions, npm install runs in the
+   `functions/` subdirectory.
 7. Print next steps (`cd` + `neovex dev`).
 
 #### Convex adapter templates
@@ -146,7 +148,7 @@ Detection priority (first match wins):
 Each adapter variant provides:
 - `name()` — `"convex"` or `"cloud-functions"`
 - `source_root()` — path to watch for codegen changes
-- `needs_node_dependencies()` — delegates to `node::adapter_needs_node_dependencies()`
+- `needs_node_dependencies()` — delegates to `node::Adapter::needs_node_dependencies()`
 - `npm_install_dir()` — project root for Convex, `functions/` for Cloud Functions
 
 #### App directory detection
@@ -163,14 +165,15 @@ Falls back to the current working directory.
 `crates/neovex-bin/src/node.rs` is the single source of truth for adapter
 Node.js dependency management:
 
-- `adapter_needs_node_dependencies(adapter: &str) -> bool` — returns `true`
-  for `"convex"` and `"cloud-functions"`.
+- `Adapter::needs_node_dependencies()` — returns `true` for `Convex` and
+  `CloudFunctions`.
 - `auto_install_node_dependencies(app_dir: &Path)` — runs `npm install` if
-  `package.json` exists and `node_modules/` does not. Used by both `init` and
-  `dev`.
+  `package.json` declares packages that are missing from the local
+  `node_modules/` tree.
 
-Both `neovex init` and `neovex dev` call this shared module. The adapter
-determines which directory to pass (project root vs `functions/`).
+`neovex dev` always uses this shared module for authoring flows. `neovex init`
+only calls it when `--install` is passed. The adapter determines which
+directory to pass (project root vs `functions/`).
 
 ### Auto-tenant creation
 
@@ -204,13 +207,16 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 1. **Default source root: `convex/`.** The `neovex/` source root is
    experimental. Scaffold into `convex/` until `neovex/` is promoted.
 
-2. **`npm install` is auto-run.** Both `neovex init` and `neovex dev`
-   auto-run `npm install` when `package.json` exists but `node_modules/`
-   does not. This matches `convex dev` behavior and eliminates a manual step
-   from the onboarding flow.
+2. **`init` scaffolds; `dev` bootstraps.** `neovex init` stops after
+   scaffolding by default so the command is deterministic and leaves a clean
+   project behind even when the Node toolchain is unavailable. `neovex dev`
+   owns automatic dependency bootstrap, and `neovex init --install` is an
+   opt-in convenience for teams that want a one-command setup.
 
-3. **Node.js is required.** `neovex dev` calls `node` to run
-   `@neovex/codegen`. If Node.js is missing, fail with a clear message.
+3. **Node.js is required for authoring flows, not runtime-only flows.**
+   `neovex dev`, `neovex codegen`, and `neovex init --install` call Node.js
+   tooling. Runtime-only `neovex start` workflows such as MongoDB, Firebase
+   client, or native HTTP/WebSocket access do not require the Node toolchain.
 
 4. **Adapter argument is required and positional.** `neovex init convex`
    not `neovex init --template convex`. No silent defaults — the developer
@@ -287,7 +293,7 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 | I10 | `done` | Make `neovex init` require explicit adapter positional arg (`convex`, `cloud-functions`); replace `--template` with adapter arg; generalize `TemplateContent::PackageJson` to `TemplateContent::Template(&'static str)` |
 | I11 | `done` | Create Cloud Functions template files (`firebase.json`, `functions/package.json.tmpl`, `functions/tsconfig.json`, `functions/src/index.ts`, `gitignore`); add `CLOUD_FUNCTIONS_TEMPLATE` and adapter-specific scaffold logic |
 | I12 | `done` | Add `DevAdapter::CloudFunctions` detection: parse `firebase.json` for source dir, detect `@google-cloud/functions-framework` in `package.json`; update `detect_app_dir` for `firebase.json`; adapter-specific `npm_install_dir()` |
-| I13 | `done` | Add `"cloud-functions"` to `node::adapter_needs_node_dependencies()`; update CLI docs and Cloud Functions adapter README with `neovex init cloud-functions` path |
+| I13 | `done` | Extend `node::Adapter::needs_node_dependencies()` to cover Cloud Functions; update CLI docs and Cloud Functions adapter README with `neovex init cloud-functions` path |
 
 ---
 
@@ -310,7 +316,7 @@ Adding a new adapter to `neovex init` requires:
 4. Add `check_adapter_already_exists()` case
 5. Add `adapter_npm_install_dir()` case (if adapter uses npm)
 6. Add `DevAdapter` variant in `dev.rs` with detection logic
-7. Add adapter to `node::adapter_needs_node_dependencies()` if it uses npm
+7. Extend `node::Adapter::needs_node_dependencies()` if the adapter uses npm
 8. Update `docs/operating/cli.md`
 
 ---

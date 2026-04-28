@@ -22,6 +22,10 @@ Your existing `firebase-functions/v2` handlers run on Neovex unchanged --
 with at-least-once delivery, durable retry, and Firestore document triggers.
 ~5 minutes from install to a working trigger.
 
+Node.js with `npm` is required for this authoring flow. `neovex dev` runs
+codegen through `node` and auto-runs `npm install` when declared packages are
+missing locally.
+
 ## Quick start
 
 **New project:**
@@ -37,6 +41,10 @@ cd my-functions-app
 ```bash
 neovex dev
 ```
+
+`neovex init cloud-functions` scaffolds the backend project files. `neovex dev`
+then installs missing packages in `functions/`, runs codegen, and starts the
+local server.
 
 **Existing Firebase project:**
 
