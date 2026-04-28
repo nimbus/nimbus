@@ -206,6 +206,7 @@ fn write_env_local_deployment(app_dir: &Path, slug: &str) -> io::Result<()> {
     let env_path = app_dir.join(".env.local");
     let deployment_value = format!("local:{slug}");
     let target_line = format!("{NEOVEX_DEPLOYMENT_KEY}={deployment_value}");
+    let key_prefix = format!("{NEOVEX_DEPLOYMENT_KEY}=");
 
     let content = match std::fs::read_to_string(&env_path) {
         Ok(existing) => {
@@ -214,7 +215,7 @@ fn write_env_local_deployment(app_dir: &Path, slug: &str) -> io::Result<()> {
             let updated: Vec<String> = existing
                 .lines()
                 .map(|line| {
-                    if line.starts_with(&format!("{NEOVEX_DEPLOYMENT_KEY}=")) {
+                    if line.starts_with(&key_prefix) {
                         found = true;
                         if line == target_line {
                             already_correct = true;

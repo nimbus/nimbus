@@ -39,22 +39,19 @@ pub(crate) fn deployment_slug(app_dir: &Path) -> Result<String, Error> {
 }
 
 fn sanitize_dir_name(name: &str) -> String {
-    let sanitized: String = name
-        .chars()
-        .filter_map(|c| {
-            if c.is_ascii_alphanumeric() {
-                Some(c.to_ascii_lowercase())
-            } else if c == '-' {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect();
-    if sanitized.is_empty() {
+    let mut result = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            result.push(c.to_ascii_lowercase());
+        } else if c == '-' && !result.is_empty() && !result.ends_with('-') {
+            result.push('-');
+        }
+    }
+    let trimmed = result.trim_end_matches('-');
+    if trimmed.is_empty() {
         "app".to_owned()
     } else {
-        sanitized
+        trimmed.to_owned()
     }
 }
 
@@ -216,7 +213,27 @@ mod tests {
 
     #[test]
     fn sanitize_dir_name_mixed_unicode_ascii() {
-        assert_eq!(sanitize_dir_name("app-日本語"), "app-");
+        assert_eq!(sanitize_dir_name("app-日本語"), "app");
+    }
+
+    #[test]
+    fn sanitize_dir_name_leading_hyphen() {
+        assert_eq!(sanitize_dir_name("-leading"), "leading");
+    }
+
+    #[test]
+    fn sanitize_dir_name_trailing_hyphen() {
+        assert_eq!(sanitize_dir_name("trailing-"), "trailing");
+    }
+
+    #[test]
+    fn sanitize_dir_name_consecutive_hyphens() {
+        assert_eq!(sanitize_dir_name("a--b---c"), "a-b-c");
+    }
+
+    #[test]
+    fn sanitize_dir_name_only_hyphens() {
+        assert_eq!(sanitize_dir_name("---"), "app");
     }
 
     struct EnvGuard {
