@@ -32,6 +32,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     standalone command, dev-mode auto-tenant creation via server-internal
     boot path, and onboarding doc updates; Phase 2+ covers the React
     template and `npm create neovex` package
+- `docs/plans/xdg-project-layout-plan.md`
+  - hybrid directory layout plan: keep `.neovex/` project-local for
+    project-scoped state (codegen artifacts, dev database), move user-scoped
+    state to `~/.config/neovex/` (license, future auth), add deployment
+    identity via `.env.local` with `NEOVEX_DEPLOYMENT=local:<slug>`;
+    follows the Convex hybrid pattern verified from source
 
 ## Stable implementation baselines
 

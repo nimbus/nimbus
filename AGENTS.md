@@ -306,6 +306,30 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
   `write.rs`, or `state.rs` over `helpers.rs`, `common.rs`, `misc.rs`, or
   `utils.rs` unless ownership is truly shared and obvious.
 
+## Execution Quality
+
+This project targets enterprise-grade code. Every agent working here must
+meet this bar — not "good enough," not "as a first pass," not "can be
+improved later."
+
+- **Read before edit.** Read the file, its tests, and its callers before
+  changing it. Do not edit files you have not read in this session.
+- **Fix root causes.** When a test fails or a warning appears, fix the
+  underlying issue. Do not delete tests, weaken assertions, suppress
+  warnings, or change expected values to match wrong output.
+- **No deferred work inside completion gates.** If a plan's completion gate
+  says to handle N cases, handle all N. Do not implement a subset and leave
+  TODOs for the rest.
+- **Tests verify behavior, not compilation.** Every test must assert a
+  specific outcome. A test that only checks "it didn't panic" is not a
+  test. Cover happy path, edge cases, and error cases.
+- **Verification is evidence.** "Tests pass" without naming the test count
+  or showing the output is not verification. Record what you ran and what it
+  produced.
+- **No lazy-exit phrases.** Do not use "good enough for now," "left as an
+  exercise," "out of scope" (for in-scope work), "as a first pass," or
+  "can be improved later" to justify incomplete work.
+
 ## Common Repo Gotchas
 
 ### Crate dependency rules
