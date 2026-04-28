@@ -7,7 +7,7 @@ to live reactive data in under 3 minutes with no manual file creation.
 ## Status
 
 - **Plan status:** `in_progress`
-- **Control item:** `—`
+- **Control item:** `I6`
 - **Status values:** `pending`, `in_progress`, `done`, `blocked`
 - **Primary source of truth:** this file plus the current git worktree.
 - **Checkpoint rule:** every work session that changes implementation state
@@ -751,7 +751,7 @@ commands that complete the developer inner loop.
 | P1: Build infrastructure | `done` | I1 | `build.rs` emits package versions as compile-time env vars |
 | P2: Scaffold module | `done` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
 | P3: `neovex dev` auto-init | `done` | I3, I4 | `neovex dev` scaffolds when no source root, checks for node_modules, handles existing projects and edge cases |
-| P4: `neovex init` command | `pending` | I5 | Standalone `neovex init` command using shared scaffold module |
+| P4: `neovex init` command | `done` | I5 | Standalone `neovex init` command using shared scaffold module |
 | P5: Auto-tenant | `pending` | I6 | `neovex dev` auto-creates `demo` tenant via server-internal boot path |
 | P6: Documentation | `pending` | I7 | README, getting-started, and Convex adapter docs updated |
 | P7: CLI reference | `pending` | I8 | `docs/operating/cli.md` updated with `neovex init` and auto-init behavior |
@@ -781,7 +781,7 @@ commands that complete the developer inner loop.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| I5: `neovex init` standalone command | `pending` | I2 | `Command::Init` added to `main.rs`. `InitCommand` struct with `directory`, `--template`, `--source-root` args. Creates target directory if absent. Errors if `convex/` or `neovex/` already exists. Calls shared `scaffold_project()`. Prints next steps. `neovex init my-app` creates `my-app/` with all template files. `neovex init` in current dir works. |
+| I5: `neovex init` standalone command | `done` | I2 | `Command::Init` added to `main.rs`. `InitCommand` struct with `directory`, `--template`, `--source-root` args. Creates target directory if absent. Errors if `convex/` or `neovex/` already exists. Calls shared `scaffold_project()`. Prints next steps. `neovex init my-app` creates `my-app/` with all template files. `neovex init` in current dir works. |
 
 ### P5 Work Queue: Auto-Tenant
 
@@ -825,6 +825,7 @@ commands that complete the developer inner loop.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | 2026-04-27 | — | — | Plan created and audited against codebase | — |
+| 2026-04-27 | I5 | `done` | `Command::Init(InitCommand)` wired into `main.rs` enum and match arm. `InitCommand` struct with `directory`, `--template`, `--source-root` args. `run_init_command()` validates source root, creates target dir, checks for existing source root, calls `scaffold_project()`, prints next steps. 4 new tests: scaffold empty dir, create target dir, existing source root error, neovex source root rejection. Removed dead_code allow on `check_source_root_flag`. | `cargo test -p neovex-bin -- init::tests` 13/13 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --no-deps` clean |
 | 2026-04-27 | I4 | `done` | `--app-dir` nonexistent: pre-created before plan resolve. `--app-dir` non-empty without source root: errors. `--app-dir` empty: scaffolds normally. Added `is_dir_empty()` helper. 4 new edge-case tests. | `cargo test -p neovex-bin -- init::tests dev::tests` 31/31 pass, clippy clean |
 | 2026-04-27 | I3 | `done` | `run_dev_command()` calls `scaffold_project()` when no source root and `--skip-codegen` not set. Prints file creation/skip output. Checks `node_modules/convex`, prints install prompt and exits if missing. Re-detects source root after scaffold. 3 new dev tests. | `cargo test -p neovex-bin -- init::tests dev::tests` 27/27 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |
 | 2026-04-27 | I2 | `done` | `scaffold_project()` with per-file skip logic, safety checks ($HOME, /, /tmp), version substitution, `check_source_root_flag()`. 9 unit tests: empty dir, skip existing, refuse $HOME/root/tmp, source-root advisory, version substitution. | `cargo test -p neovex-bin -- init::tests` 9/9 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |

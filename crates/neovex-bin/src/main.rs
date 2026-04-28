@@ -18,6 +18,7 @@ use crate::compose::{ComposeCommand, run_compose_command};
 use crate::deploy::{DeployCommand, run_deploy_command};
 use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
+use crate::init::{InitCommand, run_init_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
@@ -46,6 +47,8 @@ enum Command {
     Deploy(DeployCommand),
     /// Generate app artifacts from neovex/ or convex/ source code.
     Codegen(CodegenCommand),
+    /// Scaffold a new Neovex project.
+    Init(InitCommand),
     /// Local admin token management commands.
     #[command(subcommand)]
     Token(TokenCommand),
@@ -68,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Dev(command) => run_dev_command(*command).await?,
         Command::Deploy(command) => run_deploy_command(command).await?,
         Command::Codegen(command) => run_codegen_command(command).await?,
+        Command::Init(command) => run_init_command(command)?,
         Command::Token(command) => run_token_command(command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
