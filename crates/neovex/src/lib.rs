@@ -36,11 +36,11 @@ pub use neovex_sandbox::{
 };
 // Server integration and transport construction helpers.
 pub use neovex_server::{
-    ConvexRegistry, DEFAULT_LICENSE_PATH, EmptySandboxCatalog, EmptySandboxServiceCatalog,
-    LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
-    LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus,
-    LicenseUsageSnapshot, SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch,
-    SandboxServiceManager, ServeOptions, serve, serve_with_convex, serve_with_convex_and_license,
+    ConvexRegistry, EmptySandboxCatalog, EmptySandboxServiceCatalog, LICENSE_FILE_ENV,
+    LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError, LicenseSnapshot,
+    LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus, LicenseUsageSnapshot,
+    SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch, SandboxServiceManager,
+    ServeOptions, serve, serve_with_convex, serve_with_convex_and_license,
     serve_with_convex_and_license_and_sandbox_service_manager, serve_with_license,
     serve_with_license_and_sandbox_catalog, serve_with_options,
 };

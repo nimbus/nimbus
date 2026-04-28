@@ -40,11 +40,6 @@ impl LicenseState {
             return Self::load_path(Path::new(&path), LicenseSourceKind::EnvironmentFile);
         }
 
-        let default_path = PathBuf::from(DEFAULT_LICENSE_PATH);
-        if default_path.exists() {
-            return Self::load_path(&default_path, LicenseSourceKind::DefaultPath);
-        }
-
         Ok(Self::community())
     }
 
