@@ -297,6 +297,173 @@ being able to connect to `http://localhost:3210/convex/demo`.
 
 ---
 
+## Documentation updates
+
+When auto-init and auto-tenant land, three docs need to change to reflect the
+new developer journey. The goal: every doc a new developer touches should
+show the zero-file-creation path as the primary flow.
+
+### `README.md` — Quick start
+
+The quick start currently shows the developer manually writing
+`convex/messages.ts` and then running `neovex dev`. After auto-init,
+`neovex dev` creates those files. The quick start should show the install →
+scaffold → run flow with no manual file creation.
+
+**Before (current):**
+
+```
+brew install agentstation/tap/neovex
+[manual code block: convex/messages.ts]
+neovex dev
+[manual code block: useQuery in React]
+```
+
+**After:**
+
+```bash
+brew install agentstation/tap/neovex
+mkdir my-app && cd my-app
+neovex dev
+```
+
+```
+No convex/ source root found. Creating starter project...
+  convex/schema.ts
+  convex/messages.ts
+  package.json
+  tsconfig.json
+
+Run `npm install` to install dependencies, then `neovex dev` again.
+```
+
+```bash
+npm install
+neovex dev
+```
+
+```
+✓ Codegen complete
+✓ Tenant "demo" ready
+✓ Server listening on http://localhost:3210
+```
+
+Then show what you can do with it — a curl command against the auto-created
+`demo` tenant and a React `useQuery` one-liner:
+
+```bash
+curl localhost:3210/api/tenants/demo/query \
+  -H "Content-Type: application/json" \
+  -d '{"table":"messages","filters":[]}'
+```
+
+```tsx
+// In your React app — data updates in real time
+const messages = useQuery(api.messages.list);
+```
+
+The scaffolded code (`convex/schema.ts`, `convex/messages.ts`) should appear
+below the quick start as a "What's inside" or "What gets created" section so
+the developer sees the code they can now edit. This is the hook — they see
+real TypeScript they can modify and immediately re-run `neovex dev` to see
+changes.
+
+The "Or try it with curl" section should drop the manual
+`POST /api/tenants` call since the `demo` tenant is auto-created. The curl
+section becomes just `neovex start` + insert + query (no tenant creation).
+
+### `docs/getting-started.md` — Server-side functions path
+
+Currently says "Write TypeScript queries and mutations." After auto-init, the
+primary path is:
+
+```markdown
+## Server-side functions
+
+Run `neovex dev` in an empty directory — it scaffolds a starter project with
+a schema and server functions, runs codegen, and serves everything on
+`localhost:3210`.
+
+```bash
+mkdir my-app && cd my-app
+neovex dev          # scaffolds on first run
+npm install
+neovex dev          # codegen + server + watch
+```
+
+This is the recommended path for new projects. Your frontend connects with
+`useQuery` and `useMutation` — data updates in real time without REST
+endpoints, GraphQL, or polling.
+
+**[Full tutorial →](adapters/convex/)**
+```
+
+### `docs/adapters/convex/README.md` — Quick start
+
+The current quick start has 5 steps that require the developer to manually
+create `convex/schema.ts`, `convex/messages.ts`, and the project layout.
+After auto-init, the quick start becomes:
+
+**1. Create a project:**
+
+```bash
+mkdir my-app && cd my-app
+neovex dev
+```
+
+This scaffolds `convex/schema.ts`, `convex/messages.ts`, `package.json`, and
+`tsconfig.json`.
+
+**2. Install dependencies:**
+
+```bash
+npm install
+```
+
+**3. Start the dev server:**
+
+```bash
+neovex dev
+```
+
+Codegen runs, the `demo` tenant is created, and the server starts on port
+3210. Changes to `convex/` rebuild automatically.
+
+**4. Connect your frontend** (same React example as today).
+
+The existing code-first lead (query + mutation code block at the top of the
+page) stays, but the description changes from "Write TypeScript functions"
+to something like "These are the server functions `neovex dev` creates for
+you — edit them and changes rebuild instantly."
+
+The manual schema and messages code blocks move from "steps to do" to "what
+got scaffolded" — the developer sees them as reference, not as instructions
+to copy-paste.
+
+#### Configuration section
+
+The current text says:
+
+> Tenants must exist before the Convex client connects. Create via
+> `POST /api/tenants`.
+
+After auto-tenant, this becomes:
+
+> In dev mode, `neovex dev` auto-creates a `demo` tenant. Your Convex
+> client connects to `http://localhost:3210/convex/demo` immediately.
+> In production, pre-provision tenants via the admin API or CLI.
+
+### Other docs — no changes needed
+
+- **`docs/adapters/mongodb/README.md`** — Uses `neovex start`, unaffected.
+- **`docs/adapters/firebase/README.md`** — Uses `neovex start`, unaffected.
+- **`docs/adapters/cloud-functions/README.md`** — Uses `neovex start`, unaffected.
+- **`docs/adapters/native/README.md`** — Uses `neovex start`, unaffected. The
+  native quick start shows manual tenant creation which is correct for the
+  `neovex start` path.
+
+---
+
 ## Phases
 
 ### Phase 1 — `neovex dev` auto-init + `neovex init` + auto-tenant
@@ -305,8 +472,7 @@ being able to connect to `http://localhost:3210/convex/demo`.
 2. `neovex dev` scaffolds when no source root found, checks for node_modules
 3. Add `neovex init` as standalone command using the same scaffold module
 4. Auto-create `demo` tenant in dev mode on startup
-5. Update README quick start to show `neovex dev` as the only command needed
-6. Update `docs/adapters/convex/README.md` quick start
+5. Update docs (see "Documentation updates" section below)
 
 **Target UX after Phase 1:**
 
@@ -416,3 +582,8 @@ commands that complete the developer inner loop.
 - [ ] A Convex client can connect to `localhost:3210/convex/demo` immediately
 - [ ] The `list` query returns an empty array; `send` mutation inserts a document;
   `list` reactively returns the new document
+- [ ] README quick start shows zero-file-creation path (install → mkdir → dev → npm install → dev)
+- [ ] README curl section drops manual `POST /api/tenants`
+- [ ] `docs/getting-started.md` server-side functions path shows scaffold flow
+- [ ] `docs/adapters/convex/README.md` quick start uses auto-init instead of manual file creation
+- [ ] `docs/adapters/convex/README.md` configuration section reflects auto-tenant in dev mode
