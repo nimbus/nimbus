@@ -62,6 +62,13 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 
 ## Quick start
 
+If you're authoring Convex or Cloud Functions code locally, install Node.js
+with `npm` first. `neovex dev` runs codegen through `node` and can auto-run
+`npm install` when declared packages are missing locally.
+
+If you're using `neovex start` with MongoDB, the Firebase client adapter, or
+the native HTTP/WebSocket API, Node.js is not required.
+
 **1. Install Neovex:**
 
 ```bash
@@ -70,11 +77,15 @@ brew install agentstation/tap/neovex
 
 See [Install](#install) for other platforms or building from source.
 
-**2. Go to your project root** (or scaffold a new one with `neovex init convex my-app`):
+**2. Scaffold a Convex app:**
 
 ```bash
+neovex init convex my-app
 cd my-app
 ```
+
+`neovex init convex` scaffolds backend files only: `convex/schema.ts`,
+`convex/messages.ts`, `package.json`, `tsconfig.json`, and `.gitignore`.
 
 **3. Start the dev server:**
 
@@ -83,8 +94,8 @@ neovex dev
 ```
 
 > [!TIP]
-> `neovex dev` auto-runs `npm install` when dependencies are missing, creates a
-> `demo` tenant, and starts the server on `localhost:3210`.
+> `neovex dev` auto-runs `npm install` when declared packages are missing
+> locally, creates a `demo` tenant, and starts the server on `localhost:3210`.
 
 ### Server-side functions
 
@@ -95,7 +106,7 @@ import { v } from "convex/values";
 
 export const list = query({
   args: {},
-  handler: async (ctx) => await ctx.db.query("messages").take(20),
+  handler: async (ctx) => await ctx.db.query("messages").take(50),
 });
 
 export const send = mutation({
@@ -196,6 +207,8 @@ real-time subscriptions.
 brew install agentstation/tap/neovex
 ```
 
+For Convex or Cloud Functions authoring, also install Node.js with `npm`.
+
 ### Download binary
 
 Download the latest release from [GitHub Releases](https://github.com/agentstation/neovex/releases/latest).
@@ -214,6 +227,10 @@ git clone https://github.com/agentstation/neovex.git
 cd neovex
 cargo install --path crates/neovex-bin
 ```
+
+This installs the Rust binary only. For Convex or Cloud Functions authoring,
+also install Node.js with `npm`. Runtime-only `neovex start` workflows do not
+need the Node toolchain.
 
 ## Community
 

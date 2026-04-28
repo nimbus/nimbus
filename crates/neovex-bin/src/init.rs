@@ -1,3 +1,4 @@
+use std::io;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
@@ -22,6 +23,10 @@ pub(crate) struct InitCommand {
     /// Source root directory name (convex adapter only).
     #[arg(long, default_value = "convex")]
     pub(crate) source_root: String,
+
+    /// Install adapter dependencies after scaffolding.
+    #[arg(long, default_value_t = false)]
+    pub(crate) install: bool,
 }
 
 pub(crate) async fn run_init_command(
@@ -67,10 +72,12 @@ pub(crate) async fn run_init_command(
         }
     }
 
-    if adapter.needs_node_dependencies() {
+    if command.install && adapter.needs_node_dependencies() {
         let npm_dir = adapter_npm_install_dir(adapter, &canonical);
         cli_ux::write_stderr_line("")?;
-        crate::node::auto_install_node_dependencies(&npm_dir).await?;
+        crate::node::auto_install_node_dependencies(&npm_dir)
+            .await
+            .map_err(|error| io::Error::other(format_init_install_failure(&canonical, &*error)))?;
     }
 
     cli_ux::write_stderr_line("")?;
@@ -242,6 +249,15 @@ fn adapter_npm_install_dir(adapter: crate::node::Adapter, target_dir: &Path) -> 
     }
 }
 
+fn format_init_install_failure(target_dir: &Path, error: &dyn std::error::Error) -> String {
+    format!(
+        "Starter project was created at {} but dependency installation failed. \
+Resolve the npm error above, then rerun `neovex dev` from that directory or run `npm install` manually. \
+Details: {error}",
+        target_dir.display()
+    )
+}
+
 fn scaffold_project(
     target_dir: &Path,
     templates: &[TemplateFile],
@@ -299,7 +315,22 @@ pub(crate) fn check_source_root_flag(source_root: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use super::*;
+    use crate::{Cli, Command};
+
+    fn parse_init<I, T>(args: I) -> InitCommand
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let cli = Cli::parse_from(args);
+        let Command::Init(command) = cli.command else {
+            panic!("init subcommand should parse");
+        };
+        command
+    }
 
     #[test]
     fn compile_time_versions_are_populated() {
@@ -539,33 +570,79 @@ mod tests {
         assert!(check_source_root_flag("convex").is_ok());
     }
 
+    #[test]
+    fn cli_parses_init_defaults() {
+        let command = parse_init(["neovex", "init", "convex"]);
+
+        assert_eq!(command.adapter, "convex");
+        assert_eq!(command.directory, PathBuf::from("."));
+        assert_eq!(command.source_root, "convex");
+        assert!(!command.install);
+    }
+
+    #[test]
+    fn cli_parses_init_install_flag() {
+        let command = parse_init(["neovex", "init", "cloud-functions", "./my-app", "--install"]);
+
+        assert_eq!(command.adapter, "cloud-functions");
+        assert_eq!(command.directory, PathBuf::from("./my-app"));
+        assert!(command.install);
+    }
+
+    #[test]
+    fn init_install_failure_message_preserves_recovery_steps() {
+        let message = format_init_install_failure(
+            Path::new("/tmp/my-app"),
+            &io::Error::other("npm install failed"),
+        );
+
+        assert!(message.contains("Starter project was created at /tmp/my-app"));
+        assert!(message.contains("rerun `neovex dev`"));
+        assert!(message.contains("run `npm install` manually"));
+        assert!(message.contains("npm install failed"));
+    }
+
     #[tokio::test]
     async fn init_command_scaffolds_empty_directory() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir(tmp.path().join("node_modules")).unwrap();
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
             adapter: "convex".to_string(),
             source_root: "convex".to_string(),
+            install: false,
         };
         run_init_command(command).await.unwrap();
         assert!(tmp.path().join("convex/schema.ts").exists());
         assert!(tmp.path().join("package.json").exists());
+        assert!(
+            !tmp.path().join("node_modules").exists(),
+            "init should not install dependencies unless requested"
+        );
+        assert!(
+            std::fs::read_to_string(tmp.path().join("convex/schema.ts"))
+                .unwrap()
+                .contains(".index(\"by_author\", [\"author\"])"),
+            "starter schema should model indexed author queries canonically"
+        );
     }
 
     #[tokio::test]
     async fn init_command_creates_target_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("my-app");
-        std::fs::create_dir_all(target.join("node_modules")).unwrap();
         let command = InitCommand {
             directory: target.clone(),
             adapter: "convex".to_string(),
             source_root: "convex".to_string(),
+            install: false,
         };
         run_init_command(command).await.unwrap();
         assert!(target.join("convex/schema.ts").exists());
         assert!(target.join("package.json").exists());
+        assert!(
+            !target.join("node_modules").exists(),
+            "init should leave dependency bootstrap to dev by default"
+        );
         let pkg = std::fs::read_to_string(target.join("package.json")).unwrap();
         assert!(
             pkg.contains("\"name\": \"my-app\""),
@@ -581,6 +658,7 @@ mod tests {
             directory: tmp.path().to_path_buf(),
             adapter: "convex".to_string(),
             source_root: "convex".to_string(),
+            install: false,
         };
         let err = run_init_command(command).await.unwrap_err();
         assert!(
@@ -596,6 +674,7 @@ mod tests {
             directory: tmp.path().to_path_buf(),
             adapter: "convex".to_string(),
             source_root: "neovex".to_string(),
+            install: false,
         };
         let err = run_init_command(command).await.unwrap_err();
         assert!(
@@ -607,17 +686,20 @@ mod tests {
     #[tokio::test]
     async fn init_cloud_functions_scaffolds_empty_directory() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir(tmp.path().join("functions")).unwrap();
-        std::fs::create_dir(tmp.path().join("functions").join("node_modules")).unwrap();
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
             adapter: "cloud-functions".to_string(),
             source_root: "convex".to_string(),
+            install: false,
         };
         run_init_command(command).await.unwrap();
         assert!(tmp.path().join("firebase.json").exists());
         assert!(tmp.path().join("functions/src/index.ts").exists());
         assert!(tmp.path().join("functions/package.json").exists());
+        assert!(
+            !tmp.path().join("functions/node_modules").exists(),
+            "cloud-functions init should not install dependencies unless requested"
+        );
     }
 
     #[tokio::test]
@@ -628,6 +710,7 @@ mod tests {
             directory: tmp.path().to_path_buf(),
             adapter: "cloud-functions".to_string(),
             source_root: "convex".to_string(),
+            install: false,
         };
         let err = run_init_command(command).await.unwrap_err();
         assert!(
