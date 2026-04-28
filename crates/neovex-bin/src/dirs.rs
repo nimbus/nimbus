@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 use neovex::Error;
@@ -32,7 +33,7 @@ pub(crate) fn deployment_slug(app_dir: &Path) -> Result<String, Error> {
     let digest = hasher.finalize();
     let mut hash = String::with_capacity(SLUG_HASH_HEX_LEN);
     for byte in digest.iter().take(SLUG_HASH_HEX_LEN / 2) {
-        hash.push_str(&format!("{byte:02x}"));
+        let _ = write!(hash, "{byte:02x}");
     }
 
     Ok(format!("{sanitized}-{hash}"))

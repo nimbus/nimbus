@@ -457,7 +457,7 @@ fn cloud_functions_manifest_recovery_hint(app_dir: &Path, skip_codegen: bool) ->
     }
 }
 
-fn resolve_license_path(explicit: Option<&Path>) -> Option<PathBuf> {
+pub(super) fn resolve_license_path(explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = explicit {
         return Some(path.to_path_buf());
     }

@@ -434,7 +434,7 @@ directory is overwritten mid-invocation, the hash check could fail.
 
 ### Q5: How does this interact with the license file?
 
-The license file (`--license-file` or `.neovex/license.json`) is loaded once
+The license file (`--license-file` or `~/.config/neovex/license.json`) is loaded once
 at startup and is not part of the bundle. It should remain separate from
 bundle distribution. No change needed.
 
