@@ -749,7 +749,7 @@ commands that complete the developer inner loop.
 | Phase | Status | Items | Done when |
 |-------|--------|-------|-----------|
 | P1: Build infrastructure | `done` | I1 | `build.rs` emits package versions as compile-time env vars |
-| P2: Scaffold module | `pending` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
+| P2: Scaffold module | `done` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
 | P3: `neovex dev` auto-init | `pending` | I3, I4 | `neovex dev` scaffolds when no source root, checks for node_modules, handles existing projects and edge cases |
 | P4: `neovex init` command | `pending` | I5 | Standalone `neovex init` command using shared scaffold module |
 | P5: Auto-tenant | `pending` | I6 | `neovex dev` auto-creates `demo` tenant via server-internal boot path |
@@ -768,7 +768,7 @@ commands that complete the developer inner loop.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| I2: Shared scaffold module with embedded templates | `pending` | I1 | `init.rs` module in `neovex-bin` with: embedded backend templates via `include_str!()`, `scaffold_project()` function that writes files with per-file skip logic (Decision 7), safety check for `$HOME`/`/`/`/tmp`, `package.json.tmpl` version substitution using `env!()` vars, `--source-root neovex` advisory exit (Decision 6). Unit tests for: all files written to empty dir, per-file skip when file exists, safety refusal for `$HOME`, version substitution in `package.json`. |
+| I2: Shared scaffold module with embedded templates | `done` | I1 | `init.rs` module in `neovex-bin` with: embedded backend templates via `include_str!()`, `scaffold_project()` function that writes files with per-file skip logic (Decision 7), safety check for `$HOME`/`/`/`/tmp`, `package.json.tmpl` version substitution using `env!()` vars, `--source-root neovex` advisory exit (Decision 6). Unit tests for: all files written to empty dir, per-file skip when file exists, safety refusal for `$HOME`, version substitution in `package.json`. |
 
 ### P3 Work Queue: `neovex dev` Auto-Init
 
@@ -825,4 +825,5 @@ commands that complete the developer inner loop.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | 2026-04-27 | — | — | Plan created and audited against codebase | — |
+| 2026-04-27 | I2 | `done` | `scaffold_project()` with per-file skip logic, safety checks ($HOME, /, /tmp), version substitution, `check_source_root_flag()`. 9 unit tests: empty dir, skip existing, refuse $HOME/root/tmp, source-root advisory, version substitution. | `cargo test -p neovex-bin -- init::tests` 9/9 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |
 | 2026-04-27 | I1 | `done` | `build.rs` reads versions from `packages/convex/package.json` and `packages/codegen/package.json`, emits `NEOVEX_CONVEX_VERSION` (0.1.22) and `NEOVEX_CODEGEN_VERSION` (0.1.22). Created `init.rs` with constants, template, and `render_package_json()`. Created `templates/backend/` with all 5 template files. | `cargo build -p neovex-bin` succeeds, `cargo test -p neovex-bin -- init::tests` 2/2 pass, `cargo fmt --all --check` clean, `cargo clippy -p neovex-bin --all-targets` clean |
