@@ -2,7 +2,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::Result;
-use crate::runtime::bootstrap::{install_bootstrap, runtime_extension};
+use crate::limits::RuntimeCompatibilityTarget;
+use crate::runtime::bootstrap::{
+    extension_transpiler_for_target, install_bootstrap, snapshot_extensions,
+};
 
 use super::embedder::{JsRuntimeForSnapshot, RuntimeOptions};
 
@@ -49,7 +52,9 @@ impl V8StartupSnapshot {
 #[cfg(test)]
 static V8_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
-pub(crate) fn create_v8_startup_snapshot() -> Result<V8StartupSnapshot> {
+pub(crate) fn create_v8_startup_snapshot(
+    compatibility_target: RuntimeCompatibilityTarget,
+) -> Result<V8StartupSnapshot> {
     #[cfg(test)]
     V8_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
 
@@ -58,9 +63,23 @@ pub(crate) fn create_v8_startup_snapshot() -> Result<V8StartupSnapshot> {
     // separate finalize step for ordinary runtimes until the fork offers an
     // explicit snapshot-safe replacement.
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
-        extensions: vec![runtime_extension()],
+        extensions: snapshot_extensions(compatibility_target),
+        extension_transpiler: extension_transpiler_for_target(compatibility_target),
         ..Default::default()
     });
+    if matches!(compatibility_target, RuntimeCompatibilityTarget::Node22) {
+        let isolate = runtime.v8_isolate();
+        crate::backends::v8::embedder::v8::scope!(scope, isolate);
+        let template =
+            deno_node::init_global_template(scope, deno_node::ContextInitMode::ForSnapshot);
+        let context = deno_node::create_v8_context(
+            scope,
+            template,
+            deno_node::ContextInitMode::ForSnapshot,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(scope.add_context(context), deno_node::VM_CONTEXT_INDEX);
+    }
     install_bootstrap(&mut runtime)?;
     Ok(V8StartupSnapshot::new(runtime.snapshot()))
 }

@@ -7,7 +7,9 @@ mod host;
 mod limits;
 mod metrics;
 mod module_loader;
+mod node_compat;
 mod runtime;
+mod runtime_capabilities;
 #[cfg(test)]
 mod test_support;
 mod watchdog;
@@ -30,8 +32,9 @@ pub use host::{
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
 };
 pub use limits::{
-    RuntimeBackendKind, RuntimeExecutionModel, RuntimeLimits, RuntimeModuleStateSemantics,
-    RuntimePolicy, RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeLimits,
+    RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimeProfile,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

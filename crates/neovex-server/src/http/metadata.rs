@@ -26,7 +26,9 @@ pub(crate) async fn runtime_diagnostics(
     Ok(Json(RuntimeDiagnosticsResponse {
         limits: RuntimeLimitsResponse {
             runtime_backend: limits.backend_kind,
+            compatibility_target: limits.compatibility_target,
             execution_model: limits.execution_model,
+            runtime_profile: limits.profile,
             runtime_pool_kind: limits.runtime_pool_kind,
             module_state_semantics: limits.module_state_semantics(),
             routing_affinity: limits.routing_affinity,

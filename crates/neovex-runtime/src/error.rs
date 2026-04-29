@@ -16,6 +16,9 @@ pub enum NeovexRuntimeError {
     #[error("runtime contract error: {0}")]
     Contract(String),
 
+    #[error("runtime capability denied: {0}")]
+    CapabilityDenied(String),
+
     #[error("runtime bundle integrity check failed: {0}")]
     BundleIntegrityMismatch(String),
 

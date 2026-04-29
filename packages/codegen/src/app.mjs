@@ -29,6 +29,32 @@ async function directoryExists(directoryPath) {
   }
 }
 
+async function fileExists(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function readUtf8FileIfExists(filePath) {
+  if (!await fileExists(filePath)) {
+    return null;
+  }
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function resolveSourceRoot(appDir) {
   const neovexDir = path.join(appDir, "neovex");
   const convexDir = path.join(appDir, "convex");
@@ -117,6 +143,8 @@ async function walk(directory, files) {
 
 export {
   collectModuleFiles,
+  fileExists,
+  readUtf8FileIfExists,
   resolveAppDirectory,
   resolveSourceRoot,
   sha256Hex,

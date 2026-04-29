@@ -4,12 +4,37 @@ use std::rc::Rc;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::backends::v8::embedder::{CancelFuture, JsErrorBox, OpState};
+use crate::backends::v8::embedder::{CancelFuture, JsErrorBox, OpState, op2};
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostCallOperation, HostCallRequest};
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeProfile};
+use crate::runtime_capabilities::RuntimeContractPathsDescriptor;
 
 use super::super::payloads::RuntimeHostCallEnvelope;
-use super::super::state::{InstalledRuntimeHostBridge, RuntimeCancellationState};
+use super::super::state::{
+    InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeHostBridge,
+    RuntimeCancellationState,
+};
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct RuntimeContractDescriptor {
+    compatibility_target: RuntimeCompatibilityTarget,
+    runtime_profile: RuntimeProfile,
+    paths: RuntimeContractPathsDescriptor,
+}
+
+#[op2]
+#[serde]
+pub(super) fn op_neovex_runtime_contract(state: &mut OpState) -> RuntimeContractDescriptor {
+    let contract = state.borrow::<InstalledRuntimeContract>();
+    let capability_policy = state.borrow::<InstalledRuntimeCapabilityPolicy>();
+    RuntimeContractDescriptor {
+        compatibility_target: contract.compatibility_target,
+        runtime_profile: contract.profile,
+        paths: capability_policy.paths.descriptor(),
+    }
+}
 
 struct HostCallPermitLease {
     permit: SharedInvocationPermit,

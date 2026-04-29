@@ -1,7 +1,7 @@
 use crate::affinity::{RuntimeAffinityKey, runtime_affinity_key};
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
-use crate::limits::RuntimePoolKind;
+use crate::limits::{RuntimeCompatibilityTarget, RuntimePoolKind};
 use crate::runtime::{NeovexRuntime, RuntimeBundle, RuntimeBundleIdentity};
 
 use super::{embedder::JsRuntime, startup::V8RuntimeConstructionMode};
@@ -81,6 +81,10 @@ impl V8WorkerRuntimePool {
         context: Option<&RuntimeInvocationContext>,
         use_locker: bool,
     ) -> Result<ReusableV8Runtime> {
+        let use_startup_snapshot = !matches!(
+            runtime_owner.policy().limits().compatibility_target,
+            RuntimeCompatibilityTarget::Node22
+        );
         match runtime_owner.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
             RuntimePoolKind::WarmPool => {
@@ -106,30 +110,61 @@ impl V8WorkerRuntimePool {
                 // Cold miss: build a fresh runtime
                 runtime_owner.policy().metrics().record_warm_pool_miss();
                 runtime_owner.policy().metrics().record_runtime_pool_miss();
-                let snapshot = runtime_owner.bootstrap_snapshot()?;
-                let runtime = runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?;
+                let runtime = if use_startup_snapshot {
+                    let snapshot = runtime_owner.bootstrap_snapshot()?;
+                    runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?
+                } else {
+                    // Proper Node22 snapshotting requires a Deno-style module
+                    // evaluation bootstrap. Until that lands, keep the target
+                    // honest by constructing live runtimes directly.
+                    runtime_owner.create_runtime(bundle, None, use_locker)?
+                };
                 self.warmed = true;
                 return Ok(ReusableV8Runtime::fresh(
                     runtime,
-                    V8RuntimeConstructionMode::StartupSnapshot,
+                    if use_startup_snapshot {
+                        V8RuntimeConstructionMode::StartupSnapshot
+                    } else {
+                        V8RuntimeConstructionMode::Unsnapshotted
+                    },
                 ));
             }
         }
-        let snapshot = runtime_owner.bootstrap_snapshot()?;
         if self.warmed {
             runtime_owner.policy().metrics().record_runtime_pool_hit();
-            runtime_owner
-                .create_runtime(bundle, Some(snapshot), use_locker)
-                .map(|runtime| {
-                    ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot)
-                })
+            if use_startup_snapshot {
+                let snapshot = runtime_owner.bootstrap_snapshot()?;
+                runtime_owner
+                    .create_runtime(bundle, Some(snapshot), use_locker)
+                    .map(|runtime| {
+                        ReusableV8Runtime::fresh(
+                            runtime,
+                            V8RuntimeConstructionMode::StartupSnapshot,
+                        )
+                    })
+            } else {
+                runtime_owner
+                    .create_runtime(bundle, None, use_locker)
+                    .map(|runtime| {
+                        ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::Unsnapshotted)
+                    })
+            }
         } else {
             runtime_owner.policy().metrics().record_runtime_pool_miss();
-            let runtime = runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?;
+            let runtime = if use_startup_snapshot {
+                let snapshot = runtime_owner.bootstrap_snapshot()?;
+                runtime_owner.create_runtime(bundle, Some(snapshot), use_locker)?
+            } else {
+                runtime_owner.create_runtime(bundle, None, use_locker)?
+            };
             self.warmed = true;
             Ok(ReusableV8Runtime::fresh(
                 runtime,
-                V8RuntimeConstructionMode::StartupSnapshot,
+                if use_startup_snapshot {
+                    V8RuntimeConstructionMode::StartupSnapshot
+                } else {
+                    V8RuntimeConstructionMode::Unsnapshotted
+                },
             ))
         }
     }

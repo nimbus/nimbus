@@ -101,7 +101,9 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         && !skip_codegen
         && adapter.needs_node_dependencies()
     {
-        node::auto_install_node_dependencies(&adapter.npm_install_dir(&plan.app_dir)).await?;
+        for install_dir in adapter.npm_install_dirs(&plan.app_dir) {
+            node::auto_install_node_dependencies(&install_dir).await?;
+        }
     }
 
     emit_dev_banner(&plan)?;
@@ -140,7 +142,7 @@ struct DevPlan {
 #[derive(Debug, Clone)]
 struct DevWatchPlan {
     app_dir: PathBuf,
-    source_root: Option<PathBuf>,
+    source_roots: Vec<PathBuf>,
     tail_logs: DevTailLogsMode,
     local_url: String,
     deploy_admin_token: String,
@@ -150,7 +152,11 @@ impl DevPlan {
     fn watch_plan(&self) -> DevWatchPlan {
         DevWatchPlan {
             app_dir: self.app_dir.clone(),
-            source_root: self.adapter.as_ref().map(|a| a.source_root().to_path_buf()),
+            source_roots: self
+                .adapter
+                .as_ref()
+                .map(|adapter| adapter.source_roots().to_vec())
+                .unwrap_or_default(),
             tail_logs: self.tail_logs,
             local_url: self.local_url.clone(),
             deploy_admin_token: self
@@ -164,7 +170,7 @@ impl DevPlan {
 
 fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
-    let adapter = detect_dev_adapter(&app_dir);
+    let adapter = detect_dev_adapter(&app_dir)?;
     let deployment_slug =
         dirs::deployment_slug(&app_dir).map_err(|error| io::Error::other(error.to_string()))?;
     let explicit_compose_files = command.compose_file.as_slice();
@@ -314,7 +320,7 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DevAdapter {
     Convex { source_root: PathBuf },
-    CloudFunctions { source_root: PathBuf },
+    CloudFunctions { source_roots: Vec<PathBuf> },
 }
 
 impl DevAdapter {
@@ -329,9 +335,10 @@ impl DevAdapter {
         self.adapter().name()
     }
 
-    fn source_root(&self) -> &Path {
+    fn source_roots(&self) -> &[PathBuf] {
         match self {
-            Self::Convex { source_root } | Self::CloudFunctions { source_root } => source_root,
+            Self::Convex { source_root } => std::slice::from_ref(source_root),
+            Self::CloudFunctions { source_roots } => source_roots,
         }
     }
 
@@ -339,75 +346,50 @@ impl DevAdapter {
         self.adapter().needs_node_dependencies()
     }
 
-    fn npm_install_dir(&self, app_dir: &Path) -> PathBuf {
+    fn npm_install_dirs(&self, app_dir: &Path) -> Vec<PathBuf> {
         match self {
-            Self::Convex { .. } => app_dir.to_path_buf(),
-            Self::CloudFunctions { source_root } => source_root.clone(),
+            Self::Convex { .. } => vec![app_dir.to_path_buf()],
+            Self::CloudFunctions { source_roots } => source_roots.clone(),
         }
     }
 }
 
-fn detect_dev_adapter(app_dir: &Path) -> Option<DevAdapter> {
+fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {
     let neovex_root = app_dir.join("neovex");
     if neovex_root.is_dir() {
-        return Some(DevAdapter::Convex {
+        return Ok(Some(DevAdapter::Convex {
             source_root: neovex_root,
-        });
+        }));
     }
 
     let convex_root = app_dir.join("convex");
     if convex_root.is_dir() {
-        return Some(DevAdapter::Convex {
+        return Ok(Some(DevAdapter::Convex {
             source_root: convex_root,
-        });
+        }));
     }
 
-    if let Some(adapter) = detect_cloud_functions_adapter(app_dir) {
-        return Some(adapter);
+    if let Some(adapter) = detect_cloud_functions_adapter(app_dir)? {
+        return Ok(Some(adapter));
     }
 
-    None
+    Ok(None)
 }
 
-fn detect_cloud_functions_adapter(app_dir: &Path) -> Option<DevAdapter> {
-    let firebase_json_path = app_dir.join("firebase.json");
-    if firebase_json_path.is_file() {
-        let source_dir = read_firebase_functions_source(&firebase_json_path)
-            .unwrap_or_else(|| "functions".to_string());
-        let source_root = app_dir.join(&source_dir);
-        if !source_root.is_dir() {
-            tracing::warn!(
-                "firebase.json references functions source `{source_dir}` \
-                 but directory does not exist; skipping Cloud Functions detection"
-            );
-            return None;
-        }
-        return Some(DevAdapter::CloudFunctions { source_root });
+fn detect_cloud_functions_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {
+    if let Some(project) = node::firebase_functions_project(app_dir)? {
+        return Ok(Some(DevAdapter::CloudFunctions {
+            source_roots: project.source_dirs(),
+        }));
     }
 
     if has_functions_framework_dependency(app_dir) {
-        return Some(DevAdapter::CloudFunctions {
-            source_root: app_dir.to_path_buf(),
-        });
+        return Ok(Some(DevAdapter::CloudFunctions {
+            source_roots: vec![app_dir.to_path_buf()],
+        }));
     }
 
-    None
-}
-
-fn read_firebase_functions_source(firebase_json_path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(firebase_json_path).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let functions = &parsed["functions"];
-    if let Some(source) = functions["source"].as_str() {
-        return Some(source.to_string());
-    }
-    if let Some(arr) = functions.as_array()
-        && let Some(first) = arr.first()
-        && let Some(source) = first["source"].as_str()
-    {
-        return Some(source.to_string());
-    }
-    None
+    Ok(None)
 }
 
 fn has_functions_framework_dependency(app_dir: &Path) -> bool {
@@ -491,10 +473,13 @@ fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     match plan.adapter.as_ref() {
         Some(adapter) if plan.once => lines.push(format!(
             "Watch:      disabled by --once; detected {}",
-            adapter.source_root().display()
+            format_watch_roots(adapter.source_roots())
         )),
         Some(adapter) => {
-            lines.push(format!("Watch:      {}", adapter.source_root().display()));
+            lines.push(format!(
+                "Watch:      {}",
+                format_watch_roots(adapter.source_roots())
+            ));
         }
         None if plan.once => {
             lines.push("Watch:      disabled by --once; no adapter detected".to_string());
@@ -511,23 +496,23 @@ fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
 }
 
 async fn run_dev_watch_loop(plan: DevWatchPlan) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(source_root) = plan.source_root.as_deref() else {
+    if plan.source_roots.is_empty() {
         std::future::pending::<()>().await;
         return Ok(());
-    };
+    }
 
     emit_dev_info(format!(
         "watching {} for codegen changes",
-        source_root.display()
+        format_watch_roots(&plan.source_roots)
     ));
     emit_log_tail_note(plan.tail_logs);
 
-    let mut snapshot = match collect_source_snapshot(source_root) {
+    let mut snapshot = match collect_source_snapshot(&plan.app_dir, &plan.source_roots) {
         Ok(snapshot) => snapshot,
         Err(error) => {
             emit_dev_warning(format!(
-                "could not snapshot {}: {error}",
-                source_root.display()
+                "could not snapshot watched sources under {}: {error}",
+                plan.app_dir.display()
             ));
             SourceSnapshot::default()
         }
@@ -535,13 +520,13 @@ async fn run_dev_watch_loop(plan: DevWatchPlan) -> Result<(), Box<dyn std::error
 
     loop {
         tokio::time::sleep(WATCH_POLL_INTERVAL).await;
-        let changed = match collect_source_snapshot(source_root) {
+        let changed = match collect_source_snapshot(&plan.app_dir, &plan.source_roots) {
             Ok(next) if next != snapshot => true,
             Ok(_) => false,
             Err(error) => {
                 emit_dev_warning(format!(
-                    "could not rescan {}: {error}",
-                    source_root.display()
+                    "could not rescan watched sources under {}: {error}",
+                    plan.app_dir.display()
                 ));
                 false
             }
@@ -552,12 +537,12 @@ async fn run_dev_watch_loop(plan: DevWatchPlan) -> Result<(), Box<dyn std::error
         }
 
         tokio::time::sleep(WATCH_DEBOUNCE_DELAY).await;
-        let next_snapshot = match collect_source_snapshot(source_root) {
+        let next_snapshot = match collect_source_snapshot(&plan.app_dir, &plan.source_roots) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 emit_dev_warning(format!(
-                    "could not rescan {} after debounce: {error}",
-                    source_root.display()
+                    "could not rescan watched sources under {} after debounce: {error}",
+                    plan.app_dir.display()
                 ));
                 continue;
             }
@@ -656,9 +641,11 @@ struct FileFingerprint {
     modified: Option<SystemTime>,
 }
 
-fn collect_source_snapshot(source_root: &Path) -> io::Result<SourceSnapshot> {
+fn collect_source_snapshot(app_dir: &Path, source_roots: &[PathBuf]) -> io::Result<SourceSnapshot> {
     let mut files = std::collections::BTreeMap::new();
-    collect_source_snapshot_recursive(source_root, source_root, &mut files)?;
+    for source_root in source_roots {
+        collect_source_snapshot_recursive(app_dir, source_root, &mut files)?;
+    }
     Ok(SourceSnapshot { files })
 }
 
@@ -693,6 +680,14 @@ fn collect_source_snapshot_recursive(
         );
     }
     Ok(())
+}
+
+fn format_watch_roots(source_roots: &[PathBuf]) -> String {
+    source_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn should_skip_watch_dir(path: &Path) -> bool {
@@ -1137,10 +1132,12 @@ mod tests {
         fs::write(root.join("messages.ts"), "export const list = 1;\n")
             .expect("source file should write");
 
-        let before = collect_source_snapshot(&root).expect("snapshot should collect");
+        let before = collect_source_snapshot(temp.path(), std::slice::from_ref(&root))
+            .expect("snapshot should collect");
         fs::write(root.join("messages.ts"), "export const list = 12345;\n")
             .expect("source file should update");
-        let after = collect_source_snapshot(&root).expect("snapshot should recollect");
+        let after = collect_source_snapshot(temp.path(), std::slice::from_ref(&root))
+            .expect("snapshot should recollect");
 
         assert_ne!(before, after);
     }
@@ -1155,13 +1152,15 @@ mod tests {
         fs::write(root.join("_generated").join("api.ts"), "first\n")
             .expect("generated file should write");
 
-        let before = collect_source_snapshot(&root).expect("snapshot should collect");
+        let before = collect_source_snapshot(temp.path(), std::slice::from_ref(&root))
+            .expect("snapshot should collect");
         fs::write(
             root.join("_generated").join("api.ts"),
             "second and longer\n",
         )
         .expect("generated file should update");
-        let after = collect_source_snapshot(&root).expect("snapshot should recollect");
+        let after = collect_source_snapshot(temp.path(), std::slice::from_ref(&root))
+            .expect("snapshot should recollect");
 
         assert_eq!(before, after);
     }
@@ -1289,11 +1288,11 @@ mod tests {
         )
         .unwrap();
 
-        let adapter = detect_dev_adapter(temp.path());
+        let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
         assert_eq!(
             adapter,
             Some(DevAdapter::CloudFunctions {
-                source_root: temp.path().join("functions"),
+                source_roots: vec![temp.path().join("functions").canonicalize().unwrap()],
             })
         );
     }
@@ -1308,11 +1307,11 @@ mod tests {
         )
         .unwrap();
 
-        let adapter = detect_dev_adapter(temp.path());
+        let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
         assert_eq!(
             adapter,
             Some(DevAdapter::CloudFunctions {
-                source_root: temp.path().join("backend"),
+                source_roots: vec![temp.path().join("backend").canonicalize().unwrap()],
             })
         );
     }
@@ -1327,17 +1326,46 @@ mod tests {
         )
         .unwrap();
 
-        let adapter = detect_dev_adapter(temp.path());
+        let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
         assert_eq!(
             adapter,
             Some(DevAdapter::CloudFunctions {
-                source_root: temp.path().join("api"),
+                source_roots: vec![temp.path().join("api").canonicalize().unwrap()],
             })
         );
     }
 
     #[test]
-    fn detect_cloud_functions_skips_missing_source_dir() {
+    fn detect_cloud_functions_firebase_json_multi_codebase_preserves_all_roots() {
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("packages/app-functions")).unwrap();
+        fs::create_dir_all(temp.path().join("packages/admin-functions")).unwrap();
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions": [{"source": "packages/app-functions", "codebase": "app"}, {"source": "packages/admin-functions", "codebase": "admin"}]}"#,
+        )
+        .unwrap();
+
+        let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
+        assert_eq!(
+            adapter,
+            Some(DevAdapter::CloudFunctions {
+                source_roots: vec![
+                    temp.path()
+                        .join("packages/app-functions")
+                        .canonicalize()
+                        .unwrap(),
+                    temp.path()
+                        .join("packages/admin-functions")
+                        .canonicalize()
+                        .unwrap(),
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn detect_cloud_functions_reports_missing_source_dir() {
         let temp = tempdir().expect("tempdir should build");
         fs::write(
             temp.path().join("firebase.json"),
@@ -1345,8 +1373,13 @@ mod tests {
         )
         .unwrap();
 
-        let adapter = detect_dev_adapter(temp.path());
-        assert_eq!(adapter, None, "should skip when source dir does not exist");
+        let error = detect_dev_adapter(temp.path()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not exist or is not readable"),
+            "unexpected missing-source error: {error}"
+        );
     }
 
     #[test]
@@ -1358,11 +1391,11 @@ mod tests {
         )
         .unwrap();
 
-        let adapter = detect_dev_adapter(temp.path());
+        let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
         assert_eq!(
             adapter,
             Some(DevAdapter::CloudFunctions {
-                source_root: temp.path().to_path_buf(),
+                source_roots: vec![temp.path().to_path_buf()],
             })
         );
     }
@@ -1373,7 +1406,7 @@ mod tests {
         fs::create_dir_all(temp.path().join("convex")).unwrap();
         fs::write(temp.path().join("firebase.json"), "{}").unwrap();
 
-        let adapter = detect_dev_adapter(temp.path());
+        let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
         assert!(
             matches!(adapter, Some(DevAdapter::Convex { .. })),
             "convex should take priority over cloud-functions"
@@ -1381,24 +1414,30 @@ mod tests {
     }
 
     #[test]
-    fn cloud_functions_adapter_npm_install_dir() {
+    fn cloud_functions_adapter_npm_install_dirs() {
         let adapter = DevAdapter::CloudFunctions {
-            source_root: PathBuf::from("/project/functions"),
+            source_roots: vec![
+                PathBuf::from("/project/functions"),
+                PathBuf::from("/project/admin-functions"),
+            ],
         };
         assert_eq!(
-            adapter.npm_install_dir(Path::new("/project")),
-            PathBuf::from("/project/functions")
+            adapter.npm_install_dirs(Path::new("/project")),
+            vec![
+                PathBuf::from("/project/functions"),
+                PathBuf::from("/project/admin-functions"),
+            ]
         );
     }
 
     #[test]
-    fn convex_adapter_npm_install_dir() {
+    fn convex_adapter_npm_install_dirs() {
         let adapter = DevAdapter::Convex {
             source_root: PathBuf::from("/project/convex"),
         };
         assert_eq!(
-            adapter.npm_install_dir(Path::new("/project")),
-            PathBuf::from("/project")
+            adapter.npm_install_dirs(Path::new("/project")),
+            vec![PathBuf::from("/project")]
         );
     }
 
@@ -1423,7 +1462,7 @@ mod tests {
         assert_eq!(
             plan.adapter,
             Some(DevAdapter::CloudFunctions {
-                source_root: canonical.join("functions"),
+                source_roots: vec![canonical.join("functions")],
             })
         );
     }

@@ -106,8 +106,11 @@ export {};
         .await
         .expect_err("outside import should be rejected");
 
+    let message = error.to_string();
     assert!(
-        error.to_string().contains("outside the bundle root"),
+        message.contains("runtime read capability denied")
+            && message.contains("outside.mjs")
+            && message.contains("allowed roots"),
         "unexpected loader sandbox error: {error}"
     );
 }

@@ -1,6 +1,6 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 
+import { readUtf8FileIfExists } from "../app.mjs";
 import { unsupportedError } from "../errors.mjs";
 import {
   extractCallExpression,
@@ -56,14 +56,7 @@ async function parseHttpRoutes(convexDir, schema, modules) {
 }
 
 async function readHttpRouterSource(httpPath) {
-  try {
-    return await fs.readFile(httpPath, "utf8");
-  } catch (error) {
-    if (error && typeof error === "object" && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
+  return readUtf8FileIfExists(httpPath);
 }
 
 function extractRouterName(source, httpPath) {

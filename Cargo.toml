@@ -36,8 +36,29 @@ bson = { version = "3.1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
 deadpool-postgres = "0.14"
-deno_core = { version = "0.395", features = ["unsafe_use_unprotected_platform"] }
+deno_ast = { version = "=0.53.1", features = ["transpiling"] }
+deno_core = { version = "0.400", features = ["unsafe_use_unprotected_platform"] }
+deno_crypto = "0.261.0"
 deno_error = "0.7"
+deno_fetch = "0.271.0"
+deno_fs = { version = "0.157.0", features = ["sync_fs"] }
+deno_http = "0.245.0"
+deno_io = "0.157.0"
+deno_napi = "0.178.0"
+deno_net = "0.239.0"
+deno_node = { version = "0.185.0", default-features = false, features = ["sync_fs"] }
+deno_node_crypto = "0.17.0"
+deno_os = "0.64.0"
+deno_permissions = "0.106.0"
+deno_process = "0.62.0"
+deno_resolver = { version = "=0.78.0", features = ["deno_ast", "sync"] }
+deno_semver = "=0.9.1"
+deno_telemetry = "0.69.0"
+deno_tls = "0.234.0"
+deno_web = "0.278.0"
+deno_webidl = "0.247.0"
+deno_websocket = "0.252.0"
+node_resolver = { version = "0.85", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
 futures = "0.3"
@@ -89,7 +110,9 @@ tracing-subscriber = "0.3"
 time = "0.3"
 twox-hash = "2"
 ulid = { version = "1", features = ["serde"] }
-v8 = "147.0.0"
+sys_traits = "0.1.27"
+url = "2"
+v8 = "147.4.0"
 zeroize = { version = "1", features = ["derive"] }
 
 [profile.release]
@@ -102,5 +125,25 @@ strip = true
 # Keep the public dependency surface aligned with upstream crate versions while
 # selecting the fork implementation immutably at the workspace root.
 [patch.crates-io]
-deno_core = { git = "https://github.com/agentstation/deno_core", tag = "0.395.0-locker.2" }
-v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.0.0-locker.2" }
+deno_core = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_crypto = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_fetch = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_fs = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_http = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_io = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_napi = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_net = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_node = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_node_crypto = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_os = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_package_json = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_permissions = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_process = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_resolver = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_telemetry = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_tls = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_web = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_webidl = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+deno_websocket = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+node_resolver = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.4" }
+v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.4.0-locker.1" }
