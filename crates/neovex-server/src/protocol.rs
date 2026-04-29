@@ -1,8 +1,9 @@
 use neovex_core::{Document, DurableMutationRecord, Query, Schema};
 use neovex_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use neovex_runtime::{
-    RuntimeBackendKind, RuntimeExecutionModel, RuntimeMetricsSnapshot, RuntimeModuleStateSemantics,
-    RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeMetricsSnapshot,
+    RuntimeModuleStateSemantics, RuntimePoolKind, RuntimeProfile, RuntimeResetCapabilities,
+    RuntimeRoutingAffinity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -77,7 +78,9 @@ pub(crate) struct TenantEngineDiagnosticsResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct RuntimeLimitsResponse {
     pub runtime_backend: RuntimeBackendKind,
+    pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
+    pub runtime_profile: RuntimeProfile,
     pub runtime_pool_kind: RuntimePoolKind,
     pub module_state_semantics: RuntimeModuleStateSemantics,
     pub routing_affinity: RuntimeRoutingAffinity,

@@ -2,11 +2,18 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use deno_permissions::PermissionsContainer;
+
+use crate::RuntimeBundle;
 use crate::backends::v8::embedder::{CancelHandle, JsRuntime};
 use crate::error::Result;
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostBridge, HostCallCancellation};
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeProfile};
 use crate::runtime::NeovexRuntime;
+use crate::runtime_capabilities::{
+    RuntimeEnvPolicy, RuntimePathPolicy, build_permissions_container,
+};
 use crate::watchdog::{WatchdogRegistration, WatchdogTimer};
 
 #[derive(Default)]
@@ -47,6 +54,19 @@ impl RuntimeHostBridgeSlot {
 #[derive(Clone)]
 pub(super) struct InstalledRuntimeHostBridge {
     pub(super) slot: RuntimeHostBridgeSlot,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct InstalledRuntimeContract {
+    pub(super) compatibility_target: RuntimeCompatibilityTarget,
+    pub(super) profile: RuntimeProfile,
+}
+
+#[derive(Clone)]
+pub(super) struct InstalledRuntimeCapabilityPolicy {
+    pub(super) paths: RuntimePathPolicy,
+    pub(super) env: RuntimeEnvPolicy,
+    pub(super) permissions: PermissionsContainer,
 }
 
 #[derive(Clone)]
@@ -159,12 +179,42 @@ impl RuntimeInvocationTimeoutController {
     }
 }
 
-pub(crate) fn initialize_runtime_state(runtime: &mut JsRuntime, runtime_owner: &NeovexRuntime) {
+pub(crate) fn initialize_runtime_state(
+    runtime: &mut JsRuntime,
+    runtime_owner: &NeovexRuntime,
+    bundle: &RuntimeBundle,
+) -> Result<()> {
     install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
+    install_runtime_contract(runtime, runtime_owner, bundle)?;
     reset_runtime_invocation_state(
         runtime,
         SharedInvocationPermit::new(runtime_owner.policy.clone(), None, None, true, None),
     );
+    Ok(())
+}
+
+fn install_runtime_contract(
+    runtime: &mut JsRuntime,
+    runtime_owner: &NeovexRuntime,
+    bundle: &RuntimeBundle,
+) -> Result<()> {
+    let limits = runtime_owner.policy().limits().clone();
+    let paths = RuntimePathPolicy::for_bundle(bundle, &limits)?;
+    let env = RuntimeEnvPolicy::for_profile(limits.profile);
+    let capability_policy = InstalledRuntimeCapabilityPolicy {
+        permissions: build_permissions_container(&paths, &env)?,
+        paths,
+        env,
+    };
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    state.put(InstalledRuntimeContract {
+        compatibility_target: limits.compatibility_target,
+        profile: limits.profile,
+    });
+    state.put(capability_policy.permissions.clone());
+    state.put(capability_policy);
+    Ok(())
 }
 
 pub(crate) fn install_runtime_host_bridge_slot(

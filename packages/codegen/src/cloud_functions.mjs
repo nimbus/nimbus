@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { sha256Hex } from "./app.mjs";
+import { readUtf8FileIfExists, sha256Hex } from "./app.mjs";
 import { buildCloudFunctionsRuntimeBundle } from "./cloud_functions/bundle.mjs";
 import { detectCloudFunctionsProject } from "./cloud_functions/project.mjs";
 
@@ -181,14 +181,8 @@ async function mergeFrameworkTargetBindings(project, discoveredTargets) {
 }
 
 async function readOptionalJson(filePath) {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
-  } catch (error) {
-    if (error && typeof error === "object" && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
+  const source = await readUtf8FileIfExists(filePath);
+  return source === null ? null : JSON.parse(source);
 }
 
 export { detectCloudFunctionsProject, generateCloudFunctionsArtifacts };

@@ -296,8 +296,10 @@ discovery rule:
 `neovex dev` is the local development happy path. In the current watch-loop
 slice it:
 
-- requires Node.js with `npm` for Convex and Cloud Functions authoring because
-  startup codegen runs through `node`
+- requires Node.js 22 with `npm` for Convex and Cloud Functions authoring
+  because startup codegen still runs through external `node` by default, and
+  the external authoring path verifies the `node --version` baseline before it
+  executes
 - auto-detects the app directory from the current directory by looking for a
   `neovex/` or `convex/` source root, `firebase.json`, or
   `@google-cloud/functions-framework` in `package.json`, falling back to the
@@ -305,13 +307,29 @@ slice it:
 - when no compatible adapter is detected and `--skip-codegen` is not set, exits
   with guidance to run `neovex init convex` or `neovex init cloud-functions`
 - when `package.json` exists and declared dependencies or devDependencies are
-  missing from `node_modules/`, automatically runs `npm install` before
-  codegen (for Cloud Functions, this runs in the `functions/` subdirectory)
+  missing from `node_modules/`, or when the recorded dependency fingerprint no
+  longer matches `package.json` plus the npm lockfile (`package-lock.json` or
+  `npm-shrinkwrap.json` when present), automatically runs `npm install` before
+  codegen (for Cloud Functions, this runs in the `functions/` subdirectory or,
+  for Firebase multi-codebase projects, in each declared `functions[].source`
+  package root)
+- records the current tooling dependency fingerprint in
+  `.neovex/cache/node/dependency-state.json` inside the app or functions
+  directory so future runs can distinguish “already installed and current” from
+  “installed but stale after manifest/lockfile changes”
 - auto-creates a `demo` tenant on startup so a Convex client can connect to
   `http://localhost:3210/convex/demo` immediately; silently reuses the tenant
   on subsequent runs
 - runs one initial codegen pass unless `--skip-codegen` is set
 - starts the same local server path as `neovex start`
+
+The embedded codegen runner exists only as an experimental pilot behind
+`NEOVEX_EXPERIMENTAL_EMBEDDED_CODEGEN`. Current upstream Convex and Firebase /
+Cloud Functions stacks still support Node 20, but Neovex's verified authoring
+baseline is `Node22` and it does not yet claim a separate `Node20`
+compatibility target. Firebase / Cloud Functions package layouts still fall
+back to the external Node.js runner; the embedded pilot does not yet support
+that structure.
 - watches the selected `neovex/` or `convex/` source root for source changes
   and reruns codegen after a short debounce
 - validates and locally activates regenerated artifacts through the deploy

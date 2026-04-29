@@ -607,14 +607,134 @@ globalThis.__neovexCreateContext = function(options = {}) {
 Object.freeze(globalThis.__neovexSyncHostValue);
 Object.freeze(globalThis.__neovexAsyncHostValue);
 Object.freeze(globalThis.__neovexCreateContext);
+
+function __neovexCreateProcessEnvProxy() {
+  const snapshot = __neovexCoreOps.op_neovex_runtime_env_snapshot();
+  const target = Object.assign(Object.create(null), snapshot);
+  return new Proxy(target, {
+    get(currentTarget, property) {
+      if (typeof property !== "string") {
+        return Reflect.get(currentTarget, property);
+      }
+      const result = __neovexCoreOps.op_neovex_runtime_env_get(property);
+      if (!result || typeof result !== "object") {
+        return undefined;
+      }
+      if (result.status === "allowed") {
+        currentTarget[property] = result.value;
+        return result.value;
+      }
+      if (result.status === "missing") {
+        delete currentTarget[property];
+        return undefined;
+      }
+      throw new Error(result.message ?? `runtime env capability denied for ${property}`);
+    },
+    has(currentTarget, property) {
+      if (typeof property !== "string") {
+        return Reflect.has(currentTarget, property);
+      }
+      const result = __neovexCoreOps.op_neovex_runtime_env_get(property);
+      return result?.status === "allowed";
+    },
+    ownKeys(currentTarget) {
+      return Reflect.ownKeys(currentTarget);
+    },
+    getOwnPropertyDescriptor(currentTarget, property) {
+      if (typeof property !== "string") {
+        return Reflect.getOwnPropertyDescriptor(currentTarget, property);
+      }
+      if (!Object.prototype.hasOwnProperty.call(currentTarget, property)) {
+        return undefined;
+      }
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: currentTarget[property],
+      };
+    },
+    set(_currentTarget, property) {
+      throw new Error(`runtime env capability denied for mutation of ${String(property)}`);
+    },
+    deleteProperty(_currentTarget, property) {
+      throw new Error(`runtime env capability denied for deletion of ${String(property)}`);
+    },
+  });
+}
+
+function __neovexInstallRuntimeContractGlobals(contract) {
+  if (!contract || typeof contract !== "object") {
+    return;
+  }
+  const compatibilityTarget = contract.compatibility_target;
+  if (compatibilityTarget === "node22") {
+    if (typeof globalThis.global === "undefined") {
+      globalThis.global = globalThis;
+    }
+    const versions = Object.freeze({
+      node: "22.0.0-neovex",
+    });
+    const cwd = typeof contract.paths?.cwd === "string" ? contract.paths.cwd : "/";
+    const env = __neovexCreateProcessEnvProxy();
+    const processValue = globalThis.process ?? {};
+    Object.defineProperty(processValue, "cwd", {
+      value() {
+        return cwd;
+      },
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    Object.defineProperty(processValue, "env", {
+      value: env,
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(processValue, "version", {
+      value: "v22.0.0-neovex",
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(processValue, "versions", {
+      value: versions,
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(globalThis, "process", {
+      value: processValue,
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+    return;
+  }
+  delete globalThis.global;
+  delete globalThis.process;
+}
+
+Object.freeze(__neovexInstallRuntimeContractGlobals);
 "#;
 
 // Keep Deno cleanup out of BOOTSTRAP_SOURCE. That source is executed during
 // startup-snapshot creation, and moving `delete globalThis.Deno` into it has
 // already regressed snapshot-backed Locker runtime startup in the repaired
 // deno_core fork. The cleanup must remain a separate post-bootstrap step until
-// the fork exposes an explicit snapshot-safe alternative.
-const POST_BOOTSTRAP_SOURCE: &str = "delete globalThis.Deno;";
+// the fork exposes an explicit snapshot-safe alternative. Node22 now binds its
+// internal substrate against `__bootstrap.ext_node_denoGlobals`, so ordinary
+// bundles should not observe the public `globalThis.Deno` contract after
+// finalize_bootstrap() completes.
+const POST_BOOTSTRAP_SOURCE: &str = r#"
+const __neovexRuntimeContract =
+  __neovexCoreOps.op_neovex_runtime_contract();
+delete globalThis.Deno;
+delete globalThis.__bootstrap;
+delete globalThis.bootstrap;
+__neovexInstallRuntimeContractGlobals(__neovexRuntimeContract);
+"#;
 
 const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str =
     "__neovexNextSessionId = 1; __neovexInvocationGeneration++;";

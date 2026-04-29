@@ -16,9 +16,23 @@ pub enum RuntimeBackendKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RuntimeCompatibilityTarget {
+    WebStandardIsolate,
+    Node22,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuntimeExecutionModel {
     RunToCompletion,
     CooperativeLocker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProfile {
+    Application,
+    Tooling,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -67,7 +81,9 @@ pub struct RuntimeResetCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeLimits {
     pub backend_kind: RuntimeBackendKind,
+    pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
+    pub profile: RuntimeProfile,
     pub runtime_pool_kind: RuntimePoolKind,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
@@ -85,6 +101,30 @@ pub struct RuntimeLimits {
 }
 
 impl RuntimeLimits {
+    pub fn application_web_standard() -> Self {
+        Self {
+            compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+            profile: RuntimeProfile::Application,
+            ..Self::default()
+        }
+    }
+
+    pub fn application_node22() -> Self {
+        Self {
+            compatibility_target: RuntimeCompatibilityTarget::Node22,
+            profile: RuntimeProfile::Application,
+            ..Self::default()
+        }
+    }
+
+    pub fn tooling_node22() -> Self {
+        Self {
+            compatibility_target: RuntimeCompatibilityTarget::Node22,
+            profile: RuntimeProfile::Tooling,
+            ..Self::default()
+        }
+    }
+
     pub fn module_state_semantics(&self) -> RuntimeModuleStateSemantics {
         match self.runtime_pool_kind {
             RuntimePoolKind::WarmPool => RuntimeModuleStateSemantics::WarmPerBundle,
@@ -108,6 +148,19 @@ impl RuntimeLimits {
     }
 
     pub fn normalized(&self) -> Self {
+        if matches!(self.profile, RuntimeProfile::Tooling)
+            && !matches!(
+                self.compatibility_target,
+                RuntimeCompatibilityTarget::Node22
+            )
+        {
+            panic!(
+                "Tooling runtime profile currently requires Node22 compatibility target, \
+                 got {:?}",
+                self.compatibility_target
+            );
+        }
+
         // WarmPool requires CooperativeLocker — fail fast.
         if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmPool)
             && !matches!(
@@ -139,7 +192,9 @@ impl RuntimeLimits {
             .min(worker_threads);
         Self {
             backend_kind: self.backend_kind,
+            compatibility_target: self.compatibility_target,
             execution_model: self.execution_model,
+            profile: self.profile,
             runtime_pool_kind: self.runtime_pool_kind,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
@@ -175,7 +230,9 @@ impl Default for RuntimeLimits {
         let routing_affinity_max_entries = worker_threads.saturating_mul(256).max(1024);
         Self {
             backend_kind: RuntimeBackendKind::V8,
+            compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
+            profile: RuntimeProfile::Application,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,
@@ -234,5 +291,86 @@ impl RuntimePolicy {
 impl Default for RuntimePolicy {
     fn default() -> Self {
         Self::new(RuntimeLimits::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn application_profile_supports_both_initial_targets() {
+        let web_limits = RuntimeLimits::application_web_standard().normalized();
+        assert_eq!(web_limits.profile, RuntimeProfile::Application);
+        assert_eq!(
+            web_limits.compatibility_target,
+            RuntimeCompatibilityTarget::WebStandardIsolate
+        );
+
+        let node_limits = RuntimeLimits::application_node22().normalized();
+        assert_eq!(node_limits.profile, RuntimeProfile::Application);
+        assert_eq!(
+            node_limits.compatibility_target,
+            RuntimeCompatibilityTarget::Node22
+        );
+    }
+
+    #[test]
+    fn tooling_profile_requires_node22_target() {
+        let valid = RuntimeLimits::tooling_node22().normalized();
+        assert_eq!(valid.profile, RuntimeProfile::Tooling);
+        assert_eq!(
+            valid.compatibility_target,
+            RuntimeCompatibilityTarget::Node22
+        );
+
+        let err = std::panic::catch_unwind(|| {
+            RuntimeLimits {
+                profile: RuntimeProfile::Tooling,
+                compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+                ..RuntimeLimits::default()
+            }
+            .normalized()
+        });
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn runtime_profile_and_execution_model_are_independent_axes() {
+        let run_to_completion = RuntimeLimits {
+            profile: RuntimeProfile::Application,
+            compatibility_target: RuntimeCompatibilityTarget::Node22,
+            execution_model: RuntimeExecutionModel::RunToCompletion,
+            runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+            ..RuntimeLimits::default()
+        }
+        .normalized();
+        assert_eq!(run_to_completion.profile, RuntimeProfile::Application);
+        assert_eq!(
+            run_to_completion.compatibility_target,
+            RuntimeCompatibilityTarget::Node22
+        );
+        assert_eq!(
+            run_to_completion.execution_model,
+            RuntimeExecutionModel::RunToCompletion
+        );
+
+        let cooperative = RuntimeLimits {
+            profile: RuntimeProfile::Application,
+            compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            runtime_pool_kind: RuntimePoolKind::WarmPool,
+            ..RuntimeLimits::default()
+        }
+        .normalized();
+        assert_eq!(cooperative.profile, RuntimeProfile::Application);
+        assert_eq!(
+            cooperative.compatibility_target,
+            RuntimeCompatibilityTarget::WebStandardIsolate
+        );
+        assert_eq!(
+            cooperative.execution_model,
+            RuntimeExecutionModel::CooperativeLocker
+        );
     }
 }

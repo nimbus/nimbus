@@ -148,6 +148,22 @@ Use the repo docs for architecture and behavior details:
   unless one already owns the slice. Use
   `docs/plans/archive/codegen-and-facade-hardening-plan.md` only for the
   completed cleanup wave's execution record.
+- **For Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen runtime work:**
+  open `docs/plans/node-lts-compatibility-plan.md` as the active control plan
+  after `README.md`, `ARCHITECTURE.md`, and `docs/README.md`. Use
+  `docs/plans/node-compatible-runtime-plan.md` as the completed baseline for
+  the settled compatibility-target naming, Deno family alignment,
+  `deno_node` integration, runtime profile composition, and the current public
+  contract that keeps external Node.js in the authoring happy path while
+  treating `Node22` as the verified Neovex baseline. Use
+  `~/src/github.com/agentstation/deno` as the canonical Deno-family fork
+  worktree, `~/src/github.com/agentstation/rusty_v8` as the matching V8 fork,
+  and `~/src/github.com/agentstation/deno_core` only as a historical delta
+  reference when future audit work needs it. Use
+  `~/src/github.com/denoland/deno` when source-family comparison is needed,
+  and do not start another broad Node/runtime compatibility wave outside the
+  active Node LTS control plan unless it is completed, blocked with a written
+  handoff, or explicitly superseded.
 
 ## Context Window Discipline
 
@@ -253,6 +269,20 @@ Use the repo docs for architecture and behavior details:
   already owns the slice. Use
   `docs/plans/archive/codegen-and-facade-hardening-plan.md` only when you
   need the completed cleanup wave's execution record.
+- For Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen
+  runtime work, open `docs/plans/node-lts-compatibility-plan.md` after the
+  three top-level docs plus `docs/architecture/runtime/adapter-boundary.md`
+  and `docs/architecture/server/auth-runtime-trust.md`. Treat
+  `docs/plans/node-compatible-runtime-plan.md` as the completed baseline for
+  the last runtime-compatibility wave, keep the local fork worktrees
+  `~/src/github.com/agentstation/deno` and
+  `~/src/github.com/agentstation/rusty_v8` in the immediate working set for
+  Deno-family audit and parity work, keep
+  `~/src/github.com/agentstation/deno_core` only as a historical delta
+  source, and use `~/src/github.com/denoland/deno` for upstream monorepo
+  comparison when needed. Do not start a separate broad Node/runtime
+  compatibility plan unless the active Node LTS control plan is completed,
+  blocked with a written handoff, or explicitly superseded.
 - Treat the current git worktree plus the owning active plan, when there is
   one, as progress state. Do not rely on chat history to remember where work
   stopped.

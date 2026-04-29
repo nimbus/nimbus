@@ -1,21 +1,17 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 
+import { readUtf8FileIfExists } from "./app.mjs";
 import { evaluateCompileTimeExpressionSource } from "./compile_time_interpreter.mjs";
 import { unsupportedError } from "./errors.mjs";
 import { extractCallExpression } from "./syntax.mjs";
 
 async function loadSchemaDefinition(convexDir) {
   const schemaPath = path.join(convexDir, "schema.ts");
-  try {
-    const source = await fs.readFile(schemaPath, "utf8");
-    return parseSchemaSource(source, schemaPath);
-  } catch (error) {
-    if (error && typeof error === "object" && error.code === "ENOENT") {
-      return { tables: {} };
-    }
-    throw error;
+  const source = await readUtf8FileIfExists(schemaPath);
+  if (source === null) {
+    return { tables: {} };
   }
+  return parseSchemaSource(source, schemaPath);
 }
 
 function parseSchemaSource(source, filePath) {

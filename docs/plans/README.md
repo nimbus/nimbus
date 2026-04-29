@@ -3,6 +3,13 @@
 This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
+- `docs/plans/node-lts-compatibility-plan.md`
+  - canonical execution plan for full Node.js built-in compatibility on top
+    of the landed `deno_core`/V8 runtime baseline: generated Node20/Node22
+    symbol inventories, Deno-family implementation audit, Node22 primary
+    contract with a Node20 validation lane, upstream Node test integration,
+    package/framework canaries, and evidence-backed public compatibility
+    claims
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
@@ -38,14 +45,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     state to `~/.config/neovex/` (license, future auth), add deployment
     identity via `.env.local` with `NEOVEX_DEPLOYMENT=local:<slug>`;
     follows the Convex hybrid pattern verified from source
-- `docs/plans/node-compatible-runtime-plan.md`
-  - canonical execution plan for a deliberate Node-compatible runtime on top
-    of Neovex's `deno_core`/V8 backend: version-family alignment with Deno's
-    Node compatibility crates, explicit runtime compatibility profiles,
-    capability-scoped fs/env/net/process/ffi policy, package.json and npm
-    resolution, Node-API addon support for tooling, and an embedded-codegen
-    pilot before any removal of the external Node.js prerequisite
-
 ## Stable implementation baselines
 
 - `docs/architecture/sandbox/microvm-service-baseline.md`
@@ -115,6 +114,15 @@ This directory prefers a small-number-of-plans model with clear ownership.
     routing, CRUD decomposition, shared tenant resolution, compound sort,
     connection ID width, count/distinct optimization, checksum validation, and
     documented accepted limitations
+- `docs/plans/node-compatible-runtime-plan.md`
+  - completed Node-compatible runtime baseline for the current prelaunch
+    contract: one `deno_core`/V8 runtime backend with explicit compatibility
+    targets, `RuntimeProfile::Application` / `RuntimeProfile::Tooling`,
+    capability-scoped Node22 support, Deno-family fork alignment, an embedded
+    codegen pilot behind `NEOVEX_EXPERIMENTAL_EMBEDDED_CODEGEN`, and the
+    conservative closeout decision to keep external Node.js in the public
+    authoring contract while treating Node20 as upstream-supported but not a
+    separately verified Neovex target
 
 ## Pending plans
 

@@ -74,9 +74,15 @@ neovex init <ADAPTER> [DIRECTORY] [--source-root convex] [--install]
 5. Write template files with per-file skip logic (never overwrites existing
    files).
 6. When `--install` is set, run `npm install` if the adapter needs Node.js
-   dependencies and `package.json` declares packages that are missing from the
-   local `node_modules/` tree. For Cloud Functions, npm install runs in the
-   `functions/` subdirectory.
+   dependencies and either:
+   - `package.json` declares packages that are missing from the local
+     `node_modules/` tree, or
+   - the recorded dependency fingerprint no longer matches `package.json` plus
+     the npm lockfile (`package-lock.json` or `npm-shrinkwrap.json` when
+     present)
+   The install flow records its current dependency fingerprint in
+   `.neovex/cache/node/dependency-state.json`. For Cloud Functions, npm install
+   runs in the `functions/` subdirectory.
 7. Print next steps (`cd` + `neovex dev`).
 
 #### Convex adapter templates
@@ -213,10 +219,14 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
    owns automatic dependency bootstrap, and `neovex init --install` is an
    opt-in convenience for teams that want a one-command setup.
 
-3. **Node.js is required for authoring flows, not runtime-only flows.**
-   `neovex dev`, `neovex codegen`, and `neovex init --install` call Node.js
-   tooling. Runtime-only `neovex start` workflows such as MongoDB, Firebase
-   client, or native HTTP/WebSocket access do not require the Node toolchain.
+3. **Node.js 22 is the verified authoring baseline, not a runtime-only requirement.**
+   `neovex dev`, `neovex codegen`, and `neovex init --install` call external
+   Node.js tooling today, so Convex and Cloud Functions authoring still
+   requires Node.js 22 with `npm`. Runtime-only `neovex start` workflows such
+   as MongoDB, Firebase client, or native HTTP/WebSocket access do not require
+   the Node toolchain. Upstream Convex and Firebase / Cloud Functions stacks
+   still support Node 20, but Neovex does not yet claim a separate verified
+   Node 20 compatibility target.
 
 4. **Adapter argument is required and positional.** `neovex init convex`
    not `neovex init --template convex`. No silent defaults — the developer

@@ -62,9 +62,17 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 
 ## Quick start
 
-If you're authoring Convex or Cloud Functions code locally, install Node.js
-with `npm` first. `neovex dev` runs codegen through `node` and can auto-run
-`npm install` when declared packages are missing locally.
+If you're authoring Convex or Cloud Functions code locally, install Node.js 22
+with `npm` first. `neovex dev` still runs codegen through external `node` by
+default and can auto-run `npm install` when declared packages are missing
+locally or when the recorded package/lockfile fingerprint has changed. The
+external authoring path now verifies `node --version` against the `22.x`
+baseline before it runs codegen. The embedded codegen path is still an
+experimental pilot, and Neovex does not yet
+claim a separate Node 20 compatibility target even though current upstream
+Convex and Firebase tooling still support it. Firebase / Cloud Functions
+authoring still uses the external Node.js runner; the embedded pilot does not
+yet support that package layout.
 
 If you're using `neovex start` with MongoDB, the Firebase client adapter, or
 the native HTTP/WebSocket API, Node.js is not required.
@@ -95,7 +103,8 @@ neovex dev
 
 > [!TIP]
 > `neovex dev` auto-runs `npm install` when declared packages are missing
-> locally, creates a `demo` tenant, and starts the server on `localhost:3210`.
+> locally or when the recorded package/lockfile fingerprint has changed,
+> creates a `demo` tenant, and starts the server on `localhost:3210`.
 
 ### Server-side functions
 
@@ -207,7 +216,7 @@ real-time subscriptions.
 brew install agentstation/tap/neovex
 ```
 
-For Convex or Cloud Functions authoring, also install Node.js with `npm`.
+For Convex or Cloud Functions authoring, also install Node.js 22 with `npm`.
 
 ### Download binary
 
@@ -229,8 +238,8 @@ cargo install --path crates/neovex-bin
 ```
 
 This installs the Rust binary only. For Convex or Cloud Functions authoring,
-also install Node.js with `npm`. Runtime-only `neovex start` workflows do not
-need the Node toolchain.
+also install Node.js 22 with `npm`. Runtime-only `neovex start` workflows do
+not need the Node toolchain.
 
 ## Community
 
