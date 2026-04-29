@@ -32,7 +32,9 @@ Internal docs mirroring the crate tree. See
 [architecture/README.md](architecture/README.md).
 
 - [server/](architecture/server/) -- adapter contracts, auth/runtime trust
-- [runtime/](architecture/runtime/) -- V8 host capabilities, adapter boundary
+- [runtime/](architecture/runtime/) -- V8 host capabilities, adapter boundary,
+  [generated Node LTS compatibility baseline](architecture/runtime/node-lts-compat/node-lts-compat-summary.md),
+  and [runtime surface matrix](architecture/runtime/node-compat-surface-matrix.md)
 - [storage/](architecture/storage/) -- encryption design, persistence engine, provider topologies
 - [sandbox/](architecture/sandbox/) -- microVM baseline, macOS machine flow, krun validation
 - [testing/](architecture/testing/) -- verification harness, reliability posture, CI investigation
