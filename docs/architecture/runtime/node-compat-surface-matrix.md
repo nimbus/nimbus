@@ -5,6 +5,16 @@ Status: draft-active
 This matrix is the checked-in source of truth for the currently supported
 Node-facing surface in `crates/neovex-runtime`.
 
+It complements, but does not replace, the generated Node LTS artifact set in
+[`node-lts-compat/`](node-lts-compat/node-lts-compat-summary.md):
+
+- [`node-lts-compat-summary.md`](node-lts-compat/node-lts-compat-summary.md)
+- [`node-lts-compat-matrix.csv`](node-lts-compat/node-lts-compat-matrix.csv)
+- the supporting `node20` / `node22` / Deno inventory CSVs in the same folder
+
+Use the generated baseline for broad built-in coverage truth. Use this
+document for the narrower, fixture-backed Neovex runtime contract.
+
 The important rule is simple:
 
 - only claim behavior that has a named fixture
@@ -33,6 +43,27 @@ Neovex's named compatibility baseline is `Node22`. Current upstream Convex and
 Firebase / Cloud Functions stacks still support Node 20, and some codegen
 bundles continue to emit `node20` targets for portability, but Neovex does not
 yet claim a separate verified `Node20` runtime contract.
+
+## Public Support-State Vocabulary
+
+Neovex uses these support-state labels in its public Node-facing contract:
+
+- `Supported`
+- `SupportedToolingOnly`
+- `Partial`
+- `StubOnly`
+- `NotSupported`
+- `NeedsVerification`
+
+Current public contract:
+
+- `Node22` is the primary compatibility target.
+- `Node20` is a measured compatibility lane, not a separate runtime contract.
+- Neovex does **not** currently claim full Node built-in compatibility for any
+  runtime profile.
+- Any built-in that is `SupportedToolingOnly`, `Partial`, `StubOnly`,
+  `NotSupported`, or `NeedsVerification` prevents a blanket "full Node built-in
+  compatibility" claim for that target/profile pair.
 
 ## Verified Surface
 

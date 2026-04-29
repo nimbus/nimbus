@@ -77,6 +77,39 @@ yet support that package layout.
 If you're using `neovex start` with MongoDB, the Firebase client adapter, or
 the native HTTP/WebSocket API, Node.js is not required.
 
+## Node compatibility contract
+
+Neovex's primary Node-facing compatibility target is `Node22`.
+
+- `Node22` is the named built-in module contract we verify and evolve.
+- `Node20` is a measured compatibility lane for upstream ecosystem overlap,
+  not a separate runtime contract.
+- Neovex does **not** currently claim full Node built-in compatibility for any
+  runtime profile.
+
+Public support states follow the generated compatibility baseline:
+
+- `Supported`
+- `SupportedToolingOnly`
+- `Partial`
+- `StubOnly`
+- `NotSupported`
+- `NeedsVerification`
+
+Use these documents together:
+
+- [Generated Node LTS baseline](docs/architecture/runtime/node-lts-compat/node-lts-compat-summary.md)
+- [Detailed runtime surface matrix](docs/architecture/runtime/node-compat-surface-matrix.md)
+
+Current high-level posture:
+
+- `Application + WebStandardIsolate` is the non-Node target.
+- `Application + Node22` is a partial Node22 compatibility target with
+  documented exclusions and `NeedsVerification` areas.
+- `Tooling + Node22` is also partial today; some host-sensitive surfaces may
+  eventually become `SupportedToolingOnly`, but they do not justify a blanket
+  "full Node compatibility" claim.
+
 **1. Install Neovex:**
 
 ```bash
