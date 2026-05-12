@@ -10,7 +10,7 @@ implementation wave.
 The MongoDB adapter implementation and hardening waves are complete.
 
 - Latest completed MongoDB baseline:
-  `docs/plans/mongodb-adapter-hardening-plan.md`
+  `docs/plans/archive/mongodb-adapter-hardening-plan.md`
 - Historical implementation record:
   `docs/plans/archive/mongodb-adapter-plan.md`
 

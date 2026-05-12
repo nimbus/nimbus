@@ -10,13 +10,13 @@ Source corpus:
   `~/src/github.com/agentstation/deno @ v2.7.14-locker.19`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
-- pinned official Node20 validation corpus:
+- pinned official Node20 supported corpus:
   `nodejs/node @ v20.20.2`
 
 This file records the pinned Node test globs and the currently manifested
 official-fixture subset for the `NLC3` core semantics family. The canonical
 source of truth for the executed subset is
-[`CORE_SEMANTICS_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node_compat.rs)
+[`CORE_SEMANTICS_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
 that state so future work can resume without rediscovering it.
 
@@ -46,17 +46,17 @@ the upstream pass-rate lanes are still being wired:
 
 The current manifested subset is fully data-driven from the checked-in fixture
 roots and the `CORE_SEMANTICS_BATCH` table in
-`crates/neovex-runtime/src/runtime/tests/node_compat.rs`.
+`crates/neovex-runtime/src/runtime/tests/node/mod.rs`.
 
 Current manifested batch counts:
 
-- Node22 primary lane: `120` official files
-- Node20 validation lane: `116` official files
-- Node24 preview lane: `122` staged official files
+- Node22 default lane: `120` official files
+- Node20 supported lane: `116` official files
+- Node24 supported lane: `122` staged official files
 
 Family breakdown for the manifested batch:
 
-| Family | Node22 green | Node20 green | Node24 preview staged | Notes |
+| Family | Node22 green | Node20 green | Node24 supported staged | Notes |
 | --- | ---: | ---: | ---: | --- |
 | `assert` | `12` | `10` | `12` | Node22-only `deep-with-error` and `class-destructuring` are manifested separately from the shared official LTS set |
 | `buffer` | `52` | `50` | `52` | Public-core imported Buffer corpus now includes the warning/deprecation slices `constructor-deprecation-error`, `nopendingdep-map`, and `pending-deprecation` |
@@ -74,8 +74,8 @@ Imported public-core official corpus status:
   either the manifested green batch or an explicit watchpoint
 - no imported public-core fixture files remain unstaged in the current `NLC3`
   corpus
-- the Node24 preview corpus is staged from official `nodejs/node v24.15.0`,
-  but it is not currently a green claim: the explicit preview lane still aborts
+- the Node24 supported corpus is staged from official `nodejs/node v24.15.0`,
+  but it is not currently a green claim: the explicit supported lane still aborts
   early through a `rusty_v8` weak-handle panic near `test-buffer-alloc.js`
 
 ## Representative Harness Requirements
@@ -163,7 +163,7 @@ Current Neovex-owned harness capabilities:
   clearly map to later host/process/TTY/module families, and 3 upstream
   internal-only helpers that should not count toward the public `NLC3`
   denominator.
-- The current Node20 validation lane uses the official `nodejs/node v20.20.2`
+- The current Node20 supported lane uses the official `nodejs/node v20.20.2`
   files for the same staged subset instead of reusing the Deno-vendored
   copies blindly, because multiple files differ textually between the corpora
   even when the exercised behavior still matches.
@@ -247,7 +247,7 @@ Current Neovex-owned harness capabilities:
 - The next two manifest-driven buffer batches now follow the same
   tagged-local-Node rule rather than reintroducing one-off wrapper growth.
   Sixteen additional files are green across the live Node22 lane, the official
-  Node20 validation lane, and the ignored Node24 preview lane:
+  Node20 supported lane, and the ignored Node24 supported lane:
   `test-buffer-fill.js`, `test-buffer-indexof.js`,
   `test-buffer-includes.js`, `test-buffer-readint.js`,
   `test-buffer-readuint.js`, `test-buffer-write.js`,
@@ -262,8 +262,8 @@ Current Neovex-owned harness capabilities:
   uses separate official bodies for all three versions.
 - A follow-on narrowed buffer batch now adds
   `test-buffer-compare-offset.js` and `test-buffer-fakes.js` green across the
-  live Node22 lane, the official Node20 validation lane, and the ignored
-  Node24 preview lane. The same widening pass also repaired one real runtime
+  live Node22 lane, the official Node20 supported lane, and the ignored
+  Node24 supported lane. The same widening pass also repaired one real runtime
   contract by explicitly exposing `structuredClone` in the embedded Node22
   bootstrap. That fixed the missing-global failure shape and exposed the deeper
   shared runtime seam underneath it: transfer-style `structuredClone()` still

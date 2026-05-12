@@ -9,15 +9,15 @@
   "lane_batches": [
     {
       "lane": "node20",
-      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_core_semantics_subset"
+      "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_core_semantics_subset"
     },
     {
       "lane": "node22",
-      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_core_semantics_subset"
+      "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset"
     },
     {
       "lane": "node24",
-      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_core_semantics_subset"
+      "subset_test": "runtime::tests::node_compat::node24_supported_lane_core_semantics_watchpoint"
     }
   ],
   "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
@@ -68,7 +68,6 @@
       "test_relative_path": "test/parallel/test-assert-checktag.js",
       "slice": "assert-and-buffer-foundation",
       "lane_sources": {
-        "node20": "node20/test/parallel/test-assert-checktag.js",
         "node22": "node22/test/parallel/test-assert-checktag.js",
         "node24": "node24/test/parallel/test-assert-checktag.js"
       }

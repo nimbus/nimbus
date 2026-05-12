@@ -5,13 +5,13 @@ Status: `classified`
 This file is the checked-in failure inventory for the currently manifested
 `NLC6` networking subset.
 
-It records only the explicit non-green remainder for the current family:
-watchpoints, validation-lane divergences, preview-only drift, later-family
+It records only the explicit red/skip remainder for the current family:
+watchpoints, validation-lane divergences, supported-lane drift, later-family
 dependencies, and profile/capability restrictions. Requirements and closeout
-decisions belong in `docs/plans/node-lts-compatibility-plan.md`.
+decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
 The pinned `NLC6` package canary lanes under
-`tests/node-compat/networking-canaries/` are green and do not add any
+`tests/runtime/node/networking-canaries/` are green and do not add any
 unexplained networking failures. Only the explicit remainder below stays out
 of the denominator.
 
@@ -108,45 +108,45 @@ of the denominator.
   - `2` explicit Node20 divergence watchpoints outside the green subset
 
 - `test/parallel/test-https-hwm.js`
-  - classification: `node20_validation_divergence`
+  - classification: `node20_supported_divergence`
   - reason: the shared official file now completes on Node22 and Node24 but
     still times out on the current Node20 lane after only the first two
     `readableHighWaterMark` callbacks.
-  - owner: current Node20 validation-only HTTPS response highWaterMark drift
+  - owner: current Node20 supported-only HTTPS response highWaterMark drift
   - evidence:
     `runtime::tests::node_compat::node20_https_hwm_watchpoint`
 
 - `test/parallel/test-tls-connect-hwm-option.js`
-  - classification: `node20_validation_divergence`
+  - classification: `node20_supported_divergence`
   - reason: the shared official file now completes on Node22 and Node24 but
     still times out on the current Node20 lane in the raw TLS
     `readableHighWaterMark` path.
-  - owner: current Node20 validation-only raw TLS highWaterMark drift
+  - owner: current Node20 supported-only raw TLS highWaterMark drift
   - evidence:
     `runtime::tests::node_compat::node20_tls_connect_hwm_option_watchpoint`
 
 ## Node24 Preview Status
 
-- Status: `future preview only; not a support claim`
-- Latest explicit preview run:
+- Status: `supported-lane watchpoint; not a green support claim`
+- Latest explicit supported-lane watchpoint run:
   - `268` passed
   - `0` failed
-  - `1` explicit preview-only divergence outside the green subset
+  - `1` explicit supported-lane divergence outside the green subset
 
 ### Explicit Node24 Preview Divergences
 
 - `test/parallel/test-stream-pipeline.js`
-  - classification: `node24_preview_only_divergence`
+  - classification: `node24_supported_lane_divergence`
   - reason: the staged official Node24 file still expects the inner `"Boom!"`
     pipeline error message in one aborted local-http branch, while the current
     runtime returns the higher-level AbortError-style message
     `"The operation was aborted"`
-  - owner: future Node24 preview drift review only; this is not part of the
+  - owner: future Node24 supported drift review only; this is not part of the
     supported Node22 / Node20 denominator
   - evidence:
     `runtime::tests::node_compat::node24_stream_pipeline_watchpoint`
 
 The current widened networking batch is also green against the staged official
-`nodejs/node v24.15.0` copies after holding out that single preview-only
+`nodejs/node v24.15.0` copies after holding out that single supported-lane
 divergence, but that remains forward-visibility evidence only. It does not
 authorize a Node24 support claim.

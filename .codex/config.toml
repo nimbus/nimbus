@@ -1,0 +1,8 @@
+# Neovex project-local Codex config.
+# This repo often validates changes against sibling Deno/V8 forks.
+
+[sandbox_workspace_write]
+writable_roots = [
+  "/Users/jack/src/github.com/agentstation/deno",
+  "/Users/jack/src/github.com/agentstation/rusty_v8",
+]

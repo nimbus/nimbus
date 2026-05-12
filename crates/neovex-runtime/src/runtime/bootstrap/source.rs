@@ -728,7 +728,12 @@ function __neovexInstallRuntimeContractGlobals(contract) {
     return;
   }
   const compatibilityTarget = contract.compatibility_target;
-  if (compatibilityTarget === "node22") {
+  const nodeMajorMatch =
+    typeof compatibilityTarget === "string"
+      ? /^node(\d+)$/.exec(compatibilityTarget)
+      : null;
+  if (nodeMajorMatch) {
+    const nodeMajor = nodeMajorMatch[1];
     if (typeof globalThis.global === "undefined") {
       globalThis.global = globalThis;
     }
@@ -741,7 +746,7 @@ function __neovexInstallRuntimeContractGlobals(contract) {
         : {};
     const versions = Object.freeze({
       ...existingVersions,
-      node: "22.0.0-neovex",
+      node: `${nodeMajor}.0.0-neovex`,
     });
     Object.defineProperty(processValue, "cwd", {
       value() {
@@ -758,7 +763,7 @@ function __neovexInstallRuntimeContractGlobals(contract) {
       writable: false,
     });
     Object.defineProperty(processValue, "version", {
-      value: "v22.0.0-neovex",
+      value: `v${nodeMajor}.0.0-neovex`,
       configurable: true,
       enumerable: true,
       writable: false,

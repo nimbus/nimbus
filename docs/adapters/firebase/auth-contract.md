@@ -119,4 +119,4 @@ The remaining follow-on work is no longer principal propagation itself; that
 proof and compatibility-truth hardening landed in the completed
 `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` (`MAB3`). The later
 runtime-host ownership cleanup built on that settled contract in the completed
-`docs/plans/runtime-capability-adapter-boundary-plan.md`.
+`docs/plans/archive/runtime-capability-adapter-boundary-plan.md`.

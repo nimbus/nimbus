@@ -2,8 +2,8 @@
   "schema_version": 1,
   "lane": "node22",
   "upstream_fixture_line": "Node22",
-  "lane_role": "primary",
-  "public_contract_role": "primary_contract",
+  "lane_role": "default",
+  "public_contract_role": "default_contract",
   "runtime_execution_target": "Node22",
   "runtime_limits_profile": "application_node22",
   "upstream": {

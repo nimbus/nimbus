@@ -9,7 +9,7 @@ use rand::RngCore;
 use tempfile::NamedTempFile;
 
 use crate::cli_ux;
-use crate::codegen::run_codegen_for_app_dir;
+use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
@@ -52,6 +52,10 @@ pub(crate) struct DevCommand {
     /// Skip initial codegen before starting the local server. Watched reruns still use codegen.
     #[arg(long, default_value_t = false)]
     pub(crate) skip_codegen: bool,
+
+    /// Diagnose Node.js builtin imports that should move behind "use node".
+    #[arg(long, default_value_t = false)]
+    pub(crate) debug_node_apis: bool,
 
     /// Runtime log tailing mode. Log multiplexing is pending runtime log plumbing.
     #[arg(long, value_enum, default_value_t = DevTailLogsMode::PauseOnSync)]
@@ -143,6 +147,7 @@ struct DevPlan {
 struct DevWatchPlan {
     app_dir: PathBuf,
     source_roots: Vec<PathBuf>,
+    debug_node_apis: bool,
     tail_logs: DevTailLogsMode,
     local_url: String,
     deploy_admin_token: String,
@@ -157,6 +162,7 @@ impl DevPlan {
                 .as_ref()
                 .map(|adapter| adapter.source_roots().to_vec())
                 .unwrap_or_default(),
+            debug_node_apis: self.start_command.debug_node_apis,
             tail_logs: self.tail_logs,
             local_url: self.local_url.clone(),
             deploy_admin_token: self
@@ -190,6 +196,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         tenant_provider: Some(CliTenantProvider::Sqlite),
         app_dir: Some(app_dir.clone()),
         skip_codegen: command.skip_codegen,
+        debug_node_apis: command.debug_node_apis,
         compose_file: command.compose_file,
         deploy_admin_token: Some(deploy_admin_token),
         auto_tenant: Some("demo".to_string()),
@@ -554,7 +561,14 @@ async fn run_dev_watch_loop(plan: DevWatchPlan) -> Result<(), Box<dyn std::error
         snapshot = next_snapshot;
 
         emit_dev_info("source change detected; running codegen");
-        match run_codegen_for_app_dir(&plan.app_dir).await {
+        match run_codegen_for_app_dir_with_options(
+            &plan.app_dir,
+            CodegenOptions {
+                debug_node_apis: plan.debug_node_apis,
+            },
+        )
+        .await
+        {
             Ok(()) => match activate_dev_generation(&plan).await {
                 Ok(response) => {
                     let change_lines = response.diff.human_lines();
@@ -737,6 +751,7 @@ mod tests {
         assert_eq!(command.compose_file, Vec::<PathBuf>::new());
         assert!(!command.once);
         assert!(!command.skip_codegen);
+        assert!(!command.debug_node_apis);
         assert_eq!(command.tail_logs, DevTailLogsMode::PauseOnSync);
     }
 
@@ -755,6 +770,7 @@ mod tests {
             "./compose.yaml",
             "--once",
             "--skip-codegen",
+            "--debug-node-apis",
             "--tail-logs",
             "disable",
         ]);
@@ -764,6 +780,7 @@ mod tests {
         assert_eq!(command.compose_file, vec![PathBuf::from("./compose.yaml")]);
         assert!(command.once);
         assert!(command.skip_codegen);
+        assert!(command.debug_node_apis);
         assert_eq!(command.tail_logs, DevTailLogsMode::Disable);
     }
 
@@ -795,6 +812,7 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("--app-dir"));
         assert!(rendered.contains("--skip-codegen"));
+        assert!(rendered.contains("--debug-node-apis"));
         assert!(rendered.contains("--data-dir"));
         assert!(rendered.contains("--once"));
         assert!(rendered.contains("--tail-logs"));

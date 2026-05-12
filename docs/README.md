@@ -26,6 +26,12 @@ Each adapter speaks a different client protocol against the same engine.
 - [Encryption at rest](operating/encryption.md) -- key providers, migration, recovery
 - [Deploy admin API](operating/deploy-admin-api.md) -- staging, diffing, activation
 
+## Runtimes
+
+- [Runtimes](runtimes/) -- developer-facing runtime families and support posture
+- [Node.js runtime](runtimes/nodejs/) -- `"use node"`, Node20 / Node22 / Node24 selection,
+  packages, bundling, compatibility evidence, and current limits
+
 ## Architecture
 
 Internal docs mirroring the crate tree. See

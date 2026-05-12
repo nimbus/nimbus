@@ -56,7 +56,7 @@ with zero client-side code changes — the most seamless migration path possible
 
 This is a completed control-plane execution record. Future agents should not
 reconstruct MongoDB adapter progress from chat history; use
-`docs/plans/mongodb-adapter-hardening-plan.md` as the latest completed MongoDB
+`docs/plans/archive/mongodb-adapter-hardening-plan.md` as the latest completed MongoDB
 baseline and promote a new active plan before another broad MongoDB wave.
 
 ## Plan Ownership And Canonical Inputs
@@ -69,7 +69,7 @@ Implementation work must keep the immediate source inputs open:
 - Top-level repo references: `README.md`, `ARCHITECTURE.md`, `docs/README.md`,
   and `docs/plans/README.md`.
 - Adapter boundary baseline:
-  `docs/plans/runtime-capability-adapter-boundary-plan.md` is the latest
+  `docs/plans/archive/runtime-capability-adapter-boundary-plan.md` is the latest
   completed adapter/runtime ownership baseline. MongoDB adapter work must not
   duplicate the provider-specific leakage patterns corrected there. Consult it
   for the current state of shared principal propagation, runtime-host seam
@@ -1012,7 +1012,7 @@ update loaded at once, split it before starting.
 | `bson` Rust crate | crates.io (`mongodb/bson-rust` on GitHub) | BSON serialization/deserialization; MongoDB-maintained, v3.1.0+ |
 | Firebase adapter (completed) | `crates/neovex-server/src/adapters/firebase/` | Architecture pattern, typed scalar metadata, shared primitive usage |
 | Convex adapter (existing) | `crates/neovex-server/src/adapters/convex/` | Adapter registration pattern, AppState sharing |
-| Runtime-capability adapter boundary plan (completed baseline) | `docs/plans/runtime-capability-adapter-boundary-plan.md` | Latest adapter/runtime ownership baseline, shared runtime-host capability posture |
+| Runtime-capability adapter boundary plan (completed baseline) | `docs/plans/archive/runtime-capability-adapter-boundary-plan.md` | Latest adapter/runtime ownership baseline, shared runtime-host capability posture |
 
 ## Execution Log
 

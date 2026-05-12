@@ -1,7 +1,7 @@
 use crate::affinity::{RuntimeAffinityKey, runtime_affinity_key};
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
-use crate::limits::{RuntimeCompatibilityTarget, RuntimePoolKind};
+use crate::limits::RuntimePoolKind;
 use crate::runtime::{NeovexRuntime, RuntimeBundle, RuntimeBundleIdentity};
 
 use super::{embedder::JsRuntime, startup::V8RuntimeConstructionMode};
@@ -81,10 +81,11 @@ impl V8WorkerRuntimePool {
         context: Option<&RuntimeInvocationContext>,
         use_locker: bool,
     ) -> Result<ReusableV8Runtime> {
-        let use_startup_snapshot = !matches!(
-            runtime_owner.policy().limits().compatibility_target,
-            RuntimeCompatibilityTarget::Node22
-        );
+        let use_startup_snapshot = !runtime_owner
+            .policy()
+            .limits()
+            .compatibility_target
+            .is_node();
         match runtime_owner.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
             RuntimePoolKind::WarmPool => {

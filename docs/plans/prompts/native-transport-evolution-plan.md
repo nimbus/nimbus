@@ -22,7 +22,7 @@ future native transport plan at:
 This is a **Neovex-native transport** planning task. It is not a Firebase
 transport task, and it must not duplicate the ownership already held by:
 
-- `docs/plans/websocket-protocol-plan.md`
+- `docs/plans/archive/websocket-protocol-plan.md`
 - `docs/plans/archive/firebase-adapter-plan.md`
 - `docs/plans/archive/firebase-cloud-functions-plan.md`
 
@@ -35,7 +35,7 @@ Read these files first, in order:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `docs/plans/websocket-protocol-plan.md`
+- `docs/plans/archive/websocket-protocol-plan.md`
 - `docs/plans/native-transport-evolution-plan.md`
 - `docs/plans/archive/firebase-adapter-plan.md`
 - `docs/plans/archive/firebase-cloud-functions-plan.md`
@@ -60,7 +60,7 @@ Produce or refine a plan for Neovex-native transport evolution that:
 
 ## Important Ownership Rules
 
-1. `docs/plans/websocket-protocol-plan.md` already owns:
+1. `docs/plans/archive/websocket-protocol-plan.md` already owns:
    - WebSocket subprotocol negotiation
    - hello or client_hello handshake
    - structured error schema
@@ -129,7 +129,7 @@ When updating `docs/plans/native-transport-evolution-plan.md`:
 
 - Keep it clearly marked as `proposed` unless the user explicitly asks to
   activate it.
-- Do not re-own work already listed in `websocket-protocol-plan.md`.
+- Do not re-own work already listed in `docs/plans/archive/websocket-protocol-plan.md`.
 - Keep JSON as the default native baseline unless the plan has benchmark-backed
   evidence to recommend changing that default.
 - Treat MessagePack and WebTransport as optional future capabilities, not as
@@ -153,7 +153,7 @@ When you finish:
 - summarize what changed in the proposed plan,
 - state whether the plan should remain deferred or be promoted,
 - list the recommended execution order relative to
-  `websocket-protocol-plan.md`,
+  `docs/plans/archive/websocket-protocol-plan.md`,
   `archive/firebase-adapter-plan.md`, and
   `archive/firebase-cloud-functions-plan.md`,
 - and keep the answer concise.

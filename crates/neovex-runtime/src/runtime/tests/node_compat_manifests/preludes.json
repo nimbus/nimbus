@@ -4,68 +4,57 @@
     {
       "id": "process_exit_sentinel",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "interactive_terminal",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "dns_result_order_ipv4first",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "dns_result_order_ipv6first",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "dns_result_order_verbatim",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "expose_gc",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "checkout_root_cwd",
       "phase": "prelude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "pending_deprecation",
       "phase": "prelude",
-      "selection_mode": "implicit_fixture_flag",
-      "preview_lane_only": false
+      "selection_mode": "implicit_fixture_flag"
     },
     {
       "id": "process_lifecycle_drain",
       "phase": "postlude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "process_before_exit_reentry",
       "phase": "postlude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     },
     {
       "id": "fork_child_settle",
       "phase": "postlude",
-      "selection_mode": "default_fixture_mapping",
-      "preview_lane_only": false
+      "selection_mode": "default_fixture_mapping"
     }
   ]
 }

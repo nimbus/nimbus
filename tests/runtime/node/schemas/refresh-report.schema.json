@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neovex.local/node-compat/refresh-report.schema.json",
+  "title": "Node compatibility refresh report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "report_kind",
+    "lane",
+    "requested_tag",
+    "mode",
+    "lane_metadata",
+    "steps",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report_kind": {
+      "const": "node_compat_refresh"
+    },
+    "lane": {
+      "type": "string",
+      "pattern": "^node[0-9]+$"
+    },
+    "requested_tag": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "dry_run",
+        "compare",
+        "apply"
+      ]
+    },
+    "lane_metadata": {
+      "type": "object",
+      "required": [
+        "path",
+        "before_tag",
+        "after_tag",
+        "changed",
+        "written"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "before_tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "after_tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "written": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "command",
+          "returncode",
+          "stdout_tail",
+          "stderr_tail",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "returncode": {
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "type": "string"
+          },
+          "stderr_tail": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

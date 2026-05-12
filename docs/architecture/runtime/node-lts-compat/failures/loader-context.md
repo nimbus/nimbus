@@ -12,27 +12,27 @@ work is in progress.
 - Current measured subset:
   - `239` official Node22 files passed
   - `175` official Node20 files passed
-  - `179` official Node24 files passed in the preview lane
-  - `4` explicit Node20 validation watchpoints
-  - `2` explicit Node24 preview watchpoints
+  - `179` official Node24 files passed in the supported lane
+  - `4` explicit Node20 supported watchpoints
+  - `2` explicit Node24 supported watchpoints
   - the staged `node:domain`, `node:constants`, and `node:trace_events`
     foundation waves are now promoted in the carried denominator, with the
     `node:domain` and `node:constants` tranches green across all three carried
     lanes, the tiny `node:sys`
     alias contract is now promoted across all three lanes, the first
-    Node22-primary `node:sqlite` foundation subset is now promoted too, the
+    Node22-default `node:sqlite` foundation subset is now promoted too, the
     first staged `node:sea` non-SEA contract is now promoted on Node22, the
-    first pure Node22-primary `repl.start()` foundation batch is now promoted
-    too, the first Node22-primary `node:wasi` validation wave is now
-    promoted too, the first Node22-primary `node:wasi` executable wave is
-    now promoted too, the narrower Node22-primary `node:wasi` argv contract
+    first pure Node22-default `repl.start()` foundation batch is now promoted
+    too, the first Node22-default `node:wasi` validation wave is now
+    promoted too, the first Node22-default `node:wasi` executable wave is
+    now promoted too, the narrower Node22-default `node:wasi` argv contract
     (`test-wasi-main_args.js`) is now promoted too, the first
-    Node22-primary `node:wasi` filesystem wave plus the first
-    Node22-primary `node:wasi` preopen/file-IO wave are now promoted too,
+    Node22-default `node:wasi` filesystem wave plus the first
+    Node22-default `node:wasi` preopen/file-IO wave are now promoted too,
     and the first
-    Node22-primary `node:cluster` worker foundation wave plus the first
-    Node22-primary `node:cluster` worker lifecycle/teardown wave are now
-    promoted too, and the first Node22-primary `node:test` helper, metadata,
+    Node22-default `node:cluster` worker foundation wave plus the first
+    Node22-default `node:cluster` worker lifecycle/teardown wave are now
+    promoted too, and the first Node22-default `node:test` helper, metadata,
     `run()`, option-validation, planning, reporter-edge, reporter-output,
     CLI-options, CLI-randomize, and CLI-rerun-failures waves are now
     promoted too
@@ -40,45 +40,45 @@ work is in progress.
 ## Classified Failures
 
 - `test/parallel/test-async-local-storage-exit-does-not-leak.js`
-  - classification: `node20_validation_divergence`
+  - classification: `node20_supported_divergence`
   - reason: official `nodejs/node v20.20.2` still expects the old JavaScript
     `AsyncLocalStorage._propagate` hook to exist, while the current runtime
     matches the newer Node22/Node24 implementation shape that guards the hook
     behind `typeof als._propagate === "function"`
 - `test/parallel/test-zlib-brotli-16GB.js`
-  - classification: `node20_validation_divergence`
+  - classification: `node20_supported_divergence`
   - reason: the promoted Brotli/control wave is green on Node22 and Node24,
-    but the official Node20 validation fixture still over-observes timer
+    but the official Node20 supported fixture still over-observes timer
     callbacks in the 16GB stop-early assertion path (`4 !== 1`)
-- `test/parallel/test-crypto-authenticated.js` *(Node20 validation lane)*
-  - classification: `node20_validation_divergence`
+- `test/parallel/test-crypto-authenticated.js` *(Node20 supported lane)*
+  - classification: `node20_supported_divergence`
   - reason: the shared authenticated/wrap owner pocket is closed on Node22 and
-    Node24, but the official Node20 validation fixture still expects the older
+    Node24, but the official Node20 supported fixture still expects the older
     warning ordering without `DEP0182`. The current runtime now emits the
     correct AES-GCM short-tag deprecation warning before the legacy
     `crypto.createCipher()` deprecation, so this file stays explicit as a
-    validation-only drift instead of blocking the shared denominator.
+    Node20 supported-lane drift instead of blocking the shared denominator.
 - `test/parallel/test-crypto-dh.js`
-  - classification: `node20_validation_divergence`
+  - classification: `node20_supported_divergence`
   - reason: the promoted Node22/Node24 file now matches the newer
     unspecified-validation secret error shape, while the official Node20
     validation fixture still expects the older OpenSSL invalid-secret message
-- `test/parallel/test-crypto-dh-stateless.js` *(Node24 preview lane)*
-  - classification: `node24_preview_derivation_error_drift`
-  - reason: the Node24 preview file adds the invalid X25519 public-key case
+- `test/parallel/test-crypto-dh-stateless.js` *(Node24 supported lane)*
+  - classification: `node24_supported_derivation_error_drift`
+  - reason: the Node24 supported file adds the invalid X25519 public-key case
     and currently expects `ERR_OSSL_FAILED_DURING_DERIVATION`, while the
     current stateless DH owner path still derives successfully instead of
     surfacing the newer OpenSSL3 error
 - `test/parallel/test-crypto-scrypt.js`
-  - classification: `node24_preview_error_shape_drift`
+  - classification: `node24_supported_error_shape_drift`
   - reason: the shared-LTS `crypto` KDF/stream wave is green on Node20 and
-    Node22, but the official Node24 preview file now expects
+    Node22, but the official Node24 supported file now expects
     `ERR_INCOMPATIBLE_OPTION_PAIR` for duplicate short/long option pairs while
     the current runtime still returns the older
     `ERR_CRYPTO_SCRYPT_INVALID_PARAMETER` shape
 - `test/parallel/test-sqlite.js`
   - classification: `sqlite_build_profile_boundary`
-  - reason: the first Node22-primary `node:sqlite` foundation subset is now
+  - reason: the first Node22-default `node:sqlite` foundation subset is now
     green, but the remaining upstream file still reaches `no such function:
     percentile` because the current bundled SQLCipher sqlite source does not
     contain the percentile family even after the Node-style URI/open,
@@ -97,7 +97,7 @@ work is in progress.
   the staged corpus was widened. There are no remaining explicit
   `node:domain` watchpoints in the carried denominator; any broader domain
   coverage is future work by omission rather than an open staged seam.
-- The carried denominator now also includes the first Node22-primary
+- The carried denominator now also includes the first Node22-default
   `node:constants` foundation wave under `NLC9`. That five-file slice is now
   green after the public `node:constants` export was frozen, the internal
   constants binding was restored to Node-shaped null-prototype objects, and
@@ -110,7 +110,7 @@ work is in progress.
   no remaining explicit `node:constants` watchpoints in the carried
   denominator; any broader constants coverage is future work by omission rather
   than an open staged seam.
-- The first Node22-primary `trace_events` foundation wave is now fully
+- The first Node22-default `trace_events` foundation wave is now fully
   promoted under `NLC9`. The final closeout required two more real owner
   fixes on top of the earlier `fork()` shape widening and IPC lifetime
   correction: the emulated fork child now stops presenting itself as a worker
@@ -128,7 +128,7 @@ work is in progress.
   `test-trace-events-environment.js`, `test-trace-events-metadata.js`,
   `test-trace-events-none.js`, and `test-trace-events-process-exit.js`.
 - The first staged `node:test` family under `NLC9` is now promoted as a
-  coherent Node22-primary helper, context-metadata, `run()` event-metadata,
+  coherent Node22-default helper, context-metadata, `run()` event-metadata,
   option-validation, planning, and syntax-error file-load wave.
   `test-runner-aliases.js`, `test-runner-typechecking.js`,
   `test-runner-custom-assertions.js`, `test-runner-get-test-context.js`,
@@ -148,7 +148,7 @@ work is in progress.
   runner-option validation contract for `timeout` and `concurrency`, plus the
   first `t.plan()` / planning contract for synchronous planning,
   subtest-counted planning, `options.plan`, and `options.wait`-driven
-  `test.run()` file execution. The first staged Node22-primary `node:test`
+  `test.run()` file execution. The first staged Node22-default `node:test`
   reporter-edge, reporter-output, CLI-options, CLI-randomize, and
   CLI-rerun-failures waves are now promoted too.
   `test-runner-run-files-undefined.mjs` and
@@ -175,7 +175,7 @@ work is in progress.
   nonexistent `node20` / `node22` / `node24` copies instead of the shared
   staged file. Fixing that path and rerunning the full Node22 / Node20 /
   Node24 lanes promoted the alias contract truthfully across all three lanes.
-- The first Node22-primary `node:sqlite` foundation wave is now partially
+- The first Node22-default `node:sqlite` foundation wave is now partially
   promoted under `NLC9`. `test-sqlite-config.js`,
   `test-sqlite-statement-sync.js`, `test-sqlite-template-tag.js`, and
   `test-sqlite-named-parameters.js` are green in the carried denominator after
@@ -185,7 +185,7 @@ work is in progress.
   contract widened the bundled SQL function family. The only remaining staged
   file in this family is `test-sqlite.js`, which now stays explicit as a
   bundled-percentile boundary instead of a fuzzy harness failure.
-- The first Node22-primary `node:sea` batch is now partially promoted too.
+- The first Node22-default `node:sea` batch is now partially promoted too.
   The staged upstream file `test-sea-get-asset-keys.js` is green and proves
   the truthful non-SEA contract: the builtin exists, `isSea()` remains false,
   and asset-key access throws Node-shaped
@@ -193,10 +193,10 @@ work is in progress.
   module. Broader SEA embed/asset APIs are still unstaged and should remain
   unsupported by omission until a larger family batch is classified on purpose.
 - The first staged `node:wasi` validation wave is now promoted on the Node22
-  primary lane after the owner path replaced the constructor stub with
+  default lane after the owner path replaced the constructor stub with
   Node-shaped constructor, `initialize()`, and `start()` validation
   semantics. The first executable `node:wasi` wave is promoted too, and the
-  broader Node22-primary argv, filesystem, and preopen/file-IO waves are now
+  broader Node22-default argv, filesystem, and preopen/file-IO waves are now
   promoted as well: `test-wasi-main_args.js`, `test-wasi-write_file.js`,
   `test-wasi-stat.js`, `test-wasi-readdir.js`, `test-wasi-notdir.js`,
   `test-wasi-io.js`, `test-wasi-preopen_populates.js`,
@@ -206,7 +206,7 @@ work is in progress.
   `node:wasi` surface is now unstaged future work by omission rather than an
   active explicit failure pocket in the carried denominator.
 - The first pure `repl.start()` foundation batch is now promoted on the
-  Node22 primary lane. `test-repl-definecommand.js`, `test-repl-mode.js`,
+  Node22 default lane. `test-repl-definecommand.js`, `test-repl-mode.js`,
   `test-repl-recoverable.js`, and `test-repl-reset-event.js` are green after
   the REPL owner path switched to a Node-shaped non-contextified VM context
   and the terminal preview bridge stopped dropping cross-context strict-mode
@@ -222,8 +222,8 @@ work is in progress.
   wave are now promoted, and the lane-aware SHAKE/XOF extension is promoted
   too. The shared authenticated/wrap owner pocket is now closed; the explicit
   crypto remainder is down to lane-specific validation drifts only: one
-  Node20-only authenticated warning-ordering drift, one Node24 preview-only
-  `test-crypto-scrypt.js` drift, one Node24 preview-only
+  Node20-only authenticated warning-ordering drift, one Node24 supported-only
+  `test-crypto-scrypt.js` drift, one Node24 supported-only
   `test-crypto-dh-stateless.js` derivation-error drift, and one Node20-only
   DH validation-message divergence.
   The handed-off `async_hooks` promise pocket is now fully promoted under
@@ -328,13 +328,13 @@ work is in progress.
 - `runtime::tests::node_compat::node22_nlc7_crypto_authenticated_and_aes_wrap_batch_fixture`
 - `runtime::tests::node_compat::node20_nlc7_crypto_authenticated_and_aes_wrap_batch_fixture`
 - `runtime::tests::node_compat::node24_nlc7_crypto_authenticated_and_aes_wrap_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_authenticated_validation_watchpoint_batch`
+- `runtime::tests::node_compat::node20_nlc7_crypto_authenticated_supported_watchpoint_batch`
 - `runtime::tests::node_compat::node22_nlc7_crypto_dh_and_ecdh_watchpoint_batch`
-- `runtime::tests::node_compat::node20_nlc7_crypto_dh_validation_watchpoint_batch`
+- `runtime::tests::node_compat::node20_nlc7_crypto_dh_supported_watchpoint_batch`
 - `runtime::tests::node_compat::node24_nlc7_crypto_scrypt_watchpoint`
 - `runtime::tests::node_compat::node24_nlc7_async_local_storage_batch_fixture`
-- `runtime::tests::node_compat::node22_primary_lane_executes_manifested_loader_context_subset`
-- `runtime::tests::node_compat::node20_validation_lane_executes_official_loader_context_subset`
-- `runtime::tests::node_compat::node24_preview_lane_executes_manifested_loader_context_subset`
+- `runtime::tests::node_compat::node22_default_lane_executes_manifested_loader_context_subset`
+- `runtime::tests::node_compat::node20_supported_lane_executes_official_loader_context_subset`
+- `runtime::tests::node_compat::node24_supported_lane_executes_manifested_loader_context_subset`
 - `runtime::tests::node_compat::node20_async_local_storage_exit_does_not_leak_watchpoint`
 - `docs/architecture/runtime/node-lts-compat/manifests/loader-context.md`

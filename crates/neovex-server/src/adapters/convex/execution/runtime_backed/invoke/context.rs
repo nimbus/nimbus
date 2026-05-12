@@ -75,9 +75,12 @@ impl<'a> RuntimeInvocationContext<'a> {
                 invocation_kind.clone(),
             ),
         )?);
+        let (runtime_executor, runtime_policy) = self
+            .registry
+            .runtime_lane_for_function(&request.function_name);
         let (response, read_set) = invoke_runtime_bundle_on_worker_with_host_state(
-            &self.registry.runtime_executor(),
-            self.registry.runtime_policy(),
+            &runtime_executor,
+            runtime_policy,
             bridge.clone(),
             bundle,
             request,

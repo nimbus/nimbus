@@ -4,7 +4,7 @@ Current upstream Node test-slice manifest for `NLC5`.
 
 This file records the currently counted green denominator and staged upstream
 corpus for the family. Requirements, closeout gates, and roadmap decisions
-belong in `docs/plans/node-lts-compatibility-plan.md`.
+belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
 Source corpus:
 
@@ -12,9 +12,9 @@ Source corpus:
   `~/src/github.com/agentstation/deno @ v2.7.14-locker.31`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
-- pinned official Node20 validation corpus:
+- pinned official Node20 supported corpus:
   `nodejs/node @ v20.20.2`
-- staged future Node24 preview corpus:
+- staged future Node24 supported corpus:
   `nodejs/node @ v24.15.0`
 
 The current work starts the same way `NLC3` and `NLC4` eventually succeeded:
@@ -39,7 +39,7 @@ The first-pass official candidate corpus from the canonical local
 
 - Node22: `512` files
 - Node20: `509` files
-- Node24 preview: `627` files
+- Node24 supported: `627` files
 
 These are intentionally broad candidate counts, not the future green
 denominator. The next `NLC5` step is to carve out the first manifested batch by
@@ -48,15 +48,15 @@ shared seam instead of trying to run all `512+` files at once.
 ## Current Manifested Official Subset
 
 The first manifested `NLC5` batch is now live in
-[`STREAMS_AND_LOCAL_IO_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node_compat.rs).
+[`STREAMS_AND_LOCAL_IO_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
 
-- Node22 primary lane: `317` official files
-- Node20 validation lane: `311` official files
-- Node24 preview lane: `308` staged official files
-  - current explicit preview run: `308` passed, `0` failed
-  - preview denominator intentionally excludes
+- Node22 default lane: `317` official files
+- Node20 supported lane: `311` official files
+- Node24 supported lane: `308` staged official files
+  - current explicit supported-lane watchpoint run: `308` passed, `0` failed
+  - supported-lane denominator intentionally excludes
     `test-stream-compose-operator.js`, which is not present in the official
     `nodejs/node v24.15.0` corpus
 

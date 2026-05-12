@@ -76,7 +76,7 @@ Do not rely on prior chat transcripts as progress state.
   `WorkerLoop` seam.
 - `docs/plans/v8-locker-fork-plan.md` is the source of truth for the current V8
   backend implementation via `deno_core` + Locker cooperative scheduling.
-- `docs/plans/raw-v8-warm-backend-plan.md` is the source of truth for the
+- `docs/plans/archive/raw-v8-warm-backend-plan.md` is the source of truth for the
   future raw-V8 warm backend.
 - This plan does **not** reopen the decision to keep scheduling above the
   runtime. That seam is already the right one.
@@ -444,7 +444,7 @@ W3 lands.
 
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
-| 2026-04-05 | meta | documented | Initial plan authored. Covers backend abstraction refactor, wasmtime engine/WIT/linker, run-to-completion and cooperative-fuel backends, bundle format, retained Store pool, and observability. References existing `WorkerLoopFactory` / `CooperativeScheduler<T>` seams and `ARCHITECTURE.md` WASM direction. | document review against `ARCHITECTURE.md`, `v8-locker-fork-plan.md`, `raw-v8-warm-backend-plan.md`, and current `neovex-runtime` source | keep deferred until Locker fork plan Phase 5 reaches `done` |
+| 2026-04-05 | meta | documented | Initial plan authored. Covers backend abstraction refactor, wasmtime engine/WIT/linker, run-to-completion and cooperative-fuel backends, bundle format, retained Store pool, and observability. References existing `WorkerLoopFactory` / `CooperativeScheduler<T>` seams and `ARCHITECTURE.md` WASM direction. | document review against `ARCHITECTURE.md`, `v8-locker-fork-plan.md`, `docs/plans/archive/raw-v8-warm-backend-plan.md`, and current `neovex-runtime` source | keep deferred until Locker fork plan Phase 5 reaches `done` |
 
 ## Verification Expectations
 
@@ -466,7 +466,7 @@ When promoted, the wasmtime backend should not be considered viable without:
 - **`v8-locker-fork-plan.md`**: hard prerequisite. This plan activates after
   Phase 5 completes. The backend abstraction refactor (W1) must not break the
   landed cooperative Locker scheduling.
-- **`raw-v8-warm-backend-plan.md`**: parallel deferred plan. Both this plan and
+- **`docs/plans/archive/raw-v8-warm-backend-plan.md`**: parallel deferred plan. Both this plan and
   the raw-V8 plan slot new backends beneath the same `WorkerLoopFactory` seam.
   The backend abstraction refactor (W1) should benefit both.
 - **`wasi-agent-capabilities-plan.md`**: downstream consumer. The WASI agent

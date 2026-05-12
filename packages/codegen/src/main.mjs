@@ -12,15 +12,25 @@ import { loadAuthConfig } from "./auth_config.mjs";
 import { generateCloudFunctionsArtifacts } from "./cloud_functions.mjs";
 import { generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
 import { generateRuntimeBundle } from "./emit/runtime_bundle.mjs";
+import {
+  collectNodeApiDiagnostics,
+  formatNodeApiDiagnostics,
+} from "./node_api_diagnostics.mjs";
+import {
+  createNodeExternalPackageReport,
+  stageNodeExternalPackages,
+} from "./node_external_packages.mjs";
 import { parseHttpRoutes, parseModule } from "./parser.mjs";
+import { loadProjectConfig } from "./project_config.mjs";
 import { loadSchemaDefinition } from "./schema.mjs";
 
-async function generateConvexArtifacts({ appDir, sourceRoot }) {
+async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = false, onInfo } = {}) {
   const resolvedSourceRoot = sourceRoot ?? await resolveSourceRoot(appDir);
   const sourceDir = resolvedSourceRoot.sourceDirPath;
   const packageNamespace = resolvedSourceRoot.packageNamespace;
   const generatedDir = path.join(sourceDir, "_generated");
   const internalDir = path.join(appDir, ".neovex", "convex");
+  const projectConfig = await loadProjectConfig(appDir);
   const schema = await loadSchemaDefinition(sourceDir);
   const authConfig = await loadAuthConfig(sourceDir);
 
@@ -29,7 +39,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
   const manifest = [];
 
   for (const filePath of moduleFiles) {
-    const moduleInfo = await parseModule(sourceDir, filePath, schema);
+    const moduleInfo = await parseModule(sourceDir, filePath, schema, { debugNodeApis });
     modules.push(moduleInfo);
     for (const fn of moduleInfo.functions) {
       if (fn.kind === "http_action") {
@@ -42,6 +52,11 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
         kind: fn.kind,
         visibility: fn.visibility,
         schedulable: fn.kind === "mutation",
+        runtime_environment: fn.runtimeEnvironment,
+        node_version:
+          fn.runtimeEnvironment === "node" ? projectConfig.node.nodeVersion : null,
+        node_runtime_target:
+          fn.runtimeEnvironment === "node" ? projectConfig.node.runtimeTarget : null,
         plan: fn.plan,
         runtime_handler: fn.runtimeHandler ?? null,
         runtime_bindings: fn.runtimeHandler ? (fn.runtimeBindings ?? {}) : undefined,
@@ -49,10 +64,22 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
     }
   }
 
+  const nodeExternalPackageReport = await createNodeExternalPackageReport({
+    appDir,
+    internalDir,
+    modules,
+    projectConfig,
+    sourceDir,
+  });
+
   const httpRoutes = await parseHttpRoutes(sourceDir, schema, modules);
+  if (debugNodeApis) {
+    onInfo?.(formatNodeApiDiagnostics(collectNodeApiDiagnostics(modules, sourceDir)));
+  }
 
   await fs.mkdir(generatedDir, { recursive: true });
   await fs.mkdir(internalDir, { recursive: true });
+  await stageNodeExternalPackages(appDir, nodeExternalPackageReport);
   await fs.writeFile(
     path.join(generatedDir, "api.ts"),
     generateApiFile(modules, schema, packageNamespace),
@@ -75,7 +102,12 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
   );
   await fs.writeFile(
     path.join(internalDir, "functions.json"),
-    `${JSON.stringify({ functions: manifest }, null, 2)}\n`,
+    `${JSON.stringify({ node: projectConfig.node, functions: manifest }, null, 2)}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(internalDir, "node_external_packages.json"),
+    `${JSON.stringify(nodeExternalPackageReport, null, 2)}\n`,
     "utf8",
   );
   await fs.writeFile(
@@ -110,6 +142,8 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
     httpRoutes,
     manifest,
     modules,
+    nodeExternalPackageReport,
+    projectConfig,
     schema,
     authConfig,
     sourceRoot: resolvedSourceRoot,
@@ -118,6 +152,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot }) {
 
 async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   const appDir = resolveAppDirectory(args);
+  const debugNodeApis = args.includes("--debug-node-apis");
   const sourceRoot = await tryResolveSourceRoot(appDir);
   const cloudFunctions = await generateCloudFunctionsArtifacts({ appDir, onInfo });
 
@@ -130,7 +165,7 @@ async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   }
 
   const convex = sourceRoot
-    ? await generateConvexArtifacts({ appDir, sourceRoot })
+    ? await generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis, onInfo })
     : null;
   return { appDir, cloudFunctions, convex };
 }

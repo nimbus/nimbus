@@ -44,8 +44,8 @@ These plans must complete before UI implementation begins:
 
 | Plan | What it provides | Items |
 | --- | --- | --- |
-| `docs/plans/websocket-protocol-plan.md` | Versioned protocol spec, error schema, subprotocol negotiation, structured error types | WP1–WP4 |
-| `docs/plans/localhost-server-security-plan.md` | Token file, origin allowlist, session cookie, CSP, server discovery, audit log, middleware stack | LS1–LS5 |
+| `docs/plans/archive/websocket-protocol-plan.md` | Versioned protocol spec, error schema, subprotocol negotiation, structured error types | WP1–WP4 |
+| `docs/plans/archive/localhost-server-security-plan.md` | Token file, origin allowlist, session cookie, CSP, server discovery, audit log, middleware stack | LS1–LS5 |
 | `docs/plans/system-tenant-api-plan.md` | `_neovex` system tenant, state persistence, HTTP lifecycle endpoints, Convex function bundle | ST1–ST4 |
 
 ## Status
@@ -54,8 +54,8 @@ These plans must complete before UI implementation begins:
 - **Primary owner:** this plan
 - **Activation gate:** all three prerequisite plans completed
 - **Related plans:**
-  - `docs/plans/websocket-protocol-plan.md` — protocol and error schema
-  - `docs/plans/localhost-server-security-plan.md` — auth and server security
+  - `docs/plans/archive/websocket-protocol-plan.md` — protocol and error schema
+  - `docs/plans/archive/localhost-server-security-plan.md` — auth and server security
   - `docs/plans/system-tenant-api-plan.md` — data layer the UI consumes
   - `docs/architecture/sandbox/microvm-service-baseline.md` — machine/service architecture
 
@@ -198,7 +198,7 @@ neovex ui --ensure   # start server first if none running, then open browser
 ```
 
 Discovers server via `$XDG_RUNTIME_DIR/neovex/server.json` (written by
-`neovex start` — see `localhost-server-security-plan.md` LS1). Uses
+`neovex start` — see `docs/plans/archive/localhost-server-security-plan.md` LS1). Uses
 `open::that` for cross-platform browser launch.
 
 ### Disconnected state UX

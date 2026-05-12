@@ -357,7 +357,7 @@ only Web APIs (fetch, Request/Response, timers, crypto), not npm package
 resolution. The project has ~85 stars, one contributor, and a known SIGSEGV in
 pooled container modes. Building npm compat on raw V8 is effectively rebuilding
 a significant portion of deno_core. See also the deferred
-`docs/plans/raw-v8-warm-backend-plan.md`.
+`docs/plans/archive/raw-v8-warm-backend-plan.md`.
 
 **Wasmtime (WASI Component Model):**
 Wasmtime offers 5-50µs cold instantiation, `Send`+`Sync` instances, fuel-based

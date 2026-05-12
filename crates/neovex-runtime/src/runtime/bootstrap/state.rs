@@ -210,10 +210,12 @@ pub(crate) fn initialize_runtime_state(
     install_runtime_owner(runtime, runtime_owner.clone());
     install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
     install_runtime_contract(runtime, runtime_owner, bundle)?;
-    if matches!(
-        runtime_owner.policy().limits().compatibility_target,
-        RuntimeCompatibilityTarget::Node22
-    ) {
+    if runtime_owner
+        .policy()
+        .limits()
+        .compatibility_target
+        .is_node()
+    {
         let inspector = runtime.inspector();
         let module_specifier = bundle.module_specifier()?;
         let op_state = runtime.op_state();

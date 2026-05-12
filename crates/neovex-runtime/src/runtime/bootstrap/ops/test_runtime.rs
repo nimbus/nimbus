@@ -155,11 +155,23 @@ impl RuntimeTestProcessStateSnapshot {
 
 fn runtime_limits_for_contract(contract: InstalledRuntimeContract) -> RuntimeLimits {
     match (contract.profile, contract.compatibility_target) {
+        (RuntimeProfile::Application, RuntimeCompatibilityTarget::Node20) => {
+            RuntimeLimits::application_node20()
+        }
         (RuntimeProfile::Application, RuntimeCompatibilityTarget::Node22) => {
             RuntimeLimits::application_node22()
         }
+        (RuntimeProfile::Application, RuntimeCompatibilityTarget::Node24) => {
+            RuntimeLimits::application_node24()
+        }
         (RuntimeProfile::Tooling, RuntimeCompatibilityTarget::Node22) => {
             RuntimeLimits::tooling_node22()
+        }
+        (
+            RuntimeProfile::Tooling,
+            RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node24,
+        ) => {
+            unreachable!("tooling runtimes currently support only Node22 compatibility targets")
         }
         (RuntimeProfile::Application, RuntimeCompatibilityTarget::WebStandardIsolate) => {
             RuntimeLimits::application_web_standard()

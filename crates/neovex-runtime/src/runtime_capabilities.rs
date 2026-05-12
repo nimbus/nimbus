@@ -525,10 +525,7 @@ pub(crate) fn build_permissions_container(
                 "statfs".to_string(),
                 "uid".to_string(),
             ];
-            if matches!(
-                limits.compatibility_target,
-                RuntimeCompatibilityTarget::Node22
-            ) {
+            if limits.compatibility_target.is_node() {
                 sys.push("inspector".to_string());
             }
             sys
@@ -564,7 +561,9 @@ pub(crate) fn build_permissions_container(
 
 fn allowed_net_descriptors(limits: &RuntimeLimits) -> Option<Vec<String>> {
     match limits.compatibility_target {
-        RuntimeCompatibilityTarget::Node22 => Some(
+        RuntimeCompatibilityTarget::Node20
+        | RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24 => Some(
             ["127.0.0.1", "localhost", "0.0.0.0", "[::1]", "[::]"]
                 .into_iter()
                 .map(str::to_string)

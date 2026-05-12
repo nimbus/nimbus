@@ -16,15 +16,16 @@ intentional restrictions. The NLC plan (NLC0-NLC10) is now complete.
 | Modules functionally usable               | 38/44  86%     | 43/44  98%     |
 | Modules verified with upstream Node tests | unknown        | 44/44 100%     |
 | Modules improved beyond Deno baseline     | --             | 18/44  41%     |
-| Official Node test files green (Node22)   | not published  | 898            |
+| Official Node test files green (Node22 default) | not published  | 876            |
+| Supported Node lanes                      | not published  | Node20, Node22 default, Node24 |
 | Package canaries verified                 | not published  | 10 (5 networking + 5 tooling) |
 | Oracle comparison system                  | not published  | Nightly CI with version-matched Node |
 | Nightly CI dashboard                      | not published  | `.github/workflows/node-compat-nightly.yml` |
 
 Neovex's primary advantage is **verification depth**, not implementation
 breadth. Both runtimes share the same `ext/node` codebase. But Neovex has
-run 898 lane-local official upstream Node.js test files in the Node22 primary
-lane, tracks Node20 validation and Node24 preview lanes, verified 10 package
+run 876 lane-local official upstream Node.js test files in the Node22 default
+lane, supports Node20 and Node24 as first-class lanes, verified 10 package
 canaries across Application and Tooling profiles, and fixed issues that
 stock Deno has not.
 
@@ -117,7 +118,7 @@ stock Deno has not.
 | Module | Symbols | Deno | Neovex | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
 | `domain` | 9 | Stub | Partial+ | 16-file foundation green, cross-lane (Node22/Node20/Node24) | Deno: stubs; Neovex: add/remove, timer propagation, nested binding, promise rejection bridge verified |
-| `trace_events` | 1 | Stub | Partial+ | 10-file foundation green, Node22 primary | Deno: stubs; Neovex: API, binding, bootstrap, category, console, dynamic enable, environment, metadata, process-exit verified |
+| `trace_events` | 1 | Stub | Partial+ | 10-file foundation green, Node22 default | Deno: stubs; Neovex: API, binding, bootstrap, category, console, dynamic enable, environment, metadata, process-exit verified |
 | `constants` | 1 | -- | Partial+ | 5-file tranche green across all 3 lanes | Public constants export, internalBinding('constants'), fs.constants, os signals verified cross-lane |
 | `sys` | 1 | -- | Partial+ | Cross-lane `test-sys.js` green (all 3 lanes) | Alias contract verified cross-lane |
 | `cluster` | 23 | Stub | Partial+ | 9-file Node22 worker foundation + lifecycle/teardown green | Deno: stubs; Neovex: worker construct/init/exit/disconnect/kill verified |
@@ -147,7 +148,7 @@ rather than full SEA support, which is host-binary-specific).
 
 | Metric | Deno | Neovex |
 | ------ | ---- | ------ |
-| Official upstream Node test files run | not published | 898 (Node22 path-owned green) |
+| Official upstream Node test files run | not published | 876 (Node22 default path-owned green) |
 | LTS lanes tested | 1 (own runner) | 3 (Node22, Node20, Node24) |
 | Package canaries verified | not published | 10 (express, fastify, socket.io, undici, axios, jest, tsx, ts-node, prisma, next) |
 | Per-module failure inventories | not published | all families checked in |
@@ -202,7 +203,7 @@ profile, not missing implementations. The Tooling profile has broader access.
 The NLC plan (NLC0-NLC10) is now complete. All 11 roadmap items are `done`.
 
 **NLC0-NLC2** (truth and control plane): Generated compatibility matrix,
-versioned public contract with Node22 primary / Node20 validation targets.
+versioned public contract with Node22 default plus Node20 and Node24 supported lanes.
 
 **NLC3-NLC7** (foundation built-ins): Core semantics, process/timing,
 streams/I/O, networking, crypto/compression, and loader/async context
@@ -215,7 +216,7 @@ constants verified with truthful support states across three LTS lanes.
 
 **NLC10** (validation and closeout): Delivered the full evidence layer:
 - Machine-readable manifest catalogs for all 5 carried families
-- `scripts/node-compat-report.sh` with `--capture-live` measured artifact capture
+- `scripts/runtime/node/report.sh` with `--capture-live` measured artifact capture
 - 10 package canaries verified (5 Application networking + 5 Tooling)
 - Oracle comparison system (`make node-compat-oracle`) with drift classes
   and version-matched Node20/Node22/Node24 sweeps
@@ -223,8 +224,9 @@ constants verified with truthful support states across three LTS lanes.
 - Nightly CI workflow (`.github/workflows/node-compat-nightly.yml`)
   with seeded slice replays, canary lanes, oracle samples, and artifact upload
 
-Public support claim: **"Node22 compatibility target with documented
-profile-scoped exclusions"** — evidence-backed rather than aspirational.
+Public support claim: **"Node20, Node22, and Node24 compatibility targets with
+Node22 as the default and documented profile-scoped exclusions"** —
+evidence-backed rather than aspirational.
 
 ## Methodology Notes
 
@@ -236,7 +238,7 @@ profile-scoped exclusions"** — evidence-backed rather than aspirational.
 - **Neovex status** is derived from the checked-in manifests and failure
   inventories under `docs/architecture/runtime/node-lts-compat/`, the
   verified surface matrix at `node-compat-surface-matrix.md`, and the
-  active NLC plan at `docs/plans/node-lts-compatibility-plan.md`.
+  archived NLC baseline at `docs/plans/archive/node-lts-compatibility-plan.md`.
 - **Symbol counts** come from the generated `node-lts-compat-matrix.csv`
   baseline (Node 22 column).
 - **"Full\*"** marks modules where Deno claims "fully supported" but has
@@ -247,9 +249,9 @@ profile-scoped exclusions"** — evidence-backed rather than aspirational.
   marked **Inherited** use Deno's code without separate Neovex
   verification. They are expected to have the same behavior as stock
   Deno.
-- The **898** upstream test count represents lane-local official
+- The **876** upstream test count represents lane-local official
   `nodejs/node v22.15.0` test files (not Deno's own test suite) that are
-  path-owned by Neovex's compatibility harness across the Node22 primary
-  lane after excluding explicit non-green classifications. Earlier family
-  prose counts summed to 994, but the generated status dashboard now prefers
-  reconstructable path evidence over prose counts when the two disagree.
+  path-owned by non-ignored Neovex compatibility tests across the Node22
+  default lane after excluding explicit red/gap/skip classifications. Earlier
+  family prose counts summed higher, but the generated status dashboard now
+  prefers reconstructable path evidence over prose counts when the two disagree.

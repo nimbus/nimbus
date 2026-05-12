@@ -9,15 +9,15 @@
   "lane_batches": [
     {
       "lane": "node20",
-      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_streams_and_local_io_subset"
+      "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset"
     },
     {
       "lane": "node22",
-      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_streams_and_local_io_subset"
+      "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset"
     },
     {
       "lane": "node24",
-      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_streams_and_local_io_subset"
+      "subset_test": "runtime::tests::node_compat::node24_supported_lane_streams_and_local_io_watchpoint"
     }
   ],
   "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",

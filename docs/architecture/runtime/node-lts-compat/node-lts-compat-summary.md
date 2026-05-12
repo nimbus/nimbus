@@ -17,7 +17,7 @@ Generated machine-owned baseline for NLC1.
 - `deno_repo`: `/Users/jack/src/github.com/agentstation/deno`
 - `deno_git_branch`: `locker-v2.7.14`
 - `deno_git_commit`: `a2cc5bfdc77713c9028709f386dbd671dd3f1150`
-- `generator_path`: `scripts/node_compat/generate_matrix.py`
+- `generator_path`: `scripts/runtime/node/generate_matrix.py`
 
 ## Counts
 

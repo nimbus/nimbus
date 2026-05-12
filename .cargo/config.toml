@@ -9,7 +9,11 @@ git-fetch-with-cli = true
 [env]
 # Fork release tags keep upstream crate versions intact while selecting the
 # locker-enabled prebuilt asset line explicitly.
-RUSTY_V8_VERSION = "147.0.0-locker.2"
+RUSTY_V8_VERSION = "147.4.0-locker.2"
+# Match the Node sqlite capability profile on top of the bundled SQLCipher
+# lane so `node:sqlite` exposes the same built-in SQL function families that
+# the upstream Node LTS fixtures validate.
+LIBSQLITE3_FLAGS = "SQLITE_ENABLE_GEOPOLY SQLITE_ENABLE_MATH_FUNCTIONS SQLITE_ENABLE_PERCENTILE SQLITE_ENABLE_RBU"
 
 # Use lld linker on Linux for faster linking (install: apt install lld)
 # Uncomment if you have lld installed:

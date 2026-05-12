@@ -4,8 +4,10 @@ Prerequisite execution plan for renaming the satellite repositories before the
 main repo rename in `docs/plans/nimbus-rename-plan.md`. Covers the three repos
 that contain internal "neovex" or "agentstation" references requiring updates.
 
-The forked dependency repos (`nimbus/deno_core`, `nimbus/rusty_v8`) preserve
-upstream names and need no internal renames.
+The forked dependency repos (`nimbus/deno`, `nimbus/rusty_v8`) preserve
+upstream names and need no internal renames, but they **do** need a locker
+tag re-publish under the new org so the main repo's `[patch.crates-io]` and
+`deny.toml` allow-list can resolve. See "Repo 4" below.
 
 ## Status
 
@@ -22,7 +24,9 @@ so both sides must agree on names at release time.
 **Execution order:**
 1. Transfer neovex-specific repos to `nimbus` org and create new
    `nimbus/homebrew-tap` (Phase 0 of main plan; `agentstation/homebrew-tap`
-   stays in agentstation since it is shared with other products)
+   stays in agentstation since it is shared with other products).
+   Note: the Deno-family fork is `agentstation/deno` (monorepo), not the
+   old standalone `agentstation/deno_core` which is historical only.
 2. Execute this satellite plan (rename internals of each repo)
 3. Execute main plan Phases 1-8 (rename main repo internals)
 4. Cut a release to verify end-to-end (main repo release triggers machine-os
@@ -509,6 +513,57 @@ brew install agentstation/tap/starmap
 
 ---
 
+## Repo 4: nimbus/deno + nimbus/rusty_v8 (forked dependency repos)
+
+Formerly `agentstation/deno` (Deno-family monorepo fork) and
+`agentstation/rusty_v8` (V8 binding fork). These repos do **not** get
+internal renames -- they preserve upstream identifiers (`deno_core`,
+`deno_node`, `rusty_v8`, etc.) so the workspace `Cargo.toml`
+`[patch.crates-io]` patch surface continues to match published crate names.
+
+What DOES change:
+
+1. **Origin URL** -- the GitHub transfer in main-plan Phase 0 redirects
+   `agentstation/deno` -> `nimbus/deno` and `agentstation/rusty_v8` ->
+   `nimbus/rusty_v8`. Confirm redirects then update local clone remotes.
+
+2. **Locker tag re-publish** -- the canonical main-repo `Cargo.toml`
+   `[patch.crates-io]` pins these forks at locker tags (currently
+   `v2.7.14-locker.38` for the deno-family crates and `v147.4.0-locker.1`
+   for `rusty_v8`). After transfer:
+   - Verify the existing tags survive the transfer (GitHub usually preserves
+     refs on org rename) and are reachable at the new URL.
+   - If the main-repo rename PR cuts a fresh locker tag (e.g. to capture
+     incidental fork fixes alongside the rename), publish it under
+     `nimbus/deno` / `nimbus/rusty_v8` and bump the main-repo `Cargo.toml`
+     to that tag in main-plan Phase 1b.
+   - Either way, the renamed git URL must resolve at the pinned tag before
+     `make deny` (main-plan Phase 1g) runs successfully.
+
+3. **CI badge / README links** in each fork repo's `README.md` if any
+   reference the former `agentstation` URL or owner. Optional cleanup.
+
+### Verification
+
+```sh
+# Inside the renamed local checkouts
+git -C ~/src/github.com/nimbus/deno    remote -v   # origin -> nimbus/deno
+git -C ~/src/github.com/nimbus/rusty_v8 remote -v  # origin -> nimbus/rusty_v8
+
+# Main-repo Cargo.toml + Cargo.lock resolve
+cd ~/src/github.com/nimbus/nimbus
+cargo fetch        # must succeed without unknown-git failures
+make deny          # must succeed once allow-git lists nimbus/* URLs
+```
+
+### Out of scope for this section
+
+Internal symbol renames inside the Deno/V8 forks. The forks deliberately
+mirror upstream so they can absorb upstream patches; renaming internals
+would diverge from upstream and is not in scope for this rename.
+
+---
+
 ## Execution Order
 
 Within this satellite plan, repos can be updated independently and in parallel.
@@ -517,20 +572,24 @@ new names.
 
 ```
 Phase 0 (main plan): Transfer neovex-machine-os, neovex-crun,
-                      deno_core, rusty_v8 to nimbus org
+                      deno, rusty_v8 to nimbus org
                       (homebrew-tap stays in agentstation)
          |
          v
-   +----------+---------+---------+
-   |          |         |         |
-   v          v         v         v
- MOS-1..6  CRUN-1..8  TAP-1..4  Delete neovex.rb
- (machine)  (crun)    (new repo) from agentstation
-   |          |         |         /homebrew-tap
-   +----------+---------+---------+
+   +----------+---------+---------+---------+
+   |          |         |         |         |
+   v          v         v         v         v
+ MOS-1..6  CRUN-1..8  TAP-1..4  Repo 4    Delete neovex.rb
+ (machine)  (crun)    (new repo) (forks:   from agentstation
+   |          |         |        deno +    /homebrew-tap
+   |          |         |        rusty_v8       |
+   |          |         |        locker tag     |
+   |          |         |        re-publish)    |
+   +----------+---------+---------+---------+
          |
          v
 Main plan Phases 1-8: Rename main repo internals
+   (Phase 1g `make deny` requires Repo 4 locker tags to resolve)
          |
          v
 First release under nimbus/nimbus: end-to-end verification

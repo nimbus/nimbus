@@ -29,268 +29,96 @@ If you hit a surprise that is likely to trip up another agent, tell the develope
 
 If you find yourself writing compatibility code, stop and make the breaking change instead.
 
-## Canonical References
+## Working Set
 
-### Project docs
+- Start with `README.md`, `ARCHITECTURE.md`, `docs/README.md`, and
+  `docs/plans/README.md`.
+- Use the active plan owner for the slice you are touching. Prefer active
+  plans over archived history.
+- Treat the current git worktree plus the owning active plan as progress
+  state. Resume `in_progress` work before starting a new roadmap item.
+- Checkpoint plan state before stopping, handing off, or any likely context
+  loss.
+- Load one roadmap item at a time plus only the immediately relevant code,
+  tests, and docs.
 
-Use the repo docs for architecture and behavior details:
+### Routing By Work Type
 
-- `README.md`
-- `ARCHITECTURE.md`
-- `docs/README.md`
-- Use `docs/plans/README.md` to identify the current active plan before
-  landing roadmap work. Prefer the active owner over archived history.
-- For generic maintainability, refactor, modularity, reliability hardening,
-  canonical naming, or god-file cleanup work, open
-  `docs/architecture/testing/reliability-posture.md` and
-  `docs/architecture/testing/ci-failure-investigation.md` after the three docs above.
-  Use `docs/plans/architecture-seam-cleanliness-plan.md` as the latest
-  completed repo-wide architecture/modularity/seam-cleanliness baseline, and
-  promote a new active plan before another broad architecture cleanup wave.
-  Use `docs/plans/deployment-auth-runtime-boundary-plan.md` as the latest
-  completed baseline when the work specifically touches repo-wide deploy
-  activation, application auth lifecycle, or runtime ABI cleanup. Use
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed baseline for the prior repo-wide architecture wave.
-- For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
-  compatibility-truth reconciliation, runtime-host seam promotion, auth
-  ownership cleanup, provider-family seam cleanup, or runtime trust
-  hardening, open `docs/architecture/server/adapter-expectations.md`,
+- Generic maintainability, refactor, modularity, reliability hardening, or
+  canonical naming:
+  `docs/architecture/testing/reliability-posture.md`,
+  `docs/architecture/testing/ci-failure-investigation.md`,
+  `docs/plans/archive/architecture-seam-cleanliness-plan.md`,
+  `docs/plans/archive/deployment-auth-runtime-boundary-plan.md`,
+  `docs/plans/archive/repo-architecture-and-seam-hardening-plan.md`
+- Adapter/runtime/auth/trust cleanup:
+  `docs/architecture/server/adapter-expectations.md`,
   `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`, and
-  `docs/plans/deployment-auth-runtime-boundary-plan.md` after the three docs
-  above plus the reliability references when the work touches deploy/auth/live
-  runtime seams. Treat it as the latest completed baseline for that
-  cross-cutting wave and promote a new active plan before another broad seam
-  pass. Use
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed repo-wide seam-hardening baseline, not an active owner. Use
-  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
-  canonicalization baseline and execution record, use
-  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed trust
-  baseline, use `docs/plans/runtime-capability-adapter-boundary-plan.md` as
-  the completed adapter/runtime ownership baseline, and use
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
-  completed historical hardening wave.
-- For the landed krun-backed microVM and service-control architecture, open
-  `docs/architecture/sandbox/microvm-service-baseline.md` after the three docs above.
-- For current macOS developer-machine behavior, open
-  `docs/architecture/sandbox/macos-machine-flow.md` after the microVM baseline.
-- For machine/service CLI UX work, help/output/progress consistency, or
-  Podman/Docker-style command-surface work, start with `docs/operating/cli.md`
-  and `docs/architecture/sandbox/microvm-service-baseline.md`. Promote a new active plan
-  before landing another CLI command-surface wave unless one already owns the
-  slice.
-- For shared machine-lifecycle hardening, enterprise machine-management
-  reliability, or Windows-provider groundwork that reuses the existing machine
-  manager seams, start with `docs/architecture/sandbox/microvm-service-baseline.md`,
-  `docs/architecture/sandbox/macos-machine-flow.md` when relevant, and the active platform
-  plan from `docs/plans/README.md`.
-- **For localhost/server security work:** start with the completed contract in
-  `docs/plans/localhost-server-security-plan.md` for local
-  bind/auth/session/origin/CORS, token lifecycle, server discovery,
-  route-family gating, audit logging, `/ui/*` bootstrap security, and the
-  server-access versus application-auth boundary. Promote a new active plan
-  before landing another security wave that materially changes that contract.
-- **For install script work (Channel 1):** `docs/plans/install-script-plan.md`
-  is the active control plan for the `curl | sh` quick-start bootstrapper. Its
-  parent is `docs/plans/distribution-plan.md` (Channel 1 section). Start I1
-  immediately — external release inputs already exist. Keep
-  `docs/plans/distribution-plan.md` open for the macOS Homebrew contract and
-  Linux dependency context, but treat the install-script plan as the execution
-  owner.
-- **For Firebase/Firestore compatibility work:** start with
-  `docs/adapters/firebase/compatibility.md` and
-  `docs/adapters/firebase/migration.md` and
-  `docs/adapters/firebase/auth-contract.md`, then use
-  `docs/architecture/runtime/adapter-boundary.md` and
-  `docs/architecture/server/auth-runtime-trust.md` plus
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed repo-wide auth/runtime/modularity baseline. Promote a new active
-  plan before another broad Firebase-driven seam-hardening wave. Use
-  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
-  latest canonicalization baseline for historical context. Use
-  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed auth,
-  trust, and boundary baseline, use
-  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
-  completed adapter/runtime boundary baseline, and use
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the completed
-  historical auth, compatibility-truth, and boundary-hardening wave. Use
-  `docs/plans/archive/firebase-adapter-plan.md` only as the completed
-  historical execution record for the adapter and primitive-hardening wave.
-- **For Cloud Functions compute or HTTP handler work:** start with
-  `docs/adapters/cloud-functions/compatibility.md` and
-  `docs/adapters/cloud-functions/migration.md`, then use
-  `docs/architecture/runtime/adapter-boundary.md` and
-  `docs/architecture/server/auth-runtime-trust.md` plus
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed repo-wide runtime/auth/modularity baseline. Promote a new active
-  plan before another broad Cloud Functions seam-hardening wave. Use
-  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
-  latest runtime/auth/modularity canonicalization baseline. Use
-  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed
-  runtime trust and boundary baseline, use
-  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
-  completed runtime-host and adapter-boundary baseline, and use
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
-  completed cross-adapter wave. Use
-  `docs/plans/archive/firebase-cloud-functions-plan.md` only as the completed
-  historical execution record for Firebase v2 and standalone Functions
-  Framework compatibility.
-- **For Convex or Neovex CLI/codegen workflow work:** after
-  `docs/adapters/convex/ai-guidelines.md`, open `docs/operating/cli.md` and
-  `docs/adapters/convex/compatibility.md` for `packages/codegen/`,
-  `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
-  contract. `docs/plans/neovex-init-plan.md` is the active control plan for
-  `neovex init`, `neovex dev` auto-scaffold, and dev-mode auto-tenant
-  creation. Use it as the execution owner for onboarding workflow work.
-  Promote a new active plan before landing another CLI/codegen workflow wave
-  unless one already owns the slice. Use
-  `docs/plans/archive/codegen-and-facade-hardening-plan.md` only for the
-  completed cleanup wave's execution record.
-- **For Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen runtime work:**
-  open `docs/plans/node-lts-compatibility-plan.md` as the active control plan
-  after `README.md`, `ARCHITECTURE.md`, and `docs/README.md`. Use
-  `docs/plans/node-compatible-runtime-plan.md` as the completed baseline for
-  the settled compatibility-target naming, Deno family alignment,
-  `deno_node` integration, runtime profile composition, and the current public
-  contract that keeps external Node.js in the authoring happy path while
-  treating `Node22` as the verified Neovex baseline. Use
-  `~/src/github.com/agentstation/deno` as the canonical Deno-family fork
-  worktree, `~/src/github.com/agentstation/rusty_v8` as the matching V8 fork,
-  and `~/src/github.com/agentstation/deno_core` only as a historical delta
-  reference when future audit work needs it. Use
-  `~/src/github.com/denoland/deno` when source-family comparison is needed,
-  and do not start another broad Node/runtime compatibility wave outside the
-  active Node LTS control plan unless it is completed, blocked with a written
-  handoff, or explicitly superseded.
-
-## Context Window Discipline
-
-- `AGENTS.md` is the agent entrypoint; keep it sparse and principle-first.
-- Start with `README.md`, `ARCHITECTURE.md`, and `docs/README.md` before loading deeper implementation docs.
-- Use `docs/plans/README.md` to discover the current active plan owner for the
-  slice you are touching. Do not rely on archived plans as the default source
-  of truth.
-- For generic maintainability, refactor, modularity, reliability hardening,
-  canonical naming, or readability cleanup work, open
-  `docs/architecture/testing/reliability-posture.md` and
-  `docs/architecture/testing/ci-failure-investigation.md` immediately after those three
-  docs. Use `docs/plans/architecture-seam-cleanliness-plan.md` as the latest
-  completed repo-wide architecture/modularity/seam-cleanliness baseline, and
-  promote a new active plan before another broad architecture cleanup wave.
-  Use `docs/plans/deployment-auth-runtime-boundary-plan.md` as the latest
-  completed baseline when the work specifically touches repo-wide deploy
-  activation, application auth lifecycle, or runtime ABI cleanup. Use
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed baseline for the prior repo-wide architecture wave.
-- For post-Firebase / post-Cloud-Functions adapter-boundary cleanup,
-  compatibility-truth reconciliation, runtime-host seam promotion, auth
-  ownership cleanup, provider-family seam cleanup, or runtime trust
-  hardening, open `docs/architecture/server/adapter-expectations.md`,
+  `docs/architecture/server/auth-runtime-trust.md`,
+  `docs/plans/archive/deployment-auth-runtime-boundary-plan.md`
+  Use the completed baselines in `docs/plans/archive/server-runtime-canonicalization-plan.md`,
+  `docs/plans/archive/adapter-runtime-trust-hardening-plan.md`,
+  `docs/plans/archive/runtime-capability-adapter-boundary-plan.md`, and
+  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as prior
+  wave references.
+- Sandbox, machine lifecycle, or CLI UX:
+  `docs/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/architecture/sandbox/macos-machine-flow.md` when relevant,
+  `docs/operating/cli.md`, and the active platform plan from
+  `docs/plans/README.md`
+- Localhost/server security:
+  `docs/plans/archive/localhost-server-security-plan.md`
+- Install script work:
+  `docs/plans/install-script-plan.md` as the active owner and
+  `docs/plans/distribution-plan.md` as parent context
+- Firebase/Firestore compatibility:
+  `docs/adapters/firebase/compatibility.md`,
+  `docs/adapters/firebase/migration.md`,
+  `docs/adapters/firebase/auth-contract.md`,
   `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`, and
-  `docs/plans/deployment-auth-runtime-boundary-plan.md` immediately after
-  those three docs plus the reliability references when the work touches
-  deploy/auth/live runtime seams. Treat that plan as the latest completed
-  baseline for the wave and promote a new active plan before another broad
-  seam pass. Use
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed repo-wide seam-hardening baseline. Use
-  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
-  canonicalization baseline, use
-  `docs/plans/adapter-runtime-trust-hardening-plan.md` as
-  the completed trust/boundary baseline, use
-  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
-  completed adapter/runtime ownership baseline, and use
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
-  completed wave.
-- For the current krun-backed microVM and service-control architecture, open
-  `docs/architecture/sandbox/microvm-service-baseline.md` immediately after those three
-  docs.
-- For macOS developer-machine work, open
-  `docs/architecture/sandbox/macos-machine-flow.md` after the microVM baseline.
-- For historical machine/service CLI alignment work, start with
-  `docs/operating/cli.md` and `docs/architecture/sandbox/microvm-service-baseline.md`.
-  Promote a new active plan before starting another CLI UX wave unless one
-  already owns the slice.
-- For shared machine-lifecycle hardening work, open
-  `docs/architecture/sandbox/microvm-service-baseline.md` after the microVM baseline and
-  then the active platform plan from `docs/plans/README.md`.
-- For localhost/server security work, open
-  `docs/plans/localhost-server-security-plan.md` after the three top-level
-  docs and treat it as the settled contract unless a newer active plan owns
-  the slice. Keep local server-access auth separate from tenant/application
-  auth unless an active plan explicitly says otherwise.
-- For Firebase/Firestore compatibility work, open
-  `docs/adapters/firebase/compatibility.md` and
-  `docs/adapters/firebase/migration.md` and
-  `docs/adapters/firebase/auth-contract.md` after the three top-level docs.
-  Use `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`, and
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed repo-wide canonicalization baseline. Promote a new active plan
-  before another broad Firebase-driven seam-hardening wave. Use
-  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
-  latest canonicalization baseline for historical context. Use
-  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed trust
-  and boundary baseline, use
-  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
-  completed adapter/runtime boundary baseline, and use
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the completed
-  historical auth, compatibility-truth, and boundary-hardening wave. Use
-  `docs/plans/archive/firebase-adapter-plan.md` only when you need the
-  completed execution record for the historical adapter wave.
-- For Cloud Functions compute, HTTP handlers, or trigger work (both Firebase
-  and standalone), open `docs/adapters/cloud-functions/compatibility.md` and
-  `docs/adapters/cloud-functions/migration.md` after the three
-  top-level docs. Use `docs/architecture/runtime/adapter-boundary.md`,
-  `docs/architecture/server/auth-runtime-trust.md`, and
-  `docs/plans/repo-architecture-and-seam-hardening-plan.md` as the latest
-  completed repo-wide canonicalization baseline. Promote a new active plan
-  before another broad Cloud Functions seam-hardening wave. Use
-  `docs/plans/server-runtime-canonicalization-plan.md` as the completed
-  latest canonicalization baseline for historical context. Use
-  `docs/plans/adapter-runtime-trust-hardening-plan.md` as the completed
-  runtime trust and boundary baseline, use
-  `docs/plans/runtime-capability-adapter-boundary-plan.md` as the latest
-  completed runtime-host and adapter-boundary baseline, and use
-  `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as the earlier
-  completed cross-adapter wave. Use
-  `docs/plans/archive/firebase-cloud-functions-plan.md` only when you need the
-  completed execution record for the historical compatibility wave.
-- For Convex or Neovex CLI/codegen workflow work, open
-  `docs/adapters/convex/ai-guidelines.md`, `docs/operating/cli.md`, and
-  `docs/adapters/convex/compatibility.md` after the three top-level docs.
-  `docs/plans/neovex-init-plan.md` is the active control plan for `neovex
-  init`, `neovex dev` auto-scaffold, and dev-mode auto-tenant creation. Use
-  it as the execution owner for onboarding workflow work. Promote a new
-  active plan before landing another CLI/codegen workflow wave unless one
-  already owns the slice. Use
-  `docs/plans/archive/codegen-and-facade-hardening-plan.md` only when you
-  need the completed cleanup wave's execution record.
-- For Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen
-  runtime work, open `docs/plans/node-lts-compatibility-plan.md` after the
-  three top-level docs plus `docs/architecture/runtime/adapter-boundary.md`
-  and `docs/architecture/server/auth-runtime-trust.md`. Treat
-  `docs/plans/node-compatible-runtime-plan.md` as the completed baseline for
-  the last runtime-compatibility wave, keep the local fork worktrees
-  `~/src/github.com/agentstation/deno` and
-  `~/src/github.com/agentstation/rusty_v8` in the immediate working set for
-  Deno-family audit and parity work, keep
-  `~/src/github.com/agentstation/deno_core` only as a historical delta
-  source, and use `~/src/github.com/denoland/deno` for upstream monorepo
-  comparison when needed. Do not start a separate broad Node/runtime
-  compatibility plan unless the active Node LTS control plan is completed,
-  blocked with a written handoff, or explicitly superseded.
-- Treat the current git worktree plus the owning active plan, when there is
-  one, as progress state. Do not rely on chat history to remember where work
-  stopped.
-- If an active roadmap item is already `in_progress` or the worktree is dirty,
-  reconcile and resume that work before starting a new roadmap item.
-- Checkpoint active roadmap state before stopping, handing off, or any likely
-  context loss. Do not assume you will get an explicit compaction warning.
-- Load one roadmap item at a time plus only the immediately relevant code, tests, and docs.
+  `docs/architecture/server/auth-runtime-trust.md`
+- Cloud Functions compatibility:
+  `docs/adapters/cloud-functions/compatibility.md`,
+  `docs/adapters/cloud-functions/migration.md`,
+  `docs/architecture/runtime/adapter-boundary.md`,
+  `docs/architecture/server/auth-runtime-trust.md`
+- Convex or Neovex CLI/codegen workflow:
+  `docs/adapters/convex/ai-guidelines.md`,
+  `docs/operating/cli.md`,
+  `docs/adapters/convex/compatibility.md`,
+  `docs/plans/archive/neovex-init-plan.md`
+- Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
+  `docs/architecture/runtime/adapter-boundary.md` and
+  `docs/architecture/server/auth-runtime-trust.md` after the top-level docs.
+  Use `docs/plans/archive/node-compatible-runtime-plan.md`,
+  `docs/plans/archive/node-lts-compatibility-plan.md`,
+  `docs/plans/archive/node-compat-test-infrastructure-plan.md`, and
+  `docs/plans/archive/node-compat-future-lanes-and-correctness-plan.md` as completed
+  baselines. If new Node-compat roadmap work is needed beyond those completed
+  plans, create or adopt a fresh active plan before starting a new wave.
+  `~/src/github.com/agentstation/deno` as the canonical Deno-family fork,
+  `~/src/github.com/agentstation/rusty_v8` as the matching V8 fork,
+  `~/src/github.com/agentstation/deno_core` only as historical delta context,
+  `~/src/github.com/denoland/deno` for upstream comparison, and
+  `~/src/github.com/nodejs/node` for upstream Node source/tests.
+  Prefer working and verifying against those canonical worktrees with normal
+  sandbox approval when needed. Do not make `/private/tmp` checkout copies or
+  alternate Cargo-source workspaces the default workflow.
+  For Deno-owner changes, temporarily unpin Neovex from the published
+  `agentstation/deno` tag and point the Deno-family dependencies at the
+  canonical `~/src/github.com/agentstation/deno` worktree while proving the
+  fix. Do not create shadow checkout copies to mimic the pin.
+  Once the fork change is verified, commit/tag/push it in
+  `~/src/github.com/agentstation/deno`, then repin `Cargo.toml` and
+  `Cargo.lock` back to the published tag/revision and rerun Neovex
+  verification on that repinned baseline before updating the control plane.
+  Keep Neovex-specific bootstrap/profile/capability fixes local. Promote a fix
+  to `agentstation/deno` when the local alternative would duplicate Deno/Node
+  builtin semantics, shadow internal behavior long-term, or add avoidable
+  hot-path overhead. For one-off macOS fork verification that must bypass the
+  checked-in `-fuse-ld=lld` target flag, prefer `CARGO_ENCODED_RUSTFLAGS`.
+  Use `/private/tmp` Cargo overrides only as short-lived last-resort proof
+  paths, never as progress state or the main source of truth.
 
 ### Workspace layout
 

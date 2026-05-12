@@ -184,7 +184,7 @@ on completion.
 **Verification:** (a) `POST /api/machines/{name}/start` starts the machine,
 (b) system-tenant `machines` document reflects the new state, (c)
 reactive subscription fires on state change, (d) error responses use the
-structured error schema from `websocket-protocol-plan.md`.
+structured error schema from `docs/plans/archive/websocket-protocol-plan.md`.
 
 **Status:** `pending`
 

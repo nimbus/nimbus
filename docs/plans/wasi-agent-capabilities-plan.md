@@ -525,7 +525,7 @@ When promoted, the agent capabilities should not be considered viable without:
 - **`v8-locker-fork-plan.md`**: no direct dependency, but the V8 backend must
   remain green. Agent capabilities are wasmtime-only; V8 functions do not gain
   agent interfaces.
-- **`raw-v8-warm-backend-plan.md`**: no dependency. Agent capabilities are
+- **`docs/plans/archive/raw-v8-warm-backend-plan.md`**: no dependency. Agent capabilities are
   delivered through WASI Component Model, not through V8.
 - **`ARCHITECTURE.md`**: update when each phase lands, documenting the agent
   capability surface and tenant admission model.

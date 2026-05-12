@@ -321,15 +321,21 @@ slice it:
   `http://localhost:3210/convex/demo` immediately; silently reuses the tenant
   on subsequent runs
 - runs one initial codegen pass unless `--skip-codegen` is set
+- accepts `--debug-node-apis` to diagnose Convex modules that import Node.js
+  builtins without `"use node"`; this mirrors Convex's debug flow and recognizes
+  both bare and `node:` builtin specifiers such as `fs` and `node:fs`
+- validates Convex Node action package imports against `node.externalPackages`;
+  explicit package names and `["*"]` are supported, while package imports that
+  would require unimplemented bundling fail before startup with install/config
+  guidance
 - starts the same local server path as `neovex start`
 
 The embedded codegen runner exists only as an experimental pilot behind
-`NEOVEX_EXPERIMENTAL_EMBEDDED_CODEGEN`. Current upstream Convex and Firebase /
-Cloud Functions stacks still support Node 20, but Neovex's verified authoring
-baseline is `Node22` and it does not yet claim a separate `Node20`
-compatibility target. Firebase / Cloud Functions package layouts still fall
-back to the external Node.js runner; the embedded pilot does not yet support
-that structure.
+`NEOVEX_EXPERIMENTAL_EMBEDDED_CODEGEN`. Convex-compatible Node action runtime
+execution supports configured Node20, Node22, and Node24 targets through
+`convex.json`, with Node22 as the default. Firebase / Cloud Functions package
+layouts still fall back to the external Node.js runner; the embedded pilot does
+not yet support that structure.
 - watches the selected `neovex/` or `convex/` source root for source changes
   and reruns codegen after a short debounce
 - validates and locally activates regenerated artifacts through the deploy
@@ -433,6 +439,9 @@ directory:
 
 - `_generated/*` files under the detected `neovex/` or `convex/` source root
 - runtime manifests and bundle files under `.neovex/convex/`
+- Convex Node external package evidence at
+  `.neovex/convex/node_external_packages.json` plus staged package roots under
+  `.neovex/convex/node_modules/` when `node.externalPackages` is used
 
 Equivalent entrypoints:
 

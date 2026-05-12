@@ -5,7 +5,7 @@ negotiation, handshake, framing, ordering, and reconnect behavior.
 
 It defines the single prelaunch WebSocket contract Neovex now supports:
 explicit `neovex.v2` negotiation plus the structured handshake/error behavior
-that `docs/plans/websocket-protocol-plan.md` established.
+that `docs/plans/archive/websocket-protocol-plan.md` established.
 
 Use [errors.md](errors.md)
 for the structured error contract that this protocol embeds.

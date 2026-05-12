@@ -17,8 +17,9 @@ use neovex_engine::SubscriptionUpdate;
 use neovex_runtime::HostCallOperation;
 use neovex_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
-    InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle, RuntimeExecutor,
-    RuntimePolicy,
+    InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle,
+    RuntimeCompatibilityTarget, RuntimeExecutor, RuntimeLimits, RuntimePolicy, RuntimeProfile,
+    RuntimeSubprocessPolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -70,12 +71,24 @@ pub struct ConvexRegistry {
     auth_verifier: Arc<auth::ConvexAuthVerifier>,
     runtime_policy: Arc<RuntimePolicy>,
     runtime_executor: Arc<RuntimeExecutor>,
+    node20_runtime_policy: Arc<RuntimePolicy>,
+    node20_runtime_executor: Arc<RuntimeExecutor>,
+    node22_runtime_policy: Arc<RuntimePolicy>,
+    node22_runtime_executor: Arc<RuntimeExecutor>,
+    node24_runtime_policy: Arc<RuntimePolicy>,
+    node24_runtime_executor: Arc<RuntimeExecutor>,
 }
 
 impl Default for ConvexRegistry {
     fn default() -> Self {
         let runtime_policy = Arc::new(RuntimePolicy::default());
         let runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy.clone()));
+        let (node20_runtime_policy, node20_runtime_executor) =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node20);
+        let (node22_runtime_policy, node22_runtime_executor) =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
+        let (node24_runtime_policy, node24_runtime_executor) =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
         Self {
             functions: HashMap::new(),
             http_routes: Vec::new(),
@@ -84,8 +97,26 @@ impl Default for ConvexRegistry {
             auth_verifier: Arc::new(auth::ConvexAuthVerifier::empty()),
             runtime_policy,
             runtime_executor,
+            node20_runtime_policy,
+            node20_runtime_executor,
+            node22_runtime_policy,
+            node22_runtime_executor,
+            node24_runtime_policy,
+            node24_runtime_executor,
         }
     }
+}
+
+fn convex_node_runtime_lane(
+    mut base_limits: RuntimeLimits,
+    target: RuntimeCompatibilityTarget,
+) -> (Arc<RuntimePolicy>, Arc<RuntimeExecutor>) {
+    base_limits.compatibility_target = target;
+    base_limits.profile = RuntimeProfile::Application;
+    base_limits.subprocess_policy = RuntimeSubprocessPolicy::Denied;
+    let policy = Arc::new(RuntimePolicy::new(base_limits));
+    let executor = Arc::new(RuntimeExecutor::new(policy.clone()));
+    (policy, executor)
 }
 
 impl ApplicationAuthVerifier for ConvexRegistry {

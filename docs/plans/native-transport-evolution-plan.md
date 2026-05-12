@@ -31,12 +31,12 @@ compatibility work.
 - **Plan status:** `proposed`
 - **Primary owner:** unassigned until activation
 - **Historical activation gate:** satisfied on `2026-04-26`:
-  `docs/plans/websocket-protocol-plan.md`,
+  `docs/plans/archive/websocket-protocol-plan.md`,
   `docs/plans/archive/firebase-adapter-plan.md`, and
   `docs/plans/archive/firebase-cloud-functions-plan.md`, and
-  `docs/plans/runtime-capability-adapter-boundary-plan.md`, and
+  `docs/plans/archive/runtime-capability-adapter-boundary-plan.md`, and
   `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`, and
-  `docs/plans/server-runtime-canonicalization-plan.md` are `done`
+  `docs/plans/archive/server-runtime-canonicalization-plan.md` are `done`
 - **Execution posture:** authoring and plan refinement may happen pre-launch;
   implementation remains deferred until this plan is explicitly activated
 
@@ -67,7 +67,7 @@ This plan captures the future architecture work so the repo can:
 - The browser SDK path in `packages/neovex/src/browser.ts`,
   `packages/neovex/src/browser-utils.ts`, and
   `packages/neovex/src/http-client.ts` is also JSON-specific today.
-- `docs/plans/websocket-protocol-plan.md` already owns subprotocol
+- `docs/plans/archive/websocket-protocol-plan.md` already owns subprotocol
   negotiation, hello or client_hello handshake, structured error schema, and
   versioned protocol negotiation. This plan must consume that groundwork
   rather than re-own it.
@@ -227,7 +227,7 @@ Completion gate:
 
 | Item | Status | Depends on | Goal |
 |------|--------|------------|------|
-| NTE1.1 Evidence refresh and codebase inventory | `pending` | activation gate | Record current JSON framing points, existing `NegotiatedWebSocketProtocol` seam, reader/writer asymmetry, session coupling, and the exact reuse boundary with `websocket-protocol-plan.md` |
+| NTE1.1 Evidence refresh and codebase inventory | `pending` | activation gate | Record current JSON framing points, existing `NegotiatedWebSocketProtocol` seam, reader/writer asymmetry, session coupling, and the exact reuse boundary with `docs/plans/archive/websocket-protocol-plan.md` |
 | NTE1.2 External transport and codec research refresh | `pending` | NTE1.1 | Refresh 2026 ecosystem evidence for WebTransport, MessagePack libraries, browser support, and Rust implementation maturity |
 | NTE1.3 Benchmark harness and payload definition | `pending` | NTE1.1 | Define the Neovex-native message corpus and benchmark method; must include JSON-with-`permessage-deflate` as a baseline alongside raw JSON and binary candidates |
 | NTE2.1 Server codec dispatch seam | `pending` | NTE1.3 | Formalize `to_text(protocol)` into a bytes-level dispatch; make `spawn_socket_reader` protocol-aware to match the writer |

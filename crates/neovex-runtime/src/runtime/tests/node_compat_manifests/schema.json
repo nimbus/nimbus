@@ -137,7 +137,7 @@
     "namedBehavior": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "phase", "selection_mode", "preview_lane_only"],
+      "required": ["id", "phase", "selection_mode"],
       "properties": {
         "id": {
           "type": "string",
@@ -150,9 +150,6 @@
         "selection_mode": {
           "type": "string",
           "enum": ["default_fixture_mapping", "implicit_fixture_flag"]
-        },
-        "preview_lane_only": {
-          "type": "boolean"
         }
       }
     },
@@ -187,23 +184,19 @@
         },
         "lane_role": {
           "type": "string",
-          "enum": ["primary", "validation", "preview"]
+          "enum": ["default", "supported"]
         },
         "public_contract_role": {
           "type": "string",
-          "enum": [
-            "primary_contract",
-            "measured_validation_lane",
-            "preview_visibility_lane"
-          ]
+          "enum": ["default_contract", "supported_contract"]
         },
         "runtime_execution_target": {
           "type": "string",
-          "enum": ["Node22"]
+          "enum": ["Node20", "Node22", "Node24"]
         },
         "runtime_limits_profile": {
           "type": "string",
-          "enum": ["application_node22"]
+          "enum": ["application_node20", "application_node22", "application_node24"]
         },
         "upstream": {
           "$ref": "#/$defs/upstreamMetadata"

@@ -67,7 +67,7 @@ pub(crate) fn create_v8_startup_snapshot(
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
         ..Default::default()
     });
-    if matches!(compatibility_target, RuntimeCompatibilityTarget::Node22) {
+    if compatibility_target.is_node() {
         let isolate = runtime.v8_isolate();
         crate::backends::v8::embedder::v8::scope!(scope, isolate);
         let template =

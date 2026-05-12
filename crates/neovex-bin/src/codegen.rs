@@ -70,6 +70,11 @@ pub(crate) enum CodegenRunner {
     EmbeddedPilot,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CodegenOptions {
+    pub(crate) debug_node_apis: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodegenExecutionContext {
     app_dir: PathBuf,
@@ -77,6 +82,7 @@ struct CodegenExecutionContext {
     embedded_package_install_dir: PathBuf,
     external_import_target: String,
     embedded_import_target: String,
+    options: CodegenOptions,
 }
 
 /// Generate _generated files and runtime bundle from neovex/ or convex/ source.
@@ -89,26 +95,53 @@ pub(crate) struct CodegenCommand {
     /// App directory containing a neovex/ or convex/ source root.
     #[arg(long, default_value = ".")]
     pub(crate) app: PathBuf,
+
+    /// Diagnose Node.js builtin imports that should move behind "use node".
+    #[arg(long, default_value_t = false)]
+    pub(crate) debug_node_apis: bool,
 }
 
 pub(crate) async fn run_codegen_command(
     command: CodegenCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    run_codegen_for_app_dir(&command.app).await
+    run_codegen_for_app_dir_with_options(
+        &command.app,
+        CodegenOptions {
+            debug_node_apis: command.debug_node_apis,
+        },
+    )
+    .await
 }
 
 pub(crate) async fn run_codegen_for_app_dir(
     app_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let runner = resolve_codegen_runner()?;
-    run_codegen_for_app_dir_with_runner(app_dir, runner).await
+    run_codegen_for_app_dir_with_options(app_dir, CodegenOptions::default()).await
 }
 
+pub(crate) async fn run_codegen_for_app_dir_with_options(
+    app_dir: &Path,
+    options: CodegenOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let runner = resolve_codegen_runner()?;
+    run_codegen_for_app_dir_with_runner_and_options(app_dir, runner, options).await
+}
+
+#[cfg(test)]
 pub(crate) async fn run_codegen_for_app_dir_with_runner(
     app_dir: &Path,
     runner: CodegenRunner,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let context = resolve_codegen_execution_context(app_dir)?;
+    run_codegen_for_app_dir_with_runner_and_options(app_dir, runner, CodegenOptions::default())
+        .await
+}
+
+pub(crate) async fn run_codegen_for_app_dir_with_runner_and_options(
+    app_dir: &Path,
+    runner: CodegenRunner,
+    options: CodegenOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = resolve_codegen_execution_context(app_dir, options)?;
     match runner {
         CodegenRunner::ExternalNode => run_external_codegen_for_app_dir(&context).await,
         CodegenRunner::EmbeddedPilot => run_embedded_codegen_for_app_dir(&context).await,
@@ -147,7 +180,10 @@ fn canonicalize_app_dir(app_dir: &Path) -> io::Result<PathBuf> {
     })
 }
 
-fn resolve_codegen_execution_context(app_dir: &Path) -> io::Result<CodegenExecutionContext> {
+fn resolve_codegen_execution_context(
+    app_dir: &Path,
+    options: CodegenOptions,
+) -> io::Result<CodegenExecutionContext> {
     let app_dir = canonicalize_app_dir(app_dir)?;
     let package_install_dirs = node::firebase_functions_project(&app_dir)?
         .map(|project| project.source_dirs())
@@ -165,6 +201,7 @@ fn resolve_codegen_execution_context(app_dir: &Path) -> io::Result<CodegenExecut
         embedded_package_install_dir,
         external_import_target,
         embedded_import_target,
+        options,
     })
 }
 
@@ -178,6 +215,9 @@ fn build_codegen_process(context: &CodegenExecutionContext) -> Command {
     command.arg(&context.external_import_target);
     command.arg("--app");
     command.arg(".");
+    if context.options.debug_node_apis {
+        command.arg("--debug-node-apis");
+    }
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
@@ -245,7 +285,7 @@ async fn run_embedded_codegen_for_app_dir(
         function_name: "__neovex_internal:codegen".to_string(),
         args: serde_json::json!({
             "codegenSpecifier": context.embedded_import_target.clone(),
-            "cliArgs": ["--app", "."],
+            "cliArgs": embedded_codegen_cli_args(context),
         }),
         page_size: None,
         cursor: None,
@@ -275,6 +315,14 @@ async fn run_embedded_codegen_for_app_dir(
         result
     ))
     .into())
+}
+
+fn embedded_codegen_cli_args(context: &CodegenExecutionContext) -> Vec<&'static str> {
+    let mut args = vec!["--app", "."];
+    if context.options.debug_node_apis {
+        args.push("--debug-node-apis");
+    }
+    args
 }
 
 fn ensure_embedded_codegen_package_available(package_install_dir: &Path) -> io::Result<()> {

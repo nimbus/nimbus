@@ -106,22 +106,22 @@ Integrated ownership result:
     `runtime::tests::node_compat::node22_process_finalization_watchpoint`
 ## Node24 Preview Divergences
 
-- Status: `future preview only; not a support claim`
-- Latest explicit preview run:
+- Status: `supported-lane watchpoint; not a green support claim`
+- Latest explicit supported-lane watchpoint run:
   - `45` passed
   - `3` failed
-- Current preview-only failures:
+- Current supported-lane failures:
   - `test/parallel/test-process-features.js`
-    - classification: `preview_lane_divergence`
+    - classification: `supported_lane_divergence`
     - reason: Neovex still carries the current Node22-shaped
       `process.features` contract and does not yet expose
       `openssl_is_boringssl`
   - `test/parallel/test-util-deprecate.js`
-    - classification: `preview_lane_divergence`
+    - classification: `supported_lane_divergence`
     - reason: the embedded `internalUtil.pendingDeprecate()` surface required
       by the Node24 file is not yet implemented
   - `test/parallel/test-util-format.js`
-    - classification: `preview_lane_divergence`
+    - classification: `supported_lane_divergence`
     - reason: SharedArrayBuffer inspect output still prints `byteLength`
       instead of Node24's `[byteLength]` formatting
 
@@ -132,7 +132,7 @@ official files for the family now break down into three honest buckets:
 
 - the green Node22 manifested subset (`48 / 48`)
 - the green Node20 manifested validation subset (`46 / 46`)
-- explicit non-green items that are already classified as either:
+- explicit red/skip items that are already classified as either:
   - `validation_lane_divergence`
   - `later_family_dependency`
 
@@ -141,8 +141,8 @@ to `NLC5`.
 
 ## Current Local Evidence
 
-- `runtime::tests::node_compat::node22_primary_lane_executes_manifested_process_and_timing_subset`
-- `runtime::tests::node_compat::node20_validation_lane_executes_official_process_and_timing_subset`
+- `runtime::tests::node_compat::node22_default_lane_executes_manifested_process_and_timing_subset`
+- `runtime::tests::node_compat::node20_supported_lane_executes_official_process_and_timing_subset`
 - `runtime::tests::node_compat::node20_process_features_watchpoint`
 - `docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md`
 

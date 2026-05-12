@@ -71,6 +71,60 @@ startup unless `--skip-codegen` is set, but this is intentionally not a
 replacement for Convex's watched `dev` loop. After the server starts, Neovex
 does not watch source files or regenerate artifacts on later edits.
 
+## Node Runtime Configuration
+
+Neovex mirrors Convex's Node runtime selection shape for action modules:
+
+```ts
+"use node";
+
+import fs from "node:fs";
+import { action } from "./_generated/server";
+
+export const read = action({
+  args: {},
+  handler: async () => fs.readFileSync("README.md", "utf8"),
+});
+```
+
+Only actions may live in a `"use node"` file. Queries and mutations stay in the
+default runtime and should move to a separate module if they share a file with
+Node-specific code.
+
+Project-level Node action version selection is read from `convex.json`:
+
+```json
+{
+  "node": {
+    "nodeVersion": "22"
+  }
+}
+```
+
+Supported values are `"20"`, `"22"`, and `"24"`. Neovex defaults to `"22"`
+until a deliberate Node24-default migration. Node builtin imports are accepted
+in both bare and `node:` forms, so `fs` and `node:fs` resolve to the same
+runtime family. Use `neovex dev --once --debug-node-apis` or
+`neovex codegen --app . --debug-node-apis` to diagnose default-runtime modules
+that import Node builtins without `"use node"`.
+
+`node.externalPackages` supports explicit package specifiers and Convex-style
+`["*"]` for packages imported by `"use node"` action modules. Codegen validates
+that each externalized package resolves from local `node_modules`, stages the
+resolved package roots under `.neovex/convex/node_modules/`, materializes static
+package imports into generated runtime bindings, and emits
+`.neovex/convex/node_external_packages.json` with package roots, staged roots,
+importers, size evidence, and Convex cloud limit references. Neovex records
+those external-package limits but does not enforce the same zipped/unzipped
+thresholds yet. Full Convex cloud-style dependency installation and
+dependency-closure packaging are still narrower than Convex's cloud bundler, so
+unexternalized npm package imports fail with a precise diagnostic instead of
+being treated as silently bundled.
+
+For the product-facing Node.js runtime guide, including selectable versions,
+specifier rules, package staging, compatibility evidence, and current limits,
+see `docs/runtimes/nodejs/`.
+
 ## Supported Areas
 
 - generated refs for the supported declarative subset
@@ -84,6 +138,11 @@ does not watch source files or regenerate artifacts on later edits.
 - compiled `httpAction` routes through `httpRouter`
 - generated and runtime-backed `ctx.runQuery(...)`, `ctx.runMutation(...)`, and
   `ctx.runAction(...)` composition
+- Convex-compatible `"use node"` action modules with `convex.json`
+  `node.nodeVersion` values `"20"`, `"22"`, and `"24"`
+- Convex-compatible Node action `node.externalPackages` explicit and `["*"]`
+  configuration backed by local package validation, generated staging, runtime
+  bindings, and package evidence metadata
 - scheduled Convex mutation execution through `runAfter` and `runAt`
 - live query subscriptions over the Convex WebSocket transport
 - runtime-backed dependency tracking that is narrower than plain table-level

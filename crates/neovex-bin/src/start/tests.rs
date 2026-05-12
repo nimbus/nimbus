@@ -397,12 +397,20 @@ fn start_compose_selection_prefers_explicit_flag_over_auto_discovery() {
 fn cli_parses_codegen_command_with_default_app_dir() {
     let cli = parse_codegen(["neovex", "codegen"]);
     assert_eq!(cli.app, PathBuf::from("."));
+    assert!(!cli.debug_node_apis);
 }
 
 #[test]
 fn cli_parses_codegen_command_with_explicit_app_dir() {
-    let cli = parse_codegen(["neovex", "codegen", "--app", "./demos/convex/html"]);
+    let cli = parse_codegen([
+        "neovex",
+        "codegen",
+        "--app",
+        "./demos/convex/html",
+        "--debug-node-apis",
+    ]);
     assert_eq!(cli.app, PathBuf::from("./demos/convex/html"));
+    assert!(cli.debug_node_apis);
 }
 
 #[test]

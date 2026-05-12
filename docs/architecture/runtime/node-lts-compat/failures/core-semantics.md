@@ -193,10 +193,10 @@ later-family/internal buckets called out below.
 
 - `runtime::tests::basic_invocation::node22_target_supports_core_semantics_builtins_and_subpaths`
 - `runtime::tests::basic_invocation::application_node22_commonjs_package_can_require_core_semantics_builtins`
-- `runtime::tests::node_compat::node20_validation_lane_executes_official_core_semantics_subset`
-- `runtime::tests::node_compat::node22_primary_lane_executes_manifested_core_semantics_subset`
-- `runtime::tests::node_compat::node24_preview_lane_executes_manifested_core_semantics_subset` *(ignored by default; explicit preview lane only, not a support claim; currently aborts early through a `rusty_v8` weak-handle panic near `test-buffer-alloc.js`)*
-- `docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md` (canonical family/count summary for the 120-file Node22 green batch, the paired 116-file official Node20 validation subset, the 122-file staged Node24 preview subset, and the watchpoint-backed remainder)
+- `runtime::tests::node_compat::node20_supported_lane_executes_official_core_semantics_subset`
+- `runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset`
+- `runtime::tests::node_compat::node24_supported_lane_executes_manifested_core_semantics_subset` *(ignored by default; explicit supported-lane watchpoint, not a support claim; currently aborts early through a `rusty_v8` weak-handle panic near `test-buffer-alloc.js`)*
+- `docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md` (canonical family/count summary for the 120-file Node22 green batch, the paired 116-file official Node20 supported subset, the 122-file staged Node24 supported subset, and the watchpoint-backed remainder)
 - `runtime::tests::node_compat::node20_assert_deep_watchpoint`
 - `runtime::tests::node_compat::node22_assert_deep_watchpoint`
 - `runtime::tests::node_compat::node22_assert_partial_deep_equal_watchpoint`
@@ -277,8 +277,8 @@ Package/framework canary note:
   per fixture.
 - The same runner now also executes a narrowed follow-on buffer batch with
   `test-buffer-compare-offset.js` and `test-buffer-fakes.js` green across the
-  live Node22 lane, the official Node20 validation lane, and the ignored
-  Node24 preview lane.
+  live Node22 lane, the official Node20 supported lane, and the ignored
+  Node24 supported lane.
 - The same runner now also proves a deeper shared runtime gap instead of just a
   missing global: explicitly exposing `structuredClone` in the embedded Node22
   bootstrap fixed the `ReferenceError` shape, but

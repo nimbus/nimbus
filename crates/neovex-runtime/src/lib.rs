@@ -34,7 +34,7 @@ pub use host::{
 pub use limits::{
     RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeLimits,
     RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimeProfile,
-    RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeSubprocessPolicy,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

@@ -4,7 +4,7 @@ Current upstream Node test-slice manifest for `NLC6`.
 
 This file records the currently counted green denominator and staged upstream
 corpus for the family. Requirements, closeout gates, and roadmap decisions
-belong in `docs/plans/node-lts-compatibility-plan.md`.
+belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
 Source corpus:
 
@@ -12,9 +12,9 @@ Source corpus:
   `~/src/github.com/agentstation/deno @ v2.7.14-locker.37 (b748ccc7f66b89dd5a1048e4dcfd152e35bd9682)`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
-- pinned official Node20 validation corpus:
+- pinned official Node20 supported corpus:
   `nodejs/node @ v20.20.2`
-- staged future Node24 preview corpus:
+- staged future Node24 supported corpus:
   `nodejs/node @ v24.15.0`
 
 The first `NLC6` slice follows the same fast pattern that worked for `NLC5`:
@@ -40,7 +40,7 @@ The first-pass official candidate corpus from the canonical local
 
 - Node22: `1243` files
 - Node20: `1230` files
-- Node24 preview: `1342` files
+- Node24 supported: `1342` files
 
 These are intentionally broad candidate counts, not the future green
 denominator. The first manifested batch is much smaller on purpose: prove the
@@ -50,19 +50,19 @@ servers, requests, sockets, and the heavier `tls` / `http2` families.
 ## Current Manifested Official Subset
 
 The manifested `NLC6` batch is now live in
-[`NETWORKING_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node_compat.rs).
+[`NETWORKING_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
 
-- Node22 primary lane: `270` official files
-- Node20 validation lane: `265` official files
-- Node24 preview lane: `268` staged official files
-  - current explicit preview run: `268` passed, `0` failed
+- Node22 default lane: `270` official files
+- Node20 supported lane: `265` official files
+- Node24 supported lane: `268` staged official files
+  - current explicit supported-lane watchpoint run: `268` passed, `0` failed
 
 ## Package Canary Evidence
 
 Pinned package canaries for the `NLC6` networking family now live under
-[`tests/node-compat/networking-canaries/`](../../../../tests/node-compat/networking-canaries/).
+[`tests/runtime/node/networking-canaries/`](../../../../tests/runtime/node/networking-canaries/).
 
 Current checked-in package set:
 
@@ -75,16 +75,16 @@ Current checked-in package set:
 
 Current package-canary lane mapping:
 
-- Node22 primary `Application` lane:
+- Node22 default `Application` lane:
   `express`, `fastify`, `socket.io`, `undici`, `axios`
-- Node20 validation `Application` lane:
+- Node20 supported `Application` lane:
   `express`, `fastify`
 
 Current measured canary result:
 
 - `runtime::tests::basic_invocation::application_node22_networking_package_canary_batch`
   is green
-- `runtime::tests::basic_invocation::application_node20_networking_validation_canary_batch`
+- `runtime::tests::basic_invocation::application_node20_networking_supported_canary_batch`
   is green
 
 Current manifested slice coverage:
@@ -499,5 +499,5 @@ enforcement, response-splitting stripping, custom `Http2ServerRequest` /
 multiheader / raw-header ordering all now pass in-family. The remaining
 explicit watchpoints in this family are now the legacy TLSv1.1 boundary, the
 cross-family `process.report` / embedded-exit dependency, the host/profile
-and `dgram` boundary batches, the Node20 validation divergences, and the
+and `dgram` boundary batches, the Node20 supported divergences, and the
 Node24-only `test-stream-pipeline.js` drift.
