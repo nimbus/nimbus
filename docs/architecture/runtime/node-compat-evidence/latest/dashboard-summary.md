@@ -20,9 +20,9 @@
 
 ## Fixture Inventory
 
-| Lane | Upstream | Vendored | Documented green | Classified non-green | Documented/classified | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node22` | `v22.15.0` | 1283 | 994 | 289 | 1283 | 0 | 901 | 382 | 93 | 2 |
+| Lane | Upstream | Vendored | Documented green | Classified non-green | Documented/classified | Status unclassified | Rust-referenced | Rust-unreferenced classified | Rust-unreferenced unclassified | Reconstructability gap | Warnings |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `node22` | `v22.15.0` | 1283 | 994 | 289 | 1283 | 0 | 901 | 286 | 96 | 93 | 3 |
 
 ## Slice Reports
 

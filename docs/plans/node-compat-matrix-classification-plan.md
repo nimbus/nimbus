@@ -127,3 +127,9 @@ Node22 vendored `test-*` file as one of:
   unmanifested/unclassified vendored files. The separate inventory report still
   exposes the `93`-file documented-green reconstructability gap, so NCM2 remains
   active.
+- `2026-05-12`: Hardened NCM2 evidence after the status closeout. The inventory
+  now separates denominator status from path reconstructability: Node22 reports
+  `1283 / 1283` documented-or-classified status coverage, while the path audit
+  still exposes `286` Rust-unreferenced classified non-green files, `96`
+  Rust-unreferenced unclassified files, `3` classified non-green files that are
+  Rust-referenced, and the `93` documented-green reconstructability gap.

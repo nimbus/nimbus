@@ -2380,6 +2380,9 @@
         "documented_unmanifested_or_unclassified_count": 0,
         "rust_referenced_test_file_count": 901,
         "rust_unreferenced_test_file_count": 382,
+        "rust_unreferenced_classified_non_green_count": 286,
+        "rust_unreferenced_unclassified_count": 96,
+        "classified_non_green_not_rust_unreferenced_count": 3,
         "documented_green_reconstructability_gap_count": 93
       },
       "warnings": [
@@ -2391,10 +2394,16 @@
           "action": "move documented-green fixture membership into manifest-owned or generated inventory before treating the per-file green list as complete"
         },
         {
+          "kind": "rust_unreferenced_unclassified_count_differs_from_documented_green_reconstructability_gap",
+          "rust_unreferenced_unclassified_count": 96,
+          "documented_green_reconstructability_gap_count": 93,
+          "reason": "the Rust-reference audit is path-based while the documented green count is still prose/count-based"
+        },
+        {
           "kind": "rust_unreferenced_count_differs_from_status_unclassified_count",
-          "rust_unreferenced_test_file_count": 382,
+          "rust_unreferenced_unclassified_count": 96,
           "status_unmanifested_or_unclassified_count": 0,
-          "reason": "the current status denominator is count-based from family docs, while this inventory is path-based from the Rust harness literals"
+          "reason": "status is denominator-based and may be fully classified while the Rust-reference inventory still has a documented-green reconstructability gap"
         }
       ]
     }

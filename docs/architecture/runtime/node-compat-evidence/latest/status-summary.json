@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-12T00:59:31.410862+00:00",
+  "generated_at": "2026-05-12T01:03:02.236934+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested green subset plus explicit lane classification catalogs. Classified non-green entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.",
   "lane_count": 3,

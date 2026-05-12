@@ -134,6 +134,15 @@ def build_inventory(lane: str) -> dict[str, Any]:
     documented_green = status["documented_manifested_green_count"]
     classified_non_green = status["classified_non_green_count"]
     documented_unclassified = status["unmanifested_or_unclassified_count"]
+    classified_paths = {
+        entry["test_path"]
+        for entry in status["classification_catalog"]["entries"]
+        if isinstance(entry.get("test_path"), str)
+    }
+    unreferenced_test_set = set(unreferenced_tests)
+    rust_unreferenced_classified = sorted(unreferenced_test_set & classified_paths)
+    rust_unreferenced_unclassified = sorted(unreferenced_test_set - classified_paths)
+    classified_not_rust_unreferenced = sorted(classified_paths - unreferenced_test_set)
     reconstructability_gap = max(0, documented_green - len(rust_referenced_tests))
 
     warnings: list[dict[str, Any]] = []
@@ -147,13 +156,26 @@ def build_inventory(lane: str) -> dict[str, Any]:
                 "action": "move documented-green fixture membership into manifest-owned or generated inventory before treating the per-file green list as complete",
             }
         )
-    if len(unreferenced_tests) != documented_unclassified:
+    if len(rust_unreferenced_unclassified) != reconstructability_gap:
+        warnings.append(
+            {
+                "kind": "rust_unreferenced_unclassified_count_differs_from_documented_green_reconstructability_gap",
+                "rust_unreferenced_unclassified_count": len(
+                    rust_unreferenced_unclassified
+                ),
+                "documented_green_reconstructability_gap_count": reconstructability_gap,
+                "reason": "the Rust-reference audit is path-based while the documented green count is still prose/count-based",
+            }
+        )
+    if len(rust_unreferenced_unclassified) != documented_unclassified:
         warnings.append(
             {
                 "kind": "rust_unreferenced_count_differs_from_status_unclassified_count",
-                "rust_unreferenced_test_file_count": len(unreferenced_tests),
+                "rust_unreferenced_unclassified_count": len(
+                    rust_unreferenced_unclassified
+                ),
                 "status_unmanifested_or_unclassified_count": documented_unclassified,
-                "reason": "the current status denominator is count-based from family docs, while this inventory is path-based from the Rust harness literals",
+                "reason": "status is denominator-based and may be fully classified while the Rust-reference inventory still has a documented-green reconstructability gap",
             }
         )
 
@@ -172,6 +194,13 @@ def build_inventory(lane: str) -> dict[str, Any]:
             "documented_unmanifested_or_unclassified_count": documented_unclassified,
             "rust_referenced_test_file_count": len(rust_referenced_tests),
             "rust_unreferenced_test_file_count": len(unreferenced_tests),
+            "rust_unreferenced_classified_non_green_count": len(
+                rust_unreferenced_classified
+            ),
+            "rust_unreferenced_unclassified_count": len(rust_unreferenced_unclassified),
+            "classified_non_green_not_rust_unreferenced_count": len(
+                classified_not_rust_unreferenced
+            ),
             "documented_green_reconstructability_gap_count": reconstructability_gap,
         },
         "contracts": [
@@ -181,10 +210,14 @@ def build_inventory(lane: str) -> dict[str, Any]:
             "unreferenced_tests is an actionable candidate list, not a failure list and not a support claim",
         ],
         "unreferenced_by_directory": summarize_groups(
-            unreferenced_tests, mode="directory"
+            rust_unreferenced_unclassified, mode="directory"
         ),
-        "unreferenced_by_prefix": summarize_groups(unreferenced_tests, mode="prefix"),
-        "unreferenced_tests": unreferenced_tests,
+        "unreferenced_by_prefix": summarize_groups(
+            rust_unreferenced_unclassified, mode="prefix"
+        ),
+        "unreferenced_tests": rust_unreferenced_unclassified,
+        "rust_unreferenced_classified_non_green_tests": rust_unreferenced_classified,
+        "classified_non_green_not_rust_unreferenced_tests": classified_not_rust_unreferenced,
         "warnings": warnings,
     }
 
@@ -215,6 +248,9 @@ def build_markdown(inventory: dict[str, Any]) -> str:
         f"| Documented green ratio | {ratio:.1f}% |",
         f"| Rust-referenced fixture paths | {counts['rust_referenced_test_file_count']} |",
         f"| Rust-unreferenced fixture paths | {counts['rust_unreferenced_test_file_count']} |",
+        f"| Rust-unreferenced classified non-green | {counts['rust_unreferenced_classified_non_green_count']} |",
+        f"| Rust-unreferenced unclassified | {counts['rust_unreferenced_unclassified_count']} |",
+        f"| Classified non-green not Rust-unreferenced | {counts['classified_non_green_not_rust_unreferenced_count']} |",
         f"| Documented-green reconstructability gap | {counts['documented_green_reconstructability_gap_count']} |",
         "",
         "## Largest Unreferenced Directories",

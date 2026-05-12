@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node compatibility evidence outputs.
 
-- evidence_generated_at: `2026-05-12T00:59:31.410862+00:00`
+- evidence_generated_at: `2026-05-12T01:03:02.236934+00:00`
 - publish_root: `docs/architecture/runtime/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
