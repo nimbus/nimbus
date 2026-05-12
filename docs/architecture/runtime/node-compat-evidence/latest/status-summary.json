@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-12T00:45:54.342687+00:00",
+  "generated_at": "2026-05-12T00:47:33.870690+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested green subset plus explicit lane classification catalogs. Classified non-green entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.",
   "lane_count": 3,
@@ -74,20 +74,21 @@
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 1283,
       "documented_manifested_green_count": 994,
-      "classified_non_green_count": 20,
-      "unmanifested_or_unclassified_count": 269,
+      "classified_non_green_count": 26,
+      "unmanifested_or_unclassified_count": 263,
       "documented_manifested_green_ratio": 0.774747,
       "classification_catalog": {
         "catalog_path": "tests/node-compat/classifications/node22.json",
         "catalog_present": true,
-        "classified_non_green_count": 20,
+        "classified_non_green_count": 26,
         "by_expectation": {
-          "expected_gap": 13,
+          "expected_gap": 19,
           "expected_skip": 7
         },
         "by_classification": {
           "requires_host_process_abort_harness": 1,
           "requires_native_addon_non_node_context_harness": 1,
+          "requires_native_async_resource_accounting": 6,
           "requires_pseudo_tty_host_harness": 11,
           "support_fixture_not_top_level_test": 3,
           "vendored_non_official_placeholder": 4
@@ -233,6 +234,48 @@
             "classification": "requires_native_addon_non_node_context_harness",
             "owner": "loader-context/native-addon-host",
             "reason": "This official addon fixture depends on native addon loading in a non-Node context. The current embedded runtime lane does not own native-addon host execution, so it is classified as a loader/native-addon gap rather than an unknown."
+          },
+          {
+            "test_path": "test/async-hooks/test-fseventwrap.js",
+            "expectation": "expected_gap",
+            "classification": "requires_native_async_resource_accounting",
+            "owner": "loader-context/async-hooks",
+            "reason": "This official async-hooks fixture asserts native async resource provider accounting. The current embedded Node22 lane does not yet own FSEVENTWRAP-level provider fidelity, so it is classified as an async-hooks resource-accounting gap."
+          },
+          {
+            "test_path": "test/async-hooks/test-fsreqcallback-access.js",
+            "expectation": "expected_gap",
+            "classification": "requires_native_async_resource_accounting",
+            "owner": "loader-context/async-hooks",
+            "reason": "This official async-hooks fixture asserts native FSREQCALLBACK provider accounting. The current embedded Node22 lane does not yet own filesystem async resource provider fidelity, so it is classified as an async-hooks resource-accounting gap."
+          },
+          {
+            "test_path": "test/async-hooks/test-fsreqcallback-readFile.js",
+            "expectation": "expected_gap",
+            "classification": "requires_native_async_resource_accounting",
+            "owner": "loader-context/async-hooks",
+            "reason": "This official async-hooks fixture asserts native FSREQCALLBACK provider accounting. The current embedded Node22 lane does not yet own filesystem async resource provider fidelity, so it is classified as an async-hooks resource-accounting gap."
+          },
+          {
+            "test_path": "test/async-hooks/test-timers.setInterval.js",
+            "expectation": "expected_gap",
+            "classification": "requires_native_async_resource_accounting",
+            "owner": "loader-context/async-hooks",
+            "reason": "This official async-hooks fixture asserts timer async resource provider accounting. The current embedded Node22 lane does not yet own provider-level timer resource fidelity, so it is classified as an async-hooks resource-accounting gap."
+          },
+          {
+            "test_path": "test/async-hooks/test-timers.setTimeout.js",
+            "expectation": "expected_gap",
+            "classification": "requires_native_async_resource_accounting",
+            "owner": "loader-context/async-hooks",
+            "reason": "This official async-hooks fixture asserts timer async resource provider accounting. The current embedded Node22 lane does not yet own provider-level timer resource fidelity, so it is classified as an async-hooks resource-accounting gap."
+          },
+          {
+            "test_path": "test/async-hooks/test-ttywrap.readstream.js",
+            "expectation": "expected_gap",
+            "classification": "requires_native_async_resource_accounting",
+            "owner": "loader-context/async-hooks",
+            "reason": "This official async-hooks fixture asserts native TTYWRAP provider accounting. The current embedded Node22 lane does not yet own TTY provider-level async resource fidelity, so it is classified as an async-hooks resource-accounting gap."
           }
         ]
       }

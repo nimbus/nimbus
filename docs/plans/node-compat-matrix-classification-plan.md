@@ -95,3 +95,8 @@ Node22 vendored `test-*` file as one of:
   process-abort host gap, and the non-Node-context addon timerify fixture as a
   native-addon host gap. Node22 now reports `994` documented green, `20`
   classified non-green, and `269` unmanifested/unclassified vendored files.
+- `2026-05-12`: Continued NCM4 with the `test/async-hooks` directory slice.
+  Classified six provider-accounting fixtures for FSEVENTWRAP, FSREQCALLBACK,
+  timers, and TTYWRAP as async-hooks native resource-accounting gaps. Node22
+  now reports `994` documented green, `26` classified non-green, and `263`
+  unmanifested/unclassified vendored files.
