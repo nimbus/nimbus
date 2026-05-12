@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use deno_permissions::{
@@ -15,7 +15,9 @@ use serde::Serialize;
 use sys_traits::impls::RealSys;
 
 use crate::error::{NeovexRuntimeError, Result};
-use crate::limits::{RuntimeLimits, RuntimeProfile};
+use crate::limits::{
+    RuntimeCompatibilityTarget, RuntimeLimits, RuntimeProfile, RuntimeSubprocessPolicy,
+};
 use crate::runtime::RuntimeBundle;
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +47,28 @@ pub(crate) struct RuntimeEnvPolicy {
     allowed_names: BTreeSet<String>,
 }
 
+fn runtime_self_exec_target(generated_root: &Path) -> Result<PathBuf> {
+    let current_exec = std::env::current_exe().map_err(|error| {
+        NeovexRuntimeError::Contract(format!(
+            "failed to resolve runtime self exec target: {error}"
+        ))
+    })?;
+    let exec_name = current_exec.file_name().ok_or_else(|| {
+        NeovexRuntimeError::Contract("runtime self exec target should have a file name".to_string())
+    })?;
+    canonicalize_preserving_missing_suffix(&generated_root.join("bin").join(exec_name))
+        .map_err(NeovexRuntimeError::Io)
+}
+
+fn runtime_host_exec_target() -> Result<PathBuf> {
+    let current_exec = std::env::current_exe().map_err(|error| {
+        NeovexRuntimeError::Contract(format!(
+            "failed to resolve runtime host exec target: {error}"
+        ))
+    })?;
+    canonicalize_preserving_missing_suffix(&current_exec).map_err(NeovexRuntimeError::Io)
+}
+
 #[derive(Debug)]
 struct RuntimePermissionDescriptorParser {
     cwd: PathBuf,
@@ -70,7 +94,7 @@ impl RuntimePathPolicy {
             RuntimeProfile::Application => (
                 generated_root.clone(),
                 vec![generated_root.clone()],
-                Vec::new(),
+                vec![generated_root.clone()],
                 vec![generated_root.clone()],
             ),
             RuntimeProfile::Tooling => (
@@ -90,10 +114,30 @@ impl RuntimePathPolicy {
             ),
         };
 
-        let run_targets = match limits.profile {
-            RuntimeProfile::Application => Vec::new(),
-            RuntimeProfile::Tooling => {
-                discover_tooling_run_targets(&app_root, &generated_root, &cache_root)?
+        let run_targets = match limits.subprocess_policy {
+            RuntimeSubprocessPolicy::Denied => Vec::new(),
+            RuntimeSubprocessPolicy::RuntimeSelfExecOnly => {
+                vec![runtime_self_exec_target(&generated_root)?]
+            }
+            RuntimeSubprocessPolicy::ToolingDiscovered => {
+                let self_exec_target = runtime_self_exec_target(&generated_root)?;
+                let host_exec_target = runtime_host_exec_target()?;
+                let mut run_targets =
+                    discover_tooling_run_targets(&app_root, &generated_root, &cache_root)?;
+                if run_targets
+                    .iter()
+                    .all(|existing| existing != &self_exec_target)
+                {
+                    run_targets.push(self_exec_target);
+                }
+                if run_targets
+                    .iter()
+                    .all(|existing| existing != &host_exec_target)
+                {
+                    run_targets.push(host_exec_target);
+                }
+                run_targets.sort();
+                run_targets
             }
         };
 
@@ -146,10 +190,39 @@ impl RuntimePathPolicy {
         Ok(canonical)
     }
 
+    pub(crate) fn ensure_read_path_lexical(&self, path: &Path) -> Result<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        };
+        let normalized = normalize_absolute_path_lexically(&absolute);
+        self.ensure_within_roots(&normalized, &self.read_roots, "read")?;
+        Ok(normalized)
+    }
+
+    pub(crate) fn ensure_read_metadata_path(&self, path: &Path) -> Result<PathBuf> {
+        self.ensure_read_path_lexical(path)
+    }
+
     pub(crate) fn ensure_write_path(&self, path: &Path) -> Result<PathBuf> {
         let canonical = canonicalize_preserving_missing_suffix_from_base(path, &self.cwd)?;
         self.ensure_within_roots(&canonical, &self.write_roots, "write")?;
         Ok(canonical)
+    }
+
+    pub(crate) fn ensure_symlink_target_path(
+        &self,
+        target: &Path,
+        link_path: &Path,
+    ) -> Result<PathBuf> {
+        let link_canonical =
+            canonicalize_preserving_missing_suffix_from_base(link_path, &self.cwd)?;
+        let link_parent = link_canonical.parent().unwrap_or(self.cwd.as_path());
+        let resolved_target =
+            canonicalize_preserving_missing_suffix_from_base(target, link_parent)?;
+        self.ensure_within_roots(&resolved_target, &self.read_roots, "read")?;
+        Ok(target.to_path_buf())
     }
 
     fn ensure_within_roots(&self, candidate: &Path, roots: &[PathBuf], access: &str) -> Result<()> {
@@ -176,13 +249,17 @@ impl RuntimePathPolicy {
 impl RuntimeEnvPolicy {
     pub(crate) fn for_profile(profile: RuntimeProfile) -> Self {
         let allowed_names = match profile {
-            RuntimeProfile::Application => BTreeSet::new(),
+            RuntimeProfile::Application => ["NODE_TLS_REJECT_UNAUTHORIZED"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             RuntimeProfile::Tooling => [
                 "ESBUILD_BINARY_PATH",
                 "ESBUILD_MAX_BUFFER",
                 "ESBUILD_WORKER_THREADS",
                 "HOME",
                 "NODE_ENV",
+                "NODE_TLS_REJECT_UNAUTHORIZED",
                 "NODE_INSPECTOR_IPC",
                 "NODE_V8_COVERAGE",
                 "PATH",
@@ -421,13 +498,14 @@ impl PermissionDescriptorParser for RuntimePermissionDescriptorParser {
 pub(crate) fn build_permissions_container(
     paths: &RuntimePathPolicy,
     env: &RuntimeEnvPolicy,
+    limits: &RuntimeLimits,
 ) -> Result<PermissionsContainer> {
     let parser = Arc::new(RuntimePermissionDescriptorParser::new(paths.cwd.clone()));
     let options = PermissionsOptions {
         allow_env: (!env.allowed_names.is_empty()).then(|| env.allowed_names()),
         deny_env: None,
         ignore_env: None,
-        allow_net: None,
+        allow_net: allowed_net_descriptors(limits),
         deny_net: None,
         allow_ffi: None,
         deny_ffi: None,
@@ -440,7 +518,21 @@ pub(crate) fn build_permissions_container(
         }),
         deny_read: None,
         ignore_read: None,
-        allow_sys: None,
+        allow_sys: Some({
+            let mut sys = vec![
+                "hostname".to_string(),
+                "gid".to_string(),
+                "statfs".to_string(),
+                "uid".to_string(),
+            ];
+            if matches!(
+                limits.compatibility_target,
+                RuntimeCompatibilityTarget::Node22
+            ) {
+                sys.push("inspector".to_string());
+            }
+            sys
+        }),
         deny_sys: None,
         allow_write: (!paths.write_roots().is_empty()).then(|| {
             paths
@@ -468,6 +560,18 @@ pub(crate) fn build_permissions_container(
         ))
     })?;
     Ok(PermissionsContainer::new(parser, permissions))
+}
+
+fn allowed_net_descriptors(limits: &RuntimeLimits) -> Option<Vec<String>> {
+    match limits.compatibility_target {
+        RuntimeCompatibilityTarget::Node22 => Some(
+            ["127.0.0.1", "localhost", "0.0.0.0", "[::1]", "[::]"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        ),
+        RuntimeCompatibilityTarget::WebStandardIsolate => None,
+    }
 }
 
 fn infer_app_and_neovex_roots(generated_root: &Path) -> (PathBuf, PathBuf) {
@@ -601,6 +705,43 @@ fn canonicalize_preserving_missing_suffix(path: &Path) -> std::io::Result<PathBu
     canonicalize_preserving_missing_suffix_from_base(path, &std::env::current_dir()?)
 }
 
+fn normalize_absolute_path_lexically(path: &Path) -> PathBuf {
+    let mut prefix = None::<OsString>;
+    let mut has_root = false;
+    let mut parts = Vec::<OsString>::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(value) => {
+                prefix = Some(value.as_os_str().to_os_string());
+            }
+            Component::RootDir => {
+                has_root = true;
+                parts.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !parts.is_empty() {
+                    parts.pop();
+                }
+            }
+            Component::Normal(part) => parts.push(part.to_os_string()),
+        }
+    }
+
+    let mut normalized = PathBuf::new();
+    if let Some(prefix) = prefix {
+        normalized.push(prefix);
+    }
+    if has_root {
+        normalized.push(std::path::MAIN_SEPARATOR.to_string());
+    }
+    for part in parts {
+        normalized.push(part);
+    }
+    normalized
+}
+
 fn canonicalize_preserving_missing_suffix_from_base(
     path: &Path,
     base: &Path,
@@ -610,6 +751,7 @@ fn canonicalize_preserving_missing_suffix_from_base(
     } else {
         base.join(path)
     };
+    let absolute = normalize_absolute_path_lexically(&absolute);
 
     let mut current = absolute.as_path();
     let mut missing = VecDeque::<OsString>::new();
@@ -674,7 +816,8 @@ mod tests {
             .expect("policy should build");
         let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Application);
         let permissions =
-            build_permissions_container(&policy, &env).expect("permissions should build");
+            build_permissions_container(&policy, &env, &RuntimeLimits::application_node22())
+                .expect("permissions should build");
 
         let expected_cwd = bundle_root
             .canonicalize()
@@ -716,7 +859,8 @@ mod tests {
             .expect("policy should build");
         let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Tooling);
         let permissions =
-            build_permissions_container(&policy, &env).expect("permissions should build");
+            build_permissions_container(&policy, &env, &RuntimeLimits::tooling_node22())
+                .expect("permissions should build");
 
         let expected_cwd = app_root
             .canonicalize()
@@ -758,7 +902,8 @@ mod tests {
             .expect("path policy should build");
         let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Tooling);
         let permissions =
-            build_permissions_container(&paths, &env).expect("permissions should build");
+            build_permissions_container(&paths, &env, &RuntimeLimits::tooling_node22())
+                .expect("permissions should build");
 
         let checked = permissions
             .check_open(
@@ -790,6 +935,157 @@ mod tests {
     }
 
     #[test]
+    fn ensure_write_path_allows_in_root_parent_traversal_after_missing_segment() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let bundle_root = app_root.join(".neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let paths = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("path policy should build");
+
+        let checked = paths
+            .ensure_write_path(Path::new("test10/../test11/test12"))
+            .expect("in-root mkdir path should normalize");
+        let expected = bundle_root
+            .canonicalize()
+            .expect("bundle root should canonicalize")
+            .join("test11/test12");
+        assert_eq!(checked, expected);
+    }
+
+    #[test]
+    fn ensure_symlink_target_path_allows_in_root_relative_parent_traversal() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let bundle_root = app_root.join(".neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let paths = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("path policy should build");
+
+        let link_path = paths
+            .ensure_write_path(Path::new("fixtures/a/symlink/a/b/c"))
+            .expect("symlink destination should be allowed");
+        let checked = paths
+            .ensure_symlink_target_path(Path::new("../.."), &link_path)
+            .expect("relative symlink target should normalize against the link parent");
+        assert_eq!(checked, PathBuf::from("../.."));
+    }
+
+    #[test]
+    fn ensure_read_metadata_path_denies_ancestor_of_approved_root() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let bundle_root = app_root.join(".neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let paths = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("path policy should build");
+
+        let error = paths
+            .ensure_read_metadata_path(Path::new("/"))
+            .expect_err("ancestor metadata should be denied outside approved roots");
+        assert!(
+            error
+                .to_string()
+                .contains("runtime read capability denied for /"),
+            "unexpected metadata denial: {error}"
+        );
+    }
+
+    #[test]
+    fn application_profile_has_no_run_targets_and_denies_subprocess_queries() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let bundle_root = app_root.join(".neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("policy should build");
+        assert!(
+            policy.run_targets().is_empty(),
+            "application profile should not expose runnable targets"
+        );
+
+        let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Application);
+        let permissions =
+            build_permissions_container(&policy, &env, &RuntimeLimits::application_node22())
+                .expect("permissions should build");
+        let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
+        let current_exec = std::env::current_exe().expect("current exec should resolve");
+        let current_exec_query = current_exec.to_string_lossy().into_owned();
+        let run_query = parser
+            .parse_run_query(current_exec_query.as_str())
+            .expect("current exec query should parse");
+        let error = permissions
+            .check_run(&run_query, "test")
+            .expect_err("application profile should deny subprocess execution");
+        assert!(
+            error.to_string().contains("Requires run access"),
+            "unexpected run denial: {error}"
+        );
+    }
+
+    #[test]
+    fn application_self_exec_subprocess_policy_only_allows_compat_exec_target() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        let bundle_root = app_root.join(".neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let mut limits = RuntimeLimits::application_node22();
+        limits.subprocess_policy = RuntimeSubprocessPolicy::RuntimeSelfExecOnly;
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        assert_eq!(
+            policy.run_targets().len(),
+            1,
+            "self-exec policy should expose exactly one compat exec target"
+        );
+
+        let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Application);
+        let permissions =
+            build_permissions_container(&policy, &env, &limits).expect("permissions should build");
+        let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
+
+        let allowed_path = policy.run_targets()[0].to_string_lossy().into_owned();
+        let allowed = parser
+            .parse_run_query(allowed_path.as_str())
+            .expect("self exec query should parse");
+        permissions
+            .check_run(&allowed, "test")
+            .expect("self-exec target should be runnable");
+
+        let current_exec = std::env::current_exe().expect("current exec should resolve");
+        let current_exec_query = current_exec.to_string_lossy().into_owned();
+        let denied = parser
+            .parse_run_query(current_exec_query.as_str())
+            .expect("host exec query should parse");
+        let error = permissions
+            .check_run(&denied, "test")
+            .expect_err("self-exec policy should still deny host exec");
+        assert!(
+            error.to_string().contains("Requires run access"),
+            "unexpected run denial: {error}"
+        );
+    }
+
+    #[test]
     fn tooling_profile_discovers_staged_run_targets_and_denies_escape_runs() {
         let tempdir = tempfile::tempdir().expect("tempdir should build");
         let app_root = tempdir.path().join("app");
@@ -817,7 +1113,8 @@ mod tests {
 
         let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Tooling);
         let permissions =
-            build_permissions_container(&policy, &env).expect("permissions should build");
+            build_permissions_container(&policy, &env, &RuntimeLimits::tooling_node22())
+                .expect("permissions should build");
         let parser = RuntimePermissionDescriptorParser::new(policy.cwd().to_path_buf());
 
         let allowed_path = binary_path.to_string_lossy().into_owned();
@@ -846,6 +1143,59 @@ mod tests {
         assert!(
             error.to_string().contains("Requires run access"),
             "unexpected run denial: {error}"
+        );
+    }
+
+    #[test]
+    fn application_node22_permissions_allow_local_network_hosts() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let limits = RuntimeLimits::application_node22();
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Application);
+        let mut permissions =
+            build_permissions_container(&policy, &env, &limits).expect("permissions should build");
+
+        permissions
+            .check_net(&("localhost", Some(8080)), "test")
+            .expect("loopback hostname should be allowed");
+        permissions
+            .check_net(&("127.0.0.1", Some(8080)), "test")
+            .expect("loopback ipv4 should be allowed");
+        permissions
+            .check_net(&("0.0.0.0", Some(0)), "test")
+            .expect("wildcard listen host should be allowed");
+        permissions
+            .check_sys("hostname", "test")
+            .expect("hostname sys capability should be allowed");
+    }
+
+    #[test]
+    fn web_standard_permissions_deny_local_network_hosts() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.neovex/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+
+        let limits = RuntimeLimits::application_web_standard();
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        let env = RuntimeEnvPolicy::for_profile(RuntimeProfile::Application);
+        let mut permissions =
+            build_permissions_container(&policy, &env, &limits).expect("permissions should build");
+
+        let error = permissions
+            .check_net(&("127.0.0.1", Some(8080)), "test")
+            .expect_err("web-standard runtime should still deny raw net access");
+        assert!(
+            error.to_string().contains("Requires net access"),
+            "unexpected net denial: {error}"
         );
     }
 

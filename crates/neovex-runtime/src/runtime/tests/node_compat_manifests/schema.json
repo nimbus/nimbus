@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neovex.dev/schemas/node-compat-manifests.schema.json",
+  "title": "Neovex Node Compatibility Harness Manifests",
+  "oneOf": [
+    { "$ref": "#/$defs/laneMetadata" },
+    { "$ref": "#/$defs/familyCatalog" },
+    { "$ref": "#/$defs/namedBehaviorCatalog" }
+  ],
+  "$defs": {
+    "upstreamMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "tag", "fixture_subtree", "source_kind"],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "const": "nodejs/node"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "fixture_subtree": {
+          "type": "string",
+          "const": "test"
+        },
+        "source_kind": {
+          "type": "string",
+          "const": "vendored_official_fixture_corpus"
+        }
+      }
+    },
+    "laneBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane", "subset_test"],
+      "properties": {
+        "lane": {
+          "type": "string",
+          "pattern": "^node[0-9]+$"
+        },
+        "subset_test": {
+          "type": "string"
+        }
+      }
+    },
+    "fixtureSeedLaneSources": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^node[0-9]+$": {
+          "type": "string"
+        }
+      },
+      "minProperties": 1
+    },
+    "fixtureSeedEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "test_relative_path", "slice", "lane_sources"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "test_relative_path": {
+          "type": "string"
+        },
+        "slice": {
+          "type": "string"
+        },
+        "test_tier": {
+          "type": "string",
+          "enum": ["upstream_vendored", "supplementary", "canary"]
+        },
+        "supplementary_category": {
+          "type": "string",
+          "enum": [
+            "builtin_completeness",
+            "module_resolution_bridge",
+            "global_injection_fidelity",
+            "process_object_shape",
+            "resource_safety",
+            "framework_motivated_patterns"
+          ]
+        },
+        "lane_sources": {
+          "$ref": "#/$defs/fixtureSeedLaneSources"
+        },
+        "named_preludes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "uniqueItems": true
+        },
+        "named_postludes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["Application", "Tooling"]
+    },
+    "executionClass": {
+      "type": "string",
+      "enum": [
+        "parallel",
+        "sequential",
+        "watchpoint",
+        "expected_failure",
+        "oracle_only"
+      ]
+    },
+    "capability": {
+      "type": "string",
+      "enum": [
+        "tty",
+        "main-thread",
+        "crypto",
+        "bundle-root-fs",
+        "loopback-net",
+        "external-net",
+        "dns-result-order",
+        "gc-exposed",
+        "child-process",
+        "worker-threads"
+      ]
+    },
+    "namedBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "phase", "selection_mode", "preview_lane_only"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["prelude", "postlude"]
+        },
+        "selection_mode": {
+          "type": "string",
+          "enum": ["default_fixture_mapping", "implicit_fixture_flag"]
+        },
+        "preview_lane_only": {
+          "type": "boolean"
+        }
+      }
+    },
+    "laneMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "lane",
+        "upstream_fixture_line",
+        "lane_role",
+        "public_contract_role",
+        "runtime_execution_target",
+        "runtime_limits_profile",
+        "upstream",
+        "vendored_fixture_root",
+        "manifest_docs",
+        "failure_docs"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "lane": {
+          "type": "string",
+          "pattern": "^node[0-9]+$"
+        },
+        "upstream_fixture_line": {
+          "type": "string",
+          "pattern": "^Node[0-9]+$"
+        },
+        "lane_role": {
+          "type": "string",
+          "enum": ["primary", "validation", "preview"]
+        },
+        "public_contract_role": {
+          "type": "string",
+          "enum": [
+            "primary_contract",
+            "measured_validation_lane",
+            "preview_visibility_lane"
+          ]
+        },
+        "runtime_execution_target": {
+          "type": "string",
+          "enum": ["Node22"]
+        },
+        "runtime_limits_profile": {
+          "type": "string",
+          "enum": ["application_node22"]
+        },
+        "upstream": {
+          "$ref": "#/$defs/upstreamMetadata"
+        },
+        "vendored_fixture_root": {
+          "type": "string"
+        },
+        "manifest_docs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "failure_docs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "familyCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "family",
+        "nlc_item",
+        "batch_constant",
+        "execution_class",
+        "profiles",
+        "capabilities",
+        "lane_batches",
+        "manifest_doc",
+        "failure_doc"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "family": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "nlc_item": {
+          "type": "string",
+          "pattern": "^(NLC[0-9]+|NCF[0-9]+)$"
+        },
+        "batch_constant": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]+_BATCH$"
+        },
+        "execution_class": {
+          "$ref": "#/$defs/executionClass"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/profile"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "lane_batches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/laneBatch"
+          },
+          "minItems": 1
+        },
+        "manifest_doc": {
+          "type": "string"
+        },
+        "failure_doc": {
+          "type": "string"
+        },
+        "fixture_seeds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fixtureSeedEntry"
+          },
+          "uniqueItems": false
+        }
+      }
+    },
+    "namedBehaviorCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "named_behaviors"],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "named_behaviors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/namedBehavior"
+          },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

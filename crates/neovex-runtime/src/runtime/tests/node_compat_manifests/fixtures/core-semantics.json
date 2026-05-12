@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "family": "core-semantics",
+  "nlc_item": "NLC3",
+  "batch_constant": "CORE_SEMANTICS_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_core_semantics_subset"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_core_semantics_subset"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_core_semantics_subset"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
+  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/core-semantics.md",
+  "fixture_seeds": [
+    {
+      "id": "test/parallel/test-assert-async.js",
+      "test_relative_path": "test/parallel/test-assert-async.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-assert-async.js",
+        "node22": "node20/test/parallel/test-assert-async.js",
+        "node24": "node24/test/parallel/test-assert-async.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-assert-calltracker-getCalls.js",
+      "test_relative_path": "test/parallel/test-assert-calltracker-getCalls.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-assert-calltracker-getCalls.js",
+        "node22": "node22/test/parallel/test-assert-calltracker-getCalls.js",
+        "node24": "node24/test/parallel/test-assert-calltracker-getCalls.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-assert-calltracker-report.js",
+      "test_relative_path": "test/parallel/test-assert-calltracker-report.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-assert-calltracker-report.js",
+        "node22": "node20/test/parallel/test-assert-calltracker-report.js",
+        "node24": "node24/test/parallel/test-assert-calltracker-report.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-assert-calltracker-verify.js",
+      "test_relative_path": "test/parallel/test-assert-calltracker-verify.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-assert-calltracker-verify.js",
+        "node22": "node20/test/parallel/test-assert-calltracker-verify.js",
+        "node24": "node24/test/parallel/test-assert-calltracker-verify.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-assert-checktag.js",
+      "test_relative_path": "test/parallel/test-assert-checktag.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-assert-checktag.js",
+        "node22": "node22/test/parallel/test-assert-checktag.js",
+        "node24": "node24/test/parallel/test-assert-checktag.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-assert-class-destructuring.js",
+      "test_relative_path": "test/parallel/test-assert-class-destructuring.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node22": "test/parallel/test-assert-class-destructuring.js",
+        "node24": "node24/test/parallel/test-assert-class-destructuring.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-buffer-alloc.js",
+      "test_relative_path": "test/parallel/test-buffer-alloc.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-buffer-alloc.js",
+        "node22": "node20/test/parallel/test-buffer-alloc.js",
+        "node24": "node24/test/parallel/test-buffer-alloc.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-buffer-arraybuffer.js",
+      "test_relative_path": "test/parallel/test-buffer-arraybuffer.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-buffer-arraybuffer.js",
+        "node22": "node20/test/parallel/test-buffer-arraybuffer.js",
+        "node24": "node24/test/parallel/test-buffer-arraybuffer.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-buffer-bigint64.js",
+      "test_relative_path": "test/parallel/test-buffer-bigint64.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-buffer-bigint64.js",
+        "node22": "node22/test/parallel/test-buffer-bigint64.js",
+        "node24": "node24/test/parallel/test-buffer-bigint64.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-buffer-equals.js",
+      "test_relative_path": "test/parallel/test-buffer-equals.js",
+      "slice": "assert-and-buffer-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-buffer-equals.js",
+        "node22": "node20/test/parallel/test-buffer-equals.js",
+        "node24": "node24/test/parallel/test-buffer-equals.js"
+      }
+    }
+  ]
+}

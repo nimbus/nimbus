@@ -2052,7 +2052,7 @@ dependencies = [
 [[package]]
 name = "deno_cache_dir"
 version = "0.39.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "base32",
@@ -2081,7 +2081,7 @@ dependencies = [
 [[package]]
 name = "deno_config"
 version = "0.97.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2107,7 +2107,7 @@ dependencies = [
 [[package]]
 name = "deno_core"
 version = "0.400.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "anyhow",
  "az",
@@ -2154,7 +2154,7 @@ checksum = "a9efff8990a82c1ae664292507e1a5c6749ddd2312898cdf9cd7cb1fd4bc64c6"
 [[package]]
 name = "deno_crypto"
 version = "0.261.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2195,7 +2195,7 @@ dependencies = [
 [[package]]
 name = "deno_crypto_provider"
 version = "0.41.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "aws-lc-sys",
 ]
@@ -2203,7 +2203,7 @@ dependencies = [
 [[package]]
 name = "deno_dotenv"
 version = "0.16.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_path_util",
  "sys_traits",
@@ -2238,7 +2238,7 @@ dependencies = [
 [[package]]
 name = "deno_features"
 version = "0.44.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "serde",
@@ -2248,7 +2248,7 @@ dependencies = [
 [[package]]
 name = "deno_fetch"
 version = "0.271.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "deno_fs"
 version = "0.157.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "base32",
@@ -2346,7 +2346,7 @@ dependencies = [
 [[package]]
 name = "deno_http"
 version = "0.245.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2388,7 +2388,7 @@ dependencies = [
 [[package]]
 name = "deno_inspector_server"
 version = "0.21.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2406,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "deno_io"
 version = "0.157.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2431,7 +2431,7 @@ dependencies = [
 [[package]]
 name = "deno_lockfile"
 version = "0.49.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "deno_semver",
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "deno_maybe_sync"
 version = "0.34.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "dashmap",
 ]
@@ -2463,7 +2463,7 @@ dependencies = [
 [[package]]
 name = "deno_napi"
 version = "0.178.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2493,7 +2493,7 @@ dependencies = [
 [[package]]
 name = "deno_net"
 version = "0.239.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2522,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "deno_node"
 version = "0.185.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "base64 0.22.1",
  "boxed_error",
@@ -2540,6 +2540,7 @@ dependencies = [
  "deno_io",
  "deno_net",
  "deno_node_crypto",
+ "deno_node_sqlite",
  "deno_package_json",
  "deno_path_util",
  "deno_permissions",
@@ -2563,6 +2564,7 @@ dependencies = [
  "node_resolver",
  "node_shim",
  "once_cell",
+ "openssl",
  "rand 0.8.5",
  "rustls-tokio-stream",
  "rustls-webpki 0.103.13",
@@ -2583,7 +2585,7 @@ dependencies = [
 [[package]]
 name = "deno_node_crypto"
 version = "0.17.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "aead-gcm-stream",
  "aes",
@@ -2616,6 +2618,7 @@ dependencies = [
  "num-bigint-dig",
  "num-integer",
  "num-traits",
+ "ocb3",
  "p224",
  "p256",
  "p384",
@@ -2643,9 +2646,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "deno_node_sqlite"
+version = "0.17.0"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+dependencies = [
+ "deno_core",
+ "deno_error",
+ "deno_permissions",
+ "rusqlite",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "deno_npm"
 version = "0.59.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "capacity_builder",
@@ -2666,7 +2681,7 @@ dependencies = [
 [[package]]
 name = "deno_npmrc"
 version = "0.8.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "log",
  "monch",
@@ -2679,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "deno_ops"
 version = "0.276.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "indexmap 2.13.0",
  "proc-macro2",
@@ -2695,7 +2710,7 @@ dependencies = [
 [[package]]
 name = "deno_os"
 version = "0.64.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2715,7 +2730,7 @@ dependencies = [
 [[package]]
 name = "deno_package_json"
 version = "0.49.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2747,7 +2762,7 @@ dependencies = [
 [[package]]
 name = "deno_permissions"
 version = "0.106.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "capacity_builder",
  "chrono",
@@ -2777,7 +2792,7 @@ dependencies = [
 [[package]]
 name = "deno_process"
 version = "0.62.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2807,7 +2822,7 @@ dependencies = [
 [[package]]
 name = "deno_resolver"
 version = "0.78.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -2870,7 +2885,7 @@ dependencies = [
 [[package]]
 name = "deno_signals"
 version = "0.38.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_error",
  "libc",
@@ -2883,7 +2898,7 @@ dependencies = [
 [[package]]
 name = "deno_subprocess_windows"
 version = "0.42.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "fastrand",
  "futures-channel",
@@ -2894,7 +2909,7 @@ dependencies = [
 [[package]]
 name = "deno_telemetry"
 version = "0.69.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2936,7 +2951,7 @@ dependencies = [
 [[package]]
 name = "deno_tls"
 version = "0.234.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2982,7 +2997,7 @@ dependencies = [
 [[package]]
 name = "deno_web"
 version = "0.278.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "brotli 6.0.0",
@@ -3004,7 +3019,7 @@ dependencies = [
 [[package]]
 name = "deno_webidl"
 version = "0.247.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
 ]
@@ -3012,7 +3027,7 @@ dependencies = [
 [[package]]
 name = "deno_websocket"
 version = "0.252.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "bytes",
  "deno_core",
@@ -3047,7 +3062,7 @@ dependencies = [
 [[package]]
 name = "denort_helper"
 version = "0.45.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_error",
  "deno_path_util",
@@ -4098,11 +4113,11 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
+checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
- "hashbrown 0.14.5",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -5172,10 +5187,11 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.30.1"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
 dependencies = [
+ "bindgen 0.72.1",
  "cc",
  "openssl-sys",
  "pkg-config",
@@ -5451,7 +5467,7 @@ dependencies = [
 [[package]]
 name = "napi_sym"
 version = "0.177.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "quote",
  "serde",
@@ -5568,6 +5584,7 @@ dependencies = [
 name = "neovex-runtime"
 version = "0.1.22"
 dependencies = [
+ "base64 0.22.1",
  "criterion",
  "deno_ast",
  "deno_core",
@@ -5581,6 +5598,7 @@ dependencies = [
  "deno_net",
  "deno_node",
  "deno_node_crypto",
+ "deno_node_sqlite",
  "deno_os",
  "deno_permissions",
  "deno_process",
@@ -5774,7 +5792,7 @@ dependencies = [
 [[package]]
 name = "node_resolver"
 version = "0.85.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5804,7 +5822,7 @@ dependencies = [
 [[package]]
 name = "node_shim"
 version = "0.22.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "exec",
  "serde_json",
@@ -6823,7 +6841,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "log",
  "multimap",
  "once_cell",
@@ -6856,7 +6874,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6869,7 +6887,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7417,9 +7435,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.32.1"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
+checksum = "165ca6e57b20e1351573e3729b958bc62f0e48025386970b6e4d29e7a7e71f3f"
 dependencies = [
  "bitflags",
  "fallible-iterator 0.3.0",
@@ -7917,7 +7935,7 @@ dependencies = [
 [[package]]
 name = "serde_v8"
 version = "0.309.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.4#a2cc5bfdc77713c9028709f386dbd671dd3f1150"
+source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -9844,7 +9862,7 @@ dependencies = [
 [[package]]
 name = "v8"
 version = "147.4.0"
-source = "git+https://github.com/agentstation/rusty_v8?tag=v147.4.0-locker.1#40560039dc1341e5fc98bd1065ae662f7239d8f6"
+source = "git+https://github.com/agentstation/rusty_v8?tag=v147.4.0-locker.2#0231260c48bcf9dba098959d34e9e412a5134d51"
 dependencies = [
  "bindgen 0.72.1",
  "bitflags",

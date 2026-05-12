@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "family": "loader-context",
+  "nlc_item": "NLC7",
+  "batch_constant": "LOADER_CONTEXT_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_loader_context_subset"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_loader_context_subset"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_loader_context_subset"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/loader-context.md",
+  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/loader-context.md",
+  "fixture_seeds": [
+    {
+      "id": "test/parallel/test-module-builtin.js",
+      "test_relative_path": "test/parallel/test-module-builtin.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-builtin.js",
+        "node22": "node22/test/parallel/test-module-builtin.js",
+        "node24": "node24/test/parallel/test-module-builtin.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-cache.js",
+      "test_relative_path": "test/parallel/test-module-cache.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-cache.js",
+        "node22": "node22/test/parallel/test-module-cache.js",
+        "node24": "node24/test/parallel/test-module-cache.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-create-require.js",
+      "test_relative_path": "test/parallel/test-module-create-require.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-create-require.js",
+        "node22": "node22/test/parallel/test-module-create-require.js",
+        "node24": "node24/test/parallel/test-module-create-require.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-create-require-multibyte.js",
+      "test_relative_path": "test/parallel/test-module-create-require-multibyte.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-create-require-multibyte.js",
+        "node22": "node22/test/parallel/test-module-create-require-multibyte.js",
+        "node24": "node24/test/parallel/test-module-create-require-multibyte.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-isBuiltin.js",
+      "test_relative_path": "test/parallel/test-module-isBuiltin.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-isBuiltin.js",
+        "node22": "node22/test/parallel/test-module-isBuiltin.js",
+        "node24": "node24/test/parallel/test-module-isBuiltin.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-loading-deprecated.js",
+      "test_relative_path": "test/parallel/test-module-loading-deprecated.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-loading-deprecated.js",
+        "node22": "node22/test/parallel/test-module-loading-deprecated.js",
+        "node24": "node24/test/parallel/test-module-loading-deprecated.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-nodemodulepaths.js",
+      "test_relative_path": "test/parallel/test-module-nodemodulepaths.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-nodemodulepaths.js",
+        "node22": "node22/test/parallel/test-module-nodemodulepaths.js",
+        "node24": "node24/test/parallel/test-module-nodemodulepaths.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-relative-lookup.js",
+      "test_relative_path": "test/parallel/test-module-relative-lookup.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-relative-lookup.js",
+        "node22": "node22/test/parallel/test-module-relative-lookup.js",
+        "node24": "node24/test/parallel/test-module-relative-lookup.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-version.js",
+      "test_relative_path": "test/parallel/test-module-version.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-version.js",
+        "node22": "node22/test/parallel/test-module-version.js",
+        "node24": "node24/test/parallel/test-module-version.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-module-children.js",
+      "test_relative_path": "test/parallel/test-module-children.js",
+      "slice": "module-and-async-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-module-children.js",
+        "node22": "node22/test/parallel/test-module-children.js",
+        "node24": "node24/test/parallel/test-module-children.js"
+      }
+    }
+  ]
+}

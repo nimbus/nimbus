@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use crate::backends::v8::embedder::{JsRuntime, RuntimeOptions, v8};
+use crate::backends::v8::embedder::{JsRuntime, RuntimeOptions, SharedArrayBufferStore, v8};
 use crate::backends::v8::{V8StartupSnapshot, create_v8_startup_snapshot};
 use crate::error::{NeovexRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
@@ -9,8 +9,9 @@ use crate::module_loader::RestrictedModuleLoader;
 use crate::runtime_capabilities::RuntimePathPolicy;
 
 use super::super::bootstrap::{
-    execution_extensions, extension_transpiler_for_target, finalize_bootstrap,
-    initialize_runtime_state, install_bootstrap,
+    InstalledRuntimeWorkerBootstrapState, execution_extensions, extension_transpiler_for_target,
+    finalize_bootstrap, initialize_runtime_state, install_bootstrap,
+    main_thread_worker_bootstrap_state, worker_threads_state_extension,
 };
 use super::super::{NeovexRuntime, RuntimeBundle};
 
@@ -47,7 +48,12 @@ impl NeovexRuntime {
         bundle: &RuntimeBundle,
         snapshot: &V8StartupSnapshot,
     ) -> Result<JsRuntime> {
-        self.create_runtime(bundle, Some(snapshot), false)
+        self.create_runtime_with_bootstrap_state(
+            bundle,
+            Some(snapshot),
+            false,
+            main_thread_worker_bootstrap_state(),
+        )
     }
 
     pub(crate) fn create_runtime(
@@ -56,8 +62,28 @@ impl NeovexRuntime {
         startup_snapshot: Option<&V8StartupSnapshot>,
         use_locker: bool,
     ) -> Result<JsRuntime> {
-        let mut runtime =
-            JsRuntime::new(self.runtime_options(bundle, startup_snapshot, use_locker)?);
+        self.create_runtime_with_bootstrap_state(
+            bundle,
+            startup_snapshot,
+            use_locker,
+            main_thread_worker_bootstrap_state(),
+        )
+    }
+
+    fn create_runtime_with_bootstrap_state(
+        &self,
+        bundle: &RuntimeBundle,
+        startup_snapshot: Option<&V8StartupSnapshot>,
+        use_locker: bool,
+        worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
+    ) -> Result<JsRuntime> {
+        let mut runtime = JsRuntime::new(self.runtime_options(
+            bundle,
+            startup_snapshot,
+            use_locker,
+            worker_bootstrap_state,
+        )?);
+        install_missing_runtime_start_time(&mut runtime);
         self.initialize_runtime_state(&mut runtime, bundle)?;
         if startup_snapshot.is_none() {
             Self::install_bootstrap(&mut runtime)?;
@@ -66,13 +92,25 @@ impl NeovexRuntime {
         Ok(runtime)
     }
 
+    pub(crate) fn create_unsnapshotted_runtime_with_worker_bootstrap(
+        &self,
+        bundle: &RuntimeBundle,
+        worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
+    ) -> Result<JsRuntime> {
+        self.create_runtime_with_bootstrap_state(bundle, None, false, worker_bootstrap_state)
+    }
+
     pub(crate) fn runtime_options(
         &self,
         bundle: &RuntimeBundle,
         startup_snapshot: Option<&V8StartupSnapshot>,
         use_locker: bool,
+        worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
     ) -> Result<RuntimeOptions> {
         let path_policy = RuntimePathPolicy::for_bundle(bundle, self.policy.limits())?;
+        let mut extensions =
+            execution_extensions(self.policy.limits().compatibility_target, &path_policy);
+        extensions.push(worker_threads_state_extension(worker_bootstrap_state));
         Ok(RuntimeOptions {
             create_params: Some(self.create_isolate_params()),
             module_loader: Some(Rc::new(RestrictedModuleLoader::new(
@@ -80,14 +118,16 @@ impl NeovexRuntime {
                 self.policy.limits().compatibility_target,
                 bundle.module_code_cache(),
             ))),
-            extensions: execution_extensions(
-                self.policy.limits().compatibility_target,
-                &path_policy,
-            ),
+            extensions,
             extension_transpiler: extension_transpiler_for_target(
                 self.policy.limits().compatibility_target,
             ),
+            inspector: matches!(
+                self.policy.limits().compatibility_target,
+                RuntimeCompatibilityTarget::Node22
+            ),
             startup_snapshot: startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot),
+            shared_array_buffer_store: Some(SharedArrayBufferStore::default()),
             use_locker,
             ..Default::default()
         })
@@ -115,5 +155,13 @@ impl NeovexRuntime {
 
     pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
         finalize_bootstrap(runtime)
+    }
+}
+
+fn install_missing_runtime_start_time(runtime: &mut JsRuntime) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    if !state.has::<deno_web::StartTime>() {
+        state.put(deno_web::StartTime::default());
     }
 }

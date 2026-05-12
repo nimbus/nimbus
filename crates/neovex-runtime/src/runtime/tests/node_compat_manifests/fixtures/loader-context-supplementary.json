@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "family": "loader-context-supplementary",
+  "nlc_item": "NCF3",
+  "batch_constant": "LOADER_CONTEXT_SUPPLEMENTARY_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node20"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node22"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node24"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-compat-supplementary.md",
+  "failure_doc": "docs/architecture/runtime/node-compat-supplementary-failures.md",
+  "fixture_seeds": [
+    {
+      "id": "supplementary/builtin-completeness.mjs",
+      "test_relative_path": "supplementary/builtin-completeness.mjs",
+      "slice": "supplementary-builtin-completeness",
+      "test_tier": "supplementary",
+      "supplementary_category": "builtin_completeness",
+      "lane_sources": {
+        "node20": "supplementary/builtin-completeness.mjs",
+        "node22": "supplementary/builtin-completeness.mjs",
+        "node24": "supplementary/builtin-completeness.mjs"
+      }
+    }
+  ]
+}

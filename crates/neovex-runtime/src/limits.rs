@@ -37,6 +37,14 @@ pub enum RuntimeProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RuntimeSubprocessPolicy {
+    Denied,
+    RuntimeSelfExecOnly,
+    ToolingDiscovered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuntimeRoutingAffinity {
     None,
     Tenant,
@@ -84,6 +92,7 @@ pub struct RuntimeLimits {
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
     pub profile: RuntimeProfile,
+    pub subprocess_policy: RuntimeSubprocessPolicy,
     pub runtime_pool_kind: RuntimePoolKind,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
@@ -105,6 +114,7 @@ impl RuntimeLimits {
         Self {
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             profile: RuntimeProfile::Application,
+            subprocess_policy: RuntimeSubprocessPolicy::Denied,
             ..Self::default()
         }
     }
@@ -113,6 +123,7 @@ impl RuntimeLimits {
         Self {
             compatibility_target: RuntimeCompatibilityTarget::Node22,
             profile: RuntimeProfile::Application,
+            subprocess_policy: RuntimeSubprocessPolicy::Denied,
             ..Self::default()
         }
     }
@@ -121,6 +132,7 @@ impl RuntimeLimits {
         Self {
             compatibility_target: RuntimeCompatibilityTarget::Node22,
             profile: RuntimeProfile::Tooling,
+            subprocess_policy: RuntimeSubprocessPolicy::ToolingDiscovered,
             ..Self::default()
         }
     }
@@ -161,6 +173,31 @@ impl RuntimeLimits {
             );
         }
 
+        if matches!(
+            self.subprocess_policy,
+            RuntimeSubprocessPolicy::RuntimeSelfExecOnly
+                | RuntimeSubprocessPolicy::ToolingDiscovered
+        ) && !matches!(
+            self.compatibility_target,
+            RuntimeCompatibilityTarget::Node22
+        ) {
+            panic!(
+                "subprocess policy {:?} currently requires Node22 compatibility target, got {:?}",
+                self.subprocess_policy, self.compatibility_target
+            );
+        }
+
+        if matches!(
+            self.subprocess_policy,
+            RuntimeSubprocessPolicy::ToolingDiscovered
+        ) && !matches!(self.profile, RuntimeProfile::Tooling)
+        {
+            panic!(
+                "tooling-discovered subprocess policy requires Tooling runtime profile, got {:?}",
+                self.profile
+            );
+        }
+
         // WarmPool requires CooperativeLocker — fail fast.
         if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmPool)
             && !matches!(
@@ -195,6 +232,7 @@ impl RuntimeLimits {
             compatibility_target: self.compatibility_target,
             execution_model: self.execution_model,
             profile: self.profile,
+            subprocess_policy: self.subprocess_policy,
             runtime_pool_kind: self.runtime_pool_kind,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
@@ -233,6 +271,7 @@ impl Default for RuntimeLimits {
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             profile: RuntimeProfile::Application,
+            subprocess_policy: RuntimeSubprocessPolicy::Denied,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,
@@ -303,12 +342,20 @@ mod tests {
         let web_limits = RuntimeLimits::application_web_standard().normalized();
         assert_eq!(web_limits.profile, RuntimeProfile::Application);
         assert_eq!(
+            web_limits.subprocess_policy,
+            RuntimeSubprocessPolicy::Denied
+        );
+        assert_eq!(
             web_limits.compatibility_target,
             RuntimeCompatibilityTarget::WebStandardIsolate
         );
 
         let node_limits = RuntimeLimits::application_node22().normalized();
         assert_eq!(node_limits.profile, RuntimeProfile::Application);
+        assert_eq!(
+            node_limits.subprocess_policy,
+            RuntimeSubprocessPolicy::Denied
+        );
         assert_eq!(
             node_limits.compatibility_target,
             RuntimeCompatibilityTarget::Node22
@@ -320,6 +367,10 @@ mod tests {
         let valid = RuntimeLimits::tooling_node22().normalized();
         assert_eq!(valid.profile, RuntimeProfile::Tooling);
         assert_eq!(
+            valid.subprocess_policy,
+            RuntimeSubprocessPolicy::ToolingDiscovered
+        );
+        assert_eq!(
             valid.compatibility_target,
             RuntimeCompatibilityTarget::Node22
         );
@@ -327,6 +378,29 @@ mod tests {
         let err = std::panic::catch_unwind(|| {
             RuntimeLimits {
                 profile: RuntimeProfile::Tooling,
+                compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+                ..RuntimeLimits::default()
+            }
+            .normalized()
+        });
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn runtime_self_exec_subprocess_policy_requires_node22_target() {
+        let valid = RuntimeLimits {
+            subprocess_policy: RuntimeSubprocessPolicy::RuntimeSelfExecOnly,
+            ..RuntimeLimits::application_node22()
+        }
+        .normalized();
+        assert_eq!(
+            valid.subprocess_policy,
+            RuntimeSubprocessPolicy::RuntimeSelfExecOnly
+        );
+
+        let err = std::panic::catch_unwind(|| {
+            RuntimeLimits {
+                subprocess_policy: RuntimeSubprocessPolicy::RuntimeSelfExecOnly,
                 compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
                 ..RuntimeLimits::default()
             }

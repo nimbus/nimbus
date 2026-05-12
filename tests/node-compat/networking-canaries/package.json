@@ -1,0 +1,13 @@
+{
+  "name": "neovex-networking-canaries",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "axios": "1.7.7",
+    "express": "4.19.2",
+    "fastify": "4.28.1",
+    "socket.io": "4.7.5",
+    "socket.io-client": "4.7.5",
+    "undici": "6.19.8"
+  }
+}

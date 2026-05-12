@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "family": "networking",
+  "nlc_item": "NLC6",
+  "batch_constant": "NETWORKING_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs", "loopback-net"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_networking_subset"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_networking_subset"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_networking_subset"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/networking.md",
+  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/networking.md",
+  "fixture_seeds": [
+    {
+      "id": "test/parallel/test-dns-get-server.js",
+      "test_relative_path": "test/parallel/test-dns-get-server.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-dns-get-server.js",
+        "node22": "node22/test/parallel/test-dns-get-server.js",
+        "node24": "node24/test/parallel/test-dns-get-server.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-dns-set-default-order.js",
+      "test_relative_path": "test/parallel/test-dns-set-default-order.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-dns-set-default-order.js",
+        "node22": "node22/test/parallel/test-dns-set-default-order.js",
+        "node24": "node24/test/parallel/test-dns-set-default-order.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-dns-default-order-ipv4.js",
+      "test_relative_path": "test/parallel/test-dns-default-order-ipv4.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-dns-default-order-ipv4.js",
+        "node22": "node22/test/parallel/test-dns-default-order-ipv4.js",
+        "node24": "node24/test/parallel/test-dns-default-order-ipv4.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-dns-default-order-ipv6.js",
+      "test_relative_path": "test/parallel/test-dns-default-order-ipv6.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-dns-default-order-ipv6.js",
+        "node22": "node22/test/parallel/test-dns-default-order-ipv6.js",
+        "node24": "node24/test/parallel/test-dns-default-order-ipv6.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-dns-default-order-verbatim.js",
+      "test_relative_path": "test/parallel/test-dns-default-order-verbatim.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-dns-default-order-verbatim.js",
+        "node22": "node22/test/parallel/test-dns-default-order-verbatim.js",
+        "node24": "node24/test/parallel/test-dns-default-order-verbatim.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-stream-finished.js",
+      "test_relative_path": "test/parallel/test-stream-finished.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-stream-finished.js",
+        "node22": "node22/test/parallel/test-stream-finished.js",
+        "node24": "node24/test/parallel/test-stream-finished.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-stream-pipeline.js",
+      "test_relative_path": "test/parallel/test-stream-pipeline.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-stream-pipeline.js",
+        "node22": "node22/test/parallel/test-stream-pipeline.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-net-connect-options-invalid.js",
+      "test_relative_path": "test/parallel/test-net-connect-options-invalid.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-net-connect-options-invalid.js",
+        "node22": "node22/test/parallel/test-net-connect-options-invalid.js",
+        "node24": "node24/test/parallel/test-net-connect-options-invalid.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-net-isip.js",
+      "test_relative_path": "test/parallel/test-net-isip.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-net-isip.js",
+        "node22": "node22/test/parallel/test-net-isip.js",
+        "node24": "node24/test/parallel/test-net-isip.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-net-isipv4.js",
+      "test_relative_path": "test/parallel/test-net-isipv4.js",
+      "slice": "dns-net-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-net-isipv4.js",
+        "node22": "node22/test/parallel/test-net-isipv4.js",
+        "node24": "node24/test/parallel/test-net-isipv4.js"
+      }
+    }
+  ]
+}

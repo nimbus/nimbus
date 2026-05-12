@@ -1,5 +1,6 @@
 import { core } from "ext:core/mod.js";
 
+import * as crypto from "ext:deno_crypto/00_crypto.js";
 import * as abortSignal from "ext:deno_web/03_abort_signal.js";
 import * as console from "ext:deno_web/01_console.js";
 import * as encoding from "ext:deno_web/08_text_encoding.js";
@@ -27,6 +28,8 @@ const windowOrWorkerGlobalScope = {
   AbortSignal: core.propNonEnumerable(abortSignal.AbortSignal),
   Blob: core.propNonEnumerable(file.Blob),
   CloseEvent: core.propNonEnumerable(event.CloseEvent),
+  Crypto: core.propNonEnumerable(crypto.Crypto),
+  CryptoKey: core.propNonEnumerable(crypto.CryptoKey),
   CustomEvent: core.propNonEnumerable(event.CustomEvent),
   DOMException: core.propNonEnumerable(DOMException),
   QuotaExceededError: core.propNonEnumerable(QuotaExceededError),
@@ -43,6 +46,7 @@ const windowOrWorkerGlobalScope = {
   ProgressEvent: core.propNonEnumerable(event.ProgressEvent),
   Request: core.propNonEnumerable(request.Request),
   Response: core.propNonEnumerable(response.Response),
+  reportError: core.propWritable(event.reportError),
   TextDecoder: core.propNonEnumerable(encoding.TextDecoder),
   TextEncoder: core.propNonEnumerable(encoding.TextEncoder),
   URL: core.propNonEnumerable(url.URL),
@@ -52,7 +56,9 @@ const windowOrWorkerGlobalScope = {
   console: core.propNonEnumerable(
     new console.Console((msg, level) => core.print(msg, level > 1)),
   ),
+  crypto: core.propReadOnly(crypto.crypto),
   fetch: core.propWritable(fetch.fetch),
+  SubtleCrypto: core.propNonEnumerable(crypto.SubtleCrypto),
 };
 
 export { windowOrWorkerGlobalScope };

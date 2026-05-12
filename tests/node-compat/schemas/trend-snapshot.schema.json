@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neovex.local/node-compat/trend-snapshot.schema.json",
+  "title": "Node compatibility trend snapshot",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "report_kind",
+    "baseline_available",
+    "current_sources",
+    "baseline_sources",
+    "lane_trends",
+    "evidence_trends"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report_kind": {
+      "const": "node_compat_trend_snapshot"
+    },
+    "baseline_available": {
+      "type": "boolean"
+    },
+    "current_sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "baseline_sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "lane_trends": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "evidence_trends": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

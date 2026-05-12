@@ -1,0 +1,112 @@
+name: Node Compatibility Evidence
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  node-compat-evidence:
+    name: Nightly Node Compatibility Evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: node-compat-nightly-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
+      - name: Set up Node.js 22 for seeded slices and canaries
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            tests/node-compat/networking-canaries/package-lock.json
+            tests/node-compat/tooling-canaries/package-lock.json
+
+      - name: Emit seeded slice reports
+        run: |
+          make node-compat-report FAMILY=core-semantics SLICE=assert-and-buffer-foundation CAPTURE_LIVE=1
+          make node-compat-report FAMILY=process-and-timing SLICE=process-foundation CAPTURE_LIVE=1
+          make node-compat-report FAMILY=streams-and-local-io SLICE=os-tty-readline-foundation CAPTURE_LIVE=1
+          make node-compat-report FAMILY=networking SLICE=dns-net-foundation CAPTURE_LIVE=1
+          make node-compat-report FAMILY=loader-context SLICE=module-and-async-foundation CAPTURE_LIVE=1
+
+      - name: Run application and tooling canaries
+        run: |
+          make node-compat-canaries-bootstrap PROFILE=application
+          make node-compat-canaries-bootstrap PROFILE=tooling
+          make node-compat-validate-claims
+          make node-compat-canaries PROFILE=application
+          make node-compat-canaries PROFILE=tooling
+
+      - name: Set up Node.js 20 for oracle sample
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Run representative Node20 oracle sample
+        run: |
+          make node-compat-oracle LANE=node20 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+
+      - name: Set up Node.js 22 for oracle sample
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Run representative Node22 oracle sample
+        run: |
+          make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+
+      - name: Set up Node.js 24 for oracle sample
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Run representative Node24 oracle sample
+        run: |
+          make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+
+      - name: Build dashboard summary
+        run: |
+          make node-compat-status
+          make node-compat-dashboard
+          make node-compat-trends
+          make node-compat-publish-evidence PUBLISH_ROOT=target/node-compat/published
+
+      - name: Upload node-compat artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-compat-evidence
+          path: target/node-compat
+          if-no-files-found: error

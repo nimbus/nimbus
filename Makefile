@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-cli-proof collect-neovex-machine-guest-proof collect-neovex-machine-service-proof collect-neovex-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-neovex-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-build-neovex-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-cli-proof-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-neovex-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-sync node-compat-refresh node-compat-publish-evidence node-compat-trends node-compat-expectations-sync node-compat-expectations-validate node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-neovex-machine-diagnostics collect-neovex-machine-cli-proof collect-neovex-machine-guest-proof collect-neovex-machine-service-proof collect-neovex-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-neovex-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-neovex-machine prepare-linux-vmm-validation-bundle verify-build-neovex-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-neovex-machine-diagnostics-helper verify-neovex-machine-recreate-helper verify-neovex-machine-cli-proof-helper verify-neovex-machine-guest-proof-helper verify-neovex-machine-service-proof-helper verify-neovex-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -118,6 +118,53 @@ verify-harness-repro:
 	@test -n "$(MODE)" || (echo "set MODE=pr|nightly" && exit 1)
 	@test -n "$(CASE)" || (echo "set CASE=<named-seed-case>" && exit 1)
 	bash scripts/verification-harness.sh repro "$(SURFACE)" "$(MODE)" "$(CASE)"
+
+# Emit manifest-driven node-compat report artifacts for one seeded family/slice
+node-compat-report:
+	@test -n "$(FAMILY)" || (echo "set FAMILY=<family-id>" && exit 1)
+	@test -n "$(SLICE)" || (echo "set SLICE=<slice-id>" && exit 1)
+	bash scripts/node-compat-report.sh --family "$(FAMILY)" --slice "$(SLICE)" $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(OBSERVED_RESULTS),--observed-results "$(OBSERVED_RESULTS)",) $(if $(CAPTURE_LIVE),--capture-live,)
+
+node-compat-dashboard:
+	python3 scripts/node_compat/dashboard.py $(if $(ARTIFACTS_ROOT),--artifacts-root "$(ARTIFACTS_ROOT)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
+
+node-compat-status:
+	python3 scripts/node_compat/status.py $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(EXPECTATION_CATALOG),--expectation-catalog "$(EXPECTATION_CATALOG)",) $(if $(OBSERVED_RESULTS),--observed-results "$(OBSERVED_RESULTS)",)
+
+node-compat-sync:
+	@test -n "$(LANE)" || (echo "set LANE=node20|node22|node24" && exit 1)
+	python3 scripts/node_compat/sync.py --lane "$(LANE)" $(if $(TAG),--upstream-tag "$(TAG)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(DRY_RUN),--dry-run,) $(if $(COMPARE_UPSTREAM),--compare-upstream,) $(if $(APPLY),--apply,) $(if $(FORCE),--force,)
+
+node-compat-refresh:
+	@test -n "$(LANE)" || (echo "set LANE=node20|node22|node24" && exit 1)
+	python3 scripts/node_compat/refresh.py --lane "$(LANE)" $(if $(TAG),--tag "$(TAG)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(DRY_RUN),--dry-run,) $(if $(COMPARE_UPSTREAM),--compare-upstream,) $(if $(APPLY),--apply,) $(if $(FORCE),--force,) $(if $(RUN_SLICES),--run-representative-slices,)
+
+node-compat-publish-evidence:
+	python3 scripts/node_compat/publish_evidence.py $(if $(ARTIFACTS_ROOT),--artifacts-root "$(ARTIFACTS_ROOT)",) $(if $(PUBLISH_ROOT),--publish-root "$(PUBLISH_ROOT)",)
+
+node-compat-trends:
+	python3 scripts/node_compat/trends.py $(if $(ARTIFACTS_ROOT),--artifacts-root "$(ARTIFACTS_ROOT)",) $(if $(BASELINE_ROOT),--baseline-root "$(BASELINE_ROOT)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
+
+node-compat-expectations-sync:
+	python3 scripts/node_compat/expectations.py sync $(if $(EXPECTATION_CATALOG),--catalog "$(EXPECTATION_CATALOG)",)
+
+node-compat-expectations-validate:
+	python3 scripts/node_compat/expectations.py validate $(if $(EXPECTATION_CATALOG),--catalog "$(EXPECTATION_CATALOG)",) $(if $(OBSERVED_RESULTS),--observed-results "$(OBSERVED_RESULTS)",)
+
+node-compat-oracle:
+	@test -n "$(LANE)" || (echo "set LANE=node20|node22|node24" && exit 1)
+	@test -n "$(SAMPLE)" || (echo "set SAMPLE=test/parallel/test-buffer-alloc.js" && exit 1)
+	bash scripts/node_compat/oracle-run.sh --lane "$(LANE)" --fixture "$(SAMPLE)" $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(NODE_BIN),--node-bin "$(NODE_BIN)",)
+
+node-compat-canaries-bootstrap:
+	bash scripts/node_compat/canaries-bootstrap.sh $(if $(PROFILE),--profile "$(PROFILE)",)
+
+node-compat-canaries:
+	@test -n "$(PROFILE)" || (echo "set PROFILE=application|tooling" && exit 1)
+	bash scripts/node_compat/canaries-run.sh --profile "$(PROFILE)" $(if $(LANE),--lane "$(LANE)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
+
+node-compat-validate-claims:
+	bash scripts/node_compat/validate-claims.sh
 
 # crun patch/build/verify targets moved to agentstation/neovex-crun
 

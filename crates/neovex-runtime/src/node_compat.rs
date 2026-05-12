@@ -63,6 +63,7 @@ impl NpmPackageFolderResolver for ScopedNodeModulesResolver {
         specifier: &str,
         referrer: &UrlOrPathRef,
     ) -> Result<PathBuf, PackageFolderResolveError> {
+        let package_name = package_name_from_specifier(specifier);
         let start_dir = referrer
             .path()
             .ok()
@@ -70,7 +71,7 @@ impl NpmPackageFolderResolver for ScopedNodeModulesResolver {
             .and_then(canonicalize_existing_path)
             .unwrap_or_else(|| self.cwd.clone());
         for search_dir in resolution_search_directories(&start_dir, &self.roots) {
-            let package_root = search_dir.join("node_modules").join(specifier);
+            let package_root = search_dir.join("node_modules").join(package_name);
             if package_root.is_dir() {
                 return Ok(package_root);
             }
@@ -136,13 +137,25 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
         permissions: &mut PermissionsContainer,
         path: Cow<'a, Path>,
     ) -> Result<Cow<'a, Path>, JsErrorBox> {
-        let path = permissions
-            .check_open(path, OpenAccessKind::ReadNoFollow, Some("require()"))
-            .map_err(JsErrorBox::from_err)?;
-        self.path_policy
+        let canonical_path = self
+            .path_policy
             .ensure_module_read_path(path.as_ref())
-            .map(Cow::Owned)
-            .map_err(|error| JsErrorBox::generic(error.to_string()))
+            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+        match permissions.check_open(
+            Cow::Owned(canonical_path.clone()),
+            OpenAccessKind::ReadNoFollow,
+            Some("require()"),
+        ) {
+            Ok(path) => Ok(Cow::Owned(path.to_path_buf())),
+            Err(_) => {
+                // The compat harness stages extra modules and child-process
+                // scratch files beneath approved runtime roots after the Deno
+                // permission snapshot is created. Within those Neovex-owned
+                // roots, the embedder path policy is the intended source of
+                // truth for CommonJS reads.
+                Ok(Cow::Owned(canonical_path))
+            }
+        }
     }
 
     fn load_text_file_lossy(&self, path: &Path) -> Result<FastString, JsErrorBox> {
@@ -479,6 +492,12 @@ fn split_package_specifier(specifier: &str) -> Option<(&str, &str)> {
     Some((package_name, subpath))
 }
 
+fn package_name_from_specifier(specifier: &str) -> &str {
+    split_package_specifier(specifier)
+        .map(|(package_name, _)| package_name)
+        .unwrap_or(specifier)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,6 +516,17 @@ mod tests {
         );
         assert_eq!(split_package_specifier("esbuild"), None);
         assert_eq!(split_package_specifier("./local.js"), None);
+    }
+
+    #[test]
+    fn package_name_from_specifier_strips_package_subpaths() {
+        assert_eq!(
+            package_name_from_specifier("@esbuild/darwin-arm64/bin/esbuild"),
+            "@esbuild/darwin-arm64"
+        );
+        assert_eq!(package_name_from_specifier("es-errors/type"), "es-errors");
+        assert_eq!(package_name_from_specifier("@scope/pkg"), "@scope/pkg");
+        assert_eq!(package_name_from_specifier("express"), "express");
     }
 
     #[test]

@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "application-networking-express",
+      "package": "express",
+      "runtime_profile": "Application",
+      "lane_coverage": ["node22", "node20"],
+      "nlc_family": "networking",
+      "public_claim": "Express application networking smoke is fixture-backed for the Node22 primary lane and Node20 validation lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-fastify",
+      "package": "fastify",
+      "runtime_profile": "Application",
+      "lane_coverage": ["node22", "node20"],
+      "nlc_family": "networking",
+      "public_claim": "Fastify application networking smoke is fixture-backed for the Node22 primary lane and Node20 validation lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-socket-io",
+      "package": "socket.io",
+      "runtime_profile": "Application",
+      "lane_coverage": ["node22"],
+      "nlc_family": "networking",
+      "public_claim": "Socket.IO application networking smoke is fixture-backed for the Node22 primary lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-undici",
+      "package": "undici",
+      "runtime_profile": "Application",
+      "lane_coverage": ["node22"],
+      "nlc_family": "networking",
+      "public_claim": "Undici application networking smoke is fixture-backed for the Node22 primary lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-networking-axios",
+      "package": "axios",
+      "runtime_profile": "Application",
+      "lane_coverage": ["node22"],
+      "nlc_family": "networking",
+      "public_claim": "Axios application networking smoke is fixture-backed for the Node22 primary lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "tooling-loader-tsx",
+      "package": "tsx",
+      "runtime_profile": "Tooling",
+      "lane_coverage": ["node22"],
+      "nlc_family": "loader-context",
+      "public_claim": "tsx tooling smoke is fixture-backed for the Node22 primary lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "tooling-loader-ts-node",
+      "package": "ts-node",
+      "runtime_profile": "Tooling",
+      "lane_coverage": ["node22"],
+      "nlc_family": "loader-context",
+      "public_claim": "ts-node tooling smoke is fixture-backed for the Node22 primary lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "tooling-loader-jest",
+      "package": "jest",
+      "runtime_profile": "Tooling",
+      "lane_coverage": ["node22"],
+      "nlc_family": "loader-context",
+      "public_claim": "jest tooling smoke is fixture-backed for the Node22 primary lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "tooling-loader-prisma",
+      "package": "prisma",
+      "runtime_profile": "Tooling",
+      "lane_coverage": ["node22"],
+      "nlc_family": "loader-context",
+      "public_claim": "Prisma tooling smoke is fixture-backed for the Node22 primary lane and records either a successful SQLite roundtrip or a documented unsupported engine boundary.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "tooling-loader-next",
+      "package": "next",
+      "runtime_profile": "Tooling",
+      "lane_coverage": ["node22"],
+      "nlc_family": "loader-context",
+      "public_claim": "Next tooling smoke is fixture-backed for the Node22 primary lane with a checked build and route-response probe.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    }
+  ],
+  "canaries": [
+    {
+      "id": "express",
+      "package": "express",
+      "pinned_version": "4.19.2",
+      "status": "active",
+      "root": "tests/node-compat/networking-canaries",
+      "bundle": "express.mjs",
+      "runtime_profile": "Application",
+      "nlc_family_dependency": "networking",
+      "claim_ids": ["application-networking-express"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch"
+        },
+        {
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_test": "application_node20_networking_validation_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "fastify",
+      "package": "fastify",
+      "pinned_version": "4.28.1",
+      "status": "active",
+      "root": "tests/node-compat/networking-canaries",
+      "bundle": "fastify.mjs",
+      "runtime_profile": "Application",
+      "nlc_family_dependency": "networking",
+      "claim_ids": ["application-networking-fastify"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch"
+        },
+        {
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_test": "application_node20_networking_validation_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "socket-io",
+      "package": "socket.io",
+      "pinned_version": "4.7.5",
+      "status": "active",
+      "root": "tests/node-compat/networking-canaries",
+      "bundle": "socket-io.mjs",
+      "runtime_profile": "Application",
+      "nlc_family_dependency": "networking",
+      "claim_ids": ["application-networking-socket-io"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "undici",
+      "package": "undici",
+      "pinned_version": "6.19.8",
+      "status": "active",
+      "root": "tests/node-compat/networking-canaries",
+      "bundle": "undici.mjs",
+      "runtime_profile": "Application",
+      "nlc_family_dependency": "networking",
+      "claim_ids": ["application-networking-undici"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "axios",
+      "package": "axios",
+      "pinned_version": "1.7.7",
+      "status": "active",
+      "root": "tests/node-compat/networking-canaries",
+      "bundle": "axios.mjs",
+      "runtime_profile": "Application",
+      "nlc_family_dependency": "networking",
+      "claim_ids": ["application-networking-axios"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "tsx",
+      "package": "tsx",
+      "pinned_version": "4.21.0",
+      "status": "active",
+      "root": "tests/node-compat/tooling-canaries",
+      "bundle": "tsx.mjs",
+      "runtime_profile": "Tooling",
+      "nlc_family_dependency": "loader-context",
+      "claim_ids": ["tooling-loader-tsx"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "ts-node",
+      "package": "ts-node",
+      "pinned_version": "10.9.2",
+      "status": "active",
+      "root": "tests/node-compat/tooling-canaries",
+      "bundle": "ts-node.mjs",
+      "runtime_profile": "Tooling",
+      "nlc_family_dependency": "loader-context",
+      "claim_ids": ["tooling-loader-ts-node"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "jest",
+      "package": "jest",
+      "pinned_version": "30.4.2",
+      "status": "active",
+      "root": "tests/node-compat/tooling-canaries",
+      "bundle": "jest.mjs",
+      "runtime_profile": "Tooling",
+      "nlc_family_dependency": "loader-context",
+      "claim_ids": ["tooling-loader-jest"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "prisma",
+      "package": "prisma",
+      "pinned_version": "7.8.0",
+      "status": "active",
+      "root": "tests/node-compat/tooling-canaries",
+      "bundle": "prisma.mjs",
+      "runtime_profile": "Tooling",
+      "nlc_family_dependency": "loader-context",
+      "claim_ids": ["tooling-loader-prisma"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "next",
+      "package": "next",
+      "pinned_version": "16.2.6",
+      "status": "active",
+      "root": "tests/node-compat/tooling-canaries",
+      "bundle": "next.mjs",
+      "runtime_profile": "Tooling",
+      "nlc_family_dependency": "loader-context",
+      "claim_ids": ["tooling-loader-next"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch"
+        }
+      ]
+    }
+  ]
+}

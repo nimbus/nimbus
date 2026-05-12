@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "family": "loader-context-supplementary-module-bridge",
+  "nlc_item": "NCF3",
+  "batch_constant": "LOADER_CONTEXT_SUPPLEMENTARY_MODULE_BRIDGE_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node20"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node22"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node24"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-compat-supplementary.md",
+  "failure_doc": "docs/architecture/runtime/node-compat-supplementary-failures.md",
+  "fixture_seeds": [
+    {
+      "id": "supplementary/module-resolution-bridge.mjs",
+      "test_relative_path": "supplementary/module-resolution-bridge.mjs",
+      "slice": "supplementary-module-resolution-bridge",
+      "test_tier": "supplementary",
+      "supplementary_category": "module_resolution_bridge",
+      "lane_sources": {
+        "node20": "supplementary/module-resolution-bridge.mjs",
+        "node22": "supplementary/module-resolution-bridge.mjs",
+        "node24": "supplementary/module-resolution-bridge.mjs"
+      }
+    }
+  ]
+}

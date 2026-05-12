@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use deno_permissions::PermissionsContainer;
+use deno_web::{JsMessageData, MessagePort};
 
 use crate::RuntimeBundle;
 use crate::backends::v8::embedder::{CancelHandle, JsRuntime};
@@ -56,6 +57,11 @@ pub(super) struct InstalledRuntimeHostBridge {
     pub(super) slot: RuntimeHostBridgeSlot,
 }
 
+#[derive(Clone)]
+pub(crate) struct InstalledRuntimeOwner {
+    pub(crate) runtime: NeovexRuntime,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct InstalledRuntimeContract {
     pub(super) compatibility_target: RuntimeCompatibilityTarget,
@@ -67,6 +73,23 @@ pub(super) struct InstalledRuntimeCapabilityPolicy {
     pub(super) paths: RuntimePathPolicy,
     pub(super) env: RuntimeEnvPolicy,
     pub(super) permissions: PermissionsContainer,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeWorkerBootstrapDescriptor {
+    pub(crate) running_on_main_thread: bool,
+    pub(crate) worker_id: u32,
+    pub(crate) close_on_idle: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) module_specifier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) worker_metadata: Option<JsMessageData>,
+}
+
+pub(crate) struct InstalledRuntimeWorkerBootstrapState {
+    pub(crate) descriptor: RuntimeWorkerBootstrapDescriptor,
+    pub(crate) parent_port: Option<Rc<MessagePort>>,
 }
 
 #[derive(Clone)]
@@ -184,8 +207,20 @@ pub(crate) fn initialize_runtime_state(
     runtime_owner: &NeovexRuntime,
     bundle: &RuntimeBundle,
 ) -> Result<()> {
+    install_runtime_owner(runtime, runtime_owner.clone());
     install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
     install_runtime_contract(runtime, runtime_owner, bundle)?;
+    if matches!(
+        runtime_owner.policy().limits().compatibility_target,
+        RuntimeCompatibilityTarget::Node22
+    ) {
+        let inspector = runtime.inspector();
+        let module_specifier = bundle.module_specifier()?;
+        let op_state = runtime.op_state();
+        let mut op_state = op_state.borrow_mut();
+        op_state.put(inspector);
+        op_state.put(module_specifier);
+    }
     reset_runtime_invocation_state(
         runtime,
         SharedInvocationPermit::new(runtime_owner.policy.clone(), None, None, true, None),
@@ -202,7 +237,7 @@ fn install_runtime_contract(
     let paths = RuntimePathPolicy::for_bundle(bundle, &limits)?;
     let env = RuntimeEnvPolicy::for_profile(limits.profile);
     let capability_policy = InstalledRuntimeCapabilityPolicy {
-        permissions: build_permissions_container(&paths, &env)?,
+        permissions: build_permissions_container(&paths, &env, &limits)?,
         paths,
         env,
     };
@@ -217,6 +252,14 @@ fn install_runtime_contract(
     Ok(())
 }
 
+pub(crate) fn install_runtime_owner(runtime: &mut JsRuntime, runtime_owner: NeovexRuntime) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    state.put(InstalledRuntimeOwner {
+        runtime: runtime_owner,
+    });
+}
+
 pub(crate) fn install_runtime_host_bridge_slot(
     runtime: &mut JsRuntime,
     bridge: Arc<dyn HostBridge>,
@@ -226,6 +269,19 @@ pub(crate) fn install_runtime_host_bridge_slot(
     state.put(InstalledRuntimeHostBridge {
         slot: RuntimeHostBridgeSlot::new(bridge),
     });
+}
+
+pub(crate) fn main_thread_worker_bootstrap_state() -> InstalledRuntimeWorkerBootstrapState {
+    InstalledRuntimeWorkerBootstrapState {
+        descriptor: RuntimeWorkerBootstrapDescriptor {
+            running_on_main_thread: true,
+            worker_id: 0,
+            close_on_idle: false,
+            module_specifier: None,
+            worker_metadata: None,
+        },
+        parent_port: None,
+    }
 }
 
 pub(crate) fn bind_runtime_host_bridge(runtime: &mut JsRuntime, bridge: Arc<dyn HostBridge>) {

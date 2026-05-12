@@ -74,6 +74,14 @@ mod tests {
     mod cooperative;
     mod host_bridge;
     mod locker;
+    mod node_compat;
+    mod node_compat_canary_registry;
+    mod node_compat_manifest_catalog;
+    mod node_compat_manifest_metadata;
+    mod node_compat_manifest_report;
+    mod node_compat_manifest_resolution;
+    mod node_compat_manifest_topology;
+    mod node_compat_oracle;
     mod pool_reuse;
     mod snapshot_lifecycle;
     mod support;

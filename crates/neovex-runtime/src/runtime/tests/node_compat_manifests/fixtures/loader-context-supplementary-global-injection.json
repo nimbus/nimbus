@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "family": "loader-context-supplementary-global-injection",
+  "nlc_item": "NCF3",
+  "batch_constant": "LOADER_CONTEXT_SUPPLEMENTARY_GLOBAL_INJECTION_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node20"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node22"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node24"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-compat-supplementary.md",
+  "failure_doc": "docs/architecture/runtime/node-compat-supplementary-failures.md",
+  "fixture_seeds": [
+    {
+      "id": "supplementary/global-injection-fidelity.mjs",
+      "test_relative_path": "supplementary/global-injection-fidelity.mjs",
+      "slice": "supplementary-global-injection-fidelity",
+      "test_tier": "supplementary",
+      "supplementary_category": "global_injection_fidelity",
+      "lane_sources": {
+        "node20": "supplementary/global-injection-fidelity.mjs",
+        "node22": "supplementary/global-injection-fidelity.mjs",
+        "node24": "supplementary/global-injection-fidelity.mjs"
+      }
+    }
+  ]
+}

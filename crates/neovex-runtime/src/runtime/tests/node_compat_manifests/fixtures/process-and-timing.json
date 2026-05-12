@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "family": "process-and-timing",
+  "nlc_item": "NLC4",
+  "batch_constant": "PROCESS_AND_TIMING_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_process_and_timing_subset"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_process_and_timing_subset"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_process_and_timing_subset"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
+  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
+  "fixture_seeds": [
+    {
+      "id": "test/parallel/test-process-default.js",
+      "test_relative_path": "test/parallel/test-process-default.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-default.js",
+        "node22": "node22/test/parallel/test-process-default.js",
+        "node24": "node24/test/parallel/test-process-default.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-prototype.js",
+      "test_relative_path": "test/parallel/test-process-prototype.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-prototype.js",
+        "node22": "node22/test/parallel/test-process-prototype.js",
+        "node24": "node24/test/parallel/test-process-prototype.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-release.js",
+      "test_relative_path": "test/parallel/test-process-release.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-release.js",
+        "node22": "node22/test/parallel/test-process-release.js",
+        "node24": "node24/test/parallel/test-process-release.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-features.js",
+      "test_relative_path": "test/parallel/test-process-features.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node22": "node22/test/parallel/test-process-features.js",
+        "node24": "node24/test/parallel/test-process-features.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-uptime.js",
+      "test_relative_path": "test/parallel/test-process-uptime.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-uptime.js",
+        "node22": "node22/test/parallel/test-process-uptime.js",
+        "node24": "node24/test/parallel/test-process-uptime.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-emitwarning.js",
+      "test_relative_path": "test/parallel/test-process-emitwarning.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-emitwarning.js",
+        "node22": "node22/test/parallel/test-process-emitwarning.js",
+        "node24": "node24/test/parallel/test-process-emitwarning.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-warning.js",
+      "test_relative_path": "test/parallel/test-process-warning.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-warning.js",
+        "node22": "node22/test/parallel/test-process-warning.js",
+        "node24": "node24/test/parallel/test-process-warning.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-no-deprecation.js",
+      "test_relative_path": "test/parallel/test-process-no-deprecation.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-no-deprecation.js",
+        "node22": "node22/test/parallel/test-process-no-deprecation.js",
+        "node24": "node24/test/parallel/test-process-no-deprecation.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-env-symbols.js",
+      "test_relative_path": "test/parallel/test-process-env-symbols.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-env-symbols.js",
+        "node22": "node22/test/parallel/test-process-env-symbols.js",
+        "node24": "node24/test/parallel/test-process-env-symbols.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-process-next-tick.js",
+      "test_relative_path": "test/parallel/test-process-next-tick.js",
+      "slice": "process-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-process-next-tick.js",
+        "node22": "node22/test/parallel/test-process-next-tick.js",
+        "node24": "node24/test/parallel/test-process-next-tick.js"
+      }
+    }
+  ]
+}

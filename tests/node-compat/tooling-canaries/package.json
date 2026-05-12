@@ -1,0 +1,17 @@
+{
+  "name": "neovex-tooling-canaries",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@prisma/client": "7.8.0",
+    "jest": "30.4.2",
+    "next": "16.2.6",
+    "prisma": "7.8.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "ts-node": "10.9.2",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3"
+  }
+}
+
