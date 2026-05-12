@@ -9,7 +9,7 @@
 | Lane | Upstream | Green | Green Delta | Ratio | Ratio Delta Points | Unclassified | Unclassified Delta |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 913 | +0 | 69.8% | +0.0 | 395 | +0 |
-| `node22` | `v22.15.0` | 994 | +0 | 77.5% | +0.0 | 235 | -28 |
+| `node22` | `v22.15.0` | 994 | +0 | 77.5% | +0.0 | 209 | -26 |
 | `node24` | `v24.15.0` | 925 | +0 | 61.9% | +0.0 | 570 | +0 |
 
 ## Evidence Trends

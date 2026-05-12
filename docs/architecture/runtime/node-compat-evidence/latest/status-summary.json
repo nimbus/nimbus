@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-12T00:50:20.080984+00:00",
+  "generated_at": "2026-05-12T00:52:33.014621+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested green subset plus explicit lane classification catalogs. Classified non-green entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.",
   "lane_count": 3,
@@ -74,18 +74,24 @@
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 1283,
       "documented_manifested_green_count": 994,
-      "classified_non_green_count": 54,
-      "unmanifested_or_unclassified_count": 235,
+      "classified_non_green_count": 80,
+      "unmanifested_or_unclassified_count": 209,
       "documented_manifested_green_ratio": 0.774747,
       "classification_catalog": {
         "catalog_path": "tests/node-compat/classifications/node22.json",
         "catalog_present": true,
-        "classified_non_green_count": 54,
+        "classified_non_green_count": 80,
         "by_expectation": {
-          "expected_gap": 47,
+          "expected_gap": 73,
           "expected_skip": 7
         },
         "by_classification": {
+          "requires_diagnostics_channel_async_context_completion": 1,
+          "requires_diagnostics_channel_host_instrumentation": 5,
+          "requires_diagnostics_channel_leak_harness": 1,
+          "requires_diagnostics_channel_loader_instrumentation": 4,
+          "requires_diagnostics_channel_tracing_completion": 14,
+          "requires_diagnostics_channel_worker_instrumentation": 1,
           "requires_host_process_abort_harness": 1,
           "requires_native_addon_non_node_context_harness": 1,
           "requires_native_async_resource_accounting": 6,
@@ -476,6 +482,188 @@
             "classification": "requires_sequential_host_state_harness",
             "owner": "process-and-timing/util-sequential",
             "reason": "This official sequential fixture relies on ordered util.debuglog process state. The current embedded Node22 lane has not promoted this sequential util/process slice, so it remains a precise process-host gap."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-bind-store.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_async_context_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset covers basic pub/sub and stable subscriber behavior. This fixture requires diagnostics_channel async context/store binding completion, so it remains a precise process/timing instrumentation gap."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-http-server-start.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_host_instrumentation",
+            "owner": "networking/http-diagnostics",
+            "reason": "The current manifested diagnostics_channel subset does not yet own HTTP lifecycle instrumentation channels. This fixture remains a precise networking diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-http.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_host_instrumentation",
+            "owner": "networking/http-diagnostics",
+            "reason": "The current manifested diagnostics_channel subset does not yet own HTTP lifecycle instrumentation channels. This fixture remains a precise networking diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-memory-leak.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_leak_harness",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "This fixture is a diagnostics_channel leak/regression probe. The current embedded Node22 lane does not yet own leak-harness execution for diagnostics channels, so it remains an instrumentation reliability gap."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-module-import-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_loader_instrumentation",
+            "owner": "loader-context/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own module loader instrumentation channels. This fixture remains a precise loader diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-module-import.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_loader_instrumentation",
+            "owner": "loader-context/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own module loader instrumentation channels. This fixture remains a precise loader diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-module-require-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_loader_instrumentation",
+            "owner": "loader-context/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own CommonJS loader instrumentation channels. This fixture remains a precise loader diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-module-require.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_loader_instrumentation",
+            "owner": "loader-context/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own CommonJS loader instrumentation channels. This fixture remains a precise loader diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-net.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_host_instrumentation",
+            "owner": "networking/net-diagnostics",
+            "reason": "The current manifested diagnostics_channel subset does not yet own net socket instrumentation channels. This fixture remains a precise networking diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-process.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_host_instrumentation",
+            "owner": "process-and-timing/process-diagnostics",
+            "reason": "The current manifested diagnostics_channel subset does not yet own process lifecycle instrumentation channels. This fixture remains a precise process diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-args-types.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel API. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-callback-early-exit.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel callback lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-callback-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel callback error lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own TracingChannel callback async-store propagation. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-callback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel callback lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-has-subscribers.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own TracingChannel subscriber-query semantics. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-promise-early-exit.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel promise lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-promise-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel promise error lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own TracingChannel promise async-store propagation. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-promise.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel promise lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-sync-early-exit.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel synchronous lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-sync-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel synchronous error lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own TracingChannel synchronous async-store propagation. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-tracing-channel-sync.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_tracing_completion",
+            "owner": "process-and-timing/diagnostics-channel",
+            "reason": "The current manifested diagnostics_channel subset does not yet own the full TracingChannel synchronous lifecycle. This fixture remains a precise tracing-channel completion gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-udp.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_host_instrumentation",
+            "owner": "networking/dgram-diagnostics",
+            "reason": "The current manifested diagnostics_channel subset does not yet own UDP socket instrumentation channels. This fixture remains a precise networking diagnostics gap rather than a green support claim."
+          },
+          {
+            "test_path": "test/parallel/test-diagnostics-channel-worker-threads.js",
+            "expectation": "expected_gap",
+            "classification": "requires_diagnostics_channel_worker_instrumentation",
+            "owner": "loader-context/worker-diagnostics",
+            "reason": "This diagnostics_channel fixture depends on worker-thread instrumentation. The current embedded Node22 lane does not yet own worker diagnostics propagation, so it remains a precise worker diagnostics gap."
           }
         ]
       }

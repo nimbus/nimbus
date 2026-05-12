@@ -107,3 +107,9 @@ Node22 vendored `test-*` file as one of:
   issues, and platform boundaries. Node22 now reports `994` documented green,
   `54` classified non-green, and `235` unmanifested/unclassified vendored
   files.
+- `2026-05-12`: Continued NCM4 with the remaining diagnostics-channel
+  instrumentation family. Classified loader, HTTP/net/UDP/process, worker,
+  leak, async-context, and TracingChannel follow-ons as precise
+  diagnostics-channel completion gaps. Node22 now reports `994` documented
+  green, `80` classified non-green, and `209` unmanifested/unclassified
+  vendored files.
