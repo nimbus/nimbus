@@ -280,9 +280,9 @@ dependencies = [
 
 [[package]]
 name = "astral-tokio-tar"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c23f3af104b40a3430ccb90ed5f7bd877a8dc5c26fc92fde51a22b40890dcf9"
+checksum = "4ce73b17c62717c4b6a9af10b43e87c578b0cac27e00666d48304d3b7d2c0693"
 dependencies = [
  "filetime",
  "futures-core",
@@ -934,7 +934,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -954,7 +954,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2052,7 +2052,7 @@ dependencies = [
 [[package]]
 name = "deno_cache_dir"
 version = "0.39.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "base32",
@@ -2081,7 +2081,7 @@ dependencies = [
 [[package]]
 name = "deno_config"
 version = "0.97.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2107,7 +2107,7 @@ dependencies = [
 [[package]]
 name = "deno_core"
 version = "0.400.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "anyhow",
  "az",
@@ -2154,7 +2154,7 @@ checksum = "a9efff8990a82c1ae664292507e1a5c6749ddd2312898cdf9cd7cb1fd4bc64c6"
 [[package]]
 name = "deno_crypto"
 version = "0.261.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2195,7 +2195,7 @@ dependencies = [
 [[package]]
 name = "deno_crypto_provider"
 version = "0.41.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "aws-lc-sys",
 ]
@@ -2203,7 +2203,7 @@ dependencies = [
 [[package]]
 name = "deno_dotenv"
 version = "0.16.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_path_util",
  "sys_traits",
@@ -2238,7 +2238,7 @@ dependencies = [
 [[package]]
 name = "deno_features"
 version = "0.44.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "serde",
@@ -2248,7 +2248,7 @@ dependencies = [
 [[package]]
 name = "deno_fetch"
 version = "0.271.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2271,7 +2271,7 @@ dependencies = [
  "hyper-util",
  "ipnet",
  "percent-encoding",
- "rustls-webpki 0.102.8",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "deno_fs"
 version = "0.157.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "base32",
@@ -2346,7 +2346,7 @@ dependencies = [
 [[package]]
 name = "deno_http"
 version = "0.245.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2388,7 +2388,7 @@ dependencies = [
 [[package]]
 name = "deno_inspector_server"
 version = "0.21.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2406,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "deno_io"
 version = "0.157.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2431,7 +2431,7 @@ dependencies = [
 [[package]]
 name = "deno_lockfile"
 version = "0.49.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "deno_semver",
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "deno_maybe_sync"
 version = "0.34.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "dashmap",
 ]
@@ -2463,7 +2463,7 @@ dependencies = [
 [[package]]
 name = "deno_napi"
 version = "0.178.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2493,7 +2493,7 @@ dependencies = [
 [[package]]
 name = "deno_net"
 version = "0.239.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2522,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "deno_node"
 version = "0.185.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "base64 0.22.1",
  "boxed_error",
@@ -2567,7 +2567,7 @@ dependencies = [
  "openssl",
  "rand 0.8.5",
  "rustls-tokio-stream",
- "rustls-webpki 0.103.13",
+ "rustls-webpki",
  "serde",
  "socket2 0.5.10",
  "sys_traits",
@@ -2585,7 +2585,7 @@ dependencies = [
 [[package]]
 name = "deno_node_crypto"
 version = "0.17.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "aead-gcm-stream",
  "aes",
@@ -2648,7 +2648,7 @@ dependencies = [
 [[package]]
 name = "deno_node_sqlite"
 version = "0.17.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2660,7 +2660,7 @@ dependencies = [
 [[package]]
 name = "deno_npm"
 version = "0.59.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "capacity_builder",
@@ -2681,7 +2681,7 @@ dependencies = [
 [[package]]
 name = "deno_npmrc"
 version = "0.8.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "log",
  "monch",
@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "deno_ops"
 version = "0.276.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "indexmap 2.13.0",
  "proc-macro2",
@@ -2710,7 +2710,7 @@ dependencies = [
 [[package]]
 name = "deno_os"
 version = "0.64.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2730,7 +2730,7 @@ dependencies = [
 [[package]]
 name = "deno_package_json"
 version = "0.49.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2762,7 +2762,7 @@ dependencies = [
 [[package]]
 name = "deno_permissions"
 version = "0.106.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "capacity_builder",
  "chrono",
@@ -2792,7 +2792,7 @@ dependencies = [
 [[package]]
 name = "deno_process"
 version = "0.62.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2822,7 +2822,7 @@ dependencies = [
 [[package]]
 name = "deno_resolver"
 version = "0.78.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -2885,7 +2885,7 @@ dependencies = [
 [[package]]
 name = "deno_signals"
 version = "0.38.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_error",
  "libc",
@@ -2898,7 +2898,7 @@ dependencies = [
 [[package]]
 name = "deno_subprocess_windows"
 version = "0.42.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "fastrand",
  "futures-channel",
@@ -2909,7 +2909,7 @@ dependencies = [
 [[package]]
 name = "deno_telemetry"
 version = "0.69.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2951,7 +2951,7 @@ dependencies = [
 [[package]]
 name = "deno_tls"
 version = "0.234.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2960,7 +2960,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "rustls-tokio-stream",
- "rustls-webpki 0.102.8",
+ "rustls-webpki",
  "serde",
  "thiserror 2.0.18",
  "tokio",
@@ -2997,7 +2997,7 @@ dependencies = [
 [[package]]
 name = "deno_web"
 version = "0.278.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "async-trait",
  "brotli 6.0.0",
@@ -3019,7 +3019,7 @@ dependencies = [
 [[package]]
 name = "deno_webidl"
 version = "0.247.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_core",
 ]
@@ -3027,7 +3027,7 @@ dependencies = [
 [[package]]
 name = "deno_websocket"
 version = "0.252.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "bytes",
  "deno_core",
@@ -3062,7 +3062,7 @@ dependencies = [
 [[package]]
 name = "denort_helper"
 version = "0.45.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_error",
  "deno_path_util",
@@ -3493,18 +3493,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "enum-as-inner"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -4163,24 +4151,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hickory-proto"
-version = "0.25.2"
+name = "hickory-net"
+version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8a6fe56c0038198998a6f217ca4e7ef3a5e51f46163bd6dd60b5c71ca6c6502"
+checksum = "e2295ed2f9c31e471e1428a8f88a3f0e1f4b27c15049592138d1eebe9c35b183"
 dependencies = [
  "async-trait",
  "cfg-if",
  "data-encoding",
- "enum-as-inner",
  "futures-channel",
  "futures-io",
  "futures-util",
+ "hickory-proto",
  "idna",
  "ipnet",
- "once_cell",
- "rand 0.9.3",
- "ring",
- "serde",
+ "jni 0.22.4",
+ "rand 0.10.1",
  "thiserror 2.0.18",
  "tinyvec",
  "tokio",
@@ -4189,22 +4175,48 @@ dependencies = [
 ]
 
 [[package]]
-name = "hickory-resolver"
-version = "0.25.2"
+name = "hickory-proto"
+version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc62a9a99b0bfb44d2ab95a7208ac952d31060efc16241c87eaf36406fecf87a"
+checksum = "0bab31817bfb44672a252e97fe81cd0c18d1b2cf892108922f6818820df8c643"
+dependencies = [
+ "data-encoding",
+ "idna",
+ "ipnet",
+ "jni 0.22.4",
+ "once_cell",
+ "prefix-trie",
+ "rand 0.10.1",
+ "ring",
+ "serde",
+ "thiserror 2.0.18",
+ "tinyvec",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "hickory-resolver"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0d58d28879ceecde6607729660c2667a081ccdc082e082675042793960f178c"
 dependencies = [
  "cfg-if",
  "futures-util",
+ "hickory-net",
  "hickory-proto",
  "ipconfig",
+ "ipnet",
+ "jni 0.22.4",
  "moka",
+ "ndk-context",
  "once_cell",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.10.1",
  "resolv-conf",
  "serde",
  "smallvec",
+ "system-configuration",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4818,6 +4830,9 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "ipnetwork"
@@ -4909,6 +4924,36 @@ dependencies = [
  "thiserror 1.0.69",
  "walkdir",
  "windows-sys 0.45.0",
+]
+
+[[package]]
+name = "jni"
+version = "0.22.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
+dependencies = [
+ "cfg-if",
+ "combine",
+ "jni-macros",
+ "jni-sys 0.4.1",
+ "log",
+ "simd_cesu8",
+ "thiserror 2.0.18",
+ "walkdir",
+ "windows-link",
+]
+
+[[package]]
+name = "jni-macros"
+version = "0.22.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rustc_version",
+ "simd_cesu8",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5467,7 +5512,7 @@ dependencies = [
 [[package]]
 name = "napi_sym"
 version = "0.177.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "quote",
  "serde",
@@ -5491,6 +5536,12 @@ dependencies = [
  "security-framework-sys",
  "tempfile",
 ]
+
+[[package]]
+name = "ndk-context"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netif"
@@ -5792,7 +5843,7 @@ dependencies = [
 [[package]]
 name = "node_resolver"
 version = "0.85.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5822,7 +5873,7 @@ dependencies = [
 [[package]]
 name = "node_shim"
 version = "0.22.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "exec",
  "serde_json",
@@ -6717,6 +6768,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "prefix-trie"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cf6e3177f0684016a5c209b00882e15f8bdd3f3bb48f0491df10cd102d0c6e7"
+dependencies = [
+ "either",
+ "ipnet",
+ "num-traits",
+]
+
+[[package]]
 name = "pretty_assertions"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6841,7 +6903,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "log",
  "multimap",
  "once_cell",
@@ -6874,7 +6936,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6887,7 +6949,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7529,7 +7591,7 @@ dependencies = [
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.13",
+ "rustls-webpki",
  "subtle",
  "zeroize",
 ]
@@ -7586,13 +7648,13 @@ checksum = "1d99feebc72bae7ab76ba994bb5e121b8d83d910ca40b36e0921f53becc41784"
 dependencies = [
  "core-foundation 0.10.1",
  "core-foundation-sys",
- "jni",
+ "jni 0.21.1",
  "log",
  "once_cell",
  "rustls",
  "rustls-native-certs 0.8.3",
  "rustls-platform-verifier-android",
- "rustls-webpki 0.103.13",
+ "rustls-webpki",
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs 1.0.6",
@@ -7616,17 +7678,6 @@ dependencies = [
  "rustls",
  "socket2 0.5.10",
  "tokio",
-]
-
-[[package]]
-name = "rustls-webpki"
-version = "0.102.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
-dependencies = [
- "ring",
- "rustls-pki-types",
- "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -7935,7 +7986,7 @@ dependencies = [
 [[package]]
 name = "serde_v8"
 version = "0.309.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.42#57ae90dd86d26b570c8f8d67a1ca188952e668b4"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -8168,6 +8219,16 @@ dependencies = [
  "serde_json",
  "simdutf8",
  "value-trait",
+]
+
+[[package]]
+name = "simd_cesu8"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94f90157bb87cddf702797c5dadfa0be7d266cdf49e22da2fcaa32eff75b2c33"
+dependencies = [
+ "rustc_version",
+ "simdutf8",
 ]
 
 [[package]]
