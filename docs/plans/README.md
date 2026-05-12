@@ -38,14 +38,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
     state to `~/.config/neovex/` (license, future auth), add deployment
     identity via `.env.local` with `NEOVEX_DEPLOYMENT=local:<slug>`;
     follows the Convex hybrid pattern verified from source
-- `docs/plans/node-compat-matrix-classification-plan.md`
-  - active post-evidence-hardening Node compatibility plan: move practical
-    long-tail fixture inventory out of historical Rust-only tables, make the
-    Node22 denominator machine-readable, and classify the remaining Node22
-    vendored test files into green manifests, expected failures, expected
-    skips, or precise owner-backed gaps
 ## Stable implementation baselines
 
+- `docs/plans/node-compat-matrix-classification-plan.md`
+  - completed post-evidence-hardening Node compatibility matrix baseline:
+    Node22 now has path-owned green evidence, explicit non-green
+    classifications for every remaining vendored test file, generated
+    inventory with zero reconstructability warnings, and synchronized
+    status/dashboard/trend/published evidence
 - `docs/plans/node-lts-compatibility-plan.md`
   - completed Node LTS closeout baseline for the landed Node22 primary
     contract, Node20 validation lane, Node24 preview visibility, family

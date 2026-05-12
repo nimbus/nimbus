@@ -1,6 +1,6 @@
 # Node Compatibility Matrix Classification Plan
 
-Status: `in_progress`
+Status: `done`
 
 Owner: Node-compatible runtime / test infrastructure
 
@@ -53,7 +53,7 @@ Node22 vendored `test-*` file as one of:
 | NCM2 Manifest-owned matrix seam | `done` | Long-tail fixture batches that are practical to data-own are moved from inline historical Rust tables into manifest/generated inventory, with tests proving the generated inventory matches the execution set. |
 | NCM3 First Node22 classification batch | `done` | A small owner-coherent Node22 unclassified group is classified as green/expected-failure/skip/gap, with status/dashboard/trend deltas updated and focused runtime evidence recorded. |
 | NCM4 Iterative coverage batches | `done` | Repeat NCM3 in family-sized batches until the Node22 unclassified count is zero or every remaining item has a precise owner-backed classification. |
-| NCM5 Closeout audit | `in_progress` | Final review confirms docs, manifests, generated inventories, dashboards, and runtime tests agree; archive this plan only after the evidence is reproducible from make targets. |
+| NCM5 Closeout audit | `done` | Final review confirms docs, manifests, generated inventories, dashboards, and runtime tests agree; archive this plan only after the evidence is reproducible from make targets. |
 
 ## Verification Gates
 
@@ -141,3 +141,8 @@ Node22 vendored `test-*` file as one of:
   test list, reports `0` Rust-unreferenced unclassified files, and has `0`
   reconstructability warnings. Public docs were corrected from the earlier
   `994` prose claim to the path-owned `898` support claim.
+- `2026-05-12`: Completed NCM5 closeout. Re-ran the status, inventory,
+  dashboard, trend, publish, schema-validation, `cargo fmt --all --check`, and
+  focused runtime manifest-topology verification gates. The checked-in evidence
+  snapshot reports zero suite warnings and keeps the support claim tied to
+  path-owned Node22 green evidence plus explicit non-green classifications.
