@@ -274,8 +274,8 @@ def build_markdown(summary: dict) -> str:
         lines.extend(
             [
                 "",
-                "| Lane | Upstream | Role | Green | Vendored | Unclassified | Ratio |",
-                "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+                "| Lane | Upstream | Role | Green | Classified non-green | Documented/classified | Vendored | Unclassified | Ratio |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for lane in status["lane_summaries"]:
@@ -284,6 +284,8 @@ def build_markdown(summary: dict) -> str:
                 f"| `{lane['lane']}` | `{lane['upstream']['tag']}` | "
                 f"`{lane['lane_role']}` | "
                 f"{lane['documented_manifested_green_count']} | "
+                f"{lane['classified_non_green_count']} | "
+                f"{lane['documented_or_classified_count']} | "
                 f"{lane['vendored_test_file_count']} | "
                 f"{lane['unmanifested_or_unclassified_count']} | "
                 f"{ratio:.1f}% |"
@@ -303,8 +305,8 @@ def build_markdown(summary: dict) -> str:
             "",
             "## Fixture Inventory",
             "",
-            "| Lane | Upstream | Vendored | Documented green | Classified non-green | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Lane | Upstream | Vendored | Documented green | Classified non-green | Documented/classified | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     if summary["inventory_reports"]:
@@ -315,6 +317,7 @@ def build_markdown(summary: dict) -> str:
                 f"{counts['vendored_test_file_count']} | "
                 f"{counts['documented_manifested_green_count']} | "
                 f"{counts['classified_non_green_count']} | "
+                f"{counts['documented_or_classified_count']} | "
                 f"{counts['documented_unmanifested_or_unclassified_count']} | "
                 f"{counts['rust_referenced_test_file_count']} | "
                 f"{counts['rust_unreferenced_test_file_count']} | "
@@ -322,7 +325,7 @@ def build_markdown(summary: dict) -> str:
                 f"{len(report['warnings'])} |"
             )
     else:
-        lines.append("| none | - | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |")
+        lines.append("| none | - | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |")
     lines.extend(
         [
             "",
