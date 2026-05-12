@@ -225,18 +225,17 @@ def validate_lane_classification_catalog(
                 "actual": catalog.get("lane"),
             }
         )
-    entries = catalog.get("entries")
+    seen_paths: set[str] = set()
+    required_fields = {"test_path", "expectation", "classification", "owner", "reason"}
+    entries = catalog.get("entries", [])
     if not isinstance(entries, list):
-        return [
-            *errors,
+        errors.append(
             {
                 "kind": "lane_classification_entries_not_array",
                 "lane": lane,
-            },
-        ]
-
-    seen_paths: set[str] = set()
-    required_fields = {"test_path", "expectation", "classification", "owner", "reason"}
+            }
+        )
+        entries = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             errors.append(
@@ -247,63 +246,234 @@ def validate_lane_classification_catalog(
                 }
             )
             continue
-        missing = sorted(required_fields - set(entry))
-        if missing:
-            errors.append(
-                {
-                    "kind": "lane_classification_entry_missing_fields",
-                    "lane": lane,
-                    "index": index,
-                    "fields": missing,
-                }
+        errors.extend(
+            validate_lane_classification_entry(
+                lane=lane,
+                entry=entry,
+                source=f"entries[{index}]",
+                fixtures=fixtures,
+                seen_paths=seen_paths,
+                required_fields=required_fields,
             )
-        test_path = entry.get("test_path")
-        if not isinstance(test_path, str) or not test_path:
+        )
+
+    groups = catalog.get("groups", [])
+    if not isinstance(groups, list):
+        errors.append(
+            {
+                "kind": "lane_classification_groups_not_array",
+                "lane": lane,
+            }
+        )
+        groups = []
+    group_required_fields = {
+        "id",
+        "test_paths",
+        "expectation",
+        "classification",
+        "owner",
+        "reason",
+    }
+    seen_group_ids: set[str] = set()
+    for group_index, group in enumerate(groups):
+        if not isinstance(group, dict):
             errors.append(
                 {
-                    "kind": "lane_classification_invalid_test_path",
+                    "kind": "lane_classification_group_not_object",
                     "lane": lane,
-                    "index": index,
+                    "index": group_index,
                 }
             )
             continue
-        if test_path in seen_paths:
+        missing = sorted(group_required_fields - set(group))
+        if missing:
             errors.append(
                 {
-                    "kind": "lane_classification_duplicate_test_path",
+                    "kind": "lane_classification_group_missing_fields",
                     "lane": lane,
-                    "test_path": test_path,
+                    "index": group_index,
+                    "fields": missing,
                 }
             )
-        seen_paths.add(test_path)
-        normalized_path = test_path[5:] if test_path.startswith("test/") else test_path
-        if normalized_path not in fixtures:
+        group_id = group.get("id")
+        if not isinstance(group_id, str) or not group_id:
             errors.append(
                 {
-                    "kind": "lane_classification_unknown_fixture",
+                    "kind": "lane_classification_invalid_group_id",
                     "lane": lane,
-                    "test_path": test_path,
+                    "index": group_index,
                 }
             )
-        if entry.get("expectation") not in VALID_LANE_CLASSIFICATION_EXPECTATIONS:
+            continue
+        if group_id in seen_group_ids:
             errors.append(
                 {
-                    "kind": "lane_classification_invalid_expectation",
+                    "kind": "lane_classification_duplicate_group_id",
                     "lane": lane,
-                    "test_path": test_path,
-                    "expectation": entry.get("expectation"),
+                    "group_id": group_id,
+                }
+            )
+        seen_group_ids.add(group_id)
+        test_paths = group.get("test_paths")
+        if not isinstance(test_paths, list):
+            errors.append(
+                {
+                    "kind": "lane_classification_group_test_paths_not_array",
+                    "lane": lane,
+                    "group_id": group_id,
+                }
+            )
+            continue
+        if not test_paths:
+            errors.append(
+                {
+                    "kind": "lane_classification_group_empty_test_paths",
+                    "lane": lane,
+                    "group_id": group_id,
                 }
             )
         for field in ("classification", "owner", "reason"):
-            if not isinstance(entry.get(field), str) or not entry[field]:
+            if not isinstance(group.get(field), str) or not group[field]:
                 errors.append(
                     {
-                        "kind": f"lane_classification_invalid_{field}",
+                        "kind": f"lane_classification_group_invalid_{field}",
                         "lane": lane,
-                        "test_path": test_path,
+                        "group_id": group_id,
                     }
                 )
+        if group.get("expectation") not in VALID_LANE_CLASSIFICATION_EXPECTATIONS:
+            errors.append(
+                {
+                    "kind": "lane_classification_group_invalid_expectation",
+                    "lane": lane,
+                    "group_id": group_id,
+                    "expectation": group.get("expectation"),
+                }
+            )
+        for path_index, test_path in enumerate(test_paths):
+            entry = {
+                "test_path": test_path,
+                "expectation": group.get("expectation"),
+                "classification": group.get("classification"),
+                "owner": group.get("owner"),
+                "reason": group.get("reason"),
+            }
+            errors.extend(
+                validate_lane_classification_entry(
+                    lane=lane,
+                    entry=entry,
+                    source=f"groups[{group_index}].test_paths[{path_index}]",
+                    fixtures=fixtures,
+                    seen_paths=seen_paths,
+                    required_fields=required_fields,
+                    group_id=group_id,
+                )
+            )
     return errors
+
+
+def validate_lane_classification_entry(
+    *,
+    lane: str,
+    entry: dict,
+    source: str,
+    fixtures: set[str],
+    seen_paths: set[str],
+    required_fields: set[str],
+    group_id: str | None = None,
+) -> list[dict]:
+    errors: list[dict] = []
+    missing = sorted(required_fields - set(entry))
+    if missing:
+        errors.append(
+            {
+                "kind": "lane_classification_entry_missing_fields",
+                "lane": lane,
+                "source": source,
+                "fields": missing,
+            }
+        )
+    test_path = entry.get("test_path")
+    if not isinstance(test_path, str) or not test_path:
+        errors.append(
+            {
+                "kind": "lane_classification_invalid_test_path",
+                "lane": lane,
+                "source": source,
+                "group_id": group_id,
+            }
+        )
+        return errors
+    if test_path in seen_paths:
+        errors.append(
+            {
+                "kind": "lane_classification_duplicate_test_path",
+                "lane": lane,
+                "test_path": test_path,
+                "source": source,
+                "group_id": group_id,
+            }
+        )
+    seen_paths.add(test_path)
+    normalized_path = test_path[5:] if test_path.startswith("test/") else test_path
+    if normalized_path not in fixtures:
+        errors.append(
+            {
+                "kind": "lane_classification_unknown_fixture",
+                "lane": lane,
+                "test_path": test_path,
+                "source": source,
+                "group_id": group_id,
+            }
+        )
+    if entry.get("expectation") not in VALID_LANE_CLASSIFICATION_EXPECTATIONS:
+        errors.append(
+            {
+                "kind": "lane_classification_invalid_expectation",
+                "lane": lane,
+                "test_path": test_path,
+                "source": source,
+                "group_id": group_id,
+                "expectation": entry.get("expectation"),
+            }
+        )
+    for field in ("classification", "owner", "reason"):
+        if not isinstance(entry.get(field), str) or not entry[field]:
+            errors.append(
+                {
+                    "kind": f"lane_classification_invalid_{field}",
+                    "lane": lane,
+                    "test_path": test_path,
+                    "source": source,
+                    "group_id": group_id,
+                }
+            )
+    return errors
+
+
+def expanded_lane_classification_entries(catalog: dict) -> list[dict]:
+    entries: list[dict] = []
+    for entry in catalog.get("entries", []):
+        if isinstance(entry, dict):
+            entries.append(entry)
+    for group in catalog.get("groups", []):
+        if not isinstance(group, dict):
+            continue
+        test_paths = group.get("test_paths")
+        if not isinstance(test_paths, list):
+            continue
+        for test_path in test_paths:
+            entries.append(
+                {
+                    "test_path": test_path,
+                    "expectation": group.get("expectation"),
+                    "classification": group.get("classification"),
+                    "owner": group.get("owner"),
+                    "reason": group.get("reason"),
+                    "group_id": group.get("id"),
+                }
+            )
+    return entries
 
 
 def build_lane_classification_summary(lane: str, fixtures: set[str]) -> dict:
@@ -322,7 +492,7 @@ def build_lane_classification_summary(lane: str, fixtures: set[str]) -> dict:
 
     catalog = load_json(path)
     errors = validate_lane_classification_catalog(lane, catalog, fixtures)
-    entries = catalog.get("entries", []) if isinstance(catalog.get("entries"), list) else []
+    entries = expanded_lane_classification_entries(catalog)
     by_expectation: dict[str, int] = {}
     by_classification: dict[str, int] = {}
     valid_entries = []
