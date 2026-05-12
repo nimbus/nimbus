@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "family": "runtime-supplementary",
+  "nlc_item": "NCF3",
+  "batch_constant": "RUNTIME_SUPPLEMENTARY_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node22"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node24"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-compat-supplementary.md",
+  "failure_doc": "docs/architecture/runtime/node-compat-supplementary-failures.md",
+  "fixture_seeds": [
+    {
+      "id": "supplementary/resource-safety.mjs",
+      "test_relative_path": "supplementary/resource-safety.mjs",
+      "slice": "supplementary-resource-safety",
+      "test_tier": "supplementary",
+      "supplementary_category": "resource_safety",
+      "lane_sources": {
+        "node20": "supplementary/resource-safety.mjs",
+        "node22": "supplementary/resource-safety.mjs",
+        "node24": "supplementary/resource-safety.mjs"
+      }
+    },
+    {
+      "id": "supplementary/framework-loader-patterns.mjs",
+      "test_relative_path": "supplementary/framework-loader-patterns.mjs",
+      "slice": "supplementary-framework-loader-patterns",
+      "test_tier": "supplementary",
+      "supplementary_category": "framework_motivated_patterns",
+      "lane_sources": {
+        "node20": "supplementary/framework-loader-patterns.mjs",
+        "node22": "supplementary/framework-loader-patterns.mjs",
+        "node24": "supplementary/framework-loader-patterns.mjs"
+      }
+    }
+  ]
+}

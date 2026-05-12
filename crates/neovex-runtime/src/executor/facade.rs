@@ -115,6 +115,7 @@ impl RuntimeExecutor {
             let worker_loop_factory = worker_loop_factory.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("neovex-runtime-worker-{worker_id}"))
+                .stack_size(8 * 1024 * 1024)
                 .spawn(move || {
                     let mut worker_loop = worker_loop_factory.create(worker_id, policy);
                     worker_loop.run(queue, shutdown);

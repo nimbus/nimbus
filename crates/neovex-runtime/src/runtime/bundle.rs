@@ -54,7 +54,7 @@ impl Eq for RuntimeBundle {}
 
 impl RuntimeBundle {
     pub fn new(entrypoint: impl AsRef<Path>) -> Self {
-        Self::from_parts(entrypoint.as_ref().to_path_buf(), None, None)
+        Self::from_parts(entrypoint.as_ref().to_path_buf(), None, None, None)
     }
 
     pub fn with_expected_sha256(
@@ -64,6 +64,7 @@ impl RuntimeBundle {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
             Some(normalize_sha256(expected_sha256.as_ref())?),
+            None,
             None,
         ))
     }
@@ -77,7 +78,20 @@ impl RuntimeBundle {
             entrypoint.as_ref().to_path_buf(),
             Some(normalize_sha256(expected_sha256.as_ref())?),
             Some(tenant_label.into()),
+            None,
         ))
+    }
+
+    pub(crate) fn with_module_root(
+        entrypoint: impl AsRef<Path>,
+        module_root: impl AsRef<Path>,
+    ) -> Self {
+        Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            None,
+            None,
+            Some(module_root.as_ref().to_path_buf()),
+        )
     }
 
     pub fn entrypoint(&self) -> &Path {
@@ -142,6 +156,7 @@ impl RuntimeBundle {
         entrypoint: PathBuf,
         expected_sha256: Option<String>,
         tenant_label: Option<String>,
+        explicit_module_root: Option<PathBuf>,
     ) -> Self {
         let canonical_entrypoint = entrypoint.canonicalize().ok();
         let module_specifier_path = canonical_entrypoint
@@ -154,13 +169,17 @@ impl RuntimeBundle {
                     entrypoint.display()
                 )
             });
-        let canonical_module_root = canonical_entrypoint
-            .as_ref()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
+        let canonical_module_root = explicit_module_root
+            .map(|path| path.canonicalize().unwrap_or(path))
             .or_else(|| {
-                entrypoint
-                    .parent()
-                    .and_then(|path| path.canonicalize().ok())
+                canonical_entrypoint
+                    .as_ref()
+                    .and_then(|path| path.parent().map(Path::to_path_buf))
+                    .or_else(|| {
+                        entrypoint
+                            .parent()
+                            .and_then(|path| path.canonicalize().ok())
+                    })
             });
         let identity = RuntimeBundleIdentity {
             tenant_label,

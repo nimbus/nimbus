@@ -1,0 +1,1415 @@
+{
+  "schema_version": 1,
+  "artifacts_root": "target/node-compat",
+  "slice_report_count": 8,
+  "canary_report_count": 2,
+  "oracle_report_count": 1,
+  "suite_status_report": {
+    "path": "target/node-compat/status/status-summary.json",
+    "lane_summaries": [
+      {
+        "lane": "node20",
+        "upstream_fixture_line": "Node20",
+        "lane_role": "validation",
+        "public_contract_role": "measured_validation_lane",
+        "runtime_execution_target": "Node22",
+        "runtime_limits_profile": "application_node22",
+        "upstream": {
+          "repo": "nodejs/node",
+          "tag": "v20.20.2",
+          "fixture_subtree": "test",
+          "source_kind": "vendored_official_fixture_corpus"
+        },
+        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
+        "denominator_kind": "vendored_fixture_root_test_files",
+        "vendored_test_file_count": 1308,
+        "documented_manifested_green_count": 913,
+        "unmanifested_or_unclassified_count": 395,
+        "documented_manifested_green_ratio": 0.698012
+      },
+      {
+        "lane": "node22",
+        "upstream_fixture_line": "Node22",
+        "lane_role": "primary",
+        "public_contract_role": "primary_contract",
+        "runtime_execution_target": "Node22",
+        "runtime_limits_profile": "application_node22",
+        "upstream": {
+          "repo": "nodejs/node",
+          "tag": "v22.15.0",
+          "fixture_subtree": "test",
+          "source_kind": "vendored_official_fixture_corpus"
+        },
+        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
+        "denominator_kind": "vendored_fixture_root_test_files",
+        "vendored_test_file_count": 1283,
+        "documented_manifested_green_count": 994,
+        "unmanifested_or_unclassified_count": 289,
+        "documented_manifested_green_ratio": 0.774747
+      },
+      {
+        "lane": "node24",
+        "upstream_fixture_line": "Node24",
+        "lane_role": "preview",
+        "public_contract_role": "preview_visibility_lane",
+        "runtime_execution_target": "Node22",
+        "runtime_limits_profile": "application_node22",
+        "upstream": {
+          "repo": "nodejs/node",
+          "tag": "v24.15.0",
+          "fixture_subtree": "test",
+          "source_kind": "vendored_official_fixture_corpus"
+        },
+        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
+        "denominator_kind": "vendored_fixture_root_test_files",
+        "vendored_test_file_count": 1495,
+        "documented_manifested_green_count": 925,
+        "unmanifested_or_unclassified_count": 570,
+        "documented_manifested_green_ratio": 0.618729
+      }
+    ],
+    "rust_ignore_count": 61,
+    "warnings": []
+  },
+  "slice_reports": [
+    {
+      "path": "target/node-compat/loader-context-supplementary/supplementary-builtin-completeness/slice-observed-loader-context-supplementary-supplementary-builtin-completeness.json",
+      "family": "loader-context-supplementary",
+      "slice": "supplementary-builtin-completeness",
+      "nlc_item": "NCF3",
+      "execution_class": "sequential",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/loader-context-supplementary-global-injection/supplementary-global-injection-fidelity/slice-observed-loader-context-supplementary-global-injection-supplementary-global-injection-fidelity.json",
+      "family": "loader-context-supplementary-global-injection",
+      "slice": "supplementary-global-injection-fidelity",
+      "nlc_item": "NCF3",
+      "execution_class": "sequential",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/loader-context-supplementary-module-bridge/supplementary-module-resolution-bridge/slice-observed-loader-context-supplementary-module-bridge-supplementary-module-resolution-bridge.json",
+      "family": "loader-context-supplementary-module-bridge",
+      "slice": "supplementary-module-resolution-bridge",
+      "nlc_item": "NCF3",
+      "execution_class": "sequential",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/networking/dns-net-foundation/slice-observed-networking-dns-net-foundation.json",
+      "family": "networking",
+      "slice": "dns-net-foundation",
+      "nlc_item": "NLC6",
+      "execution_class": "sequential",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs",
+        "loopback-net"
+      ],
+      "counts": {
+        "passed": 29,
+        "skipped": 0,
+        "failed": 0,
+        "missing": 0
+      },
+      "total_expected_results": 29,
+      "total_observed_results": 29,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_networking_subset",
+          "expected_fixture_count": 10,
+          "observed_fixture_count": 10,
+          "counts": {
+            "passed": 10,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_networking_subset",
+          "expected_fixture_count": 10,
+          "observed_fixture_count": 10,
+          "counts": {
+            "passed": 10,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_networking_subset",
+          "expected_fixture_count": 9,
+          "observed_fixture_count": 9,
+          "counts": {
+            "passed": 9,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/process-and-timing-supplementary/supplementary-process-release-shape/slice-observed-process-and-timing-supplementary-supplementary-process-release-shape.json",
+      "family": "process-and-timing-supplementary",
+      "slice": "supplementary-process-release-shape",
+      "nlc_item": "NCF3",
+      "execution_class": "expected_failure",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 0,
+        "skipped": 0,
+        "failed": 3,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 0,
+            "skipped": 0,
+            "failed": 1,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 0,
+            "skipped": 0,
+            "failed": 1,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 0,
+            "skipped": 0,
+            "failed": 1,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/runtime-supplementary/supplementary-framework-loader-patterns/slice-observed-runtime-supplementary-supplementary-framework-loader-patterns.json",
+      "family": "runtime-supplementary",
+      "slice": "supplementary-framework-loader-patterns",
+      "nlc_item": "NCF3",
+      "execution_class": "sequential",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/runtime-supplementary/supplementary-resource-safety/slice-observed-runtime-supplementary-supplementary-resource-safety.json",
+      "family": "runtime-supplementary",
+      "slice": "supplementary-resource-safety",
+      "nlc_item": "NCF3",
+      "execution_class": "sequential",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 1,
+            "skipped": 0,
+            "failed": 0,
+            "missing": 0
+          }
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/runtime-supplementary-signal-lifecycle/supplementary-signal-listener-lifecycle/slice-observed-runtime-supplementary-signal-lifecycle-supplementary-signal-listener-lifecycle.json",
+      "family": "runtime-supplementary-signal-lifecycle",
+      "slice": "supplementary-signal-listener-lifecycle",
+      "nlc_item": "NCF3",
+      "execution_class": "expected_failure",
+      "profiles": [
+        "Application"
+      ],
+      "capabilities": [
+        "bundle-root-fs"
+      ],
+      "counts": {
+        "passed": 0,
+        "skipped": 0,
+        "failed": 3,
+        "missing": 0
+      },
+      "total_expected_results": 3,
+      "total_observed_results": 3,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node20",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 0,
+            "skipped": 0,
+            "failed": 1,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node22",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 0,
+            "skipped": 0,
+            "failed": 1,
+            "missing": 0
+          }
+        },
+        {
+          "lane": "node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "preview",
+          "public_contract_role": "preview_visibility_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node24",
+          "expected_fixture_count": 1,
+          "observed_fixture_count": 1,
+          "counts": {
+            "passed": 0,
+            "skipped": 0,
+            "failed": 1,
+            "missing": 0
+          }
+        }
+      ]
+    }
+  ],
+  "canary_reports": [
+    {
+      "path": "target/node-compat/canaries/profile-application.json",
+      "profile": "Application",
+      "canary_count": 7,
+      "passed": 7,
+      "failed": 0,
+      "lane_summaries": [
+        {
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "cargo_tests": [
+            "application_node20_networking_validation_canary_batch"
+          ],
+          "canary_count": 2,
+          "passed": 2,
+          "failed": 0
+        },
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "cargo_tests": [
+            "application_node22_networking_package_canary_batch"
+          ],
+          "canary_count": 5,
+          "passed": 5,
+          "failed": 0
+        }
+      ],
+      "canary_results": [
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-express"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_test": "application_node20_networking_validation_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-fastify"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_test": "application_node20_networking_validation_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "axios",
+          "package": "axios",
+          "pinned_version": "1.7.7",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-axios"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-express"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-fastify"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "socket-io",
+          "package": "socket.io",
+          "pinned_version": "4.7.5",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-socket-io"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "undici",
+          "package": "undici",
+          "pinned_version": "6.19.8",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-undici"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "path": "target/node-compat/canaries/profile-tooling.json",
+      "profile": "Tooling",
+      "canary_count": 5,
+      "passed": 5,
+      "failed": 0,
+      "lane_summaries": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "cargo_tests": [
+            "tooling_node22_package_canary_batch"
+          ],
+          "canary_count": 5,
+          "passed": 5,
+          "failed": 0
+        }
+      ],
+      "canary_results": [
+        {
+          "id": "jest",
+          "package": "jest",
+          "pinned_version": "30.4.2",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-jest"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "next",
+          "package": "next",
+          "pinned_version": "16.2.6",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-next"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "prisma",
+          "package": "prisma",
+          "pinned_version": "7.8.0",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-prisma"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "ts-node",
+          "package": "ts-node",
+          "pinned_version": "10.9.2",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-ts-node"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "tsx",
+          "package": "tsx",
+          "pinned_version": "4.21.0",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-tsx"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    }
+  ],
+  "oracle_reports": [
+    {
+      "path": "target/node-compat/oracle/node22/test-parallel-test-buffer-alloc-js/oracle-node22-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node22",
+      "upstream_fixture_line": "Node22",
+      "lane_role": "primary",
+      "public_contract_role": "primary_contract",
+      "runtime_execution_target": "Node22",
+      "runtime_limits_profile": "application_node22",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v22.22.2"
+    }
+  ],
+  "claim_summaries": [
+    {
+      "id": "application-networking-express",
+      "package": "express",
+      "runtime_profile": "Application",
+      "lane_coverage": [
+        "node22",
+        "node20"
+      ],
+      "nlc_family": "networking",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane"
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-express"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_test": "application_node20_networking_validation_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-express"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "application-networking-fastify",
+      "package": "fastify",
+      "runtime_profile": "Application",
+      "lane_coverage": [
+        "node22",
+        "node20"
+      ],
+      "nlc_family": "networking",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane"
+        },
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-fastify"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_test": "application_node20_networking_validation_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "validation",
+          "public_contract_role": "measured_validation_lane",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-fastify"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "application-networking-socket-io",
+      "package": "socket.io",
+      "runtime_profile": "Application",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "networking",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "socket-io",
+          "package": "socket.io",
+          "pinned_version": "4.7.5",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-socket-io"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "application-networking-undici",
+      "package": "undici",
+      "runtime_profile": "Application",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "networking",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "undici",
+          "package": "undici",
+          "pinned_version": "6.19.8",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-undici"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "application-networking-axios",
+      "package": "axios",
+      "runtime_profile": "Application",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "networking",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "axios",
+          "package": "axios",
+          "pinned_version": "1.7.7",
+          "runtime_profile": "Application",
+          "claim_ids": [
+            "application-networking-axios"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_networking_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "tooling-loader-tsx",
+      "package": "tsx",
+      "runtime_profile": "Tooling",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "loader-context",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "tsx",
+          "package": "tsx",
+          "pinned_version": "4.21.0",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-tsx"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "tooling-loader-ts-node",
+      "package": "ts-node",
+      "runtime_profile": "Tooling",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "loader-context",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "ts-node",
+          "package": "ts-node",
+          "pinned_version": "10.9.2",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-ts-node"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "tooling-loader-jest",
+      "package": "jest",
+      "runtime_profile": "Tooling",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "loader-context",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "jest",
+          "package": "jest",
+          "pinned_version": "30.4.2",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-jest"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "tooling-loader-prisma",
+      "package": "prisma",
+      "runtime_profile": "Tooling",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "loader-context",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "prisma",
+          "package": "prisma",
+          "pinned_version": "7.8.0",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-prisma"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "tooling-loader-next",
+      "package": "next",
+      "runtime_profile": "Tooling",
+      "lane_coverage": [
+        "node22"
+      ],
+      "nlc_family": "loader-context",
+      "status": "passed",
+      "missing_lanes": [],
+      "observed_lane_metadata": [
+        {
+          "lane": "node22",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract"
+        }
+      ],
+      "observed_results": [
+        {
+          "id": "next",
+          "package": "next",
+          "pinned_version": "16.2.6",
+          "runtime_profile": "Tooling",
+          "claim_ids": [
+            "tooling-loader-next"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "primary",
+          "public_contract_role": "primary_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_profile": "application_node22",
+          "status": "pass"
+        }
+      ]
+    }
+  ],
+  "required_canary_gaps": []
+}

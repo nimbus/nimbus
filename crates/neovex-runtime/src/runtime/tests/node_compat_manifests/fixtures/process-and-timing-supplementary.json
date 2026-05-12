@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "family": "process-and-timing-supplementary",
+  "nlc_item": "NCF3",
+  "batch_constant": "PROCESS_AND_TIMING_SUPPLEMENTARY_BATCH",
+  "execution_class": "expected_failure",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node20"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node22"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node24"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-compat-supplementary.md",
+  "failure_doc": "docs/architecture/runtime/node-compat-supplementary-failures.md",
+  "fixture_seeds": [
+    {
+      "id": "supplementary/process-release-shape.js",
+      "test_relative_path": "supplementary/process-release-shape.js",
+      "slice": "supplementary-process-release-shape",
+      "test_tier": "supplementary",
+      "supplementary_category": "process_object_shape",
+      "lane_sources": {
+        "node20": "supplementary/process-release-shape.node20.js",
+        "node22": "supplementary/process-release-shape.node22.js",
+        "node24": "supplementary/process-release-shape.node24.js"
+      }
+    }
+  ]
+}

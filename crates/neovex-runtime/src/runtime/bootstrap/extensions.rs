@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use deno_fs::sync::MaybeArc;
 use deno_web::InMemoryBroadcastChannel;
 use sys_traits::impls::RealSys;
@@ -11,10 +13,22 @@ use crate::runtime_capabilities::RuntimePathPolicy;
 
 use super::node22_runtime::node22_runtime_bootstrap_extension;
 use super::ops::runtime_extension;
+#[cfg(test)]
+use super::ops::runtime_test_extension;
+
+fn install_rustls_default_provider_once() {
+    static RUSTLS_PROVIDER: OnceLock<()> = OnceLock::new();
+    RUSTLS_PROVIDER.get_or_init(|| {
+        deno_tls::rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Node22 runtime should install the rustls CryptoProvider once");
+    });
+}
 
 pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Extension> {
     let mut extensions = Vec::new();
     if matches!(target, RuntimeCompatibilityTarget::Node22) {
+        install_rustls_default_provider_once();
         extensions.extend([
             deno_webidl::deno_webidl::lazy_init(),
             deno_web::deno_web::lazy_init(),
@@ -31,6 +45,7 @@ pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Ext
             deno_os::deno_os::lazy_init(),
             deno_process::deno_process::lazy_init(),
             deno_node_crypto::deno_node_crypto::lazy_init(),
+            deno_node_sqlite::deno_node_sqlite::lazy_init(),
             deno_node::deno_node::lazy_init::<
                 ScopedInNpmPackageChecker,
                 ScopedNodeModulesResolver,
@@ -40,6 +55,8 @@ pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Ext
         ]);
     }
     extensions.push(runtime_extension());
+    #[cfg(test)]
+    extensions.push(runtime_test_extension());
     extensions
 }
 
@@ -49,6 +66,7 @@ pub(crate) fn execution_extensions(
 ) -> Vec<Extension> {
     let mut extensions = Vec::new();
     if matches!(target, RuntimeCompatibilityTarget::Node22) {
+        install_rustls_default_provider_once();
         let fs: deno_fs::FileSystemRc = MaybeArc::new(deno_fs::RealFs);
         extensions.extend([
             deno_webidl::deno_webidl::init(),
@@ -70,6 +88,7 @@ pub(crate) fn execution_extensions(
             deno_os::deno_os::init(Some(deno_os::ExitCode::default())),
             deno_process::deno_process::init(Default::default()),
             deno_node_crypto::deno_node_crypto::init(),
+            deno_node_sqlite::deno_node_sqlite::init(),
             deno_node::deno_node::init::<
                 ScopedInNpmPackageChecker,
                 ScopedNodeModulesResolver,
@@ -79,5 +98,7 @@ pub(crate) fn execution_extensions(
         ]);
     }
     extensions.push(runtime_extension());
+    #[cfg(test)]
+    extensions.push(runtime_test_extension());
     extensions
 }

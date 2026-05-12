@@ -608,6 +608,21 @@ Object.freeze(globalThis.__neovexSyncHostValue);
 Object.freeze(globalThis.__neovexAsyncHostValue);
 Object.freeze(globalThis.__neovexCreateContext);
 
+const __neovexRuntimeEnvOverlaySymbol = Symbol.for("neovex.runtimeEnvOverlay");
+const __neovexRuntimeEnvDeletedMarker = Symbol.for("neovex.runtimeEnvDeleted");
+if (globalThis[__neovexRuntimeEnvOverlaySymbol] === undefined) {
+  Object.defineProperty(globalThis, __neovexRuntimeEnvOverlaySymbol, {
+    value: Object.create(null),
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
+function __neovexRuntimeEnvOverlay() {
+  return globalThis[__neovexRuntimeEnvOverlaySymbol];
+}
+
 function __neovexCreateProcessEnvProxy() {
   const snapshot = __neovexCoreOps.op_neovex_runtime_env_snapshot();
   const target = Object.assign(Object.create(null), snapshot);
@@ -615,6 +630,11 @@ function __neovexCreateProcessEnvProxy() {
     get(currentTarget, property) {
       if (typeof property !== "string") {
         return Reflect.get(currentTarget, property);
+      }
+      const overlay = __neovexRuntimeEnvOverlay();
+      if (Object.prototype.hasOwnProperty.call(overlay, property)) {
+        const value = overlay[property];
+        return value === __neovexRuntimeEnvDeletedMarker ? undefined : value;
       }
       const result = __neovexCoreOps.op_neovex_runtime_env_get(property);
       if (!result || typeof result !== "object") {
@@ -624,7 +644,7 @@ function __neovexCreateProcessEnvProxy() {
         currentTarget[property] = result.value;
         return result.value;
       }
-      if (result.status === "missing") {
+      if (result.status === "missing" || result.status === "denied") {
         delete currentTarget[property];
         return undefined;
       }
@@ -634,15 +654,42 @@ function __neovexCreateProcessEnvProxy() {
       if (typeof property !== "string") {
         return Reflect.has(currentTarget, property);
       }
+      const overlay = __neovexRuntimeEnvOverlay();
+      if (Object.prototype.hasOwnProperty.call(overlay, property)) {
+        return overlay[property] !== __neovexRuntimeEnvDeletedMarker;
+      }
       const result = __neovexCoreOps.op_neovex_runtime_env_get(property);
       return result?.status === "allowed";
     },
     ownKeys(currentTarget) {
-      return Reflect.ownKeys(currentTarget);
+      const keys = new Set(Reflect.ownKeys(currentTarget));
+      for (const property of Reflect.ownKeys(__neovexRuntimeEnvOverlay())) {
+        if (
+          typeof property === "string" &&
+          __neovexRuntimeEnvOverlay()[property] === __neovexRuntimeEnvDeletedMarker
+        ) {
+          keys.delete(property);
+          continue;
+        }
+        keys.add(property);
+      }
+      return [...keys];
     },
     getOwnPropertyDescriptor(currentTarget, property) {
       if (typeof property !== "string") {
         return Reflect.getOwnPropertyDescriptor(currentTarget, property);
+      }
+      const overlay = __neovexRuntimeEnvOverlay();
+      if (Object.prototype.hasOwnProperty.call(overlay, property)) {
+        if (overlay[property] === __neovexRuntimeEnvDeletedMarker) {
+          return undefined;
+        }
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: overlay[property],
+        };
       }
       if (!Object.prototype.hasOwnProperty.call(currentTarget, property)) {
         return undefined;
@@ -654,11 +701,24 @@ function __neovexCreateProcessEnvProxy() {
         value: currentTarget[property],
       };
     },
-    set(_currentTarget, property) {
-      throw new Error(`runtime env capability denied for mutation of ${String(property)}`);
+    set(_currentTarget, property, value) {
+      if (typeof property === "symbol" || typeof value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const stringValue = String(value);
+      const overlay = __neovexRuntimeEnvOverlay();
+      overlay[property] = stringValue;
+      target[property] = stringValue;
+      return true;
     },
-    deleteProperty(_currentTarget, property) {
-      throw new Error(`runtime env capability denied for deletion of ${String(property)}`);
+    deleteProperty(currentTarget, property) {
+      if (typeof property === "symbol") {
+        return true;
+      }
+      const overlay = __neovexRuntimeEnvOverlay();
+      overlay[property] = __neovexRuntimeEnvDeletedMarker;
+      delete currentTarget[property];
+      return true;
     },
   });
 }
@@ -672,12 +732,17 @@ function __neovexInstallRuntimeContractGlobals(contract) {
     if (typeof globalThis.global === "undefined") {
       globalThis.global = globalThis;
     }
-    const versions = Object.freeze({
-      node: "22.0.0-neovex",
-    });
     const cwd = typeof contract.paths?.cwd === "string" ? contract.paths.cwd : "/";
     const env = __neovexCreateProcessEnvProxy();
     const processValue = globalThis.process ?? {};
+    const existingVersions =
+      processValue.versions && typeof processValue.versions === "object"
+        ? processValue.versions
+        : {};
+    const versions = Object.freeze({
+      ...existingVersions,
+      node: "22.0.0-neovex",
+    });
     Object.defineProperty(processValue, "cwd", {
       value() {
         return cwd;
@@ -712,6 +777,7 @@ function __neovexInstallRuntimeContractGlobals(contract) {
     });
     return;
   }
+  delete globalThis.Buffer;
   delete globalThis.global;
   delete globalThis.process;
 }

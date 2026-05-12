@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "named_behaviors": [
+    {
+      "id": "process_exit_sentinel",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "interactive_terminal",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "dns_result_order_ipv4first",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "dns_result_order_ipv6first",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "dns_result_order_verbatim",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "expose_gc",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "checkout_root_cwd",
+      "phase": "prelude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "pending_deprecation",
+      "phase": "prelude",
+      "selection_mode": "implicit_fixture_flag",
+      "preview_lane_only": false
+    },
+    {
+      "id": "process_lifecycle_drain",
+      "phase": "postlude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "process_before_exit_reentry",
+      "phase": "postlude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    },
+    {
+      "id": "fork_child_settle",
+      "phase": "postlude",
+      "selection_mode": "default_fixture_mapping",
+      "preview_lane_only": false
+    }
+  ]
+}

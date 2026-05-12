@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-12T00:19:34.605727+00:00",
+  "report_kind": "node_compat_trend_snapshot",
+  "baseline_available": true,
+  "current_sources": {
+    "status": "target/node-compat/status/status-summary.json",
+    "dashboard": "target/node-compat/dashboard/dashboard-summary.json"
+  },
+  "baseline_sources": {
+    "status": "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
+    "dashboard": "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
+  },
+  "lane_trends": [
+    {
+      "lane": "node20",
+      "upstream_tag": "v20.20.2",
+      "baseline_upstream_tag": "v20.20.2",
+      "vendored_test_file_count": 1308,
+      "vendored_test_file_count_delta": 0,
+      "documented_manifested_green_count": 913,
+      "documented_manifested_green_count_delta": 0,
+      "unmanifested_or_unclassified_count": 395,
+      "unmanifested_or_unclassified_count_delta": 0,
+      "documented_manifested_green_ratio": 0.698012,
+      "documented_manifested_green_ratio_delta": 0.0
+    },
+    {
+      "lane": "node22",
+      "upstream_tag": "v22.15.0",
+      "baseline_upstream_tag": "v22.15.0",
+      "vendored_test_file_count": 1283,
+      "vendored_test_file_count_delta": 0,
+      "documented_manifested_green_count": 994,
+      "documented_manifested_green_count_delta": 0,
+      "unmanifested_or_unclassified_count": 289,
+      "unmanifested_or_unclassified_count_delta": 0,
+      "documented_manifested_green_ratio": 0.774747,
+      "documented_manifested_green_ratio_delta": 0.0
+    },
+    {
+      "lane": "node24",
+      "upstream_tag": "v24.15.0",
+      "baseline_upstream_tag": "v24.15.0",
+      "vendored_test_file_count": 1495,
+      "vendored_test_file_count_delta": 0,
+      "documented_manifested_green_count": 925,
+      "documented_manifested_green_count_delta": 0,
+      "unmanifested_or_unclassified_count": 570,
+      "unmanifested_or_unclassified_count_delta": 0,
+      "documented_manifested_green_ratio": 0.618729,
+      "documented_manifested_green_ratio_delta": 0.0
+    }
+  ],
+  "evidence_trends": {
+    "canary_report_count": {
+      "current": 2,
+      "baseline": 2,
+      "delta": 0
+    },
+    "expectation_catalog_entry_count": {
+      "current": 61,
+      "baseline": 61,
+      "delta": 0
+    },
+    "oracle_report_count": {
+      "current": 1,
+      "baseline": 1,
+      "delta": 0
+    },
+    "required_canary_gap_count": {
+      "current": 0,
+      "baseline": 0,
+      "delta": 0
+    },
+    "rust_ignore_count": {
+      "current": 61,
+      "baseline": 61,
+      "delta": 0
+    },
+    "slice_report_count": {
+      "current": 8,
+      "baseline": 8,
+      "delta": 0
+    },
+    "unexpected_pass_count": {
+      "current": 0,
+      "baseline": 0,
+      "delta": 0
+    },
+    "warning_count": {
+      "current": 0,
+      "baseline": 0,
+      "delta": 0
+    }
+  }
+}

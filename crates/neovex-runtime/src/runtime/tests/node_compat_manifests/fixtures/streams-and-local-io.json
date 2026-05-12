@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "family": "streams-and-local-io",
+  "nlc_item": "NLC5",
+  "batch_constant": "STREAMS_AND_LOCAL_IO_BATCH",
+  "execution_class": "sequential",
+  "profiles": ["Application"],
+  "capabilities": ["bundle-root-fs"],
+  "lane_batches": [
+    {
+      "lane": "node20",
+      "subset_test": "runtime::tests::node_compat::node20_validation_lane_executes_official_streams_and_local_io_subset"
+    },
+    {
+      "lane": "node22",
+      "subset_test": "runtime::tests::node_compat::node22_primary_lane_executes_manifested_streams_and_local_io_subset"
+    },
+    {
+      "lane": "node24",
+      "subset_test": "runtime::tests::node_compat::node24_preview_lane_executes_manifested_streams_and_local_io_subset"
+    }
+  ],
+  "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
+  "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
+  "fixture_seeds": [
+    {
+      "id": "test/parallel/test-os-eol.js",
+      "test_relative_path": "test/parallel/test-os-eol.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-os-eol.js",
+        "node22": "node22/test/parallel/test-os-eol.js",
+        "node24": "node24/test/parallel/test-os-eol.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-tty-stdin-end.js",
+      "test_relative_path": "test/parallel/test-tty-stdin-end.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-tty-stdin-end.js",
+        "node22": "node22/test/parallel/test-tty-stdin-end.js",
+        "node24": "node24/test/parallel/test-tty-stdin-end.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-tty-stdin-pipe.js",
+      "test_relative_path": "test/parallel/test-tty-stdin-pipe.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-tty-stdin-pipe.js",
+        "node22": "node22/test/parallel/test-tty-stdin-pipe.js",
+        "node24": "node24/test/parallel/test-tty-stdin-pipe.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-tty-backwards-api.js",
+      "test_relative_path": "test/parallel/test-tty-backwards-api.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-tty-backwards-api.js",
+        "node22": "node22/test/parallel/test-tty-backwards-api.js",
+        "node24": "node24/test/parallel/test-tty-backwards-api.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-os-checked-function.js",
+      "test_relative_path": "test/parallel/test-os-checked-function.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-os-checked-function.js",
+        "node22": "node22/test/parallel/test-os-checked-function.js",
+        "node24": "node24/test/parallel/test-os-checked-function.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-ttywrap-invalid-fd.js",
+      "test_relative_path": "test/parallel/test-ttywrap-invalid-fd.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-ttywrap-invalid-fd.js",
+        "node22": "node22/test/parallel/test-ttywrap-invalid-fd.js",
+        "node24": "node24/test/parallel/test-ttywrap-invalid-fd.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-ttywrap-stack.js",
+      "test_relative_path": "test/parallel/test-ttywrap-stack.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-ttywrap-stack.js",
+        "node22": "node22/test/parallel/test-ttywrap-stack.js",
+        "node24": "node24/test/parallel/test-ttywrap-stack.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-readline-csi.js",
+      "test_relative_path": "test/parallel/test-readline-csi.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-readline-csi.js",
+        "node22": "node22/test/parallel/test-readline-csi.js",
+        "node24": "node24/test/parallel/test-readline-csi.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-readline-carriage-return-between-chunks.js",
+      "test_relative_path": "test/parallel/test-readline-carriage-return-between-chunks.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-readline-carriage-return-between-chunks.js",
+        "node22": "node22/test/parallel/test-readline-carriage-return-between-chunks.js",
+        "node24": "node24/test/parallel/test-readline-carriage-return-between-chunks.js"
+      }
+    },
+    {
+      "id": "test/parallel/test-readline-input-onerror.js",
+      "test_relative_path": "test/parallel/test-readline-input-onerror.js",
+      "slice": "os-tty-readline-foundation",
+      "lane_sources": {
+        "node20": "node20/test/parallel/test-readline-input-onerror.js",
+        "node22": "node22/test/parallel/test-readline-input-onerror.js",
+        "node24": "node24/test/parallel/test-readline-input-onerror.js"
+      }
+    }
+  ]
+}
