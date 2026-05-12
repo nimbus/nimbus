@@ -127,6 +127,22 @@ def discover_suite_status_report(artifacts_root: Path) -> dict | None:
     }
 
 
+def discover_inventory_reports(artifacts_root: Path) -> list[dict]:
+    reports: list[dict] = []
+    for path in sorted((artifacts_root / "inventory").glob("*-inventory.json")):
+        report = load_json(path)
+        reports.append(
+            {
+                "path": str(path.relative_to(repo_root())),
+                "lane": report["lane"],
+                "upstream": report["upstream"],
+                "counts": report["counts"],
+                "warnings": report["warnings"],
+            }
+        )
+    return reports
+
+
 def build_claim_summaries(registry: dict, canary_reports: list[dict]) -> list[dict]:
     claim_summaries: list[dict] = []
     observed_by_claim: dict[str, list[dict]] = {}
@@ -211,6 +227,7 @@ def build_dashboard_summary(artifacts_root: Path) -> dict:
     canary_reports = discover_canary_reports(artifacts_root)
     oracle_reports = discover_oracle_reports(artifacts_root)
     suite_status_report = discover_suite_status_report(artifacts_root)
+    inventory_reports = discover_inventory_reports(artifacts_root)
     claim_summaries = build_claim_summaries(registry, canary_reports)
     required_canary_gaps = build_required_canary_gaps(registry)
 
@@ -220,7 +237,9 @@ def build_dashboard_summary(artifacts_root: Path) -> dict:
         "slice_report_count": len(slice_reports),
         "canary_report_count": len(canary_reports),
         "oracle_report_count": len(oracle_reports),
+        "inventory_report_count": len(inventory_reports),
         "suite_status_report": suite_status_report,
+        "inventory_reports": inventory_reports,
         "slice_reports": slice_reports,
         "canary_reports": canary_reports,
         "oracle_reports": oracle_reports,
@@ -242,6 +261,7 @@ def build_markdown(summary: dict) -> str:
         f"- Slice reports: {summary['slice_report_count']}",
         f"- Canary reports: {summary['canary_report_count']}",
         f"- Oracle reports: {summary['oracle_report_count']}",
+        f"- Inventory reports: {summary['inventory_report_count']}",
         "",
         "## Suite Status",
     ]
@@ -278,6 +298,31 @@ def build_markdown(summary: dict) -> str:
                 )
         else:
             lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "## Fixture Inventory",
+            "",
+            "| Lane | Upstream | Vendored | Documented green | Classified non-green | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    if summary["inventory_reports"]:
+        for report in summary["inventory_reports"]:
+            counts = report["counts"]
+            lines.append(
+                f"| `{report['lane']}` | `{report['upstream']['tag']}` | "
+                f"{counts['vendored_test_file_count']} | "
+                f"{counts['documented_manifested_green_count']} | "
+                f"{counts['classified_non_green_count']} | "
+                f"{counts['documented_unmanifested_or_unclassified_count']} | "
+                f"{counts['rust_referenced_test_file_count']} | "
+                f"{counts['rust_unreferenced_test_file_count']} | "
+                f"{counts['documented_green_reconstructability_gap_count']} | "
+                f"{len(report['warnings'])} |"
+            )
+    else:
+        lines.append("| none | - | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |")
     lines.extend(
         [
             "",

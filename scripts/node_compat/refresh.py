@@ -149,6 +149,10 @@ def build_steps(args: argparse.Namespace, metadata: dict[str, Any]) -> list[tupl
                 ["python3", "scripts/node_compat/expectations.py", "validate"],
             ),
             ("status", ["python3", "scripts/node_compat/status.py"]),
+            (
+                "inventory",
+                ["python3", "scripts/node_compat/inventory.py", "--lane", args.lane],
+            ),
             ("dashboard", ["python3", "scripts/node_compat/dashboard.py"]),
             ("trends", ["python3", "scripts/node_compat/trends.py"]),
             ("publish", ["python3", "scripts/node_compat/publish_evidence.py"]),
