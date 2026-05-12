@@ -14,13 +14,13 @@ queue with minimal judgment.
 options:
   --crun-source <path>         Upstream crun source checkout (required)
   --output-root <path>         Output root for the generated bundle
-                               (default: ${TMPDIR:-/tmp}/neovex-linux-vmm-validation)
+                               (default: ${TMPDIR:-/tmp}/nimbus-linux-vmm-validation)
   --stage-dir <path>           Directory for the staged private runtime
                                (default: <output-root>/stage)
   --stage-binary <path>        Staged runtime binary path
                                (default: <stage-dir>/crun)
   --install-path <path>        Private runtime install path
-                               (default: /usr/libexec/neovex/crun)
+                               (default: /usr/libexec/nimbus/crun)
   --system-runtime <path>      System runtime path or command
                                (default: resolved `crun` or literal `crun`)
   --bundle-dir <path>          OCI bundle directory
@@ -28,7 +28,7 @@ options:
   --image <ref>                Buildah image for the first guest probe
                                (default: docker.io/library/busybox:latest)
   --buildah-name <name>        Buildah working-container name
-                               (default: neovex-vmm-busybox)
+                               (default: nimbus-vmm-busybox)
   --host-port <port>           Host port for the first probe
                                (default: 18080)
   --guest-port <port>          Guest port for the first probe
@@ -36,7 +36,7 @@ options:
   --direct-state-root <path>   Direct-runtime drill state root
                                (default: <output-root>/direct-drill)
   --direct-container-id <id>   Direct-runtime container ID
-                               (default: neovex-http)
+                               (default: nimbus-http)
   --conmon-state-root <path>   Conmon drill state root
                                (default: <output-root>/conmon-drill)
   --conmon <path>              conmon path or command
@@ -55,7 +55,7 @@ examples:
 
   bash scripts/prepare-linux-vmm-validation-bundle.sh \
     --crun-source ~/src/github.com/containers/crun \
-    --output-root /tmp/neovex-linux-vmm-validation
+    --output-root /tmp/nimbus-linux-vmm-validation
 EOF
 }
 
@@ -120,18 +120,18 @@ resolve_command_or_default() {
 }
 
 crun_source=""
-output_root="${TMPDIR:-/tmp}/neovex-linux-vmm-validation"
+output_root="${TMPDIR:-/tmp}/nimbus-linux-vmm-validation"
 stage_dir=""
 stage_binary=""
-install_path="/usr/libexec/neovex/crun"
+install_path="/usr/libexec/nimbus/crun"
 system_runtime="crun"
 bundle_dir=""
 image_ref="docker.io/library/busybox:latest"
-buildah_name="neovex-vmm-busybox"
+buildah_name="nimbus-vmm-busybox"
 host_port="18080"
 guest_port="8080"
 direct_state_root=""
-direct_container_id="neovex-http"
+direct_container_id="nimbus-http"
 conmon_state_root=""
 conmon_path="conmon"
 conmon_name=""
@@ -402,7 +402,7 @@ set -euo pipefail
 source ${session_env}
 
 echo "lh3.build_stage.output=\${LH3_DIR}/build-stage-runtime.txt"
-bash "\${REPO_ROOT}/scripts/build-neovex-crun.sh" \\
+bash "\${REPO_ROOT}/scripts/build-nimbus-crun.sh" \\
   --source "\${CRUN_SOURCE}" \\
   --output "\${STAGE_BINARY}" | tee "\${LH3_DIR}/build-stage-runtime.txt"
 
@@ -417,7 +417,7 @@ set -euo pipefail
 source ${session_env}
 
 echo "lh3.install.output=\${LH3_DIR}/install-private-runtime.txt"
-bash "\${REPO_ROOT}/scripts/build-neovex-crun.sh" \\
+bash "\${REPO_ROOT}/scripts/build-nimbus-crun.sh" \\
   --source "\${CRUN_SOURCE}" \\
   --output "\${STAGE_BINARY}" \\
   --install-path "\${INSTALL_PATH}" \\

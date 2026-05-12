@@ -16,7 +16,7 @@ from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = REPO_ROOT / "docs" / "architecture" / "runtime" / "node-lts-compat"
-DENO_REPO = pathlib.Path.home() / "src" / "github.com" / "agentstation" / "deno"
+DENO_REPO = pathlib.Path.home() / "src" / "github.com" / "nimbus" / "deno"
 
 NODE20_URL = "https://nodejs.org/download/release/latest-v20.x/docs/api/all.json"
 NODE22_URL = "https://nodejs.org/download/release/latest-v22.x/docs/api/all.json"
@@ -150,7 +150,7 @@ class RemoteDocument:
 
 
 def fetch_json(url: str, label: str) -> RemoteDocument:
-    request = urllib.request.Request(url, headers={"User-Agent": "neovex-node-compat-generator/1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "nimbus-node-compat-generator/1"})
     with urllib.request.urlopen(request) as response:
         body = json.load(response)
         return RemoteDocument(
@@ -163,7 +163,7 @@ def fetch_json(url: str, label: str) -> RemoteDocument:
 
 
 def fetch_text(url: str, label: str) -> RemoteDocument:
-    request = urllib.request.Request(url, headers={"User-Agent": "neovex-node-compat-generator/1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "nimbus-node-compat-generator/1"})
     with urllib.request.urlopen(request) as response:
         body = response.read().decode("utf-8")
         return RemoteDocument(
@@ -601,7 +601,7 @@ def build_summary(
             "",
             "- This first generated baseline is intentionally conservative.",
             "- Module and symbol coverage unresolved from the source scrape remain `NeedsVerification` instead of being guessed.",
-            "- `support_state` values in this baseline are source- and docs-derived starting points; NLC2 and later family items must refine them with measured Neovex verification.",
+            "- `support_state` values in this baseline are source- and docs-derived starting points; NLC2 and later family items must refine them with measured Nimbus verification.",
         ]
     )
     return "\n".join(lines) + "\n"

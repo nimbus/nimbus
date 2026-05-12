@@ -142,7 +142,7 @@ function assertSafeCompileTimeProperty(key, filePath) {
 function parseCompileTimeExpressionSource(expressionText, filePath, label) {
   const sourceFile = ts.createSourceFile(
     `${filePath}.${label}.ts`,
-    `const __neovexCompileTime = (${expressionText});`,
+    `const __nimbusCompileTime = (${expressionText});`,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,

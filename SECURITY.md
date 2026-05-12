@@ -2,9 +2,9 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Neovex, please **do not** open a
+If you discover a security vulnerability in Nimbus, please **do not** open a
 public GitHub issue. Instead, report it privately through
-[GitHub Security Advisories](https://github.com/agentstation/neovex/security/advisories/new).
+[GitHub Security Advisories](https://github.com/nimbus/nimbus/security/advisories/new).
 
 We will acknowledge your report within two business days and aim to provide an
 initial assessment within one week.
@@ -13,7 +13,7 @@ initial assessment within one week.
 
 This policy covers:
 
-- the Neovex binary (`neovex-bin`)
+- the Nimbus binary (`nimbus-bin`)
 - the official Rust crates in this repository
 - the official JavaScript packages in `packages/`
 - the release artifacts published on GitHub Releases and Homebrew

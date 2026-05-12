@@ -1,5 +1,5 @@
 {
-  "name": "@neovex/codegen",
+  "name": "@nimbus/codegen",
   "version": "0.1.22",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -17,6 +17,6 @@
     "./cli": "./src/cli.mjs"
   },
   "bin": {
-    "neovex-codegen": "./src/cli.mjs"
+    "nimbus-codegen": "./src/cli.mjs"
   }
 }

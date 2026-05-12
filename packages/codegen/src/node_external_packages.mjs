@@ -51,7 +51,7 @@ async function createNodeExternalPackageReport({
       throw new Error(
         [
           `${usage.file} imports package ${JSON.stringify(usage.specifier)} from a Node action module, but that package is not externalized.`,
-          "Neovex does not yet bundle npm packages into Convex function artifacts.",
+          "Nimbus does not yet bundle npm packages into Convex function artifacts.",
           `Add ${JSON.stringify(usage.packageName)} to convex.json node.externalPackages, or set node.externalPackages to ["*"].`,
         ].join(" "),
       );
@@ -86,7 +86,7 @@ async function createNodeExternalPackageReport({
     configuredExternalPackages: projectConfig.node.externalPackages,
     limits: {
       convexCloudReference: CONVEX_CLOUD_EXTERNAL_PACKAGE_LIMITS,
-      enforcedByNeovex: false,
+      enforcedByNimbus: false,
     },
     stagingRoot: path.relative(appDir, path.join(internalDir, "node_modules"))
       .replaceAll(path.sep, "/"),
@@ -160,7 +160,7 @@ function createPackageResolver(appDir) {
         throw new Error(
           [
             `${usage.importer ?? usage.file} externalizes package ${JSON.stringify(specifier)}, but it was not resolvable from local node_modules.`,
-            "Run your package manager install command so Neovex can validate and stage the same package version Convex would derive locally.",
+            "Run your package manager install command so Nimbus can validate and stage the same package version Convex would derive locally.",
             `Resolver error: ${error instanceof Error ? error.message : String(error)}`,
           ].join(" "),
         );

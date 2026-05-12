@@ -1,18 +1,18 @@
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 declare const process: {
   env: Record<string, string | undefined>;
   exit(code: number): never;
 };
 
-const host = process.env.NEOVEX_MONGODB_HOST ?? "127.0.0.1";
-const port = process.env.NEOVEX_MONGODB_PORT
-  ? Number(process.env.NEOVEX_MONGODB_PORT)
+const host = process.env.NIMBUS_MONGODB_HOST ?? "127.0.0.1";
+const port = process.env.NIMBUS_MONGODB_PORT
+  ? Number(process.env.NIMBUS_MONGODB_PORT)
   : 27017;
 
 async function main() {
-  console.log(`Connecting to Neovex MongoDB at ${host}:${port}...`);
+  console.log(`Connecting to Nimbus MongoDB at ${host}:${port}...`);
 
   const client = new MongoClient(uri({ host, port }));
   await client.connect();

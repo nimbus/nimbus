@@ -4,11 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required_env=(
-  NEOVEX_KRUN_SMOKE_ROOTFS
-  NEOVEX_KRUN_SMOKE_WORKDIR
-  NEOVEX_KRUN_SMOKE_RUNTIME
-  NEOVEX_KRUN_SMOKE_CONMON
-  NEOVEX_KRUN_SMOKE_BUILDAH
+  NIMBUS_KRUN_SMOKE_ROOTFS
+  NIMBUS_KRUN_SMOKE_WORKDIR
+  NIMBUS_KRUN_SMOKE_RUNTIME
+  NIMBUS_KRUN_SMOKE_CONMON
+  NIMBUS_KRUN_SMOKE_BUILDAH
 )
 
 for env_key in "${required_env[@]}"; do
@@ -18,7 +18,7 @@ for env_key in "${required_env[@]}"; do
   fi
 done
 
-log_root="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m2-resource-limit-verification"
+log_root="${NIMBUS_KRUN_SMOKE_WORKDIR%/}/m2-resource-limit-verification"
 mkdir -p "${log_root}"
 
 direct_log="${log_root}/direct-rootfs.log"
@@ -28,11 +28,11 @@ summary_file="${log_root}/summary.txt"
 cd "${repo_root}"
 
 cargo fmt --all --check
-cargo check -p neovex-sandbox -p neovex
-cargo test -p neovex-sandbox
+cargo check -p nimbus-sandbox -p nimbus
+cargo test -p nimbus-sandbox
 
 cargo test \
-  -p neovex-sandbox \
+  -p nimbus-sandbox \
   --test krun_linux_smoke \
   krun_backend_m2_direct_rootfs_resource_limits_lowering \
   -- \
@@ -43,7 +43,7 @@ cargo test \
   2>&1 | tee "${direct_log}"
 
 cargo test \
-  -p neovex-sandbox \
+  -p nimbus-sandbox \
   --test krun_linux_smoke \
   krun_backend_m2_image_backed_resource_limits_lowering \
   -- \

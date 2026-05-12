@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-install verification helper for neovex.
+# Post-install verification helper for nimbus.
 #
 # Checks that all required components are installed and accessible.
 # Run standalone after install, or called automatically by install.sh.
@@ -127,34 +127,34 @@ verify_linux() {
     print_line "host.distro" "unavailable"
   fi
 
-  # neovex binary
-  local install_prefix="${NEOVEX_PREFIX:-/usr/local}"
-  local neovex_path="${install_prefix}/bin/neovex"
-  if [[ -x "${neovex_path}" ]]; then
-    local neovex_version=""
-    neovex_version="$("${neovex_path}" --version 2>/dev/null | head -n1 || true)"
-    if [[ -n "${neovex_version}" ]]; then
-      print_line "neovex" "present path=${neovex_path} version=${neovex_version}"
+  # nimbus binary
+  local install_prefix="${NIMBUS_PREFIX:-/usr/local}"
+  local nimbus_path="${install_prefix}/bin/nimbus"
+  if [[ -x "${nimbus_path}" ]]; then
+    local nimbus_version=""
+    nimbus_version="$("${nimbus_path}" --version 2>/dev/null | head -n1 || true)"
+    if [[ -n "${nimbus_version}" ]]; then
+      print_line "nimbus" "present path=${nimbus_path} version=${nimbus_version}"
     else
-      print_line "neovex" "present path=${neovex_path}"
+      print_line "nimbus" "present path=${nimbus_path}"
     fi
   else
-    check_command "neovex" "neovex" required
+    check_command "nimbus" "nimbus" required
   fi
 
-  # neovex-crun at /usr/libexec/neovex/crun
-  local crun_path="/usr/libexec/neovex/crun"
+  # nimbus-crun at /usr/libexec/nimbus/crun
+  local crun_path="/usr/libexec/nimbus/crun"
   if [[ -x "${crun_path}" ]]; then
     local crun_version=""
     crun_version="$("${crun_path}" --version 2>/dev/null | head -1 || true)"
     if echo "${crun_version}" | grep -q '+LIBKRUN'; then
-      print_line "neovex-crun" "present path=${crun_path} version=$(compact_value "${crun_version}")"
+      print_line "nimbus-crun" "present path=${crun_path} version=$(compact_value "${crun_version}")"
     else
-      print_line "neovex-crun" "present path=${crun_path} (missing +LIBKRUN flag)"
+      print_line "nimbus-crun" "present path=${crun_path} (missing +LIBKRUN flag)"
       mark_failure
     fi
   else
-    print_line "neovex-crun" "missing path=${crun_path}"
+    print_line "nimbus-crun" "missing path=${crun_path}"
     mark_failure
   fi
 
@@ -221,23 +221,23 @@ verify_macos() {
     print_line "host.arch.check" "supported"
   fi
 
-  # neovex binary
-  check_command "neovex" "neovex" required
+  # nimbus binary
+  check_command "nimbus" "nimbus" required
 
   # krunkit
   check_command "krunkit" "krunkit" required
 
-  # gvproxy — find it relative to the installed neovex binary in Caskroom
-  local neovex_path=""
-  neovex_path="$(command -v neovex 2>/dev/null || true)"
-  if [[ -n "${neovex_path}" ]]; then
+  # gvproxy — find it relative to the installed nimbus binary in Caskroom
+  local nimbus_path=""
+  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
+  if [[ -n "${nimbus_path}" ]]; then
     # Resolve symlink to get Caskroom path
     local real_path=""
-    real_path="$(readlink "${neovex_path}" 2>/dev/null || echo "${neovex_path}")"
+    real_path="$(readlink "${nimbus_path}" 2>/dev/null || echo "${nimbus_path}")"
 
     # If it's a relative symlink, resolve from the symlink's directory
     if [[ "${real_path}" != /* ]]; then
-      real_path="$(cd "$(dirname "${neovex_path}")" && cd "$(dirname "${real_path}")" && pwd)/$(basename "${real_path}")"
+      real_path="$(cd "$(dirname "${nimbus_path}")" && cd "$(dirname "${real_path}")" && pwd)/$(basename "${real_path}")"
     fi
 
     # Check if it looks like a Caskroom path
@@ -274,7 +274,7 @@ verify_macos() {
       fi
     fi
   else
-    print_line "gvproxy" "skipped (neovex not found)"
+    print_line "gvproxy" "skipped (nimbus not found)"
   fi
 }
 

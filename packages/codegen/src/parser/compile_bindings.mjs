@@ -136,7 +136,7 @@ function normalizeNodeBuiltinSpecifier(specifier) {
 }
 
 function createKnownImportBindingRecord(sourcePath, importedName) {
-  if (sourcePath === "convex/server" || sourcePath === "neovex/server") {
+  if (sourcePath === "convex/server" || sourcePath === "nimbus/server") {
     if (importedName === "paginationOptsValidator") {
       return { compileValue: createPaginationOptionsValidator() };
     }

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://neovex.local/node-compat/trend-snapshot.schema.json",
+  "$id": "https://nimbus.local/node-compat/trend-snapshot.schema.json",
   "title": "Node compatibility trend snapshot",
   "type": "object",
   "required": [

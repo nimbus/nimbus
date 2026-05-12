@@ -75,12 +75,12 @@ fi
 
 echo "emitting node-compat oracle artifact for ${lane}:${fixture} into ${output_root}"
 
-NEOVEX_NODE_COMPAT_ORACLE_LANE="${lane}" \
-NEOVEX_NODE_COMPAT_ORACLE_FIXTURE="${fixture}" \
-NEOVEX_NODE_COMPAT_ORACLE_OUTPUT_ROOT="${output_root}" \
-NEOVEX_NODE_COMPAT_ORACLE_NODE_BIN="${node_bin}" \
+NIMBUS_NODE_COMPAT_ORACLE_LANE="${lane}" \
+NIMBUS_NODE_COMPAT_ORACLE_FIXTURE="${fixture}" \
+NIMBUS_NODE_COMPAT_ORACLE_OUTPUT_ROOT="${output_root}" \
+NIMBUS_NODE_COMPAT_ORACLE_NODE_BIN="${node_bin}" \
 bash "${REPO_ROOT}/scripts/single-flight.sh" \
   --key "node-compat-oracle-${lane}-$(echo "${fixture}" | tr '/.' '--')" \
-  -- cargo test -p neovex-runtime \
+  -- cargo test -p nimbus-runtime \
     node_compat_oracle_entrypoint_emits_fixture_artifact \
     -- --ignored --nocapture --test-threads=1

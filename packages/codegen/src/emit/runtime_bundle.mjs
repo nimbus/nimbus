@@ -17,13 +17,13 @@ function collectNodeRuntimeImports(manifest) {
   return {
     importPreamble: [
       ...createImportMapPreamble({
-        importNamePrefix: "__neovexNodeBuiltin",
-        mapName: "__neovexNodeBuiltinModules",
+        importNamePrefix: "__nimbusNodeBuiltin",
+        mapName: "__nimbusNodeBuiltinModules",
         specifiers: builtinSpecifiers,
       }),
       ...createImportMapPreamble({
-        importNamePrefix: "__neovexNodeExternalPackage",
-        mapName: "__neovexNodeExternalPackages",
+        importNamePrefix: "__nimbusNodeExternalPackage",
+        mapName: "__nimbusNodeExternalPackages",
         specifiers: externalPackageSpecifiers,
       }),
     ].join("\n"),

@@ -51,7 +51,7 @@ async function main() {
 
 async function assertPackageExports() {
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
-  assert.equal(packageJson.name, "@neovex/mongodb");
+  assert.equal(packageJson.name, "@nimbus/mongodb");
   assert.deepEqual(packageJson.exports, {
     ".": "./src/index.ts",
   });
@@ -59,7 +59,7 @@ async function assertPackageExports() {
 }
 
 async function buildPackageSurface() {
-  const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex-mongodb-"));
+  const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-mongodb-"));
   await build({
     entryPoints: [path.join(packageRoot, "src/index.ts")],
     bundle: true,

@@ -28,10 +28,10 @@ options:
 
 examples:
   TMPDIR=/tmp bash scripts/validate-podman-machine-readiness.sh \
-    --machine neovex-libkrun-users-only \
+    --machine nimbus-libkrun-users-only \
     --provider libkrun \
     --tmp-root /tmp/podman \
-    --output-dir /tmp/neovex-libkrun-users-only-readiness
+    --output-dir /tmp/nimbus-libkrun-users-only-readiness
 EOF
 }
 

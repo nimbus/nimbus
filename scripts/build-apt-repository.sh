@@ -15,8 +15,8 @@ Optional:
   --distribution <name>          Apt distribution/codename (default: stable)
   --suite <name>                 Apt suite name (default: same as distribution)
   --component <name>             Apt component name (default: main)
-  --origin <name>                Release metadata Origin field (default: AgentStation)
-  --label <name>                 Release metadata Label field (default: neovex)
+  --origin <name>                Release metadata Origin field (default: Nimbus)
+  --label <name>                 Release metadata Label field (default: nimbus)
   --description <text>           Release metadata Description field
   --arch <amd64|arm64>           Architectures to include; repeatable (default: infer from packages)
   --apt-ftparchive <path>        Explicit apt-ftparchive binary path
@@ -24,22 +24,22 @@ Optional:
   --gpg-private-key <path>       ASCII-armored private signing key to import
   --gpg-key-id <id>              Existing GPG key id/fingerprint to sign with
   --gpg-passphrase-file <path>   File containing the signing-key passphrase
-  --keyring-name <name>          Output keyring basename (default: neovex)
+  --keyring-name <name>          Output keyring basename (default: nimbus)
   -h, --help                     Show this help text
 
 Examples:
   bash scripts/build-apt-repository.sh \
-    --output-dir /tmp/neovex-apt-repo \
-    --packages-dir /tmp/neovex-linux-packages/packages \
+    --output-dir /tmp/nimbus-apt-repo \
+    --packages-dir /tmp/nimbus-linux-packages/packages \
     --distribution stable \
     --component main
 
   bash scripts/build-apt-repository.sh \
-    --output-dir /tmp/neovex-apt-repo \
-    --packages-dir /tmp/neovex-linux-packages/packages \
+    --output-dir /tmp/nimbus-apt-repo \
+    --packages-dir /tmp/nimbus-linux-packages/packages \
     --distribution stable \
-    --gpg-private-key /tmp/neovex-apt-private-key.asc \
-    --gpg-passphrase-file /tmp/neovex-apt-passphrase.txt
+    --gpg-private-key /tmp/nimbus-apt-private-key.asc \
+    --gpg-passphrase-file /tmp/nimbus-apt-passphrase.txt
 EOF
 }
 
@@ -96,15 +96,15 @@ packages_dir=""
 distribution="stable"
 suite=""
 component="main"
-origin="AgentStation"
-label="neovex"
-description="Neovex apt repository"
+origin="Nimbus"
+label="nimbus"
+description="Nimbus apt repository"
 apt_ftparchive_bin="${APT_FTPARCHIVE_BIN:-apt-ftparchive}"
 gpg_bin="${GPG_BIN:-gpg}"
 gpg_private_key=""
 gpg_key_id=""
 GPG_PASSPHRASE_FILE=""
-keyring_name="neovex"
+keyring_name="nimbus"
 declare -a requested_arches=()
 
 while [[ "$#" -gt 0 ]]; do
@@ -275,7 +275,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -n "$gpg_private_key" ]]; then
-  repo_signing_home="$(mktemp -d "${TMPDIR:-/tmp}/neovex-apt-signing.XXXXXX")"
+  repo_signing_home="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-apt-signing.XXXXXX")"
   chmod 0700 "$repo_signing_home"
   GNUPGHOME="$repo_signing_home" gpg_command "$gpg_bin" --import "$gpg_private_key" >/dev/null 2>&1
   if [[ -z "$gpg_key_id" ]]; then

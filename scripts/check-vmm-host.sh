@@ -141,7 +141,7 @@ check_any_command "tool.cc" "cc" "gcc" "clang"
 check_command "runtime.conmon" "conmon"
 check_command "runtime.buildah" "buildah"
 check_command "runtime.system_crun" "crun"
-check_command "runtime.private_crun" "/usr/libexec/neovex/crun" optional
+check_command "runtime.private_crun" "/usr/libexec/nimbus/crun" optional
 check_command "runtime.podman" "podman" optional
 check_any_command "runtime.init" "catatonit" "tini" "dumb-init"
 
@@ -213,7 +213,7 @@ else
     fi
   done
   if ! [[ -f /usr/local/lib64/pkgconfig/libkrun.pc || -f /usr/local/lib/pkgconfig/libkrun.pc ]]; then
-    print_line "pkgconfig.libkrun" "missing (build-neovex-crun.sh will fail)"
+    print_line "pkgconfig.libkrun" "missing (build-nimbus-crun.sh will fail)"
     mark_failure
   fi
 fi

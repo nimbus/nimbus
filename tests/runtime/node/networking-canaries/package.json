@@ -1,5 +1,5 @@
 {
-  "name": "neovex-networking-canaries",
+  "name": "nimbus-networking-canaries",
   "private": true,
   "type": "module",
   "dependencies": {

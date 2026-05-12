@@ -63,7 +63,7 @@ async function executeResolvedQueryPlan(ctx, plan) {
       ? await builder.take(plan.limit)
       : await builder.collect();
   }
-  return await globalThis.__neovexAsyncHostValue("op_neovex_ctx_query", {
+  return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
     query: plan,
     session_id: "convex-runtime-query-plan",
   });

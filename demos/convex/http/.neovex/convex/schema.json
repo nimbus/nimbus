@@ -1,0 +1,22 @@
+{
+  "tables": {
+    "messages": {
+      "fields": {
+        "author": {
+          "kind": "string"
+        },
+        "body": {
+          "kind": "string"
+        }
+      },
+      "indexes": [
+        {
+          "name": "by_author",
+          "fields": [
+            "author"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -14,7 +14,7 @@ function usage() {
 
 function shouldCopy(sourcePath) {
   const basename = path.basename(sourcePath);
-  return basename !== "node_modules" && basename !== ".neovex" && basename !== "_generated";
+  return basename !== "node_modules" && basename !== ".nimbus" && basename !== "_generated";
 }
 
 async function safeSymlink(target, linkPath) {
@@ -24,7 +24,7 @@ async function safeSymlink(target, linkPath) {
 
 export async function prepareOverlay(convexDemosDir, demoName) {
   const sourceDir = path.resolve(convexDemosDir, demoName);
-  const overlayDir = await fs.mkdtemp(path.join(os.tmpdir(), `neovex-convex-demo-${demoName}-`));
+  const overlayDir = await fs.mkdtemp(path.join(os.tmpdir(), `nimbus-convex-demo-${demoName}-`));
 
   await fs.cp(sourceDir, overlayDir, {
     recursive: true,
@@ -32,14 +32,14 @@ export async function prepareOverlay(convexDemosDir, demoName) {
   });
 
   const nodeModulesDir = path.join(overlayDir, "node_modules");
-  const neovexScopeDir = path.join(nodeModulesDir, "@neovex");
-  await fs.mkdir(neovexScopeDir, { recursive: true });
+  const nimbusScopeDir = path.join(nodeModulesDir, "@nimbus");
+  await fs.mkdir(nimbusScopeDir, { recursive: true });
 
   await safeSymlink(path.join(repoRoot, "packages", "convex"), path.join(nodeModulesDir, "convex"));
-  await safeSymlink(path.join(repoRoot, "packages", "neovex"), path.join(nodeModulesDir, "neovex"));
+  await safeSymlink(path.join(repoRoot, "packages", "nimbus"), path.join(nodeModulesDir, "nimbus"));
   await safeSymlink(
     path.join(repoRoot, "packages", "codegen"),
-    path.join(neovexScopeDir, "codegen"),
+    path.join(nimbusScopeDir, "codegen"),
   );
 
   return overlayDir;

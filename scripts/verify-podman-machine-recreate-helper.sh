@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_base="${TMPDIR:-/tmp}"
 tmp_base="${tmp_base%/}"
-tmp_dir="$(mktemp -d "${tmp_base}/neovex-podman-recreate-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${tmp_base}/nimbus-podman-recreate-verify.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 

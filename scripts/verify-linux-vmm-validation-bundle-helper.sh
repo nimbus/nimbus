@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_base="${TMPDIR:-/tmp}"
 tmp_base="${tmp_base%/}"
-tmp_dir="$(mktemp -d "${tmp_base}/neovex-linux-vmm-bundle-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${tmp_base}/nimbus-linux-vmm-bundle-verify.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -46,14 +46,14 @@ do
 done
 
 grep -F "CRUN_SOURCE=${fake_crun_source}" "${bundle_root}/session.env" >/dev/null
-grep -F "INSTALL_PATH=/usr/libexec/neovex/crun" "${bundle_root}/session.env" >/dev/null
+grep -F "INSTALL_PATH=/usr/libexec/nimbus/crun" "${bundle_root}/session.env" >/dev/null
 grep -F "IMAGE_REF=docker.io/library/busybox:latest" "${bundle_root}/session.env" >/dev/null
 grep -F "PROBE_URL=http://127.0.0.1:18080/" "${bundle_root}/session.env" >/dev/null
 
 grep -F "bash ${bundle_root}/commands/01-lh1-host-preflight.sh" "${bundle_root}/commands/00-run-through-lh6.sh" >/dev/null
 grep -F "scripts/check-vmm-host.sh" "${bundle_root}/commands/01-lh1-host-preflight.sh" >/dev/null
 grep -F "scripts/verify-crun-patch.sh" "${bundle_root}/commands/02-lh2-verify-crun-patch.sh" >/dev/null
-grep -F "scripts/build-neovex-crun.sh" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
+grep -F "scripts/build-nimbus-crun.sh" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "scripts/prepare-krun-bundle.sh" "${bundle_root}/commands/07-lh5-prepare-krun-bundle.sh" >/dev/null
 grep -F "buildah from --name" "${bundle_root}/commands/06-lh5-buildah-rootfs.sh" >/dev/null
 grep -F "scripts/prepare-direct-krun-drill.sh" "${bundle_root}/commands/08-lh5-prepare-direct-drill.sh" >/dev/null

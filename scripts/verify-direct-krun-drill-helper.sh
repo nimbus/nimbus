@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-direct-krun-drill-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-direct-krun-drill-verify.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 bundle_dir="${tmp_dir}/bundle"
@@ -36,11 +36,11 @@ PY
 bash "${repo_root}/scripts/prepare-direct-krun-drill.sh" \
   --bundle-dir "${bundle_dir}" \
   --state-root "${state_root}" \
-  --container-id neovex-http \
-  --runtime /usr/libexec/neovex/crun \
+  --container-id nimbus-http \
+  --runtime /usr/libexec/nimbus/crun \
   > "${output_file}"
 
-container_state_dir="${state_root}/containers/neovex-http"
+container_state_dir="${state_root}/containers/nimbus-http"
 command_file="${container_state_dir}/run-runtime.sh"
 start_script="${container_state_dir}/start-runtime.sh"
 probe_http_script="${container_state_dir}/probe-http.sh"
@@ -105,7 +105,7 @@ grep -F "drill.probe_url=${probe_url}" "${output_file}" >/dev/null
 grep -F "drill.probe_http_cmd=bash ${probe_http_script}" "${output_file}" >/dev/null
 grep -F "drill.wait_for_http_cmd=bash ${wait_for_http_script}" "${output_file}" >/dev/null
 
-grep -F "/usr/libexec/neovex/crun run --bundle ${bundle_dir} neovex-http" "${command_file}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun run --bundle ${bundle_dir} nimbus-http" "${command_file}" >/dev/null
 grep -F "printf '%s\\n' \"\${runtime_pid}\" > ${runtime_pidfile}" "${command_file}" >/dev/null
 grep -F "printf '%s\\n' \"\${status}\" > ${exit_status_file}" "${command_file}" >/dev/null
 grep -F "bash ${command_file} &" "${start_script}" >/dev/null

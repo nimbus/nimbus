@@ -7,7 +7,7 @@ type FieldValueKind =
   | "arrayUnion"
   | "arrayRemove";
 
-const FIELD_VALUE_FACTORY = Symbol("neovex.firebase.FieldValue");
+const FIELD_VALUE_FACTORY = Symbol("nimbus.firebase.FieldValue");
 
 export class FieldValue {
   readonly _kind: FieldValueKind;

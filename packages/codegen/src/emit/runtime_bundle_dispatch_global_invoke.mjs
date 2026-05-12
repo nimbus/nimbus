@@ -1,5 +1,5 @@
 function runtimeBundleDispatchGlobalInvoke() {
-  return `globalThis.__neovexInvoke = async function (request) {
+  return `globalThis.__nimbusInvoke = async function (request) {
   try {
     const definition = functionsByName.get(request.function_name);
     if (definition) {
@@ -10,7 +10,7 @@ function runtimeBundleDispatchGlobalInvoke() {
       ? routesByName.get(request.function_name)
       : undefined;
     if (route) {
-      return await globalThis.__neovexAsyncHostValue("op_neovex_http_route", {
+      return await globalThis.__nimbusAsyncHostValue("op_nimbus_http_route", {
         request,
         route,
       });
@@ -18,17 +18,17 @@ function runtimeBundleDispatchGlobalInvoke() {
 
     throw new Error(\`convex function or route not found: \${request.function_name}\`);
   } catch (error) {
-    if (error && typeof error === "object" && "neovexHostError" in error) {
+    if (error && typeof error === "object" && "nimbusHostError" in error) {
       return {
         status: "error",
-        error: error.neovexHostError,
+        error: error.nimbusHostError,
       };
     }
     throw error;
   }
 };
 
-globalThis.__neovexInvokeNamedLocal = invokeNamedDefinitionLocally;
+globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
 
 export {};`;
 }

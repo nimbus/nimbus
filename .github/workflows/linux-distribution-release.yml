@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Neovex GitHub release tag to mirror (for example v0.1.10)"
+        description: "Nimbus GitHub release tag to mirror (for example v0.1.10)"
         required: true
       publish_apt_repo:
         description: "Publish the built apt repository bundle to GitHub Pages"
@@ -32,8 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.contract.outputs.release_tag }}
-      neovex_version: ${{ steps.contract.outputs.neovex_version }}
-      neovex_crun_version: ${{ steps.contract.outputs.neovex_crun_version }}
+      nimbus_version: ${{ steps.contract.outputs.nimbus_version }}
+      nimbus_crun_version: ${{ steps.contract.outputs.nimbus_crun_version }}
       apt_distribution: ${{ steps.contract.outputs.apt_distribution }}
       copr_project: ${{ steps.contract.outputs.copr_project }}
       publish_apt_repo: ${{ steps.contract.outputs.publish_apt_repo }}
@@ -64,8 +64,8 @@ jobs:
             exit 1
           fi
 
-          neovex_version="${release_tag#v}"
-          neovex_crun_version="${NEOVEX_CRUN_VERSION#v}"
+          nimbus_version="${release_tag#v}"
+          nimbus_crun_version="${NIMBUS_CRUN_VERSION#v}"
           apt_distribution="${APT_REPOSITORY_DISTRIBUTION}"
           copr_project="${COPR_PROJECT}"
 
@@ -84,9 +84,9 @@ jobs:
           fi
 
           {
-            echo "release_tag=v${neovex_version}"
-            echo "neovex_version=${neovex_version}"
-            echo "neovex_crun_version=${neovex_crun_version}"
+            echo "release_tag=v${nimbus_version}"
+            echo "nimbus_version=${nimbus_version}"
+            echo "nimbus_crun_version=${nimbus_crun_version}"
             echo "apt_distribution=${apt_distribution}"
             echo "copr_project=${copr_project}"
             echo "publish_apt_repo=${publish_apt_repo}"
@@ -100,8 +100,8 @@ jobs:
     permissions:
       contents: read
     with:
-      neovex_version: ${{ needs.resolve-contract.outputs.release_tag }}
-      neovex_crun_version: ${{ needs.resolve-contract.outputs.neovex_crun_version }}
+      nimbus_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      nimbus_crun_version: ${{ needs.resolve-contract.outputs.nimbus_crun_version }}
 
   apt-repo:
     name: Mirror apt repository bundle
@@ -113,8 +113,8 @@ jobs:
       id-token: write
     secrets: inherit
     with:
-      neovex_version: ${{ needs.resolve-contract.outputs.release_tag }}
-      neovex_crun_version: ${{ needs.resolve-contract.outputs.neovex_crun_version }}
+      nimbus_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      nimbus_crun_version: ${{ needs.resolve-contract.outputs.nimbus_crun_version }}
       distribution: ${{ needs.resolve-contract.outputs.apt_distribution }}
       publish: ${{ needs.resolve-contract.outputs.publish_apt_repo == 'true' }}
 
@@ -126,7 +126,7 @@ jobs:
       contents: read
     secrets: inherit
     with:
-      neovex_version: ${{ needs.resolve-contract.outputs.release_tag }}
-      neovex_crun_version: ${{ needs.resolve-contract.outputs.neovex_crun_version }}
+      nimbus_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      nimbus_crun_version: ${{ needs.resolve-contract.outputs.nimbus_crun_version }}
       copr_project: ${{ needs.resolve-contract.outputs.copr_project }}
       submit_to_copr: ${{ needs.resolve-contract.outputs.submit_to_copr == 'true' }}

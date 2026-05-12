@@ -1,8 +1,8 @@
-Neovex Community License 1.0
+Nimbus Community License 1.0
 
-Copyright (c) 2026 the Neovex contributors and other copyright holders
+Copyright (c) 2026 the Nimbus contributors and other copyright holders
 
-This License governs use of the Neovex source code, documentation, and other
+This License governs use of the Nimbus source code, documentation, and other
 materials distributed in this repository (the "Licensed Work"). By using,
 copying, modifying, distributing, deploying, or making the Licensed Work
 available, you agree to this License.
@@ -113,12 +113,12 @@ Without a Commercial License, you may not:
 3. embed, white-label, OEM, sublicense, or otherwise provide the Licensed Work
    as a material part of a Competing Offering;
 4. represent that your fork, service, or product is endorsed by or affiliated
-   with Neovex or the Licensor;
+   with Nimbus or the Licensor;
 5. obtain rights reserved by Section 10 on trademarks and branding.
 
 For clarity, using the Licensed Work to power your own application, website, or
 internal system is allowed if your use otherwise complies with this License. The
-restriction in this Section applies to offering Neovex itself, or a materially
+restriction in this Section applies to offering Nimbus itself, or a materially
 similar managed backend/database/platform service, to third parties.
 
 6. Redistribution Conditions
@@ -129,7 +129,7 @@ If you distribute the Licensed Work or a derivative work, you must:
 2. preserve copyright, attribution, license, and notice files;
 3. identify material modifications in a reasonable manner;
 4. not grant recipients rights broader than those granted by this License;
-5. not use the Neovex name, logos, or other marks except as allowed by Section
+5. not use the Nimbus name, logos, or other marks except as allowed by Section
    10 and `TRADEMARKS.md`.
 
 This License does not require you to publish your modifications, but any
@@ -179,7 +179,7 @@ You may not:
 10. Trademarks
 
 This License does not grant any right to use the trade names, trademarks, service
-marks, logos, or branding of Neovex or the Licensor, except for reasonable
+marks, logos, or branding of Nimbus or the Licensor, except for reasonable
 nominative use to describe the Licensed Work or as expressly allowed in
 `TRADEMARKS.md`.
 

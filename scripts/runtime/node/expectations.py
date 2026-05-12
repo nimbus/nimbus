@@ -13,7 +13,7 @@ from schema import default_schema_path, validate_payload_against_schema
 
 DEFAULT_CATALOG_PATH = Path("tests/runtime/node/expectations/rust-watchpoints.json")
 CATALOG_SCHEMA_PATH = default_schema_path("rust-watchpoints.schema.json")
-RUST_NODE_COMPAT_PATH = Path("crates/neovex-runtime/src/runtime/tests/node/mod.rs")
+RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
 PASS_OUTCOMES = {"green", "ok", "pass", "passed", "success"}
 
 

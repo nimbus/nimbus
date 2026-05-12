@@ -132,15 +132,15 @@ function formatDifferentialValue(value) {
 
 function parseCliArgs(argv) {
   const parsed = {
-    neovexOnly: false,
+    nimbusOnly: false,
     requireExternal: false,
     emitFixtureDir: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--neovex-only") {
-      parsed.neovexOnly = true;
+    if (arg === "--nimbus-only") {
+      parsed.nimbusOnly = true;
       continue;
     }
     if (arg === "--require-external") {
@@ -153,7 +153,7 @@ function parseCliArgs(argv) {
       continue;
     }
     throw new Error(
-      `Unsupported differential argument "${arg}". Supported flags: --neovex-only, --require-external, --emit-fixture-dir <dir>.`,
+      `Unsupported differential argument "${arg}". Supported flags: --nimbus-only, --require-external, --emit-fixture-dir <dir>.`,
     );
   }
 
@@ -205,7 +205,7 @@ async function waitForHealth(url, child, stderrBuffer) {
   while (Date.now() - startedAt < 30_000) {
     if (child.exitCode !== null) {
       throw new Error(
-        `Neovex server exited before becoming healthy.\n${stderrBuffer.join("")}`,
+        `Nimbus server exited before becoming healthy.\n${stderrBuffer.join("")}`,
       );
     }
 
@@ -226,16 +226,16 @@ async function waitForHealth(url, child, stderrBuffer) {
   );
 }
 
-async function startNeovexFixtureServer(appDir) {
+async function startNimbusFixtureServer(appDir) {
   const port = await reservePort();
-  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex-convex-diff-data-"));
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-convex-diff-data-"));
   const stderrBuffer = [];
   const child = spawn(
     "cargo",
     [
       "run",
       "-p",
-      "neovex-bin",
+      "nimbus-bin",
       "--",
       "serve",
       "--port",
@@ -270,7 +270,7 @@ async function startNeovexFixtureServer(appDir) {
   });
   if (!tenantResponse.ok) {
     throw new Error(
-      `failed to create differential tenant on Neovex: ${tenantResponse.status} ${await tenantResponse.text()}`,
+      `failed to create differential tenant on Nimbus: ${tenantResponse.status} ${await tenantResponse.text()}`,
     );
   }
 
@@ -294,22 +294,22 @@ async function startNeovexFixtureServer(appDir) {
   };
 }
 
-async function prepareNeovexAppFixture() {
-  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex-convex-diff-app-"));
+async function prepareNimbusAppFixture() {
+  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-convex-diff-app-"));
   await emitDifferentialFixture(appDir);
   const result = spawnSync(process.execPath, [cliPath, "codegen", "--app", appDir], {
     encoding: "utf8",
     cwd: repoRoot,
   });
   if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || "neovex codegen failed");
+    throw new Error(result.stderr || result.stdout || "nimbus codegen failed");
   }
   return appDir;
 }
 
 async function resolveOfficialConvexBrowserEntry() {
-  if (process.env.NEOVEX_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY) {
-    return process.env.NEOVEX_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY;
+  if (process.env.NIMBUS_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY) {
+    return process.env.NIMBUS_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY;
   }
 
   const directSibling = path.resolve(repoRoot, "..", officialConvexBrowserEntrySuffix);
@@ -356,7 +356,7 @@ async function pathExists(targetPath) {
 
 async function resolveExternalTargetConfig() {
   const deploymentUrl =
-    process.env.NEOVEX_CONVEX_DIFF_EXTERNAL_URL ?? process.env.CONVEX_SELF_HOSTED_URL ?? null;
+    process.env.NIMBUS_CONVEX_DIFF_EXTERNAL_URL ?? process.env.CONVEX_SELF_HOSTED_URL ?? null;
   const officialBrowserEntry = await resolveOfficialConvexBrowserEntry();
   return {
     deploymentUrl,
@@ -368,7 +368,7 @@ async function resolveExternalTargetConfig() {
   };
 }
 
-function neovexFunctionRefs(browserModule) {
+function nimbusFunctionRefs(browserModule) {
   return {
     byAuthor: browserModule.makeQueryReference("messages:byAuthor"),
     listPage: browserModule.makeQueryReference("messages:listPage"),
@@ -426,9 +426,9 @@ async function waitForSubscriptionStates(subscribe, mutate, timeoutMs = 10_000) 
   }
 }
 
-async function runNeovexDifferentialSubset(browserModule, deploymentUrl, runId) {
+async function runNimbusDifferentialSubset(browserModule, deploymentUrl, runId) {
   SUPPORTED_DIFFERENTIAL_SURFACES.forEach(assertSupportedDifferentialSurface);
-  const refs = neovexFunctionRefs(browserModule);
+  const refs = nimbusFunctionRefs(browserModule);
   const http = new browserModule.ConvexHttpClient(deploymentUrl, {
     skipConvexDeploymentUrlCheck: true,
   });
@@ -633,31 +633,31 @@ async function main() {
     return;
   }
 
-  const neovexBrowser = await loadBundledModule(
+  const nimbusBrowser = await loadBundledModule(
     fileURLToPath(new URL("./browser.ts", import.meta.url)),
-    "neovex-convex-browser-",
+    "nimbus-convex-browser-",
   );
 
-  const appDir = await prepareNeovexAppFixture();
-  const server = await startNeovexFixtureServer(appDir);
+  const appDir = await prepareNimbusAppFixture();
+  const server = await startNimbusFixtureServer(appDir);
   const runId = `diff-${Date.now()}`;
 
   try {
-    const neovexResult = await runNeovexDifferentialSubset(
-      neovexBrowser,
+    const nimbusResult = await runNimbusDifferentialSubset(
+      nimbusBrowser,
       server.deploymentUrl,
       runId,
     );
-    console.log("Neovex supported Convex differential subset passed.");
+    console.log("Nimbus supported Convex differential subset passed.");
 
-    if (args.neovexOnly) {
+    if (args.nimbusOnly) {
       return;
     }
 
     const external = await resolveExternalTargetConfig();
     if (!external.officialBrowserEntry) {
       throw new Error(
-        "External Convex target is configured, but the official Convex browser source was not found. Set NEOVEX_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY to a local convex-backend checkout.",
+        "External Convex target is configured, but the official Convex browser source was not found. Set NIMBUS_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY to a local convex-backend checkout.",
       );
     }
 
@@ -691,10 +691,10 @@ async function main() {
         runId,
       );
 
-      const mismatches = collectDifferentialMismatches(neovexResult, externalResult);
+      const mismatches = collectDifferentialMismatches(nimbusResult, externalResult);
       if (mismatches.length > 0) {
         throw new Error(
-          `Neovex diverged from the supported Convex differential subset across ${mismatches.length} semantic slice(s).\n\n${formatDifferentialMismatchReport(mismatches)}`,
+          `Nimbus diverged from the supported Convex differential subset across ${mismatches.length} semantic slice(s).\n\n${formatDifferentialMismatchReport(mismatches)}`,
         );
       }
       console.log("External Convex differential comparison passed.");

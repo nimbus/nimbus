@@ -30,7 +30,7 @@ def manifest_root() -> Path:
     return (
         repo_root()
         / "crates"
-        / "neovex-runtime"
+        / "nimbus-runtime"
         / "src"
         / "runtime"
         / "tests"

@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_base="${TMPDIR:-/tmp}"
 tmp_base="${tmp_base%/}"
-tmp_dir="$(mktemp -d "${tmp_base}/neovex-sqlcipher-proof-helper.XXXXXX")"
+tmp_dir="$(mktemp -d "${tmp_base}/nimbus-sqlcipher-proof-helper.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
 
 cleanup() {
@@ -76,7 +76,7 @@ chmod +x "${bin_dir}/gh"
 PATH="${bin_dir}:${PATH}" \
   bash "${repo_root}/scripts/collect-sqlcipher-proof-bundles.sh" \
     --run-id 12345678901 \
-    --repo agentstation/neovex \
+    --repo nimbus/nimbus \
     --output-dir "${output_dir}"
 
 summary_file="${output_dir}/summary.txt"
@@ -87,7 +87,7 @@ test -f "${summary_file}"
 test -f "${artifact_names_file}"
 test -f "${artifacts_json}"
 
-grep -Fq 'repo=agentstation/neovex' "${summary_file}"
+grep -Fq 'repo=nimbus/nimbus' "${summary_file}"
 grep -Fq 'run_id=12345678901' "${summary_file}"
 grep -Fq 'artifact_count=2' "${summary_file}"
 grep -Fq 'sqlcipher-proof-x86_64-unknown-linux-gnu' "${artifact_names_file}"

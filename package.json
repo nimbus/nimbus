@@ -1,12 +1,12 @@
 {
-  "name": "neovex-workspace",
+  "name": "nimbus-workspace",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "workspaces": [
     "packages/convex",
     "packages/firebase",
-    "packages/neovex",
+    "packages/nimbus",
     "packages/codegen",
     "packages/mongodb",
     "demos/convex/html",
@@ -14,7 +14,7 @@
     "demos/convex/node",
     "demos/firebase/html",
     "demos/mongodb/node",
-    "demos/neovex/html"
+    "demos/nimbus/html"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -25,14 +25,14 @@
     "convex:build": "npm run build",
     "convex:test": "npm run test",
     "convex:typecheck": "npm run typecheck",
-    "convex:server:node": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/node",
-    "convex:server:html": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/html",
-    "convex:server:http": "cargo run -p neovex-bin -- start --port 8080 --app-dir ./demos/convex/http",
+    "convex:server:node": "cargo run -p nimbus-bin -- start --port 8080 --app-dir ./demos/convex/node",
+    "convex:server:html": "cargo run -p nimbus-bin -- start --port 8080 --app-dir ./demos/convex/html",
+    "convex:server:http": "cargo run -p nimbus-bin -- start --port 8080 --app-dir ./demos/convex/http",
     "convex:demo:node": "npm run demo --workspace convex-node",
     "convex:demo:html": "npm run dev --workspace convex-html",
     "convex:demo:http": "npm run dev --workspace convex-http",
-    "firebase:server:html": "cargo run -p neovex-bin -- start --port 8080",
+    "firebase:server:html": "cargo run -p nimbus-bin -- start --port 8080",
     "firebase:demo:html": "npm run dev --workspace firebase-html",
-    "neovex:demo:html": "npm run dev --workspace neovex-html"
+    "nimbus:demo:html": "npm run dev --workspace nimbus-html"
   }
 }

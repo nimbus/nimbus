@@ -1,6 +1,6 @@
 import "./app.css";
 
-import { deleteApp, initializeApp, type FirebaseApp } from "@neovex/firebase/app";
+import { deleteApp, initializeApp, type FirebaseApp } from "@nimbus/firebase/app";
 import {
   addDoc,
   arrayUnion,
@@ -22,10 +22,10 @@ import {
   type DocumentData,
   type Firestore,
   type FirestoreUnaryTransport,
-} from "@neovex/firebase/firestore";
+} from "@nimbus/firebase/firestore";
 
 const COLLECTION_NAME = "demoMessages";
-const LOCAL_STORAGE_KEY = "neovex.firebase.demo.settings";
+const LOCAL_STORAGE_KEY = "nimbus.firebase.demo.settings";
 
 type DemoSettings = {
   author: string;
@@ -55,9 +55,9 @@ type FeedMessage = {
 };
 
 const defaultSettings: DemoSettings = {
-  author: "Neovex Demo",
+  author: "Nimbus Demo",
   baseUrl: "http://127.0.0.1:8080",
-  message: "Hello from @neovex/firebase",
+  message: "Hello from @nimbus/firebase",
   tag: "demo",
   unaryTransport: "rest",
 };
@@ -90,7 +90,7 @@ root.innerHTML = `
         <span class="eyebrow">Firebase / Firestore demo</span>
         <h1>Exercise the first-party SDK over REST, gRPC-Web, and live Listen.</h1>
         <p class="lede">
-          This demo talks to a local Neovex server with <code>@neovex/firebase</code>,
+          This demo talks to a local Nimbus server with <code>@nimbus/firebase</code>,
           using REST or gRPC-Web for unary calls and the browser WebSocket Listen path
           for live query updates. It is the concrete runnable reference for the current
           supported Firebase data-path tier.
@@ -111,12 +111,12 @@ root.innerHTML = `
         <div class="panel-header">
           <div>
             <h2>Connection</h2>
-            <p>Point the demo at a local Neovex server and choose the unary transport.</p>
+            <p>Point the demo at a local Nimbus server and choose the unary transport.</p>
           </div>
         </div>
         <div class="field-grid">
           <label>
-            Neovex base URL
+            Nimbus base URL
             <input id="base-url" type="url" />
           </label>
           <label>
@@ -440,8 +440,8 @@ async function rebuildFirestore(): Promise<void> {
 
   const app = initializeApp(
     {
-      apiKey: "neovex-demo",
-      projectId: "neovex-demo",
+      apiKey: "nimbus-demo",
+      projectId: "nimbus-demo",
     },
     { name: `firebase-demo-${Date.now()}` },
   );

@@ -56,25 +56,25 @@ async function readUtf8FileIfExists(filePath) {
 }
 
 async function resolveSourceRoot(appDir) {
-  const neovexDir = path.join(appDir, "neovex");
+  const nimbusDir = path.join(appDir, "nimbus");
   const convexDir = path.join(appDir, "convex");
-  const neovexExists = await directoryExists(neovexDir);
+  const nimbusExists = await directoryExists(nimbusDir);
   const convexExists = await directoryExists(convexDir);
 
-  if (neovexExists && convexExists) {
+  if (nimbusExists && convexExists) {
     return {
-      sourceDirName: "neovex",
-      sourceDirPath: neovexDir,
-      packageNamespace: "neovex",
+      sourceDirName: "nimbus",
+      sourceDirPath: nimbusDir,
+      packageNamespace: "nimbus",
       detectedBothRoots: true,
     };
   }
 
-  if (neovexExists) {
+  if (nimbusExists) {
     return {
-      sourceDirName: "neovex",
-      sourceDirPath: neovexDir,
-      packageNamespace: "neovex",
+      sourceDirName: "nimbus",
+      sourceDirPath: nimbusDir,
+      packageNamespace: "nimbus",
       detectedBothRoots: false,
     };
   }
@@ -89,7 +89,7 @@ async function resolveSourceRoot(appDir) {
   }
 
   throw new Error(
-    `No neovex/ or convex/ directory found in ${appDir}. ` +
+    `No nimbus/ or convex/ directory found in ${appDir}. ` +
     `Create one of those directories and place your app functions there.`,
   );
 }
@@ -100,7 +100,7 @@ async function tryResolveSourceRoot(appDir) {
   } catch (error) {
     if (
       error instanceof Error
-      && error.message.startsWith("No neovex/ or convex/ directory found in ")
+      && error.message.startsWith("No nimbus/ or convex/ directory found in ")
     ) {
       return null;
     }

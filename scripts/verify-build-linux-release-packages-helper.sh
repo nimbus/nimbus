@@ -2,59 +2,59 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-output_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-linux-package-helper.XXXXXX")"
+output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-linux-package-helper.XXXXXX")"
 trap 'rm -rf "${output_dir}"' EXIT
 
-neovex_stub="${output_dir}/neovex"
-neovex_crun_stub="${output_dir}/neovex-crun"
+nimbus_stub="${output_dir}/nimbus"
+nimbus_crun_stub="${output_dir}/nimbus-crun"
 
-cat >"${neovex_stub}" <<'EOF'
+cat >"${nimbus_stub}" <<'EOF'
 #!/bin/sh
-printf 'neovex stub\n'
+printf 'nimbus stub\n'
 EOF
 
-cat >"${neovex_crun_stub}" <<'EOF'
+cat >"${nimbus_crun_stub}" <<'EOF'
 #!/bin/sh
-printf 'neovex-crun stub\n'
+printf 'nimbus-crun stub\n'
 EOF
 
-chmod 0755 "${neovex_stub}" "${neovex_crun_stub}"
+chmod 0755 "${nimbus_stub}" "${nimbus_crun_stub}"
 
 cd "${repo_root}"
 
 bash scripts/build-linux-release-packages.sh \
   --output-dir "${output_dir}/render" \
-  --neovex-binary "${neovex_stub}" \
-  --neovex-crun-binary "${neovex_crun_stub}" \
+  --nimbus-binary "${nimbus_stub}" \
+  --nimbus-crun-binary "${nimbus_crun_stub}" \
   --version 0.1.10 \
   --crun-version 0.1.4 \
   --arch amd64 \
   --render-only \
   >"${output_dir}/render-summary.txt"
 
-test -x "${output_dir}/render/staging/neovex/usr/bin/neovex"
-test -x "${output_dir}/render/staging/neovex-crun/usr/libexec/neovex/crun"
-test -f "${output_dir}/render/manifests/neovex-deb.yaml"
-test -f "${output_dir}/render/manifests/neovex-rpm.yaml"
-test -f "${output_dir}/render/manifests/neovex-crun-deb.yaml"
-test -f "${output_dir}/render/manifests/neovex-crun-rpm.yaml"
+test -x "${output_dir}/render/staging/nimbus/usr/bin/nimbus"
+test -x "${output_dir}/render/staging/nimbus-crun/usr/libexec/nimbus/crun"
+test -f "${output_dir}/render/manifests/nimbus-deb.yaml"
+test -f "${output_dir}/render/manifests/nimbus-rpm.yaml"
+test -f "${output_dir}/render/manifests/nimbus-crun-deb.yaml"
+test -f "${output_dir}/render/manifests/nimbus-crun-rpm.yaml"
 
-grep -F "dst: /usr/bin/neovex" "${output_dir}/render/manifests/neovex-deb.yaml" >/dev/null
-grep -F "dst: /usr/libexec/neovex/crun" "${output_dir}/render/manifests/neovex-crun-rpm.yaml" >/dev/null
-grep -F "  - buildah" "${output_dir}/render/manifests/neovex-deb.yaml" >/dev/null
-grep -F "  - conmon" "${output_dir}/render/manifests/neovex-deb.yaml" >/dev/null
-grep -F "  - netavark" "${output_dir}/render/manifests/neovex-deb.yaml" >/dev/null
-grep -F "  - aardvark-dns" "${output_dir}/render/manifests/neovex-deb.yaml" >/dev/null
-grep -F "  - neovex-crun" "${output_dir}/render/manifests/neovex-deb.yaml" >/dev/null
-grep -F "  - libkrun" "${output_dir}/render/manifests/neovex-crun-deb.yaml" >/dev/null
-grep -F "  - libkrunfw" "${output_dir}/render/manifests/neovex-crun-deb.yaml" >/dev/null
+grep -F "dst: /usr/bin/nimbus" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+grep -F "dst: /usr/libexec/nimbus/crun" "${output_dir}/render/manifests/nimbus-crun-rpm.yaml" >/dev/null
+grep -F "  - buildah" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+grep -F "  - conmon" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+grep -F "  - netavark" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+grep -F "  - aardvark-dns" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+grep -F "  - nimbus-crun" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
+grep -F "  - libkrun" "${output_dir}/render/manifests/nimbus-crun-deb.yaml" >/dev/null
+grep -F "  - libkrunfw" "${output_dir}/render/manifests/nimbus-crun-deb.yaml" >/dev/null
 grep -F "result=rendered" "${output_dir}/render-summary.txt" >/dev/null
 
 if command -v nfpm >/dev/null 2>&1; then
   bash scripts/build-linux-release-packages.sh \
     --output-dir "${output_dir}/packaged" \
-    --neovex-binary "${neovex_stub}" \
-    --neovex-crun-binary "${neovex_crun_stub}" \
+    --nimbus-binary "${nimbus_stub}" \
+    --nimbus-crun-binary "${nimbus_crun_stub}" \
     --version 0.1.10 \
     --crun-version 0.1.4 \
     --arch amd64 \

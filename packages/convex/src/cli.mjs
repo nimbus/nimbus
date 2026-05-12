@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runCliFromArgs } from "@neovex/codegen";
+import { runCliFromArgs } from "@nimbus/codegen";
 
 const HELP_TEXT = `Usage: convex <command> [options]
 
@@ -11,7 +11,7 @@ Supported today:
   convex codegen --app <dir>
 
 Source roots:
-  uses neovex/ when present, otherwise convex/
+  uses nimbus/ when present, otherwise convex/
 `;
 
 async function main() {

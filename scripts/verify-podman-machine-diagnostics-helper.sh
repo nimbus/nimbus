@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_base="${TMPDIR:-/tmp}"
 tmp_base="${tmp_base%/}"
-tmp_dir="$(mktemp -d "${tmp_base}/neovex-podman-machine-diag-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${tmp_base}/nimbus-podman-machine-diag-verify.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -98,7 +98,7 @@ EOF
 
 chmod +x "${bin_dir}/podman" "${bin_dir}/ps" "${bin_dir}/system_profiler"
 
-NEOVEX_DIAGNOSTICS_TEST_UNAME=Darwin \
+NIMBUS_DIAGNOSTICS_TEST_UNAME=Darwin \
 bash "${repo_root}/scripts/collect-podman-machine-diagnostics.sh" \
   --machine testvm \
   --provider libkrun \

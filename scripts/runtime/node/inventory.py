@@ -19,7 +19,7 @@ from status import build_summary as build_status_summary  # noqa: E402
 
 
 TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
-RUST_NODE_COMPAT_PATH = Path("crates/neovex-runtime/src/runtime/tests/node/mod.rs")
+RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
 INVENTORY_SCHEMA_PATH = default_schema_path("fixture-inventory.schema.json")
 
 
@@ -31,7 +31,7 @@ def manifest_root() -> Path:
     return (
         repo_root()
         / "crates"
-        / "neovex-runtime"
+        / "nimbus-runtime"
         / "src"
         / "runtime"
         / "tests"

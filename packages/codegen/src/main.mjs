@@ -29,7 +29,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
   const sourceDir = resolvedSourceRoot.sourceDirPath;
   const packageNamespace = resolvedSourceRoot.packageNamespace;
   const generatedDir = path.join(sourceDir, "_generated");
-  const internalDir = path.join(appDir, ".neovex", "convex");
+  const internalDir = path.join(appDir, ".nimbus", "convex");
   const projectConfig = await loadProjectConfig(appDir);
   const schema = await loadSchemaDefinition(sourceDir);
   const authConfig = await loadAuthConfig(sourceDir);
@@ -157,7 +157,7 @@ async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   const cloudFunctions = await generateCloudFunctionsArtifacts({ appDir, onInfo });
 
   if (sourceRoot?.detectedBothRoots) {
-    onInfo?.(`Detected both neovex/ and convex/ in ${appDir}; using neovex/.`);
+    onInfo?.(`Detected both nimbus/ and convex/ in ${appDir}; using nimbus/.`);
   }
 
   if (sourceRoot === null && cloudFunctions === null) {

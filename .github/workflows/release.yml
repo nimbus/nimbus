@@ -13,7 +13,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # Mirror Podman's macOS packaging model: ship a pinned upstream gvproxy
   # binary inside the darwin archive instead of publishing gvproxy as a
-  # separate Neovex release asset or depending on Podman at runtime.
+  # separate Nimbus release asset or depending on Podman at runtime.
   GVPROXY_VERSION: v0.8.8
 
 permissions:
@@ -36,11 +36,11 @@ jobs:
           MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "${MACHINE_OS_RELEASE_APP_ID}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can dispatch and observe the matching neovex-machine-os release workflow." >&2
+            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can dispatch and observe the matching nimbus-machine-os release workflow." >&2
             exit 1
           fi
           if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can dispatch and observe the matching neovex-machine-os release workflow." >&2
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can dispatch and observe the matching nimbus-machine-os release workflow." >&2
             exit 1
           fi
 
@@ -78,7 +78,7 @@ jobs:
           cache-on-failure: "false"
 
       - name: Build release binary
-        run: cargo build --release -p neovex-bin
+        run: cargo build --release -p nimbus-bin
 
       - name: Prove SQLCipher release lane
         shell: bash
@@ -99,15 +99,15 @@ jobs:
 
       - name: Package archive
         run: |
-          tar czf neovex_linux_arm64.tar.gz \
-            -C target/release neovex \
+          tar czf nimbus_linux_arm64.tar.gz \
+            -C target/release nimbus \
             -C ${{ github.workspace }} README.md LICENSE
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: neovex_linux_arm64
-          path: neovex_linux_arm64.tar.gz
+          name: nimbus_linux_arm64
+          path: nimbus_linux_arm64.tar.gz
           compression-level: 0
 
   build:
@@ -188,7 +188,7 @@ jobs:
           cache-on-failure: "false"
 
       - name: Build release binary
-        run: cargo build --release -p neovex-bin
+        run: cargo build --release -p nimbus-bin
 
       - name: Prove SQLCipher release lane
         shell: bash
@@ -220,47 +220,47 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           mkdir -p dist
-          cp target/release/neovex dist/neovex
+          cp target/release/nimbus dist/nimbus
           cp README.md LICENSE dist/
           if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            tar czf neovex_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
-              -C dist neovex libexec README.md LICENSE
+            tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
+              -C dist nimbus libexec README.md LICENSE
           else
-          tar czf neovex_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
-              -C dist neovex README.md LICENSE
+          tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
+              -C dist nimbus README.md LICENSE
           fi
 
       - name: Package archive (windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/release/neovex.exe, README.md, LICENSE `
-            -DestinationPath neovex_windows_x86_64.zip
+          Compress-Archive -Path target/release/nimbus.exe, README.md, LICENSE `
+            -DestinationPath nimbus_windows_x86_64.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: neovex_${{ matrix.os }}_${{ matrix.arch }}
-          path: neovex_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
+          name: nimbus_${{ matrix.os }}_${{ matrix.arch }}
+          path: nimbus_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
           compression-level: 0
 
   stage-machine-os:
     name: Stage machine-os bundle
     needs: build-linux-arm64
     # Keep this on a dedicated stable ref so machine-os workflow fixes do not
-    # require raw-SHA repins in neovex for every change.
+    # require raw-SHA repins in nimbus for every change.
     # Use github.run_id for the staged bundle handoff because the downstream
     # publish workflow must still find the artifact across reruns. Reserve
     # github.run_attempt for per-attempt diagnostics, not durable artifact
     # names.
-    uses: agentstation/neovex-machine-os/.github/workflows/build.yml@release-workflow-v1
+    uses: nimbus/nimbus-machine-os/.github/workflows/build.yml@release-workflow-v1
     with:
-      neovex_version: ${{ github.ref_name }}
-      neovex_artifact_name: neovex_linux_arm64
+      nimbus_version: ${{ github.ref_name }}
+      nimbus_artifact_name: nimbus_linux_arm64
       create_release: false
       publish: false
-      image_reference: "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}"
-      stage_artifact_name: neovex-machine-os-${{ github.run_id }}
+      image_reference: "docker://ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}"
+      stage_artifact_name: nimbus-machine-os-${{ github.run_id }}
     permissions:
       contents: write
       packages: write
@@ -281,8 +281,8 @@ jobs:
         with:
           app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
-          owner: agentstation
-          repositories: neovex-machine-os
+          owner: nimbus
+          repositories: nimbus-machine-os
           permission-actions: write
           permission-contents: read
 
@@ -299,17 +299,17 @@ jobs:
               "source_repository": "${{ github.repository }}",
               "source_run_id": "${{ github.run_id }}",
               "source_run_attempt": "${{ github.run_attempt }}",
-              "neovex_version": "${{ github.ref_name }}",
+              "nimbus_version": "${{ github.ref_name }}",
               "release_tag": "${{ github.ref_name }}",
-              "stage_artifact_name": "neovex-machine-os-${{ github.run_id }}",
-              "image_reference": "docker://ghcr.io/agentstation/neovex-machine-os:${{ github.ref_name }}",
+              "stage_artifact_name": "nimbus-machine-os-${{ github.run_id }}",
+              "image_reference": "docker://ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}",
               "create_release": true
             }
           }
           EOF
 
           gh api \
-            repos/agentstation/neovex-machine-os/actions/workflows/publish.yml/dispatches \
+            repos/nimbus/nimbus-machine-os/actions/workflows/publish.yml/dispatches \
             --method POST \
             --input /tmp/machine-os-dispatch.json
 
@@ -326,7 +326,7 @@ jobs:
           while [[ $(date +%s) -lt "${deadline}" ]]; do
             run_id="$(
               gh run list \
-                --repo agentstation/neovex-machine-os \
+                --repo nimbus/nimbus-machine-os \
                 --workflow publish.yml \
                 --branch release-workflow-v1 \
                 --event workflow_dispatch \
@@ -342,9 +342,9 @@ jobs:
           done
 
           if [[ -z "${run_id}" ]]; then
-            echo "Failed to locate dispatched neovex-machine-os publish run with title '${EXPECTED_TITLE}'." >&2
+            echo "Failed to locate dispatched nimbus-machine-os publish run with title '${EXPECTED_TITLE}'." >&2
             gh run list \
-              --repo agentstation/neovex-machine-os \
+              --repo nimbus/nimbus-machine-os \
               --workflow publish.yml \
               --branch release-workflow-v1 \
               --event workflow_dispatch \
@@ -352,9 +352,9 @@ jobs:
             exit 1
           fi
 
-          echo "Watching neovex-machine-os run ${run_id} (${EXPECTED_TITLE})"
-          if ! gh run watch "${run_id}" --repo agentstation/neovex-machine-os --exit-status; then
-            gh run view "${run_id}" --repo agentstation/neovex-machine-os --log-failed || true
+          echo "Watching nimbus-machine-os run ${run_id} (${EXPECTED_TITLE})"
+          if ! gh run watch "${run_id}" --repo nimbus/nimbus-machine-os --exit-status; then
+            gh run view "${run_id}" --repo nimbus/nimbus-machine-os --log-failed || true
             exit 1
           fi
 
@@ -372,11 +372,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download neovex build artifacts
+      - name: Download nimbus build artifacts
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: neovex_*
+          pattern: nimbus_*
           merge-multiple: true
 
       - name: Verify release archive layout
@@ -385,7 +385,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum neovex_* > checksums-sha256.txt
+          sha256sum nimbus_* > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Generate release notes
@@ -441,8 +441,8 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: |
-            artifacts/neovex_*.tar.gz
-            artifacts/neovex_*.zip
+            artifacts/nimbus_*.tar.gz
+            artifacts/nimbus_*.zip
             artifacts/checksums-sha256.txt
 
       - name: Create GitHub Release
@@ -454,9 +454,19 @@ jobs:
             ${{ steps.prerelease.outputs.flag }} \
             artifacts/*
 
+      - name: Create Homebrew tap token
+        id: homebrew_tap_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: nimbus
+          repositories: homebrew-tap
+          permission-contents: write
+
       - name: Update Homebrew cask
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ steps.homebrew_tap_token.outputs.token }}
         run: |
           TAG="${{ github.ref_name }}"
           VERSION="${TAG#v}"
@@ -465,18 +475,18 @@ jobs:
           SHA_LINUX_ARM64=$(grep linux_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
           SHA_LINUX_X86_64=$(grep linux_x86_64 artifacts/checksums-sha256.txt | awk '{print $1}')
 
-          cat > /tmp/neovex.rb << CASKEOF
-          cask "neovex" do
-            name "neovex"
+          cat > /tmp/nimbus.rb << CASKEOF
+          cask "nimbus" do
+            name "nimbus"
             desc "Self-hosted JavaScript backend runtime powered by V8"
-            homepage "https://github.com/agentstation/neovex"
+            homepage "https://github.com/nimbus/nimbus"
             version "${VERSION}"
 
             livecheck do
               skip "Auto-generated on release."
             end
 
-            binary "neovex"
+            binary "nimbus"
 
             on_macos do
               depends_on arch: :arm64
@@ -484,18 +494,18 @@ jobs:
               depends_on formula: "slp/krunkit/krunkit"
 
               on_arm do
-                url "https://github.com/agentstation/neovex/releases/download/v#{version}/neovex_darwin_arm64.tar.gz"
+                url "https://github.com/nimbus/nimbus/releases/download/v#{version}/nimbus_darwin_arm64.tar.gz"
                 sha256 "${SHA_DARWIN_ARM64}"
               end
             end
 
             on_linux do
               on_intel do
-                url "https://github.com/agentstation/neovex/releases/download/v#{version}/neovex_linux_x86_64.tar.gz"
+                url "https://github.com/nimbus/nimbus/releases/download/v#{version}/nimbus_linux_x86_64.tar.gz"
                 sha256 "${SHA_LINUX_X86_64}"
               end
               on_arm do
-                url "https://github.com/agentstation/neovex/releases/download/v#{version}/neovex_linux_arm64.tar.gz"
+                url "https://github.com/nimbus/nimbus/releases/download/v#{version}/nimbus_linux_arm64.tar.gz"
                 sha256 "${SHA_LINUX_ARM64}"
               end
             end
@@ -507,37 +517,37 @@ jobs:
             end
 
             caveats do
-              "Neovex has been installed!"
+              "Nimbus has been installed!"
               ""
               "Quick start:"
-              "  neovex --help              # Show all commands"
-              "  neovex machine init        # Record the default macOS machine contract"
-              "  neovex serve               # Auto-start the machine if needed"
+              "  nimbus --help              # Show all commands"
+              "  nimbus machine init        # Record the default macOS machine contract"
+              "  nimbus serve               # Auto-start the machine if needed"
               ""
-              "Documentation: https://github.com/agentstation/neovex"
+              "Documentation: https://github.com/nimbus/nimbus"
             end
           end
 
           CASKEOF
 
           # Strip leading whitespace from heredoc
-          sed -i 's/^          //' /tmp/neovex.rb
+          sed -i 's/^          //' /tmp/nimbus.rb
 
           # Get current file SHA (if it exists) for the update API call
-          FILE_SHA=$(gh api repos/agentstation/homebrew-tap/contents/Casks/neovex.rb --jq '.sha' 2>/dev/null || echo "")
+          FILE_SHA=$(gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb --jq '.sha' 2>/dev/null || echo "")
 
           if [ -n "$FILE_SHA" ]; then
-            gh api repos/agentstation/homebrew-tap/contents/Casks/neovex.rb \
+            gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb \
               --method PUT \
-              --field message="Update neovex to ${VERSION}" \
-              --field content="$(base64 -w0 /tmp/neovex.rb)" \
+              --field message="Update nimbus to ${VERSION}" \
+              --field content="$(base64 -w0 /tmp/nimbus.rb)" \
               --field sha="$FILE_SHA" \
               --silent
           else
-            gh api repos/agentstation/homebrew-tap/contents/Casks/neovex.rb \
+            gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb \
               --method PUT \
-              --field message="Add neovex cask at ${VERSION}" \
-              --field content="$(base64 -w0 /tmp/neovex.rb)" \
+              --field message="Add nimbus cask at ${VERSION}" \
+              --field content="$(base64 -w0 /tmp/nimbus.rb)" \
               --silent
           fi
         continue-on-error: true

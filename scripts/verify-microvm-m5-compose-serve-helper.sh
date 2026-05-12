@@ -4,10 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required_env=(
-  NEOVEX_KRUN_SMOKE_WORKDIR
-  NEOVEX_KRUN_SMOKE_RUNTIME
-  NEOVEX_KRUN_SMOKE_CONMON
-  NEOVEX_KRUN_SMOKE_BUILDAH
+  NIMBUS_KRUN_SMOKE_WORKDIR
+  NIMBUS_KRUN_SMOKE_RUNTIME
+  NIMBUS_KRUN_SMOKE_CONMON
+  NIMBUS_KRUN_SMOKE_BUILDAH
 )
 
 for env_key in "${required_env[@]}"; do
@@ -17,13 +17,13 @@ for env_key in "${required_env[@]}"; do
   fi
 done
 
-host_port="${NEOVEX_KRUN_SMOKE_M5_HOST_PORT:-18091}"
-guest_port="${NEOVEX_KRUN_SMOKE_M5_GUEST_PORT:-8091}"
-export NEOVEX_KRUN_SMOKE_M5_HOST_PORT="${host_port}"
-export NEOVEX_KRUN_SMOKE_M5_GUEST_PORT="${guest_port}"
+host_port="${NIMBUS_KRUN_SMOKE_M5_HOST_PORT:-18091}"
+guest_port="${NIMBUS_KRUN_SMOKE_M5_GUEST_PORT:-8091}"
+export NIMBUS_KRUN_SMOKE_M5_HOST_PORT="${host_port}"
+export NIMBUS_KRUN_SMOKE_M5_GUEST_PORT="${guest_port}"
 
-control_root="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m5-compose-control"
-log_root="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m5-compose-serve-verification"
+control_root="${NIMBUS_KRUN_SMOKE_WORKDIR%/}/m5-compose-control"
+log_root="${NIMBUS_KRUN_SMOKE_WORKDIR%/}/m5-compose-serve-verification"
 rm -rf "${control_root}" "${log_root}"
 mkdir -p "${log_root}"
 
@@ -34,12 +34,12 @@ metadata_file="${log_root}/metadata.json"
 cd "${repo_root}"
 
 cargo fmt --all --check
-cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex
-cargo test -p neovex-bin
+cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus
+cargo test -p nimbus-bin
 
-export NEOVEX_KRUN_SMOKE_M5_METADATA_FILE="${metadata_file}"
+export NIMBUS_KRUN_SMOKE_M5_METADATA_FILE="${metadata_file}"
 cargo test \
-  -p neovex-bin \
+  -p nimbus-bin \
   tests::convex_runtime_query_starts_real_krun_service_from_compose_file_and_tears_it_down \
   -- \
   --ignored \

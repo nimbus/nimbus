@@ -13,7 +13,7 @@ unsound = "all"
 yanked = "deny"
 # `RUSTSEC-2026-0097` requires `rand`'s `log` + `thread_rng` features plus a
 # custom `log` logger path. The remaining transitive `rand 0.8.5` lane in this
-# workspace does not enable `log`, and Neovex uses `tracing_subscriber` rather
+# workspace does not enable `log`, and Nimbus uses `tracing_subscriber` rather
 # than a custom `log::Log` implementation.
 ignore = ["RUSTSEC-2026-0097"]
 
@@ -21,7 +21,7 @@ ignore = ["RUSTSEC-2026-0097"]
 version = 2
 # Confidence threshold for license detection
 confidence-threshold = 0.8
-# Workspace crates use the Neovex Community License (custom, not SPDX)
+# Workspace crates use the Nimbus Community License (custom, not SPDX)
 private = { ignore = true }
 # All licenses are denied unless explicitly in the allow list
 allow = [
@@ -65,6 +65,6 @@ skip-tree = [
 unknown-git = "deny"
 unknown-registry = "deny"
 allow-git = [
-  "https://github.com/agentstation/deno_core",
-  "https://github.com/agentstation/rusty_v8",
+  "https://github.com/nimbus/deno",
+  "https://github.com/nimbus/rusty_v8",
 ]

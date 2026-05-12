@@ -1,0 +1,62 @@
+[package]
+name = "nimbus-engine"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+test-hooks = []
+aws-kms = ["nimbus-storage/aws-kms"]
+
+[dependencies]
+arc-swap.workspace = true
+base64.workspace = true
+futures.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+nimbus-storage = { path = "../nimbus-storage" }
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+hyper.workspace = true
+libsql.workspace = true
+mysql_async.workspace = true
+nimbus-testing = { path = "../nimbus-testing" }
+proptest = "1"
+serial_test.workspace = true
+tempfile.workspace = true
+testcontainers-modules = { workspace = true, features = ["blocking", "mysql", "postgres"] }
+
+[[bench]]
+name = "embedded-provider-benchmarks"
+harness = false
+
+[[bench]]
+name = "postgres-provider-benchmarks"
+harness = false
+
+[[bench]]
+name = "mysql-provider-benchmarks"
+harness = false
+
+[[bench]]
+name = "libsql-replica-provider-benchmarks"
+harness = false
+
+[[bench]]
+name = "materialized-surface-evaluation"
+harness = false

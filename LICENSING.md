@@ -1,11 +1,11 @@
 # Licensing
 
-Neovex is source-available software. The binding legal terms are in
+Nimbus is source-available software. The binding legal terms are in
 [LICENSE](LICENSE). This file is the short, plain-English guide.
 
 ## Free use
 
-You can use Neovex for free if any of these apply:
+You can use Nimbus for free if any of these apply:
 
 - you are an individual developer
 - you are a nonprofit organization
@@ -37,13 +37,13 @@ threshold again.
 ## What counts as a monthly active user
 
 A monthly active user is a unique human user, internal or external, who in a
-calendar month uses an application, service, or system backed by Neovex.
+calendar month uses an application, service, or system backed by Nimbus.
 
 That includes:
 
-- employees using an internal Neovex-backed tool
-- customers using your Neovex-backed product
-- authenticated or otherwise identifiable end users who trigger Neovex-backed
+- employees using an internal Nimbus-backed tool
+- customers using your Nimbus-backed product
+- authenticated or otherwise identifiable end users who trigger Nimbus-backed
   activity
 
 That does not normally include:
@@ -61,26 +61,26 @@ IDs, request activity, or similar telemetry.
 Even if you otherwise qualify for free use or trial use, you may not without a
 commercial license:
 
-- offer Neovex itself as a hosted or managed service
+- offer Nimbus itself as a hosted or managed service
 - provide a competing hosted backend, database, or developer platform built on
-  Neovex
-- embed or white-label Neovex as a material part of a competing platform
-- use Neovex branding as if your fork or service is official
+  Nimbus
+- embed or white-label Nimbus as a material part of a competing platform
+- use Nimbus branding as if your fork or service is official
 
-Using Neovex to power your own product is allowed. Offering Neovex itself, or a
+Using Nimbus to power your own product is allowed. Offering Nimbus itself, or a
 substantially similar managed platform, to third parties is not.
 
 ## Examples
 
 - A startup with `$2M` annual revenue and `50,000` monthly active users may use
-  Neovex for free.
+  Nimbus for free.
 - A public company with `$500M` annual revenue and `100` monthly active users
-  may use Neovex for free.
+  may use Nimbus for free.
 - A company with `$25M` annual revenue and `2,000` monthly active users gets a
   `90-day` trial and then needs an enterprise license.
-- A university may use Neovex for free for teaching, research, or operations,
+- A university may use Nimbus for free for teaching, research, or operations,
   as long as it is not offering a prohibited competing hosted service.
-- A cloud vendor may not offer a managed Neovex-like service without a
+- A cloud vendor may not offer a managed Nimbus-like service without a
   commercial license, even if it would otherwise fit the revenue or MAU limits.
 
 ## Commercial licensing
@@ -88,7 +88,7 @@ substantially similar managed platform, to third parties is not.
 Commercial licensing is for:
 
 - organizations above the free-use threshold after the `90-day` trial
-- hosted or managed Neovex offerings
+- hosted or managed Nimbus offerings
 - OEM, embedded, or white-label platform deals
 - enterprise support, security review, indemnity, or custom terms
 
@@ -96,5 +96,5 @@ See [COMMERCIAL.md](COMMERCIAL.md).
 
 ## Trademarks
 
-Neovex trademarks and branding are not open for unrestricted use. See
+Nimbus trademarks and branding are not open for unrestricted use. See
 [TRADEMARKS.md](TRADEMARKS.md).

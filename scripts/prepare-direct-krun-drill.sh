@@ -8,16 +8,16 @@ usage: prepare-direct-krun-drill.sh --bundle-dir <path> [options]
 Prepare a reproducible direct private-runtime krun drill layout without running
 the stack yet. The helper creates deterministic state directories and
 operator-facing scripts so a supported Linux host can execute the first
-/usr/libexec/neovex/crun run --bundle ... drill and record the same evidence
+/usr/libexec/nimbus/crun run --bundle ... drill and record the same evidence
 paths every time.
 
 options:
   --bundle-dir <path>      OCI bundle directory (must already contain config.json)
   --state-root <path>      Root directory for pid/log/exit state
-                           (default: ${TMPDIR:-/tmp}/neovex-direct-krun-drill)
-  --container-id <id>      Runtime container ID (default: neovex-krun-probe)
+                           (default: ${TMPDIR:-/tmp}/nimbus-direct-krun-drill)
+  --container-id <id>      Runtime container ID (default: nimbus-krun-probe)
   --runtime <path>         private runtime path for direct execution
-                           (default: /usr/libexec/neovex/crun)
+                           (default: /usr/libexec/nimbus/crun)
   --host-port <port>       Override the host port derived from krun.port_map
   --probe-host <host>      Host for the HTTP connectivity probe
                            (default: 127.0.0.1)
@@ -27,14 +27,14 @@ options:
 
 examples:
   bash scripts/prepare-direct-krun-drill.sh \
-    --bundle-dir /tmp/neovex-krun-probe \
-    --state-root /tmp/neovex-direct-krun-drill
+    --bundle-dir /tmp/nimbus-krun-probe \
+    --state-root /tmp/nimbus-direct-krun-drill
 
   bash scripts/prepare-direct-krun-drill.sh \
-    --bundle-dir /tmp/neovex-krun-probe \
-    --state-root /tmp/neovex-direct-krun-drill \
-    --container-id neovex-http \
-    --runtime /usr/libexec/neovex/crun
+    --bundle-dir /tmp/nimbus-krun-probe \
+    --state-root /tmp/nimbus-direct-krun-drill \
+    --container-id nimbus-http \
+    --runtime /usr/libexec/nimbus/crun
 EOF
 }
 
@@ -92,9 +92,9 @@ require_command() {
 }
 
 bundle_dir=""
-state_root="${TMPDIR:-/tmp}/neovex-direct-krun-drill"
-container_id="neovex-krun-probe"
-runtime_path="/usr/libexec/neovex/crun"
+state_root="${TMPDIR:-/tmp}/nimbus-direct-krun-drill"
+container_id="nimbus-krun-probe"
+runtime_path="/usr/libexec/nimbus/crun"
 host_port=""
 probe_host="127.0.0.1"
 probe_path="/"

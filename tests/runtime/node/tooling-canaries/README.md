@@ -11,7 +11,7 @@ The current canary set covers:
 - `prisma`
 - `next`
 
-All package versions are pinned in [package.json](/Users/jack/src/github.com/agentstation/neovex/tests/runtime/node/tooling-canaries/package.json)
+All package versions are pinned in [package.json](/Users/jack/src/github.com/nimbus/nimbus/tests/runtime/node/tooling-canaries/package.json)
 and installed through the canonical repo-owned bootstrap command:
 
 ```bash

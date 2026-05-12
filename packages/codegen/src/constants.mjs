@@ -1,9 +1,9 @@
-const ARG_MARKER = "__neovexConvexArg";
-const OPERATION_MARKER = "__neovexConvexOperation";
-const QUERY_STATE_MARKER = "__neovexConvexQueryState";
-const REQUEST_MARKER = "__neovexConvexRequest";
-const RESULT_MARKER = "__neovexConvexResult";
-const HTTP_RESPONSE_MARKER = "__neovexConvexHttpResponse";
+const ARG_MARKER = "__nimbusConvexArg";
+const OPERATION_MARKER = "__nimbusConvexOperation";
+const QUERY_STATE_MARKER = "__nimbusConvexQueryState";
+const REQUEST_MARKER = "__nimbusConvexRequest";
+const RESULT_MARKER = "__nimbusConvexResult";
+const HTTP_RESPONSE_MARKER = "__nimbusConvexHttpResponse";
 
 const DEFINE_HELPERS = new Map([
   ["defineQuery", { kind: "query", visibility: "public", mode: "define" }],

@@ -20,7 +20,7 @@ function awaitEvent(socket, eventName) {
   });
 }
 
-globalThis.__neovexInvoke = async function () {
+globalThis.__nimbusInvoke = async function () {
   const server = http.createServer();
   const io = new Server(server, {
     cors: {

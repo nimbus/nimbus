@@ -34,7 +34,7 @@ VALID_LANE_CLASSIFICATION_EXPECTATIONS = {
     "expected_gap",
     "expected_skip",
 }
-RUST_NODE_COMPAT_PATH = Path("crates/neovex-runtime/src/runtime/tests/node/mod.rs")
+RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
 
 
 def repo_root() -> Path:
@@ -45,7 +45,7 @@ def manifest_root() -> Path:
     return (
         repo_root()
         / "crates"
-        / "neovex-runtime"
+        / "nimbus-runtime"
         / "src"
         / "runtime"
         / "tests"
@@ -129,7 +129,7 @@ def lane_passed_fixture_paths(lane: dict) -> set[str]:
 
 
 def public_node22_claim_count() -> int | None:
-    doc_path = repo_root() / "docs/architecture/runtime/deno-vs-neovex-node-compat.md"
+    doc_path = repo_root() / "docs/architecture/runtime/deno-vs-nimbus-node-compat.md"
     if not doc_path.is_file():
         return None
     text = doc_path.read_text(encoding="utf-8")
@@ -695,7 +695,7 @@ def build_summary(
                     "kind": "public_claim_exceeds_documented_manifested_green_count",
                     "public_claim_floor": public_claim,
                     "documented_manifested_green_count": documented_green,
-                    "doc_path": "docs/architecture/runtime/deno-vs-neovex-node-compat.md",
+                    "doc_path": "docs/architecture/runtime/deno-vs-nimbus-node-compat.md",
                 }
             )
     return {
@@ -812,7 +812,7 @@ def build_markdown(summary: dict) -> str:
                 f"- ignored Rust node_compat tests: "
                 f"{summary['rust_ignore_count']}"
             ),
-            "- source: `crates/neovex-runtime/src/runtime/tests/node/mod.rs`",
+            "- source: `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`",
             "",
             "## Expectation Catalog",
             "",

@@ -3,22 +3,22 @@ name: linux-packages
 on:
   workflow_call:
     inputs:
-      neovex_version:
-        description: "Neovex release version or tag"
+      nimbus_version:
+        description: "Nimbus release version or tag"
         required: true
         type: string
-      neovex_crun_version:
-        description: "neovex-crun release version or tag"
+      nimbus_crun_version:
+        description: "nimbus-crun release version or tag"
         required: false
         default: ""
         type: string
   workflow_dispatch:
     inputs:
-      neovex_version:
-        description: "Neovex release version or tag (for example 0.1.10 or v0.1.10)"
+      nimbus_version:
+        description: "Nimbus release version or tag (for example 0.1.10 or v0.1.10)"
         required: true
-      neovex_crun_version:
-        description: "neovex-crun release version or tag (defaults to packaging/linux-distribution-contract.env)"
+      nimbus_crun_version:
+        description: "nimbus-crun release version or tag (defaults to packaging/linux-distribution-contract.env)"
         required: false
         default: ""
 
@@ -45,24 +45,24 @@ jobs:
         id: contract
         shell: bash
         env:
-          INPUT_NEOVEX_VERSION: ${{ inputs.neovex_version }}
-          INPUT_NEOVEX_CRUN_VERSION: ${{ inputs.neovex_crun_version }}
+          INPUT_NIMBUS_VERSION: ${{ inputs.nimbus_version }}
+          INPUT_NIMBUS_CRUN_VERSION: ${{ inputs.nimbus_crun_version }}
         run: |
           set -euo pipefail
           source packaging/linux-distribution-contract.env
 
-          neovex_version="${INPUT_NEOVEX_VERSION#v}"
-          neovex_crun_version="${INPUT_NEOVEX_CRUN_VERSION:-}"
-          if [[ -z "${neovex_crun_version}" ]]; then
-            neovex_crun_version="${NEOVEX_CRUN_VERSION}"
+          nimbus_version="${INPUT_NIMBUS_VERSION#v}"
+          nimbus_crun_version="${INPUT_NIMBUS_CRUN_VERSION:-}"
+          if [[ -z "${nimbus_crun_version}" ]]; then
+            nimbus_crun_version="${NIMBUS_CRUN_VERSION}"
           fi
-          neovex_crun_version="${neovex_crun_version#v}"
+          nimbus_crun_version="${nimbus_crun_version#v}"
 
           {
-            echo "neovex_version=${neovex_version}"
-            echo "neovex_release_tag=v${neovex_version}"
-            echo "neovex_crun_version=${neovex_crun_version}"
-            echo "neovex_crun_release_tag=v${neovex_crun_version}"
+            echo "nimbus_version=${nimbus_version}"
+            echo "nimbus_release_tag=v${nimbus_version}"
+            echo "nimbus_crun_version=${nimbus_crun_version}"
+            echo "nimbus_crun_release_tag=v${nimbus_crun_version}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Set up Go
@@ -75,28 +75,28 @@ jobs:
           GOBIN="${RUNNER_TEMP}/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
-      - name: Download Neovex release binary
+      - name: Download Nimbus release binary
         env:
-          RELEASE_TAG: ${{ steps.contract.outputs.neovex_release_tag }}
+          RELEASE_TAG: ${{ steps.contract.outputs.nimbus_release_tag }}
           ARCH: ${{ matrix.arch }}
         run: |
-          mkdir -p dist/input/neovex
+          mkdir -p dist/input/nimbus
           case "${ARCH}" in
-            amd64) archive="neovex_linux_x86_64.tar.gz" ;;
-            arm64) archive="neovex_linux_arm64.tar.gz" ;;
+            amd64) archive="nimbus_linux_x86_64.tar.gz" ;;
+            arm64) archive="nimbus_linux_arm64.tar.gz" ;;
             *) echo "unsupported architecture: ${ARCH}" >&2; exit 64 ;;
           esac
           curl --fail -sSL --retry 5 \
             -o "dist/input/${archive}" \
-            "https://github.com/agentstation/neovex/releases/download/${RELEASE_TAG}/${archive}"
-          tar -xzf "dist/input/${archive}" -C dist/input/neovex
+            "https://github.com/nimbus/nimbus/releases/download/${RELEASE_TAG}/${archive}"
+          tar -xzf "dist/input/${archive}" -C dist/input/nimbus
 
-      - name: Prove packaged Neovex binary can exercise SQLCipher
+      - name: Prove packaged Nimbus binary can exercise SQLCipher
         run: |
           mkdir -p "dist/sqlcipher-package-proof/${{ matrix.arch }}"
           bash scripts/verify-sqlcipher-proof.sh \
             --output-dir "dist/sqlcipher-package-proof/${{ matrix.arch }}" \
-            packaged-binary dist/input/neovex/neovex
+            packaged-binary dist/input/nimbus/nimbus
 
       - name: Upload SQLCipher package proof bundle
         if: always()
@@ -106,27 +106,27 @@ jobs:
           path: dist/sqlcipher-package-proof/${{ matrix.arch }}
           if-no-files-found: ignore
 
-      - name: Download neovex-crun release binary
+      - name: Download nimbus-crun release binary
         env:
-          RELEASE_TAG: ${{ steps.contract.outputs.neovex_crun_release_tag }}
+          RELEASE_TAG: ${{ steps.contract.outputs.nimbus_crun_release_tag }}
           ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p dist/input
           curl --fail -sSL --retry 5 \
-            -o "dist/input/neovex-crun" \
-            "https://github.com/agentstation/neovex-crun/releases/download/${RELEASE_TAG}/neovex-crun-linux-${ARCH}"
-          chmod 0755 dist/input/neovex-crun
+            -o "dist/input/nimbus-crun" \
+            "https://github.com/nimbus/nimbus-crun/releases/download/${RELEASE_TAG}/nimbus-crun-linux-${ARCH}"
+          chmod 0755 dist/input/nimbus-crun
 
       - name: Build Linux package artifacts
         env:
-          VERSION: ${{ steps.contract.outputs.neovex_version }}
-          CRUN_VERSION: ${{ steps.contract.outputs.neovex_crun_version }}
+          VERSION: ${{ steps.contract.outputs.nimbus_version }}
+          CRUN_VERSION: ${{ steps.contract.outputs.nimbus_crun_version }}
           ARCH: ${{ matrix.arch }}
         run: |
           bash scripts/build-linux-release-packages.sh \
             --output-dir "dist/linux-packages/${ARCH}" \
-            --neovex-binary "dist/input/neovex/neovex" \
-            --neovex-crun-binary "dist/input/neovex-crun" \
+            --nimbus-binary "dist/input/nimbus/nimbus" \
+            --nimbus-crun-binary "dist/input/nimbus-crun" \
             --version "${VERSION}" \
             --crun-version "${CRUN_VERSION}" \
             --arch "${ARCH}"

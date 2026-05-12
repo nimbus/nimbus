@@ -1,6 +1,6 @@
 # Architecture
 
-Neovex is a single-binary reactive document database. Clients subscribe to
+Nimbus is a single-binary reactive document database. Clients subscribe to
 queries over WebSocket and receive automatic pushes when data changes. Each
 tenant gets an isolated persistence namespace: embedded deployments use local
 per-tenant databases, while external providers preserve the same isolation
@@ -59,13 +59,13 @@ and `tracing` (observability). Additional dependencies include `ring`
 flowchart TD
     Client["Client · HTTP + WebSocket"]
 
-    subgraph binary["neovex · single binary"]
-        Server["neovex-server · transport"]
-        Engine["neovex-engine · logic"]
-        Runtime["neovex-runtime · V8 execution"]
-        Sandbox["neovex-sandbox · isolation seam"]
-        Storage["neovex-storage · persistence"]
-        Core["neovex-core · types"]
+    subgraph binary["nimbus · single binary"]
+        Server["nimbus-server · transport"]
+        Engine["nimbus-engine · logic"]
+        Runtime["nimbus-runtime · V8 execution"]
+        Sandbox["nimbus-sandbox · isolation seam"]
+        Storage["nimbus-storage · persistence"]
+        Core["nimbus-core · types"]
 
         Server --> Engine
         Server --> Runtime
@@ -103,15 +103,15 @@ V8 handler code makes host calls that the server's bridge implementation
 routes to the engine. At the crate level, the runtime has zero workspace
 dependencies.
 
-**neovex-server** is the integration point. It owns all network I/O and
+**nimbus-server** is the integration point. It owns all network I/O and
 connects the two independent subsystems below it:
 
-- **neovex-engine** is the central coordinator. Every read, write,
+- **nimbus-engine** is the central coordinator. Every read, write,
   subscription, and scheduled job flows through its `Service` struct. It
-  depends on `neovex-storage` for persistence and `neovex-core` for shared
+  depends on `nimbus-storage` for persistence and `nimbus-core` for shared
   types. This is the data path: server → engine → storage → core.
 
-- **neovex-runtime** is a standalone V8 execution environment with zero
+- **nimbus-runtime** is a standalone V8 execution environment with zero
   workspace dependencies. It defines a `HostBridge` trait that declares what
   host operations a V8 handler can perform (`ctx.db.*`, `ctx.scheduler.*`,
   `ctx.run*`). The server implements that trait in
@@ -120,12 +120,12 @@ connects the two independent subsystems below it:
   runtime knows nothing about it. This is dependency inversion: the runtime
   declares what it needs; the server provides it.
 
-- **neovex-sandbox** is the generic isolation and sandbox-orchestration seam.
+- **nimbus-sandbox** is the generic isolation and sandbox-orchestration seam.
   It currently exposes backend-agnostic sandbox lifecycle contracts and the
   first server-facing catalog seam, while concrete krun-backed, Firecracker,
   and other backend implementations remain deferred.
 
-The server has two request paths. **Native** requests (Neovex HTTP/WS API) go
+The server has two request paths. **Native** requests (Nimbus HTTP/WS API) go
 directly to async engine methods; read and write paths now await an explicit
 async storage boundary that owns backend blocking work. Durable writes cross
 that boundary through `TenantWriteTransaction`, which defines an explicit
@@ -144,12 +144,12 @@ of bouncing through a Tokio `spawn_blocking(...)` adapter layer.
 This leads to a deliberate two-tier logic model. V8 and `deno_core` remain a
 first-class execution surface for Convex compatibility, JavaScript portability,
 and the existing function-oriented developer model. At the same time, the
-long-term Neovex-native surface should keep moving toward schema-driven CRUD,
+long-term Nimbus-native surface should keep moving toward schema-driven CRUD,
 planner-enforced policy, and, when needed, a database-native WASM plugin ABI
-for tightly scoped extensions. WASM is therefore an additive path for Neovex,
+for tightly scoped extensions. WASM is therefore an additive path for Nimbus,
 not a planned replacement for the Convex compatibility runtime.
 
-When that Neovex-native path lands, it should follow the same broad patterns
+When that Nimbus-native path lands, it should follow the same broad patterns
 used by systems such as PostgREST, Hasura, and Wasmtime: a schema-owned public
 API contract, planner-enforced policy, and a typed, capability-scoped plugin
 ABI rather than an untyped general escape hatch.
@@ -160,15 +160,15 @@ The Convex surface also depends on a build-time pipeline: `packages/codegen`
 (`bundle.sha256`). The server loads these at startup; the runtime verifies the
 hash before every invocation. Compile-time planning is AST-owned and does not
 execute user source through Node's `new Function`; the generated runtime bundle
-still materializes runtime-only handlers with `new Function` inside the Neovex
+still materializes runtime-only handlers with `new Function` inside the Nimbus
 V8 runtime so unsupported Convex-compatible code runs behind the runtime
 `HostBridge` capability boundary rather than in the codegen process.
 
-The **neovex** facade crate re-exports the stable, embedder-oriented surface of
+The **nimbus** facade crate re-exports the stable, embedder-oriented surface of
 the workspace so embedders can usually depend on a single crate. Low-level
 server-construction helpers such as localhost security internals, discovery or
 token lifecycle records, and router-builder overloads remain owned by
-**neovex-server** directly. The **neovex-bin** crate is the CLI entry point.
+**nimbus-server** directly. The **nimbus-bin** crate is the CLI entry point.
 
 ---
 
@@ -178,7 +178,7 @@ Each crate has a single responsibility. When looking for where something
 lives, use this map. Search for type and function names rather than following
 file links (links go stale; symbol search does not).
 
-**`neovex-core`** — Shared types and validation. Zero I/O, zero external deps.
+**`nimbus-core`** — Shared types and validation. Zero I/O, zero external deps.
 
 - `auth/` — auth and access-policy composition root. `mod.rs` owns
   `PrincipalContext`, `PrincipalSnapshot`, `PrincipalClaimSource`, and policy
@@ -198,7 +198,7 @@ file links (links go stale; symbol search does not).
 - `scheduled.rs` — `ScheduledJob`, `CronJob`, `CronSchedule`, `ScheduledJobResult`. Interval-based cron.
 - `error.rs` — `Error` enum with variants mapped to HTTP status codes in the server layer.
 
-**`neovex-storage`** — Persistence layer. Tenant persistence now runs behind
+**`nimbus-storage`** — Persistence layer. Tenant persistence now runs behind
 the durable provider seam, with SQLite as the default embedded provider, redb
 retained as another embedded provider, and the global usage store lowered
 through a separate embedded redb control-plane provider for cross-tenant
@@ -296,9 +296,9 @@ metering.
   crash recovery.
 - `commit_log.rs` — Durable mutation journal serialization plus the internal
   `CommitEntry` projection used by legacy storage-facing helpers and tests.
-- `usage_store.rs` — `UsageStore` backed by a separate redb database (`neovex-control.db`). Tracks monthly active users (MAU) by token identifier with per-month counters.
+- `usage_store.rs` — `UsageStore` backed by a separate redb database (`nimbus-control.db`). Tracks monthly active users (MAU) by token identifier with per-month counters.
 
-**`neovex-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
+**`nimbus-engine`** — Central coordinator. Every read, write, subscription, and scheduled job flows through the `Service` struct — whether the request originates from native HTTP, WebSocket, the background scheduler, or a runtime host operation.
 
 - `service/mod.rs` — `Service` struct: tenant registry plus the async storage
   boundary, the embedded provider selector, the still-local redb usage/control
@@ -451,12 +451,12 @@ metering.
   per-commit metadata for the intermediate records.
 - `scheduler.rs` — Background loop: `run_scheduler` sleeps until the next due tenant-local scheduled or cron work (or a wakeup notification), then fans loaded tenants out through a bounded concurrent scheduler tick so one slow tenant does not stall other due work.
 
-**`neovex-runtime`** — Standalone execution runtime, currently V8-backed, with
+**`nimbus-runtime`** — Standalone execution runtime, currently V8-backed, with
 zero workspace dependencies. Defines the `HostBridge` trait for
 dependency-inverted host integration; the runtime never imports engine or
 storage types directly.
 
-- `runtime.rs` — `NeovexRuntime`: the runtime composition root. It now keeps
+- `runtime.rs` — `NimbusRuntime`: the runtime composition root. It now keeps
   the public type surface while delegating public runtime
   construction and convenience invocation entrypoints to `runtime/facade.rs`,
   invocation-driver ownership to the `runtime/driver/` module tree
@@ -542,10 +542,10 @@ storage types directly.
 - `module_loader.rs` — `RestrictedModuleLoader`: custom `deno_core` module
   loader that restricts ESM imports to the bundle root.
 - `watchdog.rs` — `WatchdogTimer`: shared timeout and external-cancellation watchdog owned by `RuntimeExecutor`, replacing the old per-invocation watchdog OS threads.
-- `error.rs` — `NeovexRuntimeError` with variants for timeout, cancellation,
+- `error.rs` — `NimbusRuntimeError` with variants for timeout, cancellation,
   heap exceeded, contract violations, and user-thrown errors.
 
-**`neovex-sandbox`** — Generic isolation and sandbox-orchestration seam. This
+**`nimbus-sandbox`** — Generic isolation and sandbox-orchestration seam. This
 crate owns the stable sandbox nouns plus the first backend-owned krun
 implementation slice. The public seam stays generic, while backend-specific
 bundle generation, buildah command assembly, conmon/crun launch planning, and
@@ -568,7 +568,7 @@ proof on Linux.
 - `backends/krun/` — backend-owned krun internals. `bundle.rs` writes OCI
   bundle config with the krun handler and TSI port-map annotation,
   `buildah.rs` owns buildah command assembly, `conmon.rs` builds the
-  `conmon -> /usr/libexec/neovex/crun` launch plan, `command.rs` holds the
+  `conmon -> /usr/libexec/nimbus/crun` launch plan, `command.rs` holds the
   reusable backend-local command spec, and `vm.rs` is now the backend
   composition root over `vm/launch.rs` (launch planning, image/build
   materialization, guest-user switching, and krun VM-config helpers),
@@ -624,8 +624,8 @@ similar durable background work are Service responsibilities.
 
 | Domain | Owner | Primitive | Live responsibility |
 | --- | --- | --- | --- |
-| Main server runtime | `neovex-bin` | process Tokio runtime from `#[tokio::main]` | axum HTTP/WS request handling and the root scheduler task |
-| Scheduler loop | `neovex-bin` + `Service` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then fans out a bounded set of per-tenant ticks via `Service` so one slow tenant cannot stall others |
+| Main server runtime | `nimbus-bin` | process Tokio runtime from `#[tokio::main]` | axum HTTP/WS request handling and the root scheduler task |
+| Scheduler loop | `nimbus-bin` + `Service` | long-lived Tokio task with `watch` shutdown + `Notify` wakeup | sleeps until the next due scheduled or cron work, then fans out a bounded set of per-tenant ticks via `Service` so one slow tenant cannot stall others |
 | Service background runtime | `Service` | owned `BackgroundExecutor` field with `TaskTracker`, `CancellationToken`, and explicit `quiesce()` | stable home for long-lived engine async workers with service-owned shutdown semantics |
 | Mutation journal worker | `Service` + `TenantRuntime` | service-owned async task | drains the outer mutation admission gate, applies CoDel shedding before journal ownership transfer, durably appends and applies queued mutations in order, and resolves mutation futures |
 | Subscription delivery worker | `TenantRuntime` | tenant-owned dedicated OS thread with `Condvar` queue | bounded subscription reevaluation and delivery preparation, including small-batch queue draining and overlap-aware work merging before reevaluation |
@@ -659,11 +659,11 @@ re-acquire its permit. The executor's primary extensibility seam is
 `WorkerLoopFactory` / `WorkerLoop`; the current V8 backend stays
 worker-local beneath that seam.
 
-**`neovex-server`** — Network I/O and integration. Neovex-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
+**`nimbus-server`** — Network I/O and integration. Nimbus-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
 - `lib.rs` — Public server facade. Re-exports the router builders and serve
   helpers; `serve` starts the axum listener.
-- `router.rs` — Neovex-native and Convex route composition. The public
+- `router.rs` — Nimbus-native and Convex route composition. The public
   `build_router*` overloads are now thin wrappers over one internal
   `RouterBuildConfig` path that normalizes `LicenseState`, optional Convex
   support, and runtime-service-registry wiring before building the axum
@@ -676,25 +676,25 @@ worker-local beneath that seam.
   path only sees already-ready in-memory bindings, while async `ctx.services.get`
   calls can start and wait for declared services through cancellable sandbox
   activation plus readiness polling.
-- `http/` — Neovex-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
+- `http/` — Nimbus-native HTTP handlers. Read, control, and durable write routes all await async engine methods directly. Write handlers thread request disconnect cancellation to the engine, but post-commit disconnects remain transport-only failures and do not roll back durable writes.
 - `local_server/` — Server-owned localhost security boundary. Owns platform
   path resolution, `server.json` discovery, local admin token lifecycle and
   rotation, signed UI sessions, origin and route-family gate helpers, and the
   append-only security audit log. These credentials authorize server access
   only and never populate Convex `InvocationAuth`, `ctx.auth`, or tenant
   `PrincipalContext`.
-- `ws.rs` / `ws/socket.rs` — Neovex-native WebSocket upgrade and session
+- `ws.rs` / `ws/socket.rs` — Nimbus-native WebSocket upgrade and session
   composition. `ws/socket/transport.rs` owns socket reader, writer, and
   subscription-forwarder tasks, `ws/socket/pending.rs` owns pending bootstrap
   cancellation tracking, and `ws/socket/session.rs` owns generic subscription
   registration, unsubscribe handling, and disconnect cleanup. The native
   session still explicitly unsubscribes active subscriptions on disconnect and
   owns its child tasks through `OwnedTaskSet`.
-- `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NEOVEX_LICENSE_FILE` env, or `~/.config/neovex/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
+- `license/` — `LicenseState`, `LicenseDocument`, `LicenseSnapshot`, `LicenseEntitlements`. Loads from `--license-file`, `NIMBUS_LICENSE_FILE` env, or `~/.config/nimbus/license.json`. Supports community, trial, and enterprise tiers. Exposes status at `GET /debug/license/status` including MAU usage.
 - `convex/mod.rs` — Convex shim request/response types plus the public Convex support handlers. Owns the `RuntimeExecutor`, runtime policy, auth verifier, registry state, and the server-side `HostBridge` implementation.
 - `convex/auth/` — Convex auth adapter: OIDC and custom JWT provider config, JWKS key fetching, JWT validation with clock-skew tolerance, and identity extraction for `InvocationAuth`.
 - `convex/registry/` and `convex/manifest.rs` — Manifest loading, runtime bundle discovery, function lookup, and Convex support route resolution.
-- `convex/host_bridge/` — The `HostBridge` implementation that adapts Neovex
+- `convex/host_bridge/` — The `HostBridge` implementation that adapts Nimbus
   engine operations into the contract the runtime expects. Async host-call
   routes now await real engine or storage futures directly; only inherently
   synchronous host-side setup stays on the sync bridge path. The server-side
@@ -736,12 +736,12 @@ worker-local beneath that seam.
 - `protocol.rs` — Request/response DTOs. `ClientMessage` (Subscribe/Unsubscribe) and `ServerMessage` (SubscriptionResult/Error).
 - `sandbox.rs` — `SandboxCatalog` and `EmptySandboxCatalog`: server-owned
   service-discovery seam for mapping tenant-and-name lookups onto sandbox
-  handles without coupling `neovex-sandbox` directly into request handlers.
+  handles without coupling `nimbus-sandbox` directly into request handlers.
 - `state.rs` — `AppState` holds the shared `Service`, optional Convex support registry, `LicenseState`, and the injected `SandboxCatalog`. `AppError` maps `Error` variants to HTTP status codes.
 
-**`neovex`** — Public facade crate for embedders. Re-exports stable types from `neovex-core`, `neovex-engine`, `neovex-runtime`, `neovex-sandbox`, `neovex-server`, and `neovex-storage` so downstream consumers can usually depend on one crate. Low-level localhost-security records, discovery helpers, and router-construction overloads stay on `neovex-server` so the facade does not become an implementation-detail bucket.
+**`nimbus`** — Public facade crate for embedders. Re-exports stable types from `nimbus-core`, `nimbus-engine`, `nimbus-runtime`, `nimbus-sandbox`, `nimbus-server`, and `nimbus-storage` so downstream consumers can usually depend on one crate. Low-level localhost-security records, discovery helpers, and router-construction overloads stay on `nimbus-server` so the facade does not become an implementation-detail bucket.
 
-**`neovex-bin`** — CLI entry point. `main.rs` is the thin command root, while
+**`nimbus-bin`** — CLI entry point. `main.rs` is the thin command root, while
 `serve/` owns the serve-command composition seam: JSON config and env loading,
 provider selection, precedence merging into typed
 `ServicePersistenceConfig`, runtime-limit defaults, and the server boot path
@@ -780,7 +780,7 @@ and forwarded log reads, and `process.rs` owns PID-file plus process-table
 inspection helpers. The Compose plan loader under `service/compose/` now
 follows the same concept-owned split: `compose.rs` stays the public Compose
 composition surface, `raw.rs` owns decoded Compose document types,
-`lower.rs` owns project and service lowering into Neovex plans, `parse.rs`
+`lower.rs` owns project and service lowering into Nimbus plans, `parse.rs`
 owns scalar and lifecycle parser helpers, `warnings.rs` owns warning helpers,
 `render.rs` owns rendered plan output, and `tests.rs` keeps the Compose
 regression coverage packaged beside that surface. The CLI surface still
@@ -793,24 +793,24 @@ flags (`--runtime-heap-mb`, `--runtime-initial-heap-mb`,
 
 **`packages/codegen`** — Node.js code generation tool. Reads Convex source
 files (`convex/*.ts`) and a `convex/schema.ts`, emits
-`.neovex/convex/functions.json` (named-function manifest),
-`.neovex/convex/bundle.mjs` (runtime ESM entrypoint),
-`.neovex/convex/bundle.sha256` (integrity hash), and generated
+`.nimbus/convex/functions.json` (named-function manifest),
+`.nimbus/convex/bundle.mjs` (runtime ESM entrypoint),
+`.nimbus/convex/bundle.sha256` (integrity hash), and generated
 `convex/_generated/` TypeScript (api, server, dataModel, scheduled_functions).
 The generated files still target `convex/*` imports for compatibility, but
 those surfaces now delegate more of their implementation through canonical
-`packages/neovex` modules where behavior is shared.
+`packages/nimbus` modules where behavior is shared.
 
 **`packages/convex`** — In-repo Convex compatibility package. Provides
 `convex/browser` (`ConvexHttpClient`, named-string and `anyApi` helpers),
 `convex/react` (`ConvexReactClient`, provider and hook aliases), `convex/server`
-(thin typed wrappers over `neovex/server`), and `convex/values` (validators).
-These still speak the Neovex Convex-shaped WebSocket/HTTP protocol, but the
+(thin typed wrappers over `nimbus/server`), and `convex/values` (validators).
+These still speak the Nimbus Convex-shaped WebSocket/HTTP protocol, but the
 package now prefers wrapper, alias, and re-export seams over copy-forward
-duplication whenever behavior matches the canonical `packages/neovex`
+duplication whenever behavior matches the canonical `packages/nimbus`
 implementations.
 
-**`neovex-testing`** — Shared test fixtures (`HttpApiFixture`) for
+**`nimbus-testing`** — Shared test fixtures (`HttpApiFixture`) for
 integration tests. `http_api_fixture/` is now a route-family composition root:
 `debug.rs` owns diagnostics helpers, `convex.rs` owns Convex runtime and HTTP
 helpers, `tenants.rs` owns tenant lifecycle helpers, `schedule.rs` owns native
@@ -821,7 +821,7 @@ owns document and journal helpers, and `queries.rs` owns native query helpers.
 
 ## Persistence Seams
 
-Neovex should keep two different seams explicit instead of collapsing them into
+Nimbus should keep two different seams explicit instead of collapsing them into
 one generic "backend" abstraction.
 
 ### Durable engine-facing behavior seam
@@ -842,7 +842,7 @@ names should stay behavior-oriented:
 - `TenantSchemaPersistence`
 
 The current `QueryReadStore` in
-`crates/neovex-storage/src/query_read.rs` is already a good example of the
+`crates/nimbus-storage/src/query_read.rs` is already a good example of the
 intended direction: narrow, planner-driven, and derived from live call sites
 rather than from a greenfield CRUD sketch.
 
@@ -927,7 +927,7 @@ Operator-facing startup config should follow the same rule. CLI flags,
 environment variables, and config files should lower into one typed
 `ServicePersistenceConfig` model. Resource identity and execution intent
 should stay separate, so a canonical Postgres connection value such as
-`NEOVEX_POSTGRES_URL` can be reused across runtime, test, and benchmark
+`NIMBUS_POSTGRES_URL` can be reused across runtime, test, and benchmark
 surfaces while the invoking command or profile chooses the intent.
 
 ### Naming rules
@@ -953,7 +953,7 @@ and lock costs. External backends such as Postgres or MySQL also pay network
 round trips, pool checkout, TLS, remote planning, and server-side concurrency
 costs.
 
-That makes the Neovex-owned pre-storage layer even more important for external
+That makes the Nimbus-owned pre-storage layer even more important for external
 SQL, but only for the right kind of work:
 
 - do more semantic shaping above the seam
@@ -990,11 +990,11 @@ For the deeper provider-topology baselines and readiness gates for
 These rules must not be violated. If a change would break one, it requires an
 architecture discussion.
 
-1. **`neovex-core` has zero I/O.** It defines types and validation only. If
+1. **`nimbus-core` has zero I/O.** It defines types and validation only. If
    you need to read a file or make a network call, it belongs in another crate.
 
-2. **`neovex-runtime` has zero workspace dependencies.** It defines the V8
-   execution surface and the `HostBridge` trait. All Neovex-specific
+2. **`nimbus-runtime` has zero workspace dependencies.** It defines the V8
+   execution surface and the `HostBridge` trait. All Nimbus-specific
    integration lives in the server's bridge implementation, not in the runtime
    crate.
 
@@ -1140,7 +1140,7 @@ sequenceDiagram
 
 ## Persistence Engine
 
-Neovex now keeps one persistence contract across multiple provider families:
+Nimbus now keeps one persistence contract across multiple provider families:
 
 - SQLite is the default embedded tenant provider
 - redb remains a supported embedded tenant provider
@@ -1181,13 +1181,13 @@ the storage seam canonical.
 that schema-generated APIs and WASM plugins are attractive for a database: WASM
 is language-agnostic, sandbox-friendly, and a better fit for tightly bounded
 engine-local extensions such as policies, triggers, or deterministic compute.
-But Neovex also has an explicit Convex-compatibility goal today, and that goal
+But Nimbus also has an explicit Convex-compatibility goal today, and that goal
 is best served by keeping the V8 and `deno_core` runtime first-class. The
 project decision is therefore:
 
 - keep V8 for the Convex compatibility surface and JavaScript function model
 - keep the engine and planner language-agnostic
-- treat future WASM support as a complementary Neovex-native extension path,
+- treat future WASM support as a complementary Nimbus-native extension path,
   not a forced replacement for the compatibility runtime
 
 TigerBeetle is not the reference system for this layer. For runtime surface,
@@ -1226,7 +1226,7 @@ queries remains future work.
 Runtime-backed subscriptions now also retain their last emitted runtime value
 and suppress duplicate pushes when an approximate wakeup or delayed catch-up
 re-evaluation computes the same externally visible result. That keeps the
-transport contract aligned with the database contract: Neovex may bootstrap at
+transport contract aligned with the database contract: Nimbus may bootstrap at
 an older applied frontier and then catch up, but it should not spam clients
 with duplicate payloads just because the runtime subscription wakeup path is a
 conservative approximation.
@@ -1260,7 +1260,7 @@ ABI is versioned and payload-typed at that boundary so adapter changes cannot
 silently reinterpret an incompatible top-level payload shape.
 
 **Why a separate usage database?** MAU tracking is global (not per-tenant),
-so it lives in a dedicated `neovex-control.db` redb file managed by
+so it lives in a dedicated `nimbus-control.db` redb file managed by
 `UsageStore`. This avoids coupling usage metering to any single tenant's
 lifecycle. It is also why the first Postgres-first non-local activation stays
 tenant-scoped: the cross-tenant usage/control path remains local and
@@ -1299,8 +1299,8 @@ overload shedding happens at admission while admitted journal work retains its
 commit-path guarantee. An isolate concurrency semaphore caps the number of
 simultaneous V8 invocations.
 
-**Error handling.** All fallible operations return `neovex_core::Result<T>`.
-Runtime errors use `NeovexRuntimeError` with variants for timeout,
+**Error handling.** All fallible operations return `nimbus_core::Result<T>`.
+Runtime errors use `NimbusRuntimeError` with variants for timeout,
 cancellation, heap limits, and user-thrown exceptions. The server maps error
 variants to HTTP status codes in one place (`state.rs`). Subscription
 re-evaluation errors are logged and sent to the client as
@@ -1317,7 +1317,7 @@ entitlements, warnings, and MAU usage.
 The Convex adapter layer supports OIDC and custom JWT providers via
 `convex/auth/`. JWT validation uses `ring` for signature verification with JWKS
 key fetching and clock-skew tolerance, and validated identities are passed to
-runtime handlers as `InvocationAuth`. Neovex-native routes still do not
+runtime handlers as `InvocationAuth`. Nimbus-native routes still do not
 prescribe one built-in transport authentication mechanism. Authorization now
 lives in the engine and planner as declarative schema-level policy so reads,
 writes, subscriptions, and runtime host calls share one enforcement model. In
@@ -1327,8 +1327,8 @@ and a policy revision, and a policy or principal-context change must trigger
 revalidation or teardown before more data is delivered.
 
 **Testing.** Unit tests live beside the owning crates, integration tests for
-HTTP and WebSocket behavior live in `neovex-server/tests/reactive_loop.rs`, and
-shared fixtures live in `neovex-testing`. The live verification architecture
+HTTP and WebSocket behavior live in `nimbus-server/tests/reactive_loop.rs`, and
+shared fixtures live in `nimbus-testing`. The live verification architecture
 now emphasizes concept-owned regression surfaces, deterministic simulation
 seams, shared harness metadata, differential Convex checks, and dedicated
 verification-harness corpora instead of growing one flat collection of root
@@ -1375,11 +1375,11 @@ paths, so deterministic service tests can verify the composite planner is
 actually being exercised instead of silently falling back.
 
 Fallback table scans now also have their first conservative raw-value pushdown
-slice. `neovex-storage` can probe just the targeted MessagePack field values
+slice. `nimbus-storage` can probe just the targeted MessagePack field values
 for simple `Eq/Gt/Gte/Lt/Lte` filters, reject rows that are definite
 non-matches before building a full `Document`, and expose scan stats that
 differentiate scanned rows, decoded rows, and pushdown-rejected rows in tests.
-`neovex-engine` only uses that seam as a reject-fast prefilter: unsupported
+`nimbus-engine` only uses that seam as a reject-fast prefilter: unsupported
 operators, unsupported value domains, and anything the probe cannot decide all
 fall back to the full decode-and-evaluate path so query, pagination, and error
 semantics stay unchanged.

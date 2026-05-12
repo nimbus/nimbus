@@ -8,9 +8,9 @@ declare const process: {
   once(event: "SIGINT" | "SIGTERM", listener: () => void): void;
 };
 
-const nativeUrl = process.env.NEOVEX_NATIVE_URL ?? "http://localhost:8080";
-const convexUrl = process.env.NEOVEX_CONVEX_URL ?? "http://localhost:8080/convex/demo";
-const author = process.env.NEOVEX_NODE_DEMO_AUTHOR ?? "Node Demo";
+const nativeUrl = process.env.NIMBUS_NATIVE_URL ?? "http://localhost:8080";
+const convexUrl = process.env.NIMBUS_CONVEX_URL ?? "http://localhost:8080/convex/demo";
+const author = process.env.NIMBUS_NODE_DEMO_AUTHOR ?? "Node Demo";
 
 async function ensureTenant() {
   const response = await fetch(`${nativeUrl}/api/tenants`, {

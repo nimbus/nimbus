@@ -78,7 +78,7 @@ export const cleanupUser = onDocumentDeleted(
   );
 
   const runtimeBundle = await readCloudFunctionsFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /globalThis\.__neovexInvoke = createInvocationDispatcher/);
+  assert.match(runtimeBundle, /globalThis\.__nimbusInvoke = createInvocationDispatcher/);
   assert.match(runtimeBundle, /defineFirestoreDocumentTarget/);
 
   const runtimeBundleHash = (await readCloudFunctionsFile(appDir, "bundle.sha256")).trim();
@@ -204,10 +204,10 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   const rawTime = 1712345678901;
@@ -226,7 +226,7 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
   };
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.inspectCreatedUser",
       args: sampleCreatedTriggerEvent({ time: rawTime }),
     }),
@@ -244,7 +244,7 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.inspectDeletedUser",
       args: sampleDeletedTriggerEvent({ time: rawTime }),
     }),
@@ -262,7 +262,7 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.inspectUpdatedUser",
       args: sampleUpdatedTriggerEvent({ time: rawTime }),
     }),
@@ -287,7 +287,7 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.inspectWrittenUser",
       args: sampleWrittenTriggerEvent({ time: rawTime }),
     }),
@@ -320,7 +320,7 @@ import functions from "@google-cloud/functions-framework";
 functions.cloudEvent("syncUser", async (event) => ({ event }));
 functions.http("helloWorld", async (req, res) => ({ req, res }));
 `,
-    ".neovex/firebase/targets.json": JSON.stringify({
+    ".nimbus/firebase/targets.json": JSON.stringify({
       version: 1,
       targets: [
         {
@@ -408,7 +408,7 @@ functions.http("fallback", async (req, res) => ({
   body: req.body,
 }));
 `,
-    ".neovex/firebase/targets.json": JSON.stringify({
+    ".nimbus/firebase/targets.json": JSON.stringify({
       version: 1,
       targets: [
         {
@@ -442,14 +442,14 @@ functions.http("fallback", async (req, res) => ({
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "registry.helloWorld",
       args: {
         method: "POST",
@@ -492,7 +492,7 @@ functions.http("fallback", async (req, res) => ({
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "registry.fallback",
       args: {
         method: "GET",
@@ -533,7 +533,7 @@ functions.cloudEvent("syncUser", async (event) => ({
   data: event.data,
 }));
 `,
-    ".neovex/firebase/targets.json": JSON.stringify({
+    ".nimbus/firebase/targets.json": JSON.stringify({
       version: 1,
       targets: [
         {
@@ -556,15 +556,15 @@ functions.cloudEvent("syncUser", async (event) => ({
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   const rawTime = 1712345678901;
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "registry.syncUser",
       args: sampleWrittenTriggerEvent({ time: rawTime }),
     }),
@@ -605,7 +605,7 @@ import { onRequest } from "firebase-functions/v2/https";
 setGlobalOptions({ retry: true });
 
 export const hello = onRequest(async (req, res) => {
-  res.status(202).set("x-neovex-http", req.path).json({
+  res.status(202).set("x-nimbus-http", req.path).json({
     method: req.method,
     path: req.path,
     originalUrl: req.originalUrl,
@@ -661,14 +661,14 @@ export const empty = onRequest({}, async () => ({ ok: true }));
     ],
   );
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.hello",
       args: {
         method: "POST",
@@ -691,7 +691,7 @@ export const empty = onRequest({}, async () => ({ ok: true }));
       status: 202,
       headers: {
         "content-type": "application/json",
-        "x-neovex-http": "/hello",
+        "x-nimbus-http": "/hello",
       },
       body_kind: "json",
       body: {
@@ -793,14 +793,14 @@ export const empty = onCall({}, async () => null);
     ],
   );
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.hello",
       args: {
         method: "POST",
@@ -862,7 +862,7 @@ export const empty = onCall({}, async () => null);
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.hello",
       args: {
         method: "POST",
@@ -965,15 +965,15 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexAdminApps;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusAdminApps;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.inspectAdmin",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
     }),
@@ -1027,14 +1027,14 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexAdminApps;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusAdminApps;
+  delete globalThis.__nimbusInvoke;
   const hostCalls = [];
-  globalThis.__neovexAsyncHostValue = async (opName, payload) => {
+  globalThis.__nimbusAsyncHostValue = async (opName, payload) => {
     hostCalls.push({ opName, payload: JSON.parse(JSON.stringify(payload)) });
     if (
-      opName === "op_neovex_runtime_extension_call"
+      opName === "op_nimbus_runtime_extension_call"
       && payload?.operation === "firebase_admin.firestore.get_document"
     ) {
       return {
@@ -1051,19 +1051,19 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       };
     }
     if (
-      opName === "op_neovex_runtime_extension_call"
+      opName === "op_nimbus_runtime_extension_call"
       && payload?.operation === "firebase_admin.firestore.set_document"
     ) {
       return { write_time_ms: 101 };
     }
     if (
-      opName === "op_neovex_runtime_extension_call"
+      opName === "op_nimbus_runtime_extension_call"
       && payload?.operation === "firebase_admin.firestore.update_document"
     ) {
       return { write_time_ms: 102 };
     }
     if (
-      opName === "op_neovex_runtime_extension_call"
+      opName === "op_nimbus_runtime_extension_call"
       && payload?.operation === "firebase_admin.firestore.delete_document"
     ) {
       return { write_time_ms: 103 };
@@ -1072,11 +1072,11 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
   };
 
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   assert.deepEqual(
-    await globalThis.__neovexInvoke({
+    await globalThis.__nimbusInvoke({
       function_name: "exports.inspectAdmin",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
     }),
@@ -1102,7 +1102,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
 
   assert.deepEqual(hostCalls, [
     {
-      opName: "op_neovex_runtime_extension_call",
+      opName: "op_nimbus_runtime_extension_call",
       payload: {
         namespace: "cloud_functions",
         operation: "firebase_admin.firestore.get_document",
@@ -1113,7 +1113,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       },
     },
     {
-      opName: "op_neovex_runtime_extension_call",
+      opName: "op_nimbus_runtime_extension_call",
       payload: {
         namespace: "cloud_functions",
         operation: "firebase_admin.firestore.set_document",
@@ -1128,7 +1128,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       },
     },
     {
-      opName: "op_neovex_runtime_extension_call",
+      opName: "op_nimbus_runtime_extension_call",
       payload: {
         namespace: "cloud_functions",
         operation: "firebase_admin.firestore.update_document",
@@ -1142,7 +1142,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       },
     },
     {
-      opName: "op_neovex_runtime_extension_call",
+      opName: "op_nimbus_runtime_extension_call",
       payload: {
         namespace: "cloud_functions",
         operation: "firebase_admin.firestore.delete_document",
@@ -1154,7 +1154,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
     },
   ]);
 
-  delete globalThis.__neovexAsyncHostValue;
+  delete globalThis.__nimbusAsyncHostValue;
 }
 
 async function testFirebaseAdminFirestoreDeferredOperationsFailFast() {
@@ -1180,15 +1180,15 @@ export const invalidDelete = onDocumentWritten("users/{userId}", async () => {
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__neovexCloudFunctionsState;
-  delete globalThis.__neovexAdminApps;
-  delete globalThis.__neovexInvoke;
+  delete globalThis.__nimbusCloudFunctionsState;
+  delete globalThis.__nimbusAdminApps;
+  delete globalThis.__nimbusInvoke;
   await import(
-    `${pathToFileURL(path.join(appDir, ".neovex", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
   );
 
   await assert.rejects(
-    () => globalThis.__neovexInvoke({
+    () => globalThis.__nimbusInvoke({
       function_name: "exports.invalidDoc",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
     }),
@@ -1196,7 +1196,7 @@ export const invalidDelete = onDocumentWritten("users/{userId}", async () => {
   );
 
   await assert.rejects(
-    () => globalThis.__neovexInvoke({
+    () => globalThis.__nimbusInvoke({
       function_name: "exports.invalidSet",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
     }),
@@ -1204,7 +1204,7 @@ export const invalidDelete = onDocumentWritten("users/{userId}", async () => {
   );
 
   await assert.rejects(
-    () => globalThis.__neovexInvoke({
+    () => globalThis.__nimbusInvoke({
       function_name: "exports.invalidDelete",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
     }),
@@ -1225,7 +1225,7 @@ functions.cloudEvent("syncUser", async (event) => event);
   assert.notEqual(result.status, 0, result.stdout);
   assert.match(
     result.stderr || result.stdout,
-    /requires .*\.neovex\/firebase\/targets\.json to bind discovered targets: syncUser/,
+    /requires .*\.nimbus\/firebase\/targets\.json to bind discovered targets: syncUser/,
   );
 }
 

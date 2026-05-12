@@ -1,18 +1,18 @@
-# Neovex Individual Contributor License Agreement
+# Nimbus Individual Contributor License Agreement
 
 This Individual Contributor License Agreement ("ICLA") is between the
-individual signing it ("You") and AgentStation, as the current project owner
-and maintainer of Neovex, together with its successors or assigns
+individual signing it ("You") and Nimbus, as the current project owner
+and maintainer of Nimbus, together with its successors or assigns
 ("Maintainer").
 
 ## 1. Definitions
 
 "Contribution" means any source code, documentation, issue text, design
 material, tests, examples, data, or other material that You intentionally submit
-to the Maintainer for inclusion in Neovex.
+to the Maintainer for inclusion in Nimbus.
 
 "Submission" means any electronic, written, or verbal communication sent to the
-Maintainer or project maintainers for the purpose of improving Neovex, excluding
+Maintainer or project maintainers for the purpose of improving Nimbus, excluding
 communications clearly marked as not a contribution.
 
 ## 2. Copyright license
@@ -21,7 +21,7 @@ You retain ownership of Your Contributions. You grant the Maintainer a
 perpetual, worldwide, non-exclusive, irrevocable, royalty-free, fully paid-up,
 transferable, sublicensable license to use, reproduce, modify, prepare
 derivative works of, display, perform, distribute, relicense, and otherwise
-exploit Your Contributions as part of Neovex or any related project, under any
+exploit Your Contributions as part of Nimbus or any related project, under any
 license or commercial terms chosen by the Maintainer.
 
 ## 3. Patent license
@@ -30,7 +30,7 @@ You grant the Maintainer and recipients of software distributed by the
 Maintainer a perpetual, worldwide, non-exclusive, irrevocable, royalty-free,
 fully paid-up patent license under patent claims that You can license and that
 would be necessarily infringed by Your Contribution or by combination of Your
-Contribution with Neovex.
+Contribution with Nimbus.
 
 ## 4. Your promises
 

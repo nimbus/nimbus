@@ -179,7 +179,7 @@ export default function App() {
     .join(",")}`;
 
   useEffect(() => {
-    const nativeUrl = import.meta.env.VITE_NEOVEX_NATIVE_URL ?? "http://localhost:8080";
+    const nativeUrl = import.meta.env.VITE_NIMBUS_NATIVE_URL ?? "http://localhost:8080";
     void fetch(`${nativeUrl}/api/tenants`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -230,10 +230,10 @@ export default function App() {
         padding: "2rem 1rem 4rem",
       }}
     >
-      <h1>Neovex Convex Demo</h1>
+      <h1>Nimbus Convex Demo</h1>
       <p>
         This app uses <code>convex/react</code>, generated named refs, and
-        Neovex's Convex transport.
+        Nimbus's Convex transport.
       </p>
       <p>
         WebSocket connected:{" "}

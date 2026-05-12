@@ -5,9 +5,9 @@ import type { Doc } from "../convex/_generated/dataModel";
 
 type Message = Doc<"messages">;
 
-const nativeUrl = import.meta.env.VITE_NEOVEX_NATIVE_URL ?? window.location.origin;
+const nativeUrl = import.meta.env.VITE_NIMBUS_NATIVE_URL ?? window.location.origin;
 const convexUrl =
-  import.meta.env.VITE_NEOVEX_CONVEX_URL ?? `${window.location.origin}/convex/demo`;
+  import.meta.env.VITE_NIMBUS_CONVEX_URL ?? `${window.location.origin}/convex/demo`;
 const client = new ConvexHttpClient(convexUrl);
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -17,8 +17,8 @@ if (app === null) {
 
 app.innerHTML = `
   <main style="font-family: ui-sans-serif, system-ui, sans-serif; margin: 0 auto; max-width: 52rem; padding: 2rem 1rem 4rem;">
-    <h1>Neovex Convex HTTP Demo</h1>
-    <p>This app uses <code>convex/browser</code> and generated refs over the Neovex convex transport.</p>
+    <h1>Nimbus Convex HTTP Demo</h1>
+    <p>This app uses <code>convex/browser</code> and generated refs over the Nimbus convex transport.</p>
     <p style="color: #555; margin-top: -0.5rem;">Composer submits through a Convex-style action that delegates to an internal mutation. You can also schedule that internal mutation with <code>ctx.scheduler.runAfter(...)</code>, or hit compiled <code>httpAction</code> routes via the buttons below. Click a message to load it again through <code>ctx.db.get(id)</code>.</p>
     <form id="composer" style="display: grid; gap: 0.75rem; margin-bottom: 1.25rem;">
       <input id="author" placeholder="Author" value="HTTP User" style="padding: 0.75rem;" />

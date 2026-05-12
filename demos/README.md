@@ -1,8 +1,8 @@
-# Neovex Demos
+# Nimbus Demos
 
-This directory holds Neovex demo apps split by ownership:
+This directory holds Nimbus demo apps split by ownership:
 
-- `demos/neovex/*` for Neovex-native demos
+- `demos/nimbus/*` for Nimbus-native demos
 - `demos/firebase/*` for Firebase/Firestore demos
 - `demos/mongodb/*` for MongoDB wire protocol demos
 - `demos/convex/*` for Convex-surface demos and fixtures
@@ -14,7 +14,7 @@ The Convex-side demos still mirror useful shapes from the official Convex demos 
 - Axum static file example: <https://github.com/tokio-rs/axum/tree/main/examples/static-file-server>
 - Axum chat/websocket example: <https://github.com/tokio-rs/axum/tree/main/examples/chat>
 
-These are Neovex ports and adaptations, not the official Convex demos running unchanged.
+These are Nimbus ports and adaptations, not the official Convex demos running unchanged.
 
 Current 4B note:
 
@@ -40,21 +40,21 @@ Current 4B note:
 Why this directory exists:
 
 - keep a browser-facing test app in the repo
-- exercise Neovex through the same public HTTP and WebSocket surface real clients use
+- exercise Nimbus through the same public HTTP and WebSocket surface real clients use
 - make future demos easy to add in a predictable place
 
 Current demos:
 
-- `neovex/html/`: Vite-based browser playground using `neovex/rest` SDK for tenant setup, schema install, document inserts, scheduled inserts, and live WebSocket subscriptions
-- `firebase/html/`: browser demo using `@neovex/firebase` against a local Neovex server
+- `nimbus/html/`: Vite-based browser playground using `nimbus/rest` SDK for tenant setup, schema install, document inserts, scheduled inserts, and live WebSocket subscriptions
+- `firebase/html/`: browser demo using `@nimbus/firebase` against a local Nimbus server
   - exercises `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`, `writeBatch`, `runTransaction`, `deleteDoc`, and the supported `FieldValue` sentinels
   - unary calls can switch between REST and gRPC-Web, while live query updates use the documented WebSocket `Listen` bridge
 - `convex/node/`: Convex-style Node demo using generated refs, an injected Node WebSocket implementation, point-in-time reads, and live subscriptions
-- `convex/html/`: Convex-style React demo using `convex/react`, generated `_generated/api.ts`, and Neovex's convex transport
+- `convex/html/`: Convex-style React demo using `convex/react`, generated `_generated/api.ts`, and Nimbus's convex transport
   - the demo now authors functions through `convex/_generated/server`, `convex/values`, and `convex/schema.ts`
   - codegen now emits `_generated/dataModel.d.ts` and `_generated/scheduled_functions.ts` for the supported subset
   - the app exercises live `ctx.db.insert(...)`, delayed `ctx.scheduler.runAfter(...)`, `ctx.db.patch(...)`, `ctx.db.delete(...)`, a runtime-only list query, `ctx.db.query(...).first()`, `ctx.db.query(...).unique()`, `ctx.db.get(id)`, `useQueries`, and `usePaginatedQuery` against a runtime-only `paginatedQuery`
-- `mongodb/node/`: MongoDB wire protocol demo using `@neovex/mongodb` URI helper with the stock `mongodb` driver for CRUD operations
+- `mongodb/node/`: MongoDB wire protocol demo using `@nimbus/mongodb` URI helper with the stock `mongodb` driver for CRUD operations
 - `convex/http/`: Convex-style browser HTTP demo using `convex/browser` and generated refs without React
   - the demo authors queries with a runtime-only filtered list, compiled `ctx.db.query(...).withIndex(...).filter(...).unique()`, `ctx.db.get(id)`, and a runtime-only multi-step mutation that writes immediately and schedules a follow-up write
   - the composer path now goes through a Convex-style action that delegates to an internal mutation via generated refs, it can also schedule that same internal mutation with `ctx.scheduler.runAfter(...)`, and it includes compiled `httpAction` routes for POST and GET flows
@@ -70,17 +70,17 @@ Browser note:
 - native browser `WebSocket` clients cannot send the custom `X-Tenant-Id` header
 - the demo uses `GET /ws?tenant_id=...` while non-browser clients can still use the header form
 - the convex browser client now reconnects and resubscribes live queries automatically after a dropped socket
-- the plain HTML variant at `/demos/convex/html/vanilla.html` is served directly by Neovex and expects `npm run build --workspace convex` to have generated `/demos/convex/vendor/browser.bundle.js`
+- the plain HTML variant at `/demos/convex/html/vanilla.html` is served directly by Nimbus and expects `npm run build --workspace convex` to have generated `/demos/convex/vendor/browser.bundle.js`
 
 Planned next demos:
 
 - `pagination/`: explicit paginated query exercise
 - `scheduling/`: schedule and cron workflow demo
 
-Run the Neovex server:
+Run the Nimbus server:
 
 ```bash
-cargo run -p neovex-bin -- start --port 8080
+cargo run -p nimbus-bin -- start --port 8080
 ```
 
 Run the Firebase HTML demo:
@@ -113,16 +113,16 @@ Run the Convex support server for the HTTP demo:
 npm run convex:server:http
 ```
 
-Run the Neovex native HTML demo (Vite dev server):
+Run the Nimbus native HTML demo (Vite dev server):
 
 ```bash
-npm run neovex:demo:html
+npm run nimbus:demo:html
 ```
 
 Then open:
 
 - <http://localhost:8080/demos/>
-- <http://127.0.0.1:5177/> for the Neovex native HTML demo
+- <http://127.0.0.1:5177/> for the Nimbus native HTML demo
 - <http://127.0.0.1:5176/> for the Firebase HTML demo
 
 For the React convex demo, in a second terminal run:
@@ -151,11 +151,11 @@ npm run build --workspace convex
 
 - <http://localhost:8080/demos/convex/html/vanilla.html>
 
-Running upstream `convex-demos` against Neovex:
+Running upstream `convex-demos` against Nimbus:
 
 1. Clone <https://github.com/get-convex/convex-demos> somewhere on your machine.
 2. Copy `.env.example` to `.env` and set `CONVEX_DEMOS_DIR` to that clone path.
 3. Run `make convex-demo-node`, `make convex-demo-html`, or `make convex-demo-http`.
 
 Those targets build a temporary overlay app that forces `convex/*` imports to
-resolve to this repo's workspace packages before running codegen and Neovex.
+resolve to this repo's workspace packages before running codegen and Nimbus.

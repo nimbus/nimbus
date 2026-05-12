@@ -121,7 +121,7 @@ export const listPage = paginatedQuery({
   assert.match(manifest.functions[0].runtime_handler, /trim/);
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /op_neovex_ctx_query_paginate/);
+  assert.match(runtimeBundle, /op_nimbus_ctx_query_paginate/);
   assert.match(runtimeBundle, /__builderId/);
 }
 
@@ -175,12 +175,12 @@ export const sendAndSchedule = mutation({
   assert.match(runtimeBundle, /generated_reference_tree/);
 
   const bundleUrl =
-    `${pathToFileURL(path.join(appDir, ".neovex", "convex", "bundle.mjs")).href}?runtimeBindings=1`;
-  const previousInvoke = globalThis.__neovexInvoke;
-  const previousCreateContext = globalThis.__neovexCreateContext;
+    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?runtimeBindings=1`;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
 
   let scheduledCall = null;
-  globalThis.__neovexCreateContext = () => ({
+  globalThis.__nimbusCreateContext = () => ({
     db: {
       insert: async (_table, document) => document.body === "hello" ? "message-id" : "scheduled-id",
     },
@@ -194,7 +194,7 @@ export const sendAndSchedule = mutation({
 
   try {
     await import(bundleUrl);
-    const response = await globalThis.__neovexInvoke({
+    const response = await globalThis.__nimbusInvoke({
       kind: "mutation",
       function_name: "messages:sendAndSchedule",
       args: { body: "hello" },
@@ -207,14 +207,14 @@ export const sendAndSchedule = mutation({
     assert.deepEqual(scheduledCall?.args, { body: "hello later" });
   } finally {
     if (previousInvoke === undefined) {
-      delete globalThis.__neovexInvoke;
+      delete globalThis.__nimbusInvoke;
     } else {
-      globalThis.__neovexInvoke = previousInvoke;
+      globalThis.__nimbusInvoke = previousInvoke;
     }
     if (previousCreateContext === undefined) {
-      delete globalThis.__neovexCreateContext;
+      delete globalThis.__nimbusCreateContext;
     } else {
-      globalThis.__neovexCreateContext = previousCreateContext;
+      globalThis.__nimbusCreateContext = previousCreateContext;
     }
   }
 }

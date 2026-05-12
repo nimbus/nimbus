@@ -9,7 +9,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-output_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-install-helper.XXXXXX")"
+output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-install-helper.XXXXXX")"
 trap 'rm -rf "${output_dir}"' EXIT
 testable_install_sh="${output_dir}/install-lib.sh"
 
@@ -95,7 +95,7 @@ if sh "${repo_root}/scripts/install.sh" --help > "${output_dir}/help.txt" 2>&1; 
     fail "install.sh --help documents --uninstall"
   fi
 
-  if grep -q "NEOVEX_REQUIRE_ATTESTATIONS" "${output_dir}/help.txt"; then
+  if grep -q "NIMBUS_REQUIRE_ATTESTATIONS" "${output_dir}/help.txt"; then
     pass "install.sh --help documents attestation enforcement"
   else
     fail "install.sh --help documents attestation enforcement"
@@ -136,7 +136,7 @@ fi
 echo ""
 echo "Checking checksum enforcement..."
 
-printf 'neovex-test\n' > "${output_dir}/artifact.bin"
+printf 'nimbus-test\n' > "${output_dir}/artifact.bin"
 artifact_sha="$(sha256_of "${output_dir}/artifact.bin")"
 printf '%s  artifact.bin\n' "${artifact_sha}" > "${output_dir}/checksums-ok.txt"
 printf '%s  something-else.bin\n' "${artifact_sha}" > "${output_dir}/checksums-missing.txt"
@@ -187,11 +187,11 @@ for arg in "\$@"; do
   last_arg="\$arg"
 done
 case "\$last_arg" in
-  https://api.github.com/repos/agentstation/neovex/releases/latest)
+  https://api.github.com/repos/nimbus/nimbus/releases/latest)
     printf '{"tag_name":"v0.1.14"}'
     ;;
-  https://api.github.com/repos/agentstation/neovex-crun/releases/latest)
-    printf '{"tag_name":"v1.27-neovex.1"}'
+  https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
+    printf '{"tag_name":"v1.27-nimbus.1"}'
     ;;
   *)
     exit 97
@@ -281,10 +281,10 @@ if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 \
     fail "dry-run shows platform"
   fi
 
-  if grep -q "neovex:" "${output_dir}/dry-run.txt"; then
-    pass "dry-run shows neovex path"
+  if grep -q "nimbus:" "${output_dir}/dry-run.txt"; then
+    pass "dry-run shows nimbus path"
   else
-    fail "dry-run shows neovex path"
+    fail "dry-run shows nimbus path"
   fi
 
   if grep -q "dry-run" "${output_dir}/dry-run.txt"; then
@@ -305,13 +305,13 @@ os_name="$(uname -s)"
 
 case "${os_name}" in
   Linux)
-    if grep -q "neovex-crun:" "${output_dir}/dry-run.txt"; then
-      pass "Linux dry-run shows neovex-crun"
+    if grep -q "nimbus-crun:" "${output_dir}/dry-run.txt"; then
+      pass "Linux dry-run shows nimbus-crun"
     else
-      fail "Linux dry-run shows neovex-crun"
+      fail "Linux dry-run shows nimbus-crun"
     fi
 
-    if grep -q "/usr/libexec/neovex/crun" "${output_dir}/dry-run.txt"; then
+    if grep -q "/usr/libexec/nimbus/crun" "${output_dir}/dry-run.txt"; then
       pass "Linux dry-run shows crun install path"
     else
       fail "Linux dry-run shows crun install path"

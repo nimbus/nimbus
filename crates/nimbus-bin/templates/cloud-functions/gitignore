@@ -1,0 +1,4 @@
+.nimbus/
+.env.local
+node_modules/
+lib/

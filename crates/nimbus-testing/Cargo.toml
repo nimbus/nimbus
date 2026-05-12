@@ -1,0 +1,26 @@
+[package]
+name = "nimbus-testing"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+nimbus-runtime = { path = "../nimbus-runtime" }
+# Shared deterministic harness fixtures intentionally depend on real storage
+# providers so replay/drill lanes can exercise provider-backed tenant stores
+# without pulling engine/server ownership backedges into this crate.
+nimbus-storage = { path = "../nimbus-storage" }
+futures.workspace = true
+http.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true

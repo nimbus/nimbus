@@ -1,0 +1,251 @@
+{
+  "functions": [
+    {
+      "name": "messages:list",
+      "export": "list",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "table": "messages",
+        "filters": [],
+        "order": null,
+        "limit": 20
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:byAuthor",
+      "export": "byAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "table": "messages",
+        "filters": [
+          {
+            "field": "author",
+            "op": "eq",
+            "value": {
+              "$arg": "author"
+            }
+          }
+        ],
+        "order": null,
+        "limit": 20
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:maybeByAuthor",
+      "export": "maybeByAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": null,
+      "runtime_handler": "async (ctx, { author }) => {\n    const messages = author\n      ? await ctx.db\n        .query(\"messages\")\n        .filter((q) => q.eq(q.field(\"author\"), author))\n        .take(20)\n      : await ctx.db.query(\"messages\").take(20);\n    return messages.slice(0, 20);\n  }",
+      "runtime_bindings": {
+        "internalScheduledFunctions": {
+          "type": "generated_reference_tree",
+          "visibility": "internal",
+          "reference_kind": "mutation"
+        }
+      }
+    },
+    {
+      "name": "messages:latestByAuthor",
+      "export": "latestByAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "first",
+        "query": {
+          "table": "messages",
+          "filters": [
+            {
+              "field": "author",
+              "op": "eq",
+              "value": {
+                "$arg": "author"
+              }
+            }
+          ],
+          "order": {
+            "field": "author",
+            "direction": "desc"
+          },
+          "limit": 1
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:uniqueByAuthor",
+      "export": "uniqueByAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "unique",
+        "query": {
+          "table": "messages",
+          "filters": [
+            {
+              "field": "author",
+              "op": "eq",
+              "value": {
+                "$arg": "author"
+              }
+            }
+          ],
+          "order": null,
+          "limit": 2
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:byId",
+      "export": "byId",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "get",
+        "table": "messages",
+        "id": {
+          "$arg": "id"
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:listPage",
+      "export": "listPage",
+      "module": "messages",
+      "kind": "paginated_query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": null,
+      "runtime_handler": "async (ctx, { author }) => {\n    const normalizedAuthor = author?.trim();\n    if (normalizedAuthor) {\n      return ctx.db\n        .query(\"messages\")\n        .filter((q) => q.eq(q.field(\"author\"), normalizedAuthor));\n    }\n    return ctx.db.query(\"messages\");\n  }",
+      "runtime_bindings": {
+        "internalScheduledFunctions": {
+          "type": "generated_reference_tree",
+          "visibility": "internal",
+          "reference_kind": "mutation"
+        }
+      }
+    },
+    {
+      "name": "messages:sendInternal",
+      "export": "sendInternal",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "internal",
+      "schedulable": true,
+      "plan": {
+        "type": "insert",
+        "table": "messages",
+        "fields": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:send",
+      "export": "send",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "insert",
+        "table": "messages",
+        "fields": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:scheduleSend",
+      "export": "scheduleSend",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "schedule_run_after",
+        "delay_ms": {
+          "$arg": "delayMs"
+        },
+        "name": "messages:sendInternal",
+        "visibility": "internal",
+        "args": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:rename",
+      "export": "rename",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "update",
+        "table": "messages",
+        "id": {
+          "$arg": "id"
+        },
+        "patch": {
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:remove",
+      "export": "remove",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "delete",
+        "table": "messages",
+        "id": {
+          "$arg": "id"
+        }
+      },
+      "runtime_handler": null
+    }
+  ]
+}

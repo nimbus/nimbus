@@ -1,5 +1,5 @@
 {
-  "name": "neovex-tooling-canaries",
+  "name": "nimbus-tooling-canaries",
   "private": true,
   "type": "module",
   "dependencies": {

@@ -1,26 +1,26 @@
 <div align="center">
 
-# Neovex
+# Nimbus
 
 **BaaS in a binary. For apps and agents.**
 
 Storage, compute, and networking -- with real-time and scheduling -- in a single Rust binary.
 
-[![CI](https://github.com/agentstation/neovex/actions/workflows/ci.yml/badge.svg)](https://github.com/agentstation/neovex/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/agentstation/neovex/graph/badge.svg)](https://codecov.io/gh/agentstation/neovex)
-[![Release](https://img.shields.io/github/v/release/agentstation/neovex)](https://github.com/agentstation/neovex/releases/latest)
-[![Homebrew](https://img.shields.io/badge/homebrew-agentstation%2Ftap%2Fneovex-orange)](https://github.com/agentstation/homebrew-tap)
+[![CI](https://github.com/nimbus/nimbus/actions/workflows/ci.yml/badge.svg)](https://github.com/nimbus/nimbus/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/nimbus/nimbus/graph/badge.svg)](https://codecov.io/gh/nimbus/nimbus)
+[![Release](https://img.shields.io/github/v/release/nimbus/nimbus)](https://github.com/nimbus/nimbus/releases/latest)
+[![Homebrew](https://img.shields.io/badge/homebrew-nimbus%2Ftap%2Fnimbus-orange)](https://github.com/nimbus/homebrew-tap)
 [![Status](https://img.shields.io/badge/status-beta-yellow)]()
-[![License](https://img.shields.io/badge/license-Neovex%20Community-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-Nimbus%20Community-blue)](LICENSE)
 
-[Quick start](#quick-start) · [Why Neovex](#why-neovex) · [Adapters](#adapters) · [Install](#install) · [Docs](docs/README.md) · [Architecture](ARCHITECTURE.md)
+[Quick start](#quick-start) · [Why Nimbus](#why-nimbus) · [Adapters](#adapters) · [Install](#install) · [Docs](docs/README.md) · [Architecture](ARCHITECTURE.md)
 
 </div>
 
 ---
 
 > [!WARNING]
-> **Beta.** APIs may break between releases. Not for production yet. [Feedback welcome.](https://github.com/agentstation/neovex/discussions)
+> **Beta.** APIs may break between releases. Not for production yet. [Feedback welcome.](https://github.com/nimbus/nimbus/discussions)
 
 ```
                                             ┌───────────────┐
@@ -31,7 +31,7 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
                    ┌─ Machine (local dev · cloud vm · bare metal) ─────────────────────┐
                    │                                │                                  │
                    │                                ▼                                  │
-                   │   ┌─ neovex (single Rust binary) ─────────────────────────────┐   │
+                   │   ┌─ nimbus (single Rust binary) ─────────────────────────────┐   │
                    │   │                            │                              │   │
                    │   │                            ▼                              │   │
                    │   │  ┌─ Adapters ──────────────────────────────────────────┐  │   │
@@ -63,7 +63,7 @@ Storage, compute, and networking -- with real-time and scheduling -- in a single
 ## Quick start
 
 If you're authoring Convex or Cloud Functions code locally, install Node.js 22
-with `npm` first. `neovex dev` still runs codegen through external `node` by
+with `npm` first. `nimbus dev` still runs codegen through external `node` by
 default and can auto-run `npm install` when declared packages are missing
 locally or when the recorded package/lockfile fingerprint has changed. The
 external authoring path verifies `node --version` against the `22.x` baseline
@@ -72,18 +72,18 @@ Node20, Node22, or Node24 through `convex.json` for `"use node"` actions.
 Firebase / Cloud Functions authoring still uses the external Node.js runner;
 the embedded pilot does not yet support that package layout.
 
-If you're using `neovex start` with MongoDB, the Firebase client adapter, or
+If you're using `nimbus start` with MongoDB, the Firebase client adapter, or
 the native HTTP/WebSocket API, Node.js is not required.
 
 ## Node compatibility contract
 
-Neovex's default Node-facing compatibility target is `Node22`.
+Nimbus's default Node-facing compatibility target is `Node22`.
 
 - `Node22` is the default built-in module contract we verify and evolve.
 - `Node20` and `Node24` are supported Convex Node action targets selected by
   `convex.json`; Node22 remains the default until a deliberate Node24-default
   migration.
-- Neovex does **not** currently claim full Node built-in compatibility for any
+- Nimbus does **not** currently claim full Node built-in compatibility for any
   runtime profile.
 
 Convex-compatible projects may configure Node actions like this:
@@ -100,11 +100,11 @@ Convex-compatible projects may configure Node actions like this:
 Only action modules may opt into Node APIs. Put `"use node";` at the top of an
 action-only file, and import builtins as either `fs` or `node:fs`. If codegen
 reports a Node builtin in a default-runtime file, run
-`neovex dev --once --debug-node-apis` or
-`neovex codegen --app . --debug-node-apis` for file-level diagnostics.
+`nimbus dev --once --debug-node-apis` or
+`nimbus codegen --app . --debug-node-apis` for file-level diagnostics.
 Node action npm package imports must currently be externalized with
 `node.externalPackages` or `["*"]`; codegen validates the local `node_modules`
-install, stages package roots under `.neovex/convex/node_modules/`, and emits a
+install, stages package roots under `.nimbus/convex/node_modules/`, and emits a
 package evidence report. Full Convex cloud-style dependency installation is not
 claimed yet.
 
@@ -131,10 +131,10 @@ Current high-level posture:
   eventually become `SupportedToolingOnly`, but they do not justify a blanket
   "full Node compatibility" claim.
 
-**1. Install Neovex:**
+**1. Install Nimbus:**
 
 ```bash
-brew install agentstation/tap/neovex
+brew install nimbus/tap/nimbus
 ```
 
 See [Install](#install) for other platforms or building from source.
@@ -142,21 +142,21 @@ See [Install](#install) for other platforms or building from source.
 **2. Scaffold a Convex app:**
 
 ```bash
-neovex init convex my-app
+nimbus init convex my-app
 cd my-app
 ```
 
-`neovex init convex` scaffolds backend files only: `convex/schema.ts`,
+`nimbus init convex` scaffolds backend files only: `convex/schema.ts`,
 `convex/messages.ts`, `package.json`, `tsconfig.json`, and `.gitignore`.
 
 **3. Start the dev server:**
 
 ```bash
-neovex dev
+nimbus dev
 ```
 
 > [!TIP]
-> `neovex dev` auto-runs `npm install` when declared packages are missing
+> `nimbus dev` auto-runs `npm install` when declared packages are missing
 > locally or when the recorded package/lockfile fingerprint has changed,
 > creates a `demo` tenant, and starts the server on `localhost:3210`.
 
@@ -184,7 +184,7 @@ export const send = mutation({
 const messages = useQuery(api.messages.list);
 ```
 
-Write TypeScript functions, run `neovex dev`, and your frontend gets reactive
+Write TypeScript functions, run `nimbus dev`, and your frontend gets reactive
 queries and mutations — no REST endpoints, no GraphQL, no polling. Everything
 runs locally in a single process. See the [full tutorial](docs/adapters/convex/).
 
@@ -193,7 +193,7 @@ runs locally in a single process. See the [full tutorial](docs/adapters/convex/)
 Start the server:
 
 ```bash
-neovex start --port 8080 --data-dir ./data
+nimbus start --port 8080 --data-dir ./data
 ```
 
 Create a tenant:
@@ -220,16 +220,16 @@ curl -s -X POST http://localhost:8080/api/tenants/demo/query \
   -d '{"table": "messages", "filters": []}'
 ```
 
-`neovex start` runs the same engine without codegen — connect with
+`nimbus start` runs the same engine without codegen — connect with
 [stock MongoDB drivers](docs/adapters/mongodb/),
 [Firebase SDKs](docs/adapters/firebase/), or any HTTP client.
 See the [getting started guide](docs/getting-started.md) to pick your adapter.
 
-## Why Neovex
+## Why Nimbus
 
 Most self-hosted backends are dev tools wearing a production costume. They run
 on a single machine, can't migrate without wiping the database, and ship with a
-"we strongly recommend the cloud version" warning. Neovex is designed from day
+"we strongly recommend the cloud version" warning. Nimbus is designed from day
 one to be the thing you actually deploy — on your own hardware, air-gapped if
 needed, with no telemetry and no metered pricing. Built for regulated
 industries, air-gapped environments, teams replacing expensive BaaS bills, and
@@ -250,7 +250,7 @@ real-time subscriptions.
 | **Native HTTP/WS** | Direct REST + WebSocket API — just curl | [docs/adapters/native/](docs/adapters/native/) |
 
 > [!TIP]
-> Running on one of these today and the bill, the lock-in, or the compliance gap has you looking for the door? [Open an issue](https://github.com/agentstation/neovex/issues) -- we want to hear about your migration scenario.
+> Running on one of these today and the bill, the lock-in, or the compliance gap has you looking for the door? [Open an issue](https://github.com/nimbus/nimbus/issues) -- we want to hear about your migration scenario.
 
 ## What's in the box
 
@@ -267,7 +267,7 @@ real-time subscriptions.
 ### Homebrew (macOS and Linux)
 
 ```bash
-brew install agentstation/tap/neovex
+brew install nimbus/tap/nimbus
 ```
 
 For Convex or Cloud Functions authoring, also install Node.js 22 with `npm`.
@@ -275,45 +275,45 @@ Convex Node action execution can be configured separately in `convex.json`.
 
 ### Download binary
 
-Download the latest release from [GitHub Releases](https://github.com/agentstation/neovex/releases/latest).
+Download the latest release from [GitHub Releases](https://github.com/nimbus/nimbus/releases/latest).
 
 | Platform | Architecture | Archive |
 |----------|-------------|---------|
-| Linux | x86_64 | `neovex_linux_x86_64.tar.gz` |
-| Linux | ARM64 | `neovex_linux_arm64.tar.gz` |
-| macOS | Apple Silicon | `neovex_darwin_arm64.tar.gz` |
-| Windows | x86_64 | `neovex_windows_x86_64.zip` |
+| Linux | x86_64 | `nimbus_linux_x86_64.tar.gz` |
+| Linux | ARM64 | `nimbus_linux_arm64.tar.gz` |
+| macOS | Apple Silicon | `nimbus_darwin_arm64.tar.gz` |
+| Windows | x86_64 | `nimbus_windows_x86_64.zip` |
 
 ### Build from source
 
 ```bash
-git clone https://github.com/agentstation/neovex.git
-cd neovex
-cargo install --path crates/neovex-bin
+git clone https://github.com/nimbus/nimbus.git
+cd nimbus
+cargo install --path crates/nimbus-bin
 ```
 
 This installs the Rust binary only. For Convex or Cloud Functions authoring,
-also install Node.js 22 with `npm`. Runtime-only `neovex start` workflows do
+also install Node.js 22 with `npm`. Runtime-only `nimbus start` workflows do
 not need the Node toolchain after artifacts have been generated.
 
 ## Community
 
-- **[Issues](https://github.com/agentstation/neovex/issues)** — bugs and concrete problems
-- **[Discussions](https://github.com/agentstation/neovex/discussions)** — feature requests and longer-form conversation
+- **[Issues](https://github.com/nimbus/nimbus/issues)** — bugs and concrete problems
+- **[Discussions](https://github.com/nimbus/nimbus/discussions)** — feature requests and longer-form conversation
 - **[Contributing](CONTRIBUTING.md)** — workflow, CLA, and coding standards
 
 ## Security
 
-If you've found a security vulnerability, report it through [GitHub Security Advisories](https://github.com/agentstation/neovex/security/advisories/new). See [SECURITY.md](SECURITY.md) for the full policy.
+If you've found a security vulnerability, report it through [GitHub Security Advisories](https://github.com/nimbus/nimbus/security/advisories/new). See [SECURITY.md](SECURITY.md) for the full policy.
 
 ## Licensing
 
-Neovex is **source-available** under the [Neovex Community License](LICENSE). Free for individuals, nonprofits, education, and organizations under a [$10M revenue + 500 MAU dual gate](LICENSING.md). No telemetry, no metered pricing. See [LICENSING.md](LICENSING.md) for the full plain-English summary.
+Nimbus is **source-available** under the [Nimbus Community License](LICENSE). Free for individuals, nonprofits, education, and organizations under a [$10M revenue + 500 MAU dual gate](LICENSING.md). No telemetry, no metered pricing. See [LICENSING.md](LICENSING.md) for the full plain-English summary.
 
 ---
 
 <div align="center">
 
-Built by [agentstation](https://github.com/agentstation) and the Neovex contributors.
+Built by [nimbus](https://github.com/nimbus) and the Nimbus contributors.
 
 </div>

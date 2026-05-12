@@ -3,12 +3,12 @@ name: apt-repo
 on:
   workflow_call:
     inputs:
-      neovex_version:
-        description: "Neovex release version or tag"
+      nimbus_version:
+        description: "Nimbus release version or tag"
         required: true
         type: string
-      neovex_crun_version:
-        description: "neovex-crun release version or tag"
+      nimbus_crun_version:
+        description: "nimbus-crun release version or tag"
         required: false
         default: ""
         type: string
@@ -24,11 +24,11 @@ on:
         type: boolean
   workflow_dispatch:
     inputs:
-      neovex_version:
-        description: "Neovex release version or tag (for example 0.1.10 or v0.1.10)"
+      nimbus_version:
+        description: "Nimbus release version or tag (for example 0.1.10 or v0.1.10)"
         required: true
-      neovex_crun_version:
-        description: "neovex-crun release version or tag (defaults to packaging/linux-distribution-contract.env)"
+      nimbus_crun_version:
+        description: "nimbus-crun release version or tag (defaults to packaging/linux-distribution-contract.env)"
         required: false
         default: ""
       distribution:
@@ -56,29 +56,29 @@ jobs:
         id: contract
         shell: bash
         env:
-          INPUT_NEOVEX_VERSION: ${{ inputs.neovex_version }}
-          INPUT_NEOVEX_CRUN_VERSION: ${{ inputs.neovex_crun_version }}
+          INPUT_NIMBUS_VERSION: ${{ inputs.nimbus_version }}
+          INPUT_NIMBUS_CRUN_VERSION: ${{ inputs.nimbus_crun_version }}
           INPUT_DISTRIBUTION: ${{ inputs.distribution }}
         run: |
           set -euo pipefail
           source packaging/linux-distribution-contract.env
 
-          neovex_version="${INPUT_NEOVEX_VERSION#v}"
-          neovex_crun_version="${INPUT_NEOVEX_CRUN_VERSION:-}"
+          nimbus_version="${INPUT_NIMBUS_VERSION#v}"
+          nimbus_crun_version="${INPUT_NIMBUS_CRUN_VERSION:-}"
           distribution="${INPUT_DISTRIBUTION:-}"
-          if [[ -z "${neovex_crun_version}" ]]; then
-            neovex_crun_version="${NEOVEX_CRUN_VERSION}"
+          if [[ -z "${nimbus_crun_version}" ]]; then
+            nimbus_crun_version="${NIMBUS_CRUN_VERSION}"
           fi
           if [[ -z "${distribution}" ]]; then
             distribution="${APT_REPOSITORY_DISTRIBUTION}"
           fi
-          neovex_crun_version="${neovex_crun_version#v}"
+          nimbus_crun_version="${nimbus_crun_version#v}"
 
           {
-            echo "neovex_version=${neovex_version}"
-            echo "neovex_release_tag=v${neovex_version}"
-            echo "neovex_crun_version=${neovex_crun_version}"
-            echo "neovex_crun_release_tag=v${neovex_crun_version}"
+            echo "nimbus_version=${nimbus_version}"
+            echo "nimbus_release_tag=v${nimbus_version}"
+            echo "nimbus_crun_version=${nimbus_crun_version}"
+            echo "nimbus_crun_release_tag=v${nimbus_crun_version}"
             echo "distribution=${distribution}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -96,53 +96,53 @@ jobs:
 
       - name: Download release binaries
         env:
-          NEOVEX_RELEASE_TAG: ${{ steps.contract.outputs.neovex_release_tag }}
-          CRUN_RELEASE_TAG: ${{ steps.contract.outputs.neovex_crun_release_tag }}
+          NIMBUS_RELEASE_TAG: ${{ steps.contract.outputs.nimbus_release_tag }}
+          CRUN_RELEASE_TAG: ${{ steps.contract.outputs.nimbus_crun_release_tag }}
         run: |
-          mkdir -p dist/input/neovex/amd64 dist/input/neovex/arm64 dist/input/crun
+          mkdir -p dist/input/nimbus/amd64 dist/input/nimbus/arm64 dist/input/crun
 
           curl --fail -sSL --retry 5 \
-            -o dist/input/neovex_linux_x86_64.tar.gz \
-            "https://github.com/agentstation/neovex/releases/download/${NEOVEX_RELEASE_TAG}/neovex_linux_x86_64.tar.gz"
-          tar -xzf dist/input/neovex_linux_x86_64.tar.gz -C dist/input/neovex/amd64
+            -o dist/input/nimbus_linux_x86_64.tar.gz \
+            "https://github.com/nimbus/nimbus/releases/download/${NIMBUS_RELEASE_TAG}/nimbus_linux_x86_64.tar.gz"
+          tar -xzf dist/input/nimbus_linux_x86_64.tar.gz -C dist/input/nimbus/amd64
 
           curl --fail -sSL --retry 5 \
-            -o dist/input/neovex_linux_arm64.tar.gz \
-            "https://github.com/agentstation/neovex/releases/download/${NEOVEX_RELEASE_TAG}/neovex_linux_arm64.tar.gz"
-          tar -xzf dist/input/neovex_linux_arm64.tar.gz -C dist/input/neovex/arm64
+            -o dist/input/nimbus_linux_arm64.tar.gz \
+            "https://github.com/nimbus/nimbus/releases/download/${NIMBUS_RELEASE_TAG}/nimbus_linux_arm64.tar.gz"
+          tar -xzf dist/input/nimbus_linux_arm64.tar.gz -C dist/input/nimbus/arm64
 
           curl --fail -sSL --retry 5 \
-            -o dist/input/crun/neovex-crun-amd64 \
-            "https://github.com/agentstation/neovex-crun/releases/download/${CRUN_RELEASE_TAG}/neovex-crun-linux-amd64"
+            -o dist/input/crun/nimbus-crun-amd64 \
+            "https://github.com/nimbus/nimbus-crun/releases/download/${CRUN_RELEASE_TAG}/nimbus-crun-linux-amd64"
           curl --fail -sSL --retry 5 \
-            -o dist/input/crun/neovex-crun-arm64 \
-            "https://github.com/agentstation/neovex-crun/releases/download/${CRUN_RELEASE_TAG}/neovex-crun-linux-arm64"
-          chmod 0755 dist/input/crun/neovex-crun-amd64 dist/input/crun/neovex-crun-arm64
+            -o dist/input/crun/nimbus-crun-arm64 \
+            "https://github.com/nimbus/nimbus-crun/releases/download/${CRUN_RELEASE_TAG}/nimbus-crun-linux-arm64"
+          chmod 0755 dist/input/crun/nimbus-crun-amd64 dist/input/crun/nimbus-crun-arm64
 
       - name: Build amd64 deb packages
         env:
-          NEOVEX_VERSION: ${{ steps.contract.outputs.neovex_version }}
-          CRUN_VERSION: ${{ steps.contract.outputs.neovex_crun_version }}
+          NIMBUS_VERSION: ${{ steps.contract.outputs.nimbus_version }}
+          CRUN_VERSION: ${{ steps.contract.outputs.nimbus_crun_version }}
         run: |
           bash scripts/build-linux-release-packages.sh \
             --output-dir dist/linux-packages/amd64 \
-            --neovex-binary dist/input/neovex/amd64/neovex \
-            --neovex-crun-binary dist/input/crun/neovex-crun-amd64 \
-            --version "${NEOVEX_VERSION}" \
+            --nimbus-binary dist/input/nimbus/amd64/nimbus \
+            --nimbus-crun-binary dist/input/crun/nimbus-crun-amd64 \
+            --version "${NIMBUS_VERSION}" \
             --crun-version "${CRUN_VERSION}" \
             --arch amd64 \
             --format deb
 
       - name: Build arm64 deb packages
         env:
-          NEOVEX_VERSION: ${{ steps.contract.outputs.neovex_version }}
-          CRUN_VERSION: ${{ steps.contract.outputs.neovex_crun_version }}
+          NIMBUS_VERSION: ${{ steps.contract.outputs.nimbus_version }}
+          CRUN_VERSION: ${{ steps.contract.outputs.nimbus_crun_version }}
         run: |
           bash scripts/build-linux-release-packages.sh \
             --output-dir dist/linux-packages/arm64 \
-            --neovex-binary dist/input/neovex/arm64/neovex \
-            --neovex-crun-binary dist/input/crun/neovex-crun-arm64 \
-            --version "${NEOVEX_VERSION}" \
+            --nimbus-binary dist/input/nimbus/arm64/nimbus \
+            --nimbus-crun-binary dist/input/crun/nimbus-crun-arm64 \
+            --version "${NIMBUS_VERSION}" \
             --crun-version "${CRUN_VERSION}" \
             --arch arm64 \
             --format deb
@@ -185,8 +185,8 @@ jobs:
             --distribution "${DISTRIBUTION}" \
             --component main \
             --origin AgentStation \
-            --label neovex \
-            --description "Neovex apt repository" \
+            --label nimbus \
+            --description "Nimbus apt repository" \
             "${signing_args[@]}"
 
           if [[ -n "${APT_REPOSITORY_CNAME}" ]]; then

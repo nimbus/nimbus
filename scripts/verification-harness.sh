@@ -20,10 +20,10 @@ EOF
 
 surface_package() {
   case "$1" in
-    storage) echo "neovex-storage" ;;
-    engine) echo "neovex-engine" ;;
-    server) echo "neovex-server" ;;
-    runtime) echo "neovex-runtime" ;;
+    storage) echo "nimbus-storage" ;;
+    engine) echo "nimbus-engine" ;;
+    server) echo "nimbus-server" ;;
+    runtime) echo "nimbus-runtime" ;;
     *)
       echo "unknown surface: $1" >&2
       exit 1
@@ -154,7 +154,7 @@ run_repro() {
   if [[ "$surface" == "server" ]]; then
     cargo_args+=(--test-threads=1)
   fi
-  NEOVEX_VERIFY_CASE="$case_id" \
+  NIMBUS_VERIFY_CASE="$case_id" \
     bash "${SCRIPT_DIR}/single-flight.sh" \
       --key "verify-harness-repro-${surface}-${mode}-${case_id}" \
       -- "${cargo_args[@]}"

@@ -1,14 +1,14 @@
-# Neovex development backing services.
+# Nimbus development backing services.
 #
 # Start backing services:
 #   docker compose up -d
 #
-# Then run Neovex with an external backend:
-#   neovex start --tenant-provider postgres --postgres-url "postgresql://neovex:neovex@localhost:5432/neovex"
-#   neovex start --tenant-provider mysql --mysql-url "mysql://neovex:neovex@localhost:3306/neovex"
+# Then run Nimbus with an external backend:
+#   nimbus start --tenant-provider postgres --postgres-url "postgresql://nimbus:nimbus@localhost:5432/nimbus"
+#   nimbus start --tenant-provider mysql --mysql-url "mysql://nimbus:nimbus@localhost:3306/nimbus"
 #
-# Or use neovex compose:
-#   neovex compose up
+# Or use nimbus compose:
+#   nimbus compose up
 
 services:
   postgres:
@@ -16,13 +16,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: neovex
-      POSTGRES_PASSWORD: neovex
-      POSTGRES_DB: neovex
+      POSTGRES_USER: nimbus
+      POSTGRES_PASSWORD: nimbus
+      POSTGRES_DB: nimbus
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U neovex"]
+      test: ["CMD-SHELL", "pg_isready -U nimbus"]
       interval: 3s
       timeout: 2s
       retries: 10
@@ -33,14 +33,14 @@ services:
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: neovex
-      MYSQL_USER: neovex
-      MYSQL_PASSWORD: neovex
-      MYSQL_DATABASE: neovex
+      MYSQL_ROOT_PASSWORD: nimbus
+      MYSQL_USER: nimbus
+      MYSQL_PASSWORD: nimbus
+      MYSQL_DATABASE: nimbus
     volumes:
       - mysqldata:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "neovex", "-pneovex"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "nimbus", "-pnimbus"]
       interval: 3s
       timeout: 2s
       retries: 10

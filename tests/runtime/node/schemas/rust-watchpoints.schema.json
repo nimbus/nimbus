@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://neovex.local/node-compat/rust-watchpoints.schema.json",
+  "$id": "https://nimbus.local/node-compat/rust-watchpoints.schema.json",
   "title": "Node compatibility Rust watchpoint expectation catalog",
   "type": "object",
   "required": [
@@ -22,7 +22,7 @@
       "const": "rust_ignore_attributes"
     },
     "source_path": {
-      "const": "crates/neovex-runtime/src/runtime/tests/node/mod.rs"
+      "const": "crates/nimbus-runtime/src/runtime/tests/node/mod.rs"
     },
     "contract": {
       "type": "string",
@@ -82,7 +82,7 @@
             "minLength": 1
           },
           "source_path": {
-            "const": "crates/neovex-runtime/src/runtime/tests/node/mod.rs"
+            "const": "crates/nimbus-runtime/src/runtime/tests/node/mod.rs"
           },
           "source_line": {
             "type": "integer",

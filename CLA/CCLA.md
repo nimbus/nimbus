@@ -1,8 +1,8 @@
-# Neovex Corporate Contributor License Agreement
+# Nimbus Corporate Contributor License Agreement
 
 This Corporate Contributor License Agreement ("CCLA") is between the
-organization signing it ("Company") and AgentStation, as the current project
-owner and maintainer of Neovex, together with its successors or assigns
+organization signing it ("Company") and Nimbus, as the current project
+owner and maintainer of Nimbus, together with its successors or assigns
 ("Maintainer").
 
 ## 1. Definitions
@@ -10,7 +10,7 @@ owner and maintainer of Neovex, together with its successors or assigns
 "Contribution" means any source code, documentation, issue text, design
 material, tests, examples, data, or other material intentionally submitted by
 Company or an Authorized Contributor to the Maintainer for inclusion in
-Neovex.
+Nimbus.
 
 "Authorized Contributor" means an employee, contractor, or agent of Company
 whom Company authorizes to make Contributions on its behalf.
@@ -21,7 +21,7 @@ Company grants the Maintainer a perpetual, worldwide, non-exclusive,
 irrevocable, royalty-free, fully paid-up, transferable, sublicensable license
 to use, reproduce, modify, prepare derivative works of, display, perform,
 distribute, relicense, and otherwise exploit Contributions made by or on behalf
-of Company as part of Neovex or any related project, under any license or
+of Company as part of Nimbus or any related project, under any license or
 commercial terms chosen by the Maintainer.
 
 ## 3. Patent license
@@ -30,7 +30,7 @@ Company grants the Maintainer and recipients of software distributed by the
 Maintainer a perpetual, worldwide, non-exclusive, irrevocable, royalty-free,
 fully paid-up patent license under patent claims that Company can license and
 that would be necessarily infringed by a Contribution or by combination of a
-Contribution with Neovex.
+Contribution with Nimbus.
 
 ## 4. Company promises
 

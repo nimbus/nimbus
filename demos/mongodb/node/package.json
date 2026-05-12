@@ -6,7 +6,7 @@
     "demo": "node --experimental-strip-types ./script.ts"
   },
   "dependencies": {
-    "@neovex/mongodb": "0.1.22",
+    "@nimbus/mongodb": "0.1.22",
     "mongodb": "^6.16.0"
   },
   "devDependencies": {

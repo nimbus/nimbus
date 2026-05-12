@@ -63,13 +63,13 @@ jobs:
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
         # CI keeps a dedicated runtime lane instead of falling back to a global
         # single-thread workaround.
-        run: cargo test -p neovex-runtime
+        run: cargo test -p nimbus-runtime
 
       - name: Run workspace test lane
         # Verification-harness corpus tests are ignored by default and run in
         # the dedicated harness matrix below, so this lane stays focused on the
         # main workspace suite outside the runtime crate.
-        run: cargo test --workspace --exclude neovex-runtime
+        run: cargo test --workspace --exclude nimbus-runtime
 
   harness-pr:
     name: Verification Harness (PR / ${{ matrix.surface }})
@@ -218,13 +218,13 @@ jobs:
       - name: Check helper script syntax
         run: |
           bash -n scripts/collect-sqlcipher-proof-bundles.sh
-          bash -n scripts/collect-neovex-machine-guest-proof.sh
-          bash -n scripts/collect-neovex-machine-service-proof.sh
-          bash -n scripts/collect-neovex-homebrew-cask-proof.sh
+          bash -n scripts/collect-nimbus-machine-guest-proof.sh
+          bash -n scripts/collect-nimbus-machine-service-proof.sh
+          bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
           bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
-          bash -n scripts/verify-neovex-machine-guest-proof-helper.sh
-          bash -n scripts/verify-neovex-machine-service-proof-helper.sh
-          bash -n scripts/verify-neovex-homebrew-cask-proof-helper.sh
+          bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
+          bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
+          bash -n scripts/verify-nimbus-homebrew-cask-proof-helper.sh
           bash -n scripts/install.sh
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh
@@ -233,13 +233,13 @@ jobs:
         run: bash scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
 
       - name: Verify guest proof helper
-        run: bash scripts/verify-neovex-machine-guest-proof-helper.sh
+        run: bash scripts/verify-nimbus-machine-guest-proof-helper.sh
 
       - name: Verify service proof helper
-        run: bash scripts/verify-neovex-machine-service-proof-helper.sh
+        run: bash scripts/verify-nimbus-machine-service-proof-helper.sh
 
       - name: Verify Homebrew cask proof helper
-        run: bash scripts/verify-neovex-homebrew-cask-proof-helper.sh
+        run: bash scripts/verify-nimbus-homebrew-cask-proof-helper.sh
 
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh
@@ -250,11 +250,11 @@ jobs:
     timeout-minutes: 30
     if: github.event_name != 'schedule'
     env:
-      NEOVEX_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
-      NEOVEX_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
-      NEOVEX_MYSQL_URL: mysql://root@127.0.0.1:3306/test
-      NEOVEX_LIBSQL_URL: http://127.0.0.1:18080
-      NEOVEX_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
+      NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
+      NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
+      NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
+      NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
     services:
       postgres:
         image: postgres:16
@@ -310,7 +310,7 @@ jobs:
       - name: Start libsql provider fixture
         run: |
           docker run --detach \
-            --name neovex-libsql-coverage \
+            --name nimbus-libsql-coverage \
             --publish 18080:8080 \
             --publish 18081:8081 \
             --env SQLD_ADMIN_LISTEN_ADDR=0.0.0.0:8081 \
@@ -320,15 +320,15 @@ jobs:
       - name: Wait for libsql provider fixture
         run: |
           for _ in {1..60}; do
-            if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/neovex_coverage_probe/create \
+            if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_coverage_probe/create \
               -H 'content-type: application/json' \
               --data '{}' >/dev/null; then
-              curl -fsS -X DELETE http://127.0.0.1:18081/v1/namespaces/neovex_coverage_probe >/dev/null || true
+              curl -fsS -X DELETE http://127.0.0.1:18081/v1/namespaces/nimbus_coverage_probe >/dev/null || true
               exit 0
             fi
             sleep 1
           done
-          docker logs neovex-libsql-coverage
+          docker logs nimbus-libsql-coverage
           exit 1
 
       - name: Generate coverage report

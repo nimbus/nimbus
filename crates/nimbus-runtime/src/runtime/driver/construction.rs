@@ -1,0 +1,175 @@
+use std::rc::Rc;
+use std::sync::OnceLock;
+
+use crate::backends::v8::embedder::{JsRuntime, RuntimeOptions, SharedArrayBufferStore, v8};
+use crate::backends::v8::{V8StartupSnapshot, create_v8_startup_snapshot};
+use crate::error::{NimbusRuntimeError, Result};
+use crate::limits::RuntimeCompatibilityTarget;
+use crate::module_loader::RestrictedModuleLoader;
+use crate::runtime_capabilities::RuntimePathPolicy;
+
+use super::super::bootstrap::{
+    InstalledRuntimeWorkerBootstrapState, execution_extensions, extension_transpiler_for_target,
+    finalize_bootstrap, initialize_runtime_state, install_bootstrap,
+    main_thread_worker_bootstrap_state, worker_threads_state_extension,
+};
+use super::super::{NimbusRuntime, RuntimeBundle};
+
+impl NimbusRuntime {
+    pub(crate) fn bootstrap_snapshot(&self) -> Result<&'static V8StartupSnapshot> {
+        static WEB_STANDARD_BOOTSTRAP_SNAPSHOT: OnceLock<
+            std::result::Result<V8StartupSnapshot, String>,
+        > = OnceLock::new();
+        static NODE22_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
+            OnceLock::new();
+        static NODE20_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
+            OnceLock::new();
+        static NODE24_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
+            OnceLock::new();
+        let snapshot = match self.policy.limits().compatibility_target {
+            RuntimeCompatibilityTarget::WebStandardIsolate => &WEB_STANDARD_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::Node20 => &NODE20_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::Node22 => &NODE22_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::Node24 => &NODE24_BOOTSTRAP_SNAPSHOT,
+        };
+        match snapshot.get_or_init(|| {
+            Self::create_bootstrap_snapshot(self.policy.limits().compatibility_target)
+                .map_err(|error| error.to_string())
+        }) {
+            Ok(snapshot) => Ok(snapshot),
+            Err(message) => Err(NimbusRuntimeError::Contract(format!(
+                "failed to initialize runtime bootstrap snapshot: {message}"
+            ))),
+        }
+    }
+
+    pub(crate) fn create_bootstrap_snapshot(
+        compatibility_target: RuntimeCompatibilityTarget,
+    ) -> Result<V8StartupSnapshot> {
+        create_v8_startup_snapshot(compatibility_target)
+    }
+
+    pub(crate) fn create_runtime_from_snapshot(
+        &self,
+        bundle: &RuntimeBundle,
+        snapshot: &V8StartupSnapshot,
+    ) -> Result<JsRuntime> {
+        self.create_runtime_with_bootstrap_state(
+            bundle,
+            Some(snapshot),
+            false,
+            main_thread_worker_bootstrap_state(),
+        )
+    }
+
+    pub(crate) fn create_runtime(
+        &self,
+        bundle: &RuntimeBundle,
+        startup_snapshot: Option<&V8StartupSnapshot>,
+        use_locker: bool,
+    ) -> Result<JsRuntime> {
+        self.create_runtime_with_bootstrap_state(
+            bundle,
+            startup_snapshot,
+            use_locker,
+            main_thread_worker_bootstrap_state(),
+        )
+    }
+
+    fn create_runtime_with_bootstrap_state(
+        &self,
+        bundle: &RuntimeBundle,
+        startup_snapshot: Option<&V8StartupSnapshot>,
+        use_locker: bool,
+        worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
+    ) -> Result<JsRuntime> {
+        let mut runtime = JsRuntime::new(self.runtime_options(
+            bundle,
+            startup_snapshot,
+            use_locker,
+            worker_bootstrap_state,
+        )?);
+        install_missing_runtime_start_time(&mut runtime);
+        self.initialize_runtime_state(&mut runtime, bundle)?;
+        if startup_snapshot.is_none() {
+            Self::install_bootstrap(&mut runtime)?;
+        }
+        Self::finalize_bootstrap(&mut runtime)?;
+        Ok(runtime)
+    }
+
+    pub(crate) fn create_unsnapshotted_runtime_with_worker_bootstrap(
+        &self,
+        bundle: &RuntimeBundle,
+        worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
+    ) -> Result<JsRuntime> {
+        self.create_runtime_with_bootstrap_state(bundle, None, false, worker_bootstrap_state)
+    }
+
+    pub(crate) fn runtime_options(
+        &self,
+        bundle: &RuntimeBundle,
+        startup_snapshot: Option<&V8StartupSnapshot>,
+        use_locker: bool,
+        worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
+    ) -> Result<RuntimeOptions> {
+        let path_policy = RuntimePathPolicy::for_bundle(bundle, self.policy.limits())?;
+        let mut extensions =
+            execution_extensions(self.policy.limits().compatibility_target, &path_policy);
+        extensions.push(worker_threads_state_extension(worker_bootstrap_state));
+        Ok(RuntimeOptions {
+            create_params: Some(self.create_isolate_params()),
+            module_loader: Some(Rc::new(RestrictedModuleLoader::new(
+                path_policy.clone(),
+                self.policy.limits().compatibility_target,
+                bundle.module_code_cache(),
+            ))),
+            extensions,
+            extension_transpiler: extension_transpiler_for_target(
+                self.policy.limits().compatibility_target,
+            ),
+            inspector: matches!(
+                self.policy.limits().compatibility_target,
+                RuntimeCompatibilityTarget::Node20
+                    | RuntimeCompatibilityTarget::Node22
+                    | RuntimeCompatibilityTarget::Node24
+            ),
+            startup_snapshot: startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot),
+            shared_array_buffer_store: Some(SharedArrayBufferStore::default()),
+            use_locker,
+            ..Default::default()
+        })
+    }
+
+    pub(crate) fn create_isolate_params(&self) -> v8::CreateParams {
+        let heap_megabyte = 1usize << 20;
+        v8::Isolate::create_params().heap_limits(
+            self.policy.limits().initial_heap_mb * heap_megabyte,
+            self.policy.limits().max_heap_mb * heap_megabyte,
+        )
+    }
+
+    pub(crate) fn initialize_runtime_state(
+        &self,
+        runtime: &mut JsRuntime,
+        bundle: &RuntimeBundle,
+    ) -> Result<()> {
+        initialize_runtime_state(runtime, self, bundle)
+    }
+
+    pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
+        install_bootstrap(runtime)
+    }
+
+    pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
+        finalize_bootstrap(runtime)
+    }
+}
+
+fn install_missing_runtime_start_time(runtime: &mut JsRuntime) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    if !state.has::<deno_web::StartTime>() {
+        state.put(deno_web::StartTime::default());
+    }
+}
