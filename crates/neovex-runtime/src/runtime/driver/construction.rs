@@ -22,9 +22,15 @@ impl NeovexRuntime {
         > = OnceLock::new();
         static NODE22_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
             OnceLock::new();
+        static NODE20_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
+            OnceLock::new();
+        static NODE24_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
+            OnceLock::new();
         let snapshot = match self.policy.limits().compatibility_target {
             RuntimeCompatibilityTarget::WebStandardIsolate => &WEB_STANDARD_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::Node20 => &NODE20_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::Node22 => &NODE22_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::Node24 => &NODE24_BOOTSTRAP_SNAPSHOT,
         };
         match snapshot.get_or_init(|| {
             Self::create_bootstrap_snapshot(self.policy.limits().compatibility_target)
@@ -124,7 +130,9 @@ impl NeovexRuntime {
             ),
             inspector: matches!(
                 self.policy.limits().compatibility_target,
-                RuntimeCompatibilityTarget::Node22
+                RuntimeCompatibilityTarget::Node20
+                    | RuntimeCompatibilityTarget::Node22
+                    | RuntimeCompatibilityTarget::Node24
             ),
             startup_snapshot: startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot),
             shared_array_buffer_store: Some(SharedArrayBufferStore::default()),

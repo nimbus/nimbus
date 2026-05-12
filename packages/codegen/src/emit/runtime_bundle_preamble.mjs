@@ -60,9 +60,37 @@ function materializeRuntimeBinding(descriptor) {
         visibility: descriptor.visibility,
         kind: descriptor.reference_kind ?? undefined,
       });
+    case "node_builtin_default":
+      return nodeBuiltinModule(descriptor.specifier).default ?? nodeBuiltinModule(descriptor.specifier);
+    case "node_builtin_namespace":
+      return nodeBuiltinModule(descriptor.specifier);
+    case "node_builtin_named":
+      return nodeBuiltinModule(descriptor.specifier)[descriptor.imported_name];
+    case "node_external_package_default":
+      return nodeExternalPackage(descriptor.specifier).default ?? nodeExternalPackage(descriptor.specifier);
+    case "node_external_package_namespace":
+      return nodeExternalPackage(descriptor.specifier);
+    case "node_external_package_named":
+      return nodeExternalPackage(descriptor.specifier)[descriptor.imported_name];
     default:
       throw new Error(\`unsupported runtime binding descriptor: \${descriptor.type}\`);
   }
+}
+
+function nodeBuiltinModule(specifier) {
+  const module = __neovexNodeBuiltinModules.get(specifier);
+  if (module === undefined) {
+    throw new Error(\`missing generated Node.js builtin binding for \${specifier}\`);
+  }
+  return module;
+}
+
+function nodeExternalPackage(specifier) {
+  const module = __neovexNodeExternalPackages.get(specifier);
+  if (module === undefined) {
+    throw new Error(\`missing generated Node.js external package binding for \${specifier}\`);
+  }
+  return module;
 }
 
 function createGeneratedReferenceTree(config, pathParts = []) {

@@ -3895,8 +3895,10 @@ impl RestrictedModuleLoader {
             RuntimeCompatibilityTarget::WebStandardIsolate => {
                 "node: imports are unavailable under RuntimeCompatibilityTarget::WebStandardIsolate"
             }
-            RuntimeCompatibilityTarget::Node22 => {
-                "unsupported node: builtin for the current Node22 surface; the verified extension-backed lane currently includes core semantics builtins (node:assert/strict, node:buffer, node:console, node:events, node:path including posix/win32, node:punycode, node:querystring, node:string_decoder, node:url), process/timing builtins (node:process, node:timers, node:timers/promises, node:util, node:diagnostics_channel, node:perf_hooks), selected host/runtime builtins (node:fs, node:fs/promises, node:os, node:tty, node:stream including consumers/promises/web, node:child_process, node:crypto, node:worker_threads), and the in-progress networking family (node:dns, node:net, node:dgram, node:tls, node:http, node:https, node:http2), plus minimal Node globals"
+            RuntimeCompatibilityTarget::Node20
+            | RuntimeCompatibilityTarget::Node22
+            | RuntimeCompatibilityTarget::Node24 => {
+                "unsupported node: builtin for the current Node-compatible surface; the verified extension-backed lane currently includes core semantics builtins (node:assert/strict, node:buffer, node:console, node:events, node:path including posix/win32, node:punycode, node:querystring, node:string_decoder, node:url), process/timing builtins (node:process, node:timers, node:timers/promises, node:util, node:diagnostics_channel, node:perf_hooks), selected host/runtime builtins (node:fs, node:fs/promises, node:os, node:tty, node:stream including consumers/promises/web, node:child_process, node:crypto, node:worker_threads), and the in-progress networking family (node:dns, node:net, node:dgram, node:tls, node:http, node:https, node:http2), plus minimal Node globals"
             }
         };
         JsErrorBox::generic(format!(
@@ -3953,12 +3955,7 @@ impl RestrictedModuleLoader {
                 path.display()
             ))
         })?;
-        if module_type == ModuleType::JavaScript
-            && matches!(
-                self.compatibility_target,
-                RuntimeCompatibilityTarget::Node22
-            )
-        {
+        if module_type == ModuleType::JavaScript && self.compatibility_target.is_node() {
             let package_json_resolver = build_package_json_resolver();
             if classify_resolved_module_kind(&path, package_json_resolver.as_ref())?
                 == ResolvedNodeModuleKind::CommonJs
@@ -3988,10 +3985,7 @@ impl RestrictedModuleLoader {
     }
 
     fn supported_node_builtin_source(&self, specifier: &str) -> Option<&'static str> {
-        if !matches!(
-            self.compatibility_target,
-            RuntimeCompatibilityTarget::Node22
-        ) {
+        if !self.compatibility_target.is_node() {
             return None;
         }
         match specifier {
@@ -4010,10 +4004,7 @@ impl RestrictedModuleLoader {
     }
 
     fn supports_extension_backed_node_builtin(&self, specifier: &str) -> bool {
-        if !matches!(
-            self.compatibility_target,
-            RuntimeCompatibilityTarget::Node22
-        ) {
+        if !self.compatibility_target.is_node() {
             return false;
         }
         matches!(

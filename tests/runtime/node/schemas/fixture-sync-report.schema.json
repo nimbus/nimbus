@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neovex.local/node-compat/fixture-sync-report.schema.json",
+  "title": "Node compatibility fixture sync report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "report_kind",
+    "mode",
+    "lane",
+    "upstream",
+    "upstream_tag_override",
+    "vendored_fixture_root",
+    "local_fixture_root_exists",
+    "local_test_file_count",
+    "command_plan",
+    "dry_run",
+    "diff",
+    "applied"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report_kind": {
+      "const": "node_compat_fixture_sync"
+    },
+    "mode": {
+      "enum": [
+        "dry_run",
+        "compare",
+        "apply"
+      ]
+    },
+    "lane": {
+      "type": "string",
+      "pattern": "^node[0-9]+$"
+    },
+    "upstream": {
+      "type": "object",
+      "required": [
+        "repo",
+        "tag",
+        "fixture_subtree",
+        "source_kind"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fixture_subtree": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "upstream_tag_override": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "vendored_fixture_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "local_fixture_root_exists": {
+      "type": "boolean"
+    },
+    "local_test_file_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "command_plan": {
+      "type": "object",
+      "required": [
+        "fetch",
+        "sparse_checkout",
+        "local_fixture_root"
+      ],
+      "properties": {
+        "fetch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sparse_checkout": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "local_fixture_root": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "diff": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "added_by_upstream",
+        "removed_by_upstream",
+        "modified_by_upstream",
+        "unchanged"
+      ],
+      "properties": {
+        "added_by_upstream": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed_by_upstream": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modified_by_upstream": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unchanged": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "applied": {
+      "type": "boolean"
+    },
+    "upstream_test_file_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "local_test_file_count_after_apply": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

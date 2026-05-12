@@ -65,11 +65,11 @@ fn repo_root() -> PathBuf {
 }
 
 fn networking_canary_root() -> PathBuf {
-    repo_root().join("tests/node-compat/networking-canaries")
+    repo_root().join("tests/runtime/node/networking-canaries")
 }
 
 fn tooling_canary_root() -> PathBuf {
-    repo_root().join("tests/node-compat/tooling-canaries")
+    repo_root().join("tests/runtime/node/tooling-canaries")
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) {
@@ -2118,7 +2118,7 @@ export {};
 }
 
 #[tokio::test]
-#[ignore = "Pinned NLC6 networking canary batch: requires `npm ci --prefix tests/node-compat/networking-canaries` before execution"]
+#[ignore = "Pinned NLC6 networking canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
 async fn application_node22_networking_package_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_application_networking_canary_app();
@@ -2133,8 +2133,8 @@ async fn application_node22_networking_package_canary_batch() {
 }
 
 #[tokio::test]
-#[ignore = "Pinned NLC6 Node20 validation canary batch: requires `npm ci --prefix tests/node-compat/networking-canaries` before execution"]
-async fn application_node20_networking_validation_canary_batch() {
+#[ignore = "Pinned NLC6 Node20 supported canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
+async fn application_node20_networking_supported_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_application_networking_canary_app();
     let bundles = ["express.mjs", "fastify.mjs"];
@@ -2167,7 +2167,7 @@ async fn run_application_networking_canary_batch(
 }
 
 #[tokio::test]
-#[ignore = "Pinned NLC10 tooling canary batch: requires `npm ci --prefix tests/node-compat/tooling-canaries` before execution"]
+#[ignore = "Pinned NLC10 tooling canary batch: requires `npm ci --prefix tests/runtime/node/tooling-canaries` before execution"]
 async fn tooling_node22_package_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_tooling_canary_app();

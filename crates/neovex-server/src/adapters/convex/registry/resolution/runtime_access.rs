@@ -35,12 +35,44 @@ impl ConvexRegistry {
         self.runtime_executor.clone()
     }
 
+    pub(in crate::adapters::convex) fn runtime_lane_for_function(
+        &self,
+        function_name: &str,
+    ) -> (Arc<RuntimeExecutor>, Arc<RuntimePolicy>) {
+        match self
+            .functions
+            .get(function_name)
+            .and_then(ConvexFunctionDefinition::runtime_compatibility_target)
+        {
+            Some(RuntimeCompatibilityTarget::Node20) => (
+                self.node20_runtime_executor.clone(),
+                self.node20_runtime_policy.clone(),
+            ),
+            Some(RuntimeCompatibilityTarget::Node22) => (
+                self.node22_runtime_executor.clone(),
+                self.node22_runtime_policy.clone(),
+            ),
+            Some(RuntimeCompatibilityTarget::Node24) => (
+                self.node24_runtime_executor.clone(),
+                self.node24_runtime_policy.clone(),
+            ),
+            Some(RuntimeCompatibilityTarget::WebStandardIsolate) | None => {
+                (self.runtime_executor(), self.runtime_policy())
+            }
+        }
+    }
+
     pub fn runtime_metrics_snapshot(&self) -> neovex_runtime::RuntimeMetricsSnapshot {
         self.runtime_policy.metrics_snapshot()
     }
 
     pub fn runtime_limits(&self) -> RuntimeLimits {
         self.runtime_policy.limits().clone()
+    }
+
+    pub fn runtime_limits_for_function(&self, function_name: &str) -> RuntimeLimits {
+        let (_, policy) = self.runtime_lane_for_function(function_name);
+        policy.limits().clone()
     }
 
     pub(in crate::adapters::convex) fn runtime_subscription_kind(

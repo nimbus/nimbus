@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
 use crate::metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
@@ -14,11 +14,37 @@ pub enum RuntimeBackendKind {
     V8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeCompatibilityTarget {
     WebStandardIsolate,
+    Node20,
     Node22,
+    Node24,
+}
+
+impl RuntimeCompatibilityTarget {
+    pub fn is_node(self) -> bool {
+        matches!(self, Self::Node20 | Self::Node22 | Self::Node24)
+    }
+
+    pub fn node_major_version(self) -> Option<u16> {
+        match self {
+            Self::Node20 => Some(20),
+            Self::Node22 => Some(22),
+            Self::Node24 => Some(24),
+            Self::WebStandardIsolate => None,
+        }
+    }
+
+    pub fn node_runtime_version(self) -> Option<&'static str> {
+        match self {
+            Self::Node20 => Some("v20.0.0-neovex"),
+            Self::Node22 => Some("v22.0.0-neovex"),
+            Self::Node24 => Some("v24.0.0-neovex"),
+            Self::WebStandardIsolate => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -35,7 +61,7 @@ pub enum RuntimeProfile {
     Tooling,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeSubprocessPolicy {
     Denied,
@@ -120,8 +146,21 @@ impl RuntimeLimits {
     }
 
     pub fn application_node22() -> Self {
+        Self::application_node(RuntimeCompatibilityTarget::Node22)
+    }
+
+    pub fn application_node20() -> Self {
+        Self::application_node(RuntimeCompatibilityTarget::Node20)
+    }
+
+    pub fn application_node24() -> Self {
+        Self::application_node(RuntimeCompatibilityTarget::Node24)
+    }
+
+    pub fn application_node(target: RuntimeCompatibilityTarget) -> Self {
+        assert!(target.is_node(), "application_node requires a Node target");
         Self {
-            compatibility_target: RuntimeCompatibilityTarget::Node22,
+            compatibility_target: target,
             profile: RuntimeProfile::Application,
             subprocess_policy: RuntimeSubprocessPolicy::Denied,
             ..Self::default()
@@ -350,6 +389,17 @@ mod tests {
             RuntimeCompatibilityTarget::WebStandardIsolate
         );
 
+        let node20_limits = RuntimeLimits::application_node20().normalized();
+        assert_eq!(node20_limits.profile, RuntimeProfile::Application);
+        assert_eq!(
+            node20_limits.subprocess_policy,
+            RuntimeSubprocessPolicy::Denied
+        );
+        assert_eq!(
+            node20_limits.compatibility_target,
+            RuntimeCompatibilityTarget::Node20
+        );
+
         let node_limits = RuntimeLimits::application_node22().normalized();
         assert_eq!(node_limits.profile, RuntimeProfile::Application);
         assert_eq!(
@@ -359,6 +409,17 @@ mod tests {
         assert_eq!(
             node_limits.compatibility_target,
             RuntimeCompatibilityTarget::Node22
+        );
+
+        let node24_limits = RuntimeLimits::application_node24().normalized();
+        assert_eq!(node24_limits.profile, RuntimeProfile::Application);
+        assert_eq!(
+            node24_limits.subprocess_policy,
+            RuntimeSubprocessPolicy::Denied
+        );
+        assert_eq!(
+            node24_limits.compatibility_target,
+            RuntimeCompatibilityTarget::Node24
         );
     }
 

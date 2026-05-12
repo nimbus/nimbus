@@ -2,6 +2,7 @@ use super::*;
 use std::collections::HashMap;
 
 use neovex_core::{FieldSchema, FieldType, IndexDefinition, Schema, TableName, TableSchema};
+use neovex_runtime::RuntimeCompatibilityTarget;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct ConvexManifest {
@@ -14,6 +15,46 @@ pub(super) struct ConvexHttpRouteManifest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ConvexNodeExternalPackagesManifest {
+    pub(super) version: u32,
+    pub(super) mode: ConvexNodeExternalPackageMode,
+    #[serde(default)]
+    pub(super) configured_external_packages: Vec<String>,
+    pub(super) staging_root: String,
+    #[serde(default)]
+    pub(super) packages: Vec<ConvexNodeExternalPackageDefinition>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ConvexNodeExternalPackageMode {
+    None,
+    Explicit,
+    All,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ConvexNodeExternalPackageDefinition {
+    pub(super) package_name: String,
+    pub(super) package_root: Option<String>,
+    pub(super) staged_package_root: Option<String>,
+    pub(super) size_bytes: u64,
+    #[serde(default)]
+    pub(super) resolved_specifiers: Vec<String>,
+    #[serde(default)]
+    pub(super) importers: Vec<ConvexNodeExternalPackageImporter>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct ConvexNodeExternalPackageImporter {
+    pub(super) file: String,
+    pub(super) kind: String,
+    pub(super) specifier: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub(super) struct ConvexFunctionDefinition {
     pub(super) name: String,
     pub(super) kind: ConvexFunctionKind,
@@ -22,8 +63,24 @@ pub(super) struct ConvexFunctionDefinition {
     #[serde(default)]
     pub(super) schedulable: bool,
     #[serde(default)]
+    pub(super) runtime_environment: ConvexRuntimeEnvironment,
+    #[serde(default)]
+    pub(super) node_runtime_target: Option<RuntimeCompatibilityTarget>,
+    #[serde(default)]
     pub(super) runtime_handler: Option<String>,
     pub(super) plan: Value,
+}
+
+impl ConvexFunctionDefinition {
+    pub(super) fn runtime_compatibility_target(&self) -> Option<RuntimeCompatibilityTarget> {
+        match self.runtime_environment {
+            ConvexRuntimeEnvironment::Default => None,
+            ConvexRuntimeEnvironment::Node => Some(
+                self.node_runtime_target
+                    .unwrap_or(RuntimeCompatibilityTarget::Node22),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,6 +146,15 @@ pub(super) enum ConvexFunctionVisibility {
     #[default]
     Public,
     Internal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ConvexRuntimeEnvironment {
+    #[default]
+    #[serde(rename = "default")]
+    Default,
+    Node,
 }
 
 #[derive(Debug, Clone, Deserialize)]

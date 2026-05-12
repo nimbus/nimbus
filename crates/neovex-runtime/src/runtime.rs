@@ -74,13 +74,21 @@ mod tests {
     mod cooperative;
     mod host_bridge;
     mod locker;
+    #[path = "node/mod.rs"]
     mod node_compat;
+    #[path = "node/canary_registry.rs"]
     mod node_compat_canary_registry;
+    #[path = "node/manifest_catalog.rs"]
     mod node_compat_manifest_catalog;
+    #[path = "node/manifest_metadata.rs"]
     mod node_compat_manifest_metadata;
+    #[path = "node/manifest_report.rs"]
     mod node_compat_manifest_report;
+    #[path = "node/manifest_resolution.rs"]
     mod node_compat_manifest_resolution;
+    #[path = "node/manifest_topology.rs"]
     mod node_compat_manifest_topology;
+    #[path = "node/oracle.rs"]
     mod node_compat_oracle;
     mod pool_reuse;
     mod snapshot_lifecycle;

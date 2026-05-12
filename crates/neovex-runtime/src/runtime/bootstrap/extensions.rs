@@ -21,13 +21,13 @@ fn install_rustls_default_provider_once() {
     RUSTLS_PROVIDER.get_or_init(|| {
         deno_tls::rustls::crypto::aws_lc_rs::default_provider()
             .install_default()
-            .expect("Node22 runtime should install the rustls CryptoProvider once");
+            .expect("Node-compatible runtime should install the rustls CryptoProvider once");
     });
 }
 
 pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Extension> {
     let mut extensions = Vec::new();
-    if matches!(target, RuntimeCompatibilityTarget::Node22) {
+    if target.is_node() {
         install_rustls_default_provider_once();
         extensions.extend([
             deno_webidl::deno_webidl::lazy_init(),
@@ -65,7 +65,7 @@ pub(crate) fn execution_extensions(
     path_policy: &RuntimePathPolicy,
 ) -> Vec<Extension> {
     let mut extensions = Vec::new();
-    if matches!(target, RuntimeCompatibilityTarget::Node22) {
+    if target.is_node() {
         install_rustls_default_provider_once();
         let fs: deno_fs::FileSystemRc = MaybeArc::new(deno_fs::RealFs);
         extensions.extend([

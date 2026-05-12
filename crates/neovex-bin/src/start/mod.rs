@@ -133,6 +133,10 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = false)]
     pub(crate) skip_codegen: bool,
 
+    /// Diagnose Node.js builtin imports during automatic codegen preflight.
+    #[arg(long, default_value_t = false)]
+    pub(crate) debug_node_apis: bool,
+
     /// Optional ordered Compose file list that declares sandbox-backed
     /// services for `ctx.services.*` activation. Repeat `--compose-file` to
     /// merge overlays. When omitted, Neovex uses `COMPOSE_FILE` when set, then
@@ -238,6 +242,7 @@ impl Default for StartCommand {
             mysql_max_connections: None,
             app_dir: None,
             skip_codegen: false,
+            debug_node_apis: false,
             compose_file: Vec::new(),
             license_file: None,
             runtime_heap_mb: default_runtime_heap_mb(),

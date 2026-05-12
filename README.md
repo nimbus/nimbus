@@ -66,26 +66,47 @@ If you're authoring Convex or Cloud Functions code locally, install Node.js 22
 with `npm` first. `neovex dev` still runs codegen through external `node` by
 default and can auto-run `npm install` when declared packages are missing
 locally or when the recorded package/lockfile fingerprint has changed. The
-external authoring path now verifies `node --version` against the `22.x`
-baseline before it runs codegen. The embedded codegen path is still an
-experimental pilot, and Neovex does not yet
-claim a separate Node 20 compatibility target even though current upstream
-Convex and Firebase tooling still support it. Firebase / Cloud Functions
-authoring still uses the external Node.js runner; the embedded pilot does not
-yet support that package layout.
+external authoring path verifies `node --version` against the `22.x` baseline
+before it runs codegen. Convex-compatible runtime execution can still target
+Node20, Node22, or Node24 through `convex.json` for `"use node"` actions.
+Firebase / Cloud Functions authoring still uses the external Node.js runner;
+the embedded pilot does not yet support that package layout.
 
 If you're using `neovex start` with MongoDB, the Firebase client adapter, or
 the native HTTP/WebSocket API, Node.js is not required.
 
 ## Node compatibility contract
 
-Neovex's primary Node-facing compatibility target is `Node22`.
+Neovex's default Node-facing compatibility target is `Node22`.
 
-- `Node22` is the named built-in module contract we verify and evolve.
-- `Node20` is a measured compatibility lane for upstream ecosystem overlap,
-  not a separate runtime contract.
+- `Node22` is the default built-in module contract we verify and evolve.
+- `Node20` and `Node24` are supported Convex Node action targets selected by
+  `convex.json`; Node22 remains the default until a deliberate Node24-default
+  migration.
 - Neovex does **not** currently claim full Node built-in compatibility for any
   runtime profile.
+
+Convex-compatible projects may configure Node actions like this:
+
+```json
+{
+  "node": {
+    "nodeVersion": "22",
+    "externalPackages": ["sharp"]
+  }
+}
+```
+
+Only action modules may opt into Node APIs. Put `"use node";` at the top of an
+action-only file, and import builtins as either `fs` or `node:fs`. If codegen
+reports a Node builtin in a default-runtime file, run
+`neovex dev --once --debug-node-apis` or
+`neovex codegen --app . --debug-node-apis` for file-level diagnostics.
+Node action npm package imports must currently be externalized with
+`node.externalPackages` or `["*"]`; codegen validates the local `node_modules`
+install, stages package roots under `.neovex/convex/node_modules/`, and emits a
+package evidence report. Full Convex cloud-style dependency installation is not
+claimed yet.
 
 Public support states follow the generated compatibility baseline:
 
@@ -250,6 +271,7 @@ brew install agentstation/tap/neovex
 ```
 
 For Convex or Cloud Functions authoring, also install Node.js 22 with `npm`.
+Convex Node action execution can be configured separately in `convex.json`.
 
 ### Download binary
 
@@ -272,7 +294,7 @@ cargo install --path crates/neovex-bin
 
 This installs the Rust binary only. For Convex or Cloud Functions authoring,
 also install Node.js 22 with `npm`. Runtime-only `neovex start` workflows do
-not need the Node toolchain.
+not need the Node toolchain after artifacts have been generated.
 
 ## Community
 

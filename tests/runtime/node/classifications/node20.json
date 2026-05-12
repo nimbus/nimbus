@@ -1,0 +1,819 @@
+{
+  "schema_version": 1,
+  "catalog_kind": "node_compat_lane_classifications",
+  "lane": "node20",
+  "contract": "Classifies vendored lane-local test files that are not green in the non-ignored Rust compatibility lane. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
+  "entries": [
+    {
+      "test_path": "test/parallel/test-assert-deep.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/assert",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_assert_deep_watchpoint, node22_assert_deep_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-async-local-storage-exit-does-not-leak.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "node-compat/unpromoted-surface",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_async_local_storage_exit_does_not_leak_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-buffer-isascii.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/buffer",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isascii_watchpoint, node22_buffer_isascii_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-buffer-isutf8.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/buffer",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isutf8_watchpoint, node22_buffer_isutf8_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-buffer-slow.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/buffer",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_slow_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-console-issue-43095.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/console",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint, node22_console_issue_43095_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_cluster_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-cluster-bind-error.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_cluster_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-cluster-close-during-bind.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_cluster_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-cluster-close-in-listening.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_cluster_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-error-message-address.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-exclusive-implicit-bind.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_cluster_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-ipv6only.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-reuseport.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_dgram_reuseport_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-udp6-link-local-address.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-udp6-send-default-host.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-dgram-unref-in-cluster.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/dgram",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_cluster_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-events-once.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/events",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_events_once_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-fs-filehandle-use-after-close.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_fs_filehandle_use_after_close_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-fs-open.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_fs_open_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-fs-readdir-buffer.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_fs_readdir_buffer_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-fs-realpath.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_fs_realpath_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-fs-stat.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_fs_stat_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-http-agent-reuse-drained-socket-only.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/http",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_http_agent_reuse_drained_socket_only_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-https-agent-additional-options.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/https",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_https_agent_additional_options_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-https-connect-address-family.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/https",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-https-localaddress-bind-error.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/https",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-path-resolve.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "core-semantics/path",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_path_resolve_watchpoint, node22_path_resolve_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-perf-hooks-resourcetiming.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "process-and-timing/perf-hooks",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_perf_hooks_resourcetiming_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-process-env-delete.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "process-and-timing/process-host",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_profile_watchpoint, node22_process_env_delete_application_profile_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-process-features.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "process-and-timing/process-host",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_features_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-stream-duplex-readable-end.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/stream",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_duplex_readable_end_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-stream-readable-infinite-read.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/stream",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_readable_infinite_read_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-stream-transform-split-highwatermark.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/stream",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_transform_split_highwatermark_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-stream-transform-split-objectmode.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/stream",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_transform_split_objectmode_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-stream-writable-samecb-singletick.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "streams-local-io/stream",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_stream_writable_samecb_singletick_watchpoint"
+    }
+  ],
+  "groups": [
+    {
+      "id": "node20-requires_native_addon_harness-1",
+      "expectation": "expected_gap",
+      "classification": "requires_native_addon_harness",
+      "owner": "loader-context/native-addon-host",
+      "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
+      "test_paths": [
+        "test/addons/non-node-context/test-perf-hooks-timerify.js"
+      ]
+    },
+    {
+      "id": "node20-requires_pseudo_tty_host_harness-2",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
+      "test_paths": [
+        "test/pseudo-tty/test-tty-color-support-warning-2.js",
+        "test/pseudo-tty/test-tty-color-support-warning.js",
+        "test/pseudo-tty/test-tty-color-support.js",
+        "test/pseudo-tty/test-tty-isatty.js",
+        "test/pseudo-tty/test-tty-stdin-call-end.js",
+        "test/pseudo-tty/test-tty-stdin-end.js",
+        "test/pseudo-tty/test-tty-stdout-end.js",
+        "test/pseudo-tty/test-tty-stdout-resize.js",
+        "test/pseudo-tty/test-tty-stream-constructors.js",
+        "test/pseudo-tty/test-tty-window-size.js",
+        "test/pseudo-tty/test-tty-wrap.js"
+      ]
+    },
+    {
+      "id": "node20-requires_pummel_stress_harness-3",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "node-compat/stress-harness",
+      "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
+      "test_paths": [
+        "test/pummel/test-fs-largefile.js",
+        "test/pummel/test-fs-read-file-sync-utf8-memory.js",
+        "test/pummel/test-fs-readfile-tostring-fail.js",
+        "test/pummel/test-fs-watch-file-slow.js",
+        "test/pummel/test-fs-watch-file.js",
+        "test/pummel/test-fs-watch-non-recursive.js",
+        "test/pummel/test-fs-watch-system-limit.js",
+        "test/pummel/test-next-tick-infinite-calls.js",
+        "test/pummel/test-process-cpuUsage.js",
+        "test/pummel/test-process-hrtime.js",
+        "test/pummel/test-stream-pipe-multi.js",
+        "test/pummel/test-timers.js"
+      ]
+    },
+    {
+      "id": "node20-requires_sequential_host_state_harness-4",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "node-compat/sequential-host-state",
+      "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
+      "test_paths": [
+        "test/sequential/test-fs-opendir-recursive.js",
+        "test/sequential/test-fs-readdir-recursive.js",
+        "test/sequential/test-fs-stat-sync-overflow.js",
+        "test/sequential/test-fs-watch.js",
+        "test/sequential/test-next-tick-error-spin.js",
+        "test/sequential/test-perf-hooks.js",
+        "test/sequential/test-process-title.js",
+        "test/sequential/test-process-warnings.js",
+        "test/sequential/test-stream2-fs.js",
+        "test/sequential/test-stream2-stderr-sync.js",
+        "test/sequential/test-timers-block-eventloop.js",
+        "test/sequential/test-timers-set-interval-excludes-callback-duration.js",
+        "test/sequential/test-util-debug.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-5",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "core-semantics/assert",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-assert-checktag.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-6",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "core-semantics/console",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-console-clear.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-7",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "loader-context/module",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-module-readonly.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-8",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "loader-context/util",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-util-callbackify.js",
+        "test/parallel/test-util-emit-experimental-warning.js",
+        "test/parallel/test-util-inspect-getters-accessing-this.js",
+        "test/parallel/test-util-inspect-long-running.js",
+        "test/parallel/test-util-inspect-namespace.js",
+        "test/parallel/test-util-inspect-proxy.js",
+        "test/parallel/test-util-inspect.js",
+        "test/parallel/test-util-internal.js",
+        "test/parallel/test-util-isDeepStrictEqual.js",
+        "test/parallel/test-util-log.js",
+        "test/parallel/test-util-primordial-monkeypatching.js",
+        "test/parallel/test-util-promisify-custom-names.mjs",
+        "test/parallel/test-util-promisify.js",
+        "test/parallel/test-util-sigint-watchdog.js",
+        "test/parallel/test-util-sleep.js",
+        "test/parallel/test-util-stripvtcontrolcharacters.js",
+        "test/parallel/test-util-styletext.js",
+        "test/parallel/test-util-types.js",
+        "test/parallel/test-util.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-9",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "node-compat/unpromoted-surface",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/async-hooks/test-fseventwrap.js",
+        "test/async-hooks/test-fsreqcallback-access.js",
+        "test/async-hooks/test-fsreqcallback-readFile.js",
+        "test/async-hooks/test-ttywrap.readstream.js",
+        "test/parallel/test-next-tick-domain.js",
+        "test/parallel/test-next-tick-when-exiting.js",
+        "test/parallel/test-stream2-base64-single-char-read-end.js",
+        "test/parallel/test-stream2-basic.js",
+        "test/parallel/test-stream2-compatibility.js",
+        "test/parallel/test-stream2-decode-partial.js",
+        "test/parallel/test-stream2-finish-pipe-error.js",
+        "test/parallel/test-stream2-finish-pipe.js",
+        "test/parallel/test-stream2-httpclient-response-end.js",
+        "test/parallel/test-stream2-large-read-stall.js",
+        "test/parallel/test-stream2-objects.js",
+        "test/parallel/test-stream2-pipe-error-handling.js",
+        "test/parallel/test-stream2-pipe-error-once-listener.js",
+        "test/parallel/test-stream2-push.js",
+        "test/parallel/test-stream2-read-sync-stack.js",
+        "test/parallel/test-stream2-readable-empty-buffer-no-eof.js",
+        "test/parallel/test-stream2-readable-legacy-drain.js",
+        "test/parallel/test-stream2-readable-non-empty-end.js",
+        "test/parallel/test-stream2-readable-wrap-destroy.js",
+        "test/parallel/test-stream2-readable-wrap-empty.js",
+        "test/parallel/test-stream2-readable-wrap-error.js",
+        "test/parallel/test-stream2-readable-wrap.js",
+        "test/parallel/test-stream2-set-encoding.js",
+        "test/parallel/test-stream2-transform.js",
+        "test/parallel/test-stream2-unpipe-drain.js",
+        "test/parallel/test-stream2-unpipe-leak.js",
+        "test/parallel/test-stream2-writable.js",
+        "test/parallel/test-stream3-cork-end.js",
+        "test/parallel/test-stream3-cork-uncork.js",
+        "test/parallel/test-stream3-pause-then-read.js",
+        "test/parallel/test-stream3-pipeline-async-iterator.js",
+        "test/parallel/test-streams-highwatermark.js",
+        "test/parallel/test-whatwg-readablestream.js",
+        "test/parallel/test-whatwg-readablestream.mjs",
+        "test/parallel/test-whatwg-transformstream.js",
+        "test/parallel/test-whatwg-writablestream.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-10",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "process-and-timing/diagnostics-channel",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-diagnostics-channel-bind-store.js",
+        "test/parallel/test-diagnostics-channel-http-server-start.js",
+        "test/parallel/test-diagnostics-channel-http.js",
+        "test/parallel/test-diagnostics-channel-memory-leak.js",
+        "test/parallel/test-diagnostics-channel-net.js",
+        "test/parallel/test-diagnostics-channel-process.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-args-types.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-callback-early-exit.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-callback-error.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-callback.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-has-subscribers.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-promise-early-exit.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-promise-error.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-promise.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-sync-early-exit.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-sync-error.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+        "test/parallel/test-diagnostics-channel-tracing-channel-sync.js",
+        "test/parallel/test-diagnostics-channel-udp.js",
+        "test/parallel/test-diagnostics-channel-worker-threads.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-11",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "process-and-timing/os",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-os-homedir-no-envvar.js",
+        "test/parallel/test-os-process-priority.js",
+        "test/parallel/test-os-userinfo-handles-getter-errors.js",
+        "test/parallel/test-os.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-12",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "process-and-timing/perf-hooks",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-perf-hooks-worker-timeorigin.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-13",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "process-and-timing/process-host",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/abort/test-process-abort-exitcode.js",
+        "test/parallel/test-process-abort.js",
+        "test/parallel/test-process-argv-0.js",
+        "test/parallel/test-process-assert.js",
+        "test/parallel/test-process-available-memory.js",
+        "test/parallel/test-process-beforeexit-throw-exit.js",
+        "test/parallel/test-process-beforeexit.js",
+        "test/parallel/test-process-binding-internalbinding-allowlist.js",
+        "test/parallel/test-process-binding-util.js",
+        "test/parallel/test-process-binding.js",
+        "test/parallel/test-process-chdir-errormessage.js",
+        "test/parallel/test-process-chdir.js",
+        "test/parallel/test-process-config.js",
+        "test/parallel/test-process-constrained-memory.js",
+        "test/parallel/test-process-cpuUsage.js",
+        "test/parallel/test-process-dlopen-error-message-crash.js",
+        "test/parallel/test-process-dlopen-undefined-exports.js",
+        "test/parallel/test-process-domain-segfault.js",
+        "test/parallel/test-process-emit-warning-from-native.js",
+        "test/parallel/test-process-emit.js",
+        "test/parallel/test-process-env-allowed-flags-are-documented.js",
+        "test/parallel/test-process-env-allowed-flags.js",
+        "test/parallel/test-process-env-deprecation.js",
+        "test/parallel/test-process-env-ignore-getter-setter.js",
+        "test/parallel/test-process-env-sideeffects.js",
+        "test/parallel/test-process-env-tz.js",
+        "test/parallel/test-process-env-windows-error-reset.js",
+        "test/parallel/test-process-env.js",
+        "test/parallel/test-process-euid-egid.js",
+        "test/parallel/test-process-exception-capture-errors.js",
+        "test/parallel/test-process-exception-capture-should-abort-on-uncaught-setflagsfromstring.js",
+        "test/parallel/test-process-exception-capture-should-abort-on-uncaught.js",
+        "test/parallel/test-process-exception-capture.js",
+        "test/parallel/test-process-exec-argv.js",
+        "test/parallel/test-process-execpath.js",
+        "test/parallel/test-process-exit-code-validation.js",
+        "test/parallel/test-process-exit-code.js",
+        "test/parallel/test-process-exit-from-before-exit.js",
+        "test/parallel/test-process-exit-handler.js",
+        "test/parallel/test-process-exit-recursive.js",
+        "test/parallel/test-process-exit.js",
+        "test/parallel/test-process-external-stdio-close-spawn.js",
+        "test/parallel/test-process-external-stdio-close.js",
+        "test/parallel/test-process-get-builtin.mjs",
+        "test/parallel/test-process-getactivehandles.js",
+        "test/parallel/test-process-getactiverequests.js",
+        "test/parallel/test-process-getactiveresources-track-active-handles.js",
+        "test/parallel/test-process-getactiveresources-track-active-requests.js",
+        "test/parallel/test-process-getactiveresources-track-interval-lifetime.js",
+        "test/parallel/test-process-getactiveresources-track-multiple-timers.js",
+        "test/parallel/test-process-getactiveresources-track-timer-lifetime.js",
+        "test/parallel/test-process-getactiveresources.js",
+        "test/parallel/test-process-getgroups.js",
+        "test/parallel/test-process-hrtime-bigint.js",
+        "test/parallel/test-process-hrtime.js",
+        "test/parallel/test-process-initgroups.js",
+        "test/parallel/test-process-kill-null.js",
+        "test/parallel/test-process-kill-pid.js",
+        "test/parallel/test-process-ppid.js",
+        "test/parallel/test-process-raw-debug.js",
+        "test/parallel/test-process-really-exit.js",
+        "test/parallel/test-process-redirect-warnings-env.js",
+        "test/parallel/test-process-redirect-warnings.js",
+        "test/parallel/test-process-remove-all-signal-listeners.js",
+        "test/parallel/test-process-setgroups.js",
+        "test/parallel/test-process-setsourcemapsenabled.js",
+        "test/parallel/test-process-setuid-io-uring.js",
+        "test/parallel/test-process-title-cli.js",
+        "test/parallel/test-process-uid-gid.js",
+        "test/parallel/test-process-umask-mask.js",
+        "test/parallel/test-process-umask.js",
+        "test/parallel/test-process-uncaught-exception-monitor.js",
+        "test/parallel/test-process-versions.js",
+        "test/parallel/test-process-warnings.mjs"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-14",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "process-and-timing/timers",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/async-hooks/test-timers.setInterval.js",
+        "test/async-hooks/test-timers.setTimeout.js",
+        "test/parallel/test-timers-active.js",
+        "test/parallel/test-timers-clearImmediate-als.js",
+        "test/parallel/test-timers-destroyed.js",
+        "test/parallel/test-timers-dispose.js",
+        "test/parallel/test-timers-enroll-invalid-msecs.js",
+        "test/parallel/test-timers-enroll-second-time.js",
+        "test/parallel/test-timers-immediate-promisified.js",
+        "test/parallel/test-timers-immediate-queue-throw.js",
+        "test/parallel/test-timers-immediate-queue.js",
+        "test/parallel/test-timers-immediate-unref-nested-once.js",
+        "test/parallel/test-timers-immediate-unref-simple.js",
+        "test/parallel/test-timers-immediate-unref.js",
+        "test/parallel/test-timers-interval-promisified.js",
+        "test/parallel/test-timers-interval-throw.js",
+        "test/parallel/test-timers-linked-list.js",
+        "test/parallel/test-timers-max-duration-warning.js",
+        "test/parallel/test-timers-nested.js",
+        "test/parallel/test-timers-next-tick.js",
+        "test/parallel/test-timers-now.js",
+        "test/parallel/test-timers-ordering.js",
+        "test/parallel/test-timers-process-tampering.js",
+        "test/parallel/test-timers-promises-scheduler.js",
+        "test/parallel/test-timers-promises.js",
+        "test/parallel/test-timers-refresh-in-callback.js",
+        "test/parallel/test-timers-refresh.js",
+        "test/parallel/test-timers-reset-process-domain-on-throw.js",
+        "test/parallel/test-timers-same-timeout-wrong-list-deleted.js",
+        "test/parallel/test-timers-setimmediate-infinite-loop.js",
+        "test/parallel/test-timers-socket-timeout-removes-other-socket-unref-timer.js",
+        "test/parallel/test-timers-timeout-promisified.js",
+        "test/parallel/test-timers-timeout-to-interval.js",
+        "test/parallel/test-timers-timeout-with-non-integer.js",
+        "test/parallel/test-timers-to-primitive.js",
+        "test/parallel/test-timers-uncaught-exception.js",
+        "test/parallel/test-timers-unenroll-unref-interval.js",
+        "test/parallel/test-timers-unref-active.js",
+        "test/parallel/test-timers-unref-remove-other-unref-timers-only-one-fires.js",
+        "test/parallel/test-timers-unref-remove-other-unref-timers.js",
+        "test/parallel/test-timers-unref-throw-then-ref.js",
+        "test/parallel/test-timers-unref.js",
+        "test/parallel/test-timers-unrefd-interval-still-fires.js",
+        "test/parallel/test-timers-unrefed-in-beforeexit.js",
+        "test/parallel/test-timers-unrefed-in-callback.js",
+        "test/parallel/test-timers-user-call.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-15",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "streams-local-io/fs-host-io",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-fs-cp.mjs",
+        "test/parallel/test-fs-error-messages.js",
+        "test/parallel/test-fs-filehandle.js",
+        "test/parallel/test-fs-fmap.js",
+        "test/parallel/test-fs-internal-assertencoding.js",
+        "test/parallel/test-fs-lchmod.js",
+        "test/parallel/test-fs-lchown.js",
+        "test/parallel/test-fs-long-path.js",
+        "test/parallel/test-fs-make-callback.js",
+        "test/parallel/test-fs-makeStatsCallback.js",
+        "test/parallel/test-fs-mkdir-recursive-eaccess.js",
+        "test/parallel/test-fs-promises-file-handle-read-worker.js",
+        "test/parallel/test-fs-promises.js",
+        "test/parallel/test-fs-read-file-sync-hostname.js",
+        "test/parallel/test-fs-read-position-validation.mjs",
+        "test/parallel/test-fs-read-stream-concurrent-reads.js",
+        "test/parallel/test-fs-read-stream-err.js",
+        "test/parallel/test-fs-read-stream-fd-leak.js",
+        "test/parallel/test-fs-read-stream-inherit.js",
+        "test/parallel/test-fs-read-stream-patch-open.js",
+        "test/parallel/test-fs-read-stream-pos.js",
+        "test/parallel/test-fs-read-stream-resume.js",
+        "test/parallel/test-fs-read-stream-throw-type-error.js",
+        "test/parallel/test-fs-read-stream.js",
+        "test/parallel/test-fs-readSync-position-validation.mjs",
+        "test/parallel/test-fs-readdir-recursive.js",
+        "test/parallel/test-fs-readdir-stack-overflow.js",
+        "test/parallel/test-fs-readdir-ucs2.js",
+        "test/parallel/test-fs-readfile-eof.js",
+        "test/parallel/test-fs-readfile-error.js",
+        "test/parallel/test-fs-readfile-pipe-large.js",
+        "test/parallel/test-fs-readfile-pipe.js",
+        "test/parallel/test-fs-readfilesync-enoent.js",
+        "test/parallel/test-fs-readfilesync-pipe-large.js",
+        "test/parallel/test-fs-realpath-on-substed-drive.js",
+        "test/parallel/test-fs-realpath-pipe.js",
+        "test/parallel/test-fs-rm.js",
+        "test/parallel/test-fs-sir-writes-alot.js",
+        "test/parallel/test-fs-stat-bigint.js",
+        "test/parallel/test-fs-stat-date.mjs",
+        "test/parallel/test-fs-stream-construct-compat-error-read.js",
+        "test/parallel/test-fs-stream-construct-compat-error-write.js",
+        "test/parallel/test-fs-stream-construct-compat-graceful-fs.js",
+        "test/parallel/test-fs-stream-construct-compat-old-node.js",
+        "test/parallel/test-fs-stream-destroy-emit-error.js",
+        "test/parallel/test-fs-stream-double-close.js",
+        "test/parallel/test-fs-stream-fs-options.js",
+        "test/parallel/test-fs-stream-options.js",
+        "test/parallel/test-fs-symlink-dir-junction-relative.js",
+        "test/parallel/test-fs-symlink-dir-junction.js",
+        "test/parallel/test-fs-symlink-dir.js",
+        "test/parallel/test-fs-symlink-longpath.js",
+        "test/parallel/test-fs-syncwritestream.js",
+        "test/parallel/test-fs-utils-get-dirents.js",
+        "test/parallel/test-fs-utimes-y2K38.js",
+        "test/parallel/test-fs-watch-recursive-assert-leaks.js",
+        "test/parallel/test-fs-watch-recursive-linux-parallel-remove.js",
+        "test/parallel/test-fs-write-buffer-large.js",
+        "test/parallel/test-fs-write-file-invalid-path.js",
+        "test/parallel/test-fs-write-reuse-callback.js",
+        "test/parallel/test-fs-write-sigxfsz.js",
+        "test/parallel/test-fs-write-stream-change-open.js",
+        "test/parallel/test-fs-write-stream-close-without-callback.js",
+        "test/parallel/test-fs-write-stream-eagain.mjs",
+        "test/parallel/test-fs-write-stream-err.js",
+        "test/parallel/test-fs-write-stream-file-handle-2.js",
+        "test/parallel/test-fs-write-stream-flush.js",
+        "test/parallel/test-fs-write-stream-fs.js",
+        "test/parallel/test-fs-write-stream-patch-open.js",
+        "test/parallel/test-fs-write-stream-throw-type-error.js",
+        "test/parallel/test-fs-write.js",
+        "test/parallel/test-fs-writestream-open-write.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-16",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "streams-local-io/readline-tty",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-readline-emit-keypress-events.js",
+        "test/parallel/test-readline-interface-escapecodetimeout.js",
+        "test/parallel/test-readline-interface-no-trailing-newline.js",
+        "test/parallel/test-readline-interface-recursive-writes.js",
+        "test/parallel/test-readline-keys.js",
+        "test/parallel/test-readline-position.js",
+        "test/parallel/test-readline-promises-tab-complete.js",
+        "test/parallel/test-readline-reopen.js",
+        "test/parallel/test-readline-set-raw-mode.js",
+        "test/parallel/test-readline-tab-complete.js",
+        "test/parallel/test-readline-undefined-columns.js",
+        "test/parallel/test-readline.js"
+      ]
+    },
+    {
+      "id": "node20-requires_unpromoted_node_surface-17",
+      "expectation": "expected_gap",
+      "classification": "requires_unpromoted_node_surface",
+      "owner": "streams-local-io/stream",
+      "reason": "This official fixture is not referenced by the non-ignored Rust compatibility lane yet, so it remains an owner-backed promotion gap rather than a green support claim.",
+      "test_paths": [
+        "test/parallel/test-stream-asIndexedPairs.mjs",
+        "test/parallel/test-stream-base-typechecking.js",
+        "test/parallel/test-stream-destroy.js",
+        "test/parallel/test-stream-iterator-helpers-test262-tests.mjs",
+        "test/parallel/test-stream-once-readable-pipe.js",
+        "test/parallel/test-stream-pipe-await-drain-manual-resume.js",
+        "test/parallel/test-stream-pipe-await-drain-push-while-write.js",
+        "test/parallel/test-stream-pipe-cleanup-pause.js",
+        "test/parallel/test-stream-pipe-error-handling.js",
+        "test/parallel/test-stream-pipe-error-unhandled.js",
+        "test/parallel/test-stream-pipe-flow-after-unpipe.js",
+        "test/parallel/test-stream-pipe-manual-resume.js",
+        "test/parallel/test-stream-pipe-needDrain.js",
+        "test/parallel/test-stream-pipe-unpipe-streams.js",
+        "test/parallel/test-stream-pipe-without-listenerCount.js",
+        "test/parallel/test-stream-pipeline-http2.js",
+        "test/parallel/test-stream-pipeline-process.js",
+        "test/parallel/test-stream-pipeline-queued-end-in-destroy.js",
+        "test/parallel/test-stream-preprocess.js",
+        "test/parallel/test-stream-readable-async-iterators.js",
+        "test/parallel/test-stream-readable-to-web.js",
+        "test/parallel/test-stream-readable-unpipe-resume.js",
+        "test/parallel/test-stream-readableListening-state.js",
+        "test/parallel/test-stream-some-find-every.mjs",
+        "test/parallel/test-stream-toWeb-allows-server-response.js",
+        "test/parallel/test-stream-transform-destroy.js",
+        "test/parallel/test-stream-wrap-drain.js",
+        "test/parallel/test-stream-wrap-encoding.js",
+        "test/parallel/test-stream-wrap.js"
+      ]
+    },
+    {
+      "id": "node20-requires_wpt_harness-18",
+      "expectation": "expected_gap",
+      "classification": "requires_wpt_harness",
+      "owner": "node-compat/wpt-harness",
+      "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
+      "test_paths": [
+        "test/wpt/test-streams.js",
+        "test/wpt/test-timers.js"
+      ]
+    },
+    {
+      "id": "node20-upstream_known_issue_or_platform_boundary-19",
+      "expectation": "expected_gap",
+      "classification": "upstream_known_issue_or_platform_boundary",
+      "owner": "node-compat/platform-boundary",
+      "reason": "This official fixture requires a dedicated host, ordering, stress, native, or standards harness before it can become a green support claim.",
+      "test_paths": [
+        "test/known_issues/test-fs-writeFileSync-invalid-windows.js",
+        "test/known_issues/test-stream-writable-sync-error.js"
+      ]
+    },
+    {
+      "id": "node20-support_fixture_not_top_level_test-20",
+      "expectation": "expected_skip",
+      "classification": "support_fixture_not_top_level_test",
+      "owner": "node-compat-denominator/fixture-sync",
+      "reason": "This file lives under test/fixtures and is support data for other official Node tests, not a top-level runnable compatibility test.",
+      "test_paths": [
+        "test/fixtures/test-fs-readfile-error.js",
+        "test/fixtures/test-fs-stat-sync-overflow.js",
+        "test/fixtures/wpt/streams/resources/test-utils.js"
+      ]
+    },
+    {
+      "id": "node20-vendored_non_official_placeholder-21",
+      "expectation": "expected_skip",
+      "classification": "vendored_non_official_placeholder",
+      "owner": "node-compat-denominator/fixture-sync",
+      "reason": "The vendored file is empty fixture corpus residue, so it is excluded from green support claims until a runnable upstream counterpart is proven and promoted.",
+      "test_paths": [
+        "test/parallel/test-module-setsourcemapssupport.js",
+        "test/parallel/test-v8-string-is-one-byte-representation.js"
+      ]
+    }
+  ]
+}

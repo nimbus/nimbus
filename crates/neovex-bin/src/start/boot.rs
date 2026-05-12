@@ -14,7 +14,7 @@ use super::config::{
 };
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
-use crate::codegen::run_codegen_for_app_dir;
+use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
@@ -136,7 +136,13 @@ pub(super) async fn run_codegen_preflight(
         "running one-shot codegen preflight for {}",
         app_dir.display()
     ));
-    run_codegen_for_app_dir(app_dir).await?;
+    run_codegen_for_app_dir_with_options(
+        app_dir,
+        CodegenOptions {
+            debug_node_apis: command.debug_node_apis,
+        },
+    )
+    .await?;
     emit_start_info(format!("generated app artifacts for {}", app_dir.display()));
     Ok(())
 }

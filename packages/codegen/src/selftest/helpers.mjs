@@ -6,17 +6,24 @@ import { fileURLToPath } from "node:url";
 
 const cliPath = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 
-async function createAppFixture(files, { sourceDir = "convex" } = {}) {
+async function createAppFixture(files, { sourceDir = "convex", rootFiles = {} } = {}) {
   const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex_codegen_"));
   await fs.mkdir(path.join(appDir, sourceDir), { recursive: true });
+  for (const [fileName, source] of Object.entries(rootFiles)) {
+    const filePath = path.join(appDir, fileName);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, source, "utf8");
+  }
   for (const [fileName, source] of Object.entries(files)) {
-    await fs.writeFile(path.join(appDir, sourceDir, fileName), source, "utf8");
+    const filePath = path.join(appDir, sourceDir, fileName);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, source, "utf8");
   }
   return appDir;
 }
 
-function runCli(appDir) {
-  return spawnSync(process.execPath, [cliPath, "--app", appDir], {
+function runCli(appDir, extraArgs = []) {
+  return spawnSync(process.execPath, [cliPath, "--app", appDir, ...extraArgs], {
     encoding: "utf8",
   });
 }
