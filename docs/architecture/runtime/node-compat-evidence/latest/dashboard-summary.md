@@ -9,20 +9,20 @@
 - source: `target/node-compat/status/status-summary.json`
 - rust ignored tests: `61`
 
-| Lane | Upstream | Role | Green | Vendored | Unclassified | Ratio |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| `node20` | `v20.20.2` | `validation` | 913 | 1308 | 395 | 69.8% |
-| `node22` | `v22.15.0` | `primary` | 994 | 1283 | 129 | 77.5% |
-| `node24` | `v24.15.0` | `preview` | 925 | 1495 | 570 | 61.9% |
+| Lane | Upstream | Role | Green | Classified non-green | Documented/classified | Vendored | Unclassified | Ratio |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `node20` | `v20.20.2` | `validation` | 913 | 0 | 913 | 1308 | 395 | 69.8% |
+| `node22` | `v22.15.0` | `primary` | 994 | 289 | 1283 | 1283 | 0 | 77.5% |
+| `node24` | `v24.15.0` | `preview` | 925 | 0 | 925 | 1495 | 570 | 61.9% |
 
 ### Suite Warnings
 - none
 
 ## Fixture Inventory
 
-| Lane | Upstream | Vendored | Documented green | Classified non-green | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node22` | `v22.15.0` | 1283 | 994 | 160 | 129 | 901 | 382 | 93 | 2 |
+| Lane | Upstream | Vendored | Documented green | Classified non-green | Documented/classified | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `node22` | `v22.15.0` | 1283 | 994 | 289 | 1283 | 0 | 901 | 382 | 93 | 2 |
 
 ## Slice Reports
 

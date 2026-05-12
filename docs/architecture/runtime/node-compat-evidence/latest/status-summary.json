@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-12T00:55:38.328186+00:00",
+  "generated_at": "2026-05-12T00:59:31.410862+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested green subset plus explicit lane classification catalogs. Classified non-green entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.",
   "lane_count": 3,
@@ -45,6 +45,7 @@
       "vendored_test_file_count": 1308,
       "documented_manifested_green_count": 913,
       "classified_non_green_count": 0,
+      "documented_or_classified_count": 913,
       "unmanifested_or_unclassified_count": 395,
       "documented_manifested_green_ratio": 0.698012,
       "classification_catalog": {
@@ -74,15 +75,16 @@
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 1283,
       "documented_manifested_green_count": 994,
-      "classified_non_green_count": 160,
-      "unmanifested_or_unclassified_count": 129,
+      "classified_non_green_count": 289,
+      "documented_or_classified_count": 1283,
+      "unmanifested_or_unclassified_count": 0,
       "documented_manifested_green_ratio": 0.774747,
       "classification_catalog": {
         "catalog_path": "tests/node-compat/classifications/node22.json",
         "catalog_present": true,
-        "classified_non_green_count": 160,
+        "classified_non_green_count": 289,
         "by_expectation": {
-          "expected_gap": 153,
+          "expected_gap": 282,
           "expected_skip": 7
         },
         "by_classification": {
@@ -92,6 +94,8 @@
           "requires_diagnostics_channel_loader_instrumentation": 4,
           "requires_diagnostics_channel_tracing_completion": 14,
           "requires_diagnostics_channel_worker_instrumentation": 1,
+          "requires_fs_host_io_completion": 75,
+          "requires_host_or_standards_tail_completion": 10,
           "requires_host_process_abort_harness": 1,
           "requires_native_addon_non_node_context_harness": 1,
           "requires_native_async_resource_accounting": 6,
@@ -99,6 +103,7 @@
           "requires_pseudo_tty_host_harness": 11,
           "requires_pummel_stress_harness": 11,
           "requires_sequential_host_state_harness": 13,
+          "requires_timer_scheduler_completion": 44,
           "requires_wpt_harness": 2,
           "support_fixture_not_top_level_test": 3,
           "upstream_known_issue_or_platform_boundary": 2,
@@ -1305,6 +1310,1038 @@
             "owner": "process-and-timing/process-host",
             "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
             "group_id": "node22-process-long-tail-host-surface"
+          },
+          {
+            "test_path": "test/parallel/test-fs-cp.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-error-messages.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-filehandle.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-fmap.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-internal-assertencoding.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-lchmod.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-lchown.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-long-path.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-make-callback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-makeStatsCallback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-mkdir-recursive-eaccess.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-promises-file-handle-read-worker.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-promises.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-file-sync-hostname.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-position-validation.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-promises-position-validation.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-concurrent-reads.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-err.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-fd-leak.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-inherit.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-patch-open.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-pos.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-resume.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream-throw-type-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-read-stream.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readSync-position-validation.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readdir-pipe.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readdir-recursive.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readdir-stack-overflow.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readdir-types-symlinks.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readdir-ucs2.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readfile-eof.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readfile-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readfile-pipe-large.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readfile-pipe.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readfilesync-enoent.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-readfilesync-pipe-large.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-realpath-on-substed-drive.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-realpath-pipe.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-rm.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-sir-writes-alot.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stat-bigint.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stat-date.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-construct-compat-error-read.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-construct-compat-error-write.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-construct-compat-graceful-fs.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-construct-compat-old-node.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-destroy-emit-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-double-close.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-fs-options.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-stream-options.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-symlink-dir-junction-relative.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-symlink-dir-junction.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-symlink-dir.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-symlink-longpath.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-syncwritestream.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-utils-get-dirents.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-utimes-y2K38.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-watch-recursive-assert-leaks.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-watch-recursive-linux-parallel-remove.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-buffer-large.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-file-invalid-path.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-reuse-callback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-sigxfsz.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-change-open.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-close-without-callback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-eagain.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-err.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-file-handle-2.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-flush.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-fs.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-patch-open.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write-stream-throw-type-error.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-write.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-fs-writestream-open-write.js",
+            "expectation": "expected_gap",
+            "classification": "requires_fs_host_io_completion",
+            "owner": "streams-local-io/fs-host-io",
+            "reason": "These official Node22 filesystem fixtures are outside the current manifested green local-I/O subset and cover recursive operations, file handles, watchers, symlinks, realpath/stat/date edges, stream-backed fs behavior, large writes, and host/platform-sensitive error surfaces. They remain an fs host-I/O completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-fs-long-tail-host-io"
+          },
+          {
+            "test_path": "test/parallel/test-timers-active.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-clearImmediate-als.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-destroyed.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-dispose.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-enroll-invalid-msecs.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-enroll-second-time.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-immediate-promisified.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-immediate-queue-throw.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-immediate-queue.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-immediate-unref-nested-once.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-immediate-unref-simple.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-immediate-unref.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-interval-promisified.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-interval-throw.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-linked-list.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-max-duration-warning.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-nested.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-next-tick.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-now.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-ordering.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-process-tampering.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-promises-scheduler.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-promises.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-refresh-in-callback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-refresh.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-reset-process-domain-on-throw.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-same-timeout-wrong-list-deleted.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-setimmediate-infinite-loop.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-socket-timeout-removes-other-socket-unref-timer.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-timeout-promisified.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-timeout-to-interval.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-timeout-with-non-integer.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-to-primitive.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-uncaught-exception.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unenroll-unref-interval.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unref-active.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unref-remove-other-unref-timers-only-one-fires.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unref-remove-other-unref-timers.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unref-throw-then-ref.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unref.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unrefd-interval-still-fires.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unrefed-in-beforeexit.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-unrefed-in-callback.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-timers-user-call.js",
+            "expectation": "expected_gap",
+            "classification": "requires_timer_scheduler_completion",
+            "owner": "process-and-timing/timers",
+            "reason": "These official Node22 timer fixtures are outside the current manifested green timers subset and cover unref/ref lifecycles, timer promises, async-local-storage interaction, domains, scheduler behavior, event-loop edge cases, disposal, primitive conversion, socket timeout interaction, and uncaught-exception paths. They remain a timer scheduler completion gap until promoted through measured runtime batches.",
+            "group_id": "node22-timers-long-tail-scheduler-surface"
+          },
+          {
+            "test_path": "test/parallel/test-os-homedir-no-envvar.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-os-process-priority.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-os-userinfo-handles-getter-errors.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-os.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-v8-string-is-one-byte-representation.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-whatwg-readablestream.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-whatwg-readablestream.mjs",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-whatwg-transformstream.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-whatwg-writablestream-close.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
+          },
+          {
+            "test_path": "test/parallel/test-whatwg-writablestream.js",
+            "expectation": "expected_gap",
+            "classification": "requires_host_or_standards_tail_completion",
+            "owner": "node-compat/host-standards-tail",
+            "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
+            "group_id": "node22-small-host-and-standards-tail"
           }
         ]
       }
@@ -1327,6 +2364,7 @@
       "vendored_test_file_count": 1495,
       "documented_manifested_green_count": 925,
       "classified_non_green_count": 0,
+      "documented_or_classified_count": 925,
       "unmanifested_or_unclassified_count": 570,
       "documented_manifested_green_ratio": 0.618729,
       "classification_catalog": {

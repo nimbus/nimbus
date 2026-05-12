@@ -560,6 +560,8 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
                 "vendored_test_file_count": len(fixtures),
                 "documented_manifested_green_count": documented_green,
                 "classified_non_green_count": classified_non_green,
+                "documented_or_classified_count": documented_green
+                + classified_non_green,
                 "unmanifested_or_unclassified_count": unmanifested_or_unclassified,
                 "documented_manifested_green_ratio": round(ratio, 6),
                 "classification_catalog": classification_summary,
@@ -593,6 +595,26 @@ def build_summary(
     )
     warnings.extend(expectation_summary["unexpected_passes"])
     for lane_summary in lane_summaries:
+        if (
+            lane_summary["documented_or_classified_count"]
+            > lane_summary["vendored_test_file_count"]
+        ):
+            warnings.append(
+                {
+                    "kind": "lane_documented_or_classified_count_exceeds_denominator",
+                    "lane": lane_summary["lane"],
+                    "vendored_test_file_count": lane_summary["vendored_test_file_count"],
+                    "documented_manifested_green_count": lane_summary[
+                        "documented_manifested_green_count"
+                    ],
+                    "classified_non_green_count": lane_summary[
+                        "classified_non_green_count"
+                    ],
+                    "documented_or_classified_count": lane_summary[
+                        "documented_or_classified_count"
+                    ],
+                }
+            )
         warnings.extend(
             {
                 "kind": "lane_classification_catalog_validation_error",
@@ -647,8 +669,8 @@ def build_markdown(summary: dict) -> str:
         "",
         "## Lane Summary",
         "",
-        "| Lane | Role | Upstream | Vendored test files | Documented green | Classified non-green | Unmanifested/unclassified | Ratio |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Lane | Role | Upstream | Vendored test files | Documented green | Classified non-green | Documented/classified | Unmanifested/unclassified | Ratio |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for lane in summary["lane_summaries"]:
         ratio = lane["documented_manifested_green_ratio"] * 100
@@ -658,6 +680,7 @@ def build_markdown(summary: dict) -> str:
             f"{lane['vendored_test_file_count']} | "
             f"{lane['documented_manifested_green_count']} | "
             f"{lane['classified_non_green_count']} | "
+            f"{lane['documented_or_classified_count']} | "
             f"{lane['unmanifested_or_unclassified_count']} | "
             f"{ratio:.1f}% |"
         )

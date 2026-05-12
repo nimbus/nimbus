@@ -52,7 +52,7 @@ Node22 vendored `test-*` file as one of:
 | NCM1 Inventory truth source | `done` | `make node-compat-inventory LANE=node22` emits JSON/Markdown showing vendored denominator, documented green count, Rust-referenced fixture paths, unreferenced candidates, and any reconstructability warnings. |
 | NCM2 Manifest-owned matrix seam | `in_progress` | Long-tail fixture batches that are practical to data-own are moved from inline historical Rust tables into manifest/generated inventory, with tests proving the generated inventory matches the execution set. |
 | NCM3 First Node22 classification batch | `done` | A small owner-coherent Node22 unclassified group is classified as green/expected-failure/skip/gap, with status/dashboard/trend deltas updated and focused runtime evidence recorded. |
-| NCM4 Iterative coverage batches | `in_progress` | Repeat NCM3 in family-sized batches until the Node22 unclassified count is zero or every remaining item has a precise owner-backed classification. |
+| NCM4 Iterative coverage batches | `done` | Repeat NCM3 in family-sized batches until the Node22 unclassified count is zero or every remaining item has a precise owner-backed classification. |
 | NCM5 Closeout audit | `pending` | Final review confirms docs, manifests, generated inventories, dashboards, and runtime tests agree; archive this plan only after the evidence is reproducible from make targets. |
 
 ## Verification Gates
@@ -120,3 +120,10 @@ Node22 vendored `test-*` file as one of:
   exit/abort, execve/dlopen, active-resource accounting, warnings, and signal
   behavior. Node22 now reports `994` documented green, `160` classified
   non-green, and `129` unmanifested/unclassified vendored files.
+- `2026-05-12`: Completed NCM4 status classification closeout. Classified the
+  fs long-tail host-I/O batch, timer scheduler tail, and final small
+  host/standards/runtime tail. The Node22 suite status now reports `994`
+  documented green, `289` classified non-green, and `0`
+  unmanifested/unclassified vendored files. The separate inventory report still
+  exposes the `93`-file documented-green reconstructability gap, so NCM2 remains
+  active.
