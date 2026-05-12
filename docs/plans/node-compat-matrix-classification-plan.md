@@ -100,3 +100,10 @@ Node22 vendored `test-*` file as one of:
   timers, and TTYWRAP as async-hooks native resource-accounting gaps. Node22
   now reports `994` documented green, `26` classified non-green, and `263`
   unmanifested/unclassified vendored files.
+- `2026-05-12`: Continued NCM4 with the remaining small non-parallel
+  directory tail: upstream `known_issues`, WPT fixtures, pummel stress tests,
+  and sequential host-state tests. These are now explicit expected gaps/skips
+  with owners for WPT harness, pummel stress, sequential host state, known
+  issues, and platform boundaries. Node22 now reports `994` documented green,
+  `54` classified non-green, and `235` unmanifested/unclassified vendored
+  files.

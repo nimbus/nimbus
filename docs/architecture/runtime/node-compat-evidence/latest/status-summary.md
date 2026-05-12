@@ -7,7 +7,7 @@ Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that d
 | Lane | Role | Upstream | Vendored test files | Documented green | Classified non-green | Unmanifested/unclassified | Ratio |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `validation` | `v20.20.2` | 1308 | 913 | 0 | 395 | 69.8% |
-| `node22` | `primary` | `v22.15.0` | 1283 | 994 | 26 | 263 | 77.5% |
+| `node22` | `primary` | `v22.15.0` | 1283 | 994 | 54 | 235 | 77.5% |
 | `node24` | `preview` | `v24.15.0` | 1495 | 925 | 0 | 570 | 61.9% |
 
 ## Lane Classification Catalogs
@@ -15,7 +15,7 @@ Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that d
 | Lane | Catalog | Classified non-green | By expectation | By classification |
 | --- | --- | ---: | --- | --- |
 | `node20` | `tests/node-compat/classifications/node20.json` | 0 | `{}` | `{}` |
-| `node22` | `tests/node-compat/classifications/node22.json` | 26 | `{"expected_gap": 19, "expected_skip": 7}` | `{"requires_host_process_abort_harness": 1, "requires_native_addon_non_node_context_harness": 1, "requires_native_async_resource_accounting": 6, "requires_pseudo_tty_host_harness": 11, "support_fixture_not_top_level_test": 3, "vendored_non_official_placeholder": 4}` |
+| `node22` | `tests/node-compat/classifications/node22.json` | 54 | `{"expected_gap": 47, "expected_skip": 7}` | `{"requires_host_process_abort_harness": 1, "requires_native_addon_non_node_context_harness": 1, "requires_native_async_resource_accounting": 6, "requires_pseudo_tty_host_harness": 11, "requires_pummel_stress_harness": 11, "requires_sequential_host_state_harness": 13, "requires_wpt_harness": 2, "support_fixture_not_top_level_test": 3, "upstream_known_issue_or_platform_boundary": 2, "vendored_non_official_placeholder": 4}` |
 | `node24` | `tests/node-compat/classifications/node24.json` | 0 | `{}` | `{}` |
 
 ## Family Green Denominator

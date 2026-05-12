@@ -12,7 +12,7 @@
 | Lane | Upstream | Role | Green | Vendored | Unclassified | Ratio |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `validation` | 913 | 1308 | 395 | 69.8% |
-| `node22` | `v22.15.0` | `primary` | 994 | 1283 | 263 | 77.5% |
+| `node22` | `v22.15.0` | `primary` | 994 | 1283 | 235 | 77.5% |
 | `node24` | `v24.15.0` | `preview` | 925 | 1495 | 570 | 61.9% |
 
 ### Suite Warnings
@@ -22,7 +22,7 @@
 
 | Lane | Upstream | Vendored | Documented green | Classified non-green | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node22` | `v22.15.0` | 1283 | 994 | 26 | 263 | 901 | 382 | 93 | 2 |
+| `node22` | `v22.15.0` | 1283 | 994 | 54 | 235 | 901 | 382 | 93 | 2 |
 
 ## Slice Reports
 

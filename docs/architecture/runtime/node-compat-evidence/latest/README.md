@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node compatibility evidence outputs.
 
-- evidence_generated_at: `2026-05-12T00:47:33.870690+00:00`
+- evidence_generated_at: `2026-05-12T00:50:20.080984+00:00`
 - publish_root: `docs/architecture/runtime/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -12,7 +12,7 @@ This directory is the checked-in latest snapshot of the generated Node compatibi
 | Lane | Upstream | Vendored test files | Documented green | Unmanifested/unclassified | Ratio |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 1308 | 913 | 395 | 69.8% |
-| `node22` | `v22.15.0` | 1283 | 994 | 263 | 77.5% |
+| `node22` | `v22.15.0` | 1283 | 994 | 235 | 77.5% |
 | `node24` | `v24.15.0` | 1495 | 925 | 570 | 61.9% |
 
 ## Expectation Coverage
