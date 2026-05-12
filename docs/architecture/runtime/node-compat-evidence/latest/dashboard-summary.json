@@ -55,15 +55,15 @@
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1283,
         "documented_manifested_green_count": 994,
-        "classified_non_green_count": 80,
-        "unmanifested_or_unclassified_count": 209,
+        "classified_non_green_count": 160,
+        "unmanifested_or_unclassified_count": 129,
         "documented_manifested_green_ratio": 0.774747,
         "classification_catalog": {
           "catalog_path": "tests/node-compat/classifications/node22.json",
           "catalog_present": true,
-          "classified_non_green_count": 80,
+          "classified_non_green_count": 160,
           "by_expectation": {
-            "expected_gap": 73,
+            "expected_gap": 153,
             "expected_skip": 7
           },
           "by_classification": {
@@ -76,6 +76,7 @@
             "requires_host_process_abort_harness": 1,
             "requires_native_addon_non_node_context_harness": 1,
             "requires_native_async_resource_accounting": 6,
+            "requires_process_host_surface_completion": 80,
             "requires_pseudo_tty_host_harness": 11,
             "requires_pummel_stress_harness": 11,
             "requires_sequential_host_state_harness": 13,
@@ -645,6 +646,646 @@
               "classification": "requires_diagnostics_channel_worker_instrumentation",
               "owner": "loader-context/worker-diagnostics",
               "reason": "This diagnostics_channel fixture depends on worker-thread instrumentation. The current embedded Node22 lane does not yet own worker diagnostics propagation, so it remains a precise worker diagnostics gap."
+            },
+            {
+              "test_path": "test/parallel/test-process-abort.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-argv-0.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-assert.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-available-memory.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-beforeexit-throw-exit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-beforeexit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-binding-internalbinding-allowlist.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-binding-util.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-binding.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-chdir-errormessage.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-chdir.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-config.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-constrained-memory.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-cpuUsage.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-dlopen-error-message-crash.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-dlopen-undefined-exports.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-domain-segfault.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-emit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-allowed-flags-are-documented.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-allowed-flags.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-deprecation.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-ignore-getter-setter.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-sideeffects.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-tz.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env-windows-error-reset.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-env.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-euid-egid.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exception-capture-errors.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exception-capture-should-abort-on-uncaught-setflagsfromstring.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exception-capture-should-abort-on-uncaught.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exception-capture.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exec-argv.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execpath.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-abort.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-on-exit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-permission-fail.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-permission-granted.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-socket.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-validation.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve-worker-threads.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-execve.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exit-code-validation.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exit-code.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exit-from-before-exit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exit-handler.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exit-recursive.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-exit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-external-stdio-close-spawn.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-external-stdio-close.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-get-builtin.mjs",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactivehandles.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiverequests.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiveresources-track-active-handles.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiveresources-track-active-requests.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiveresources-track-interval-lifetime.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiveresources-track-multiple-timers.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiveresources-track-timer-lifetime.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getactiveresources.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-getgroups.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-hrtime-bigint.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-hrtime.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-initgroups.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-kill-null.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-kill-pid.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-ppid.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-raw-debug.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-really-exit.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-redirect-warnings-env.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-redirect-warnings.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-ref-unref.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-remove-all-signal-listeners.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-setgroups.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-setsourcemapsenabled.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-title-cli.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-uid-gid.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-umask-mask.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-umask.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-uncaught-exception-monitor.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-versions.js",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
+            },
+            {
+              "test_path": "test/parallel/test-process-warnings.mjs",
+              "expectation": "expected_gap",
+              "classification": "requires_process_host_surface_completion",
+              "owner": "process-and-timing/process-host",
+              "reason": "These official Node22 process fixtures are outside the current manifested green process subset and cover host-sensitive process state, identity, environment, exit/abort, execve/dlopen, active-resource accounting, warnings, and signal behavior. They remain a process-host completion gap until promoted through measured runtime batches.",
+              "group_id": "node22-process-long-tail-host-surface"
             }
           ]
         }
@@ -696,8 +1337,8 @@
       "counts": {
         "vendored_test_file_count": 1283,
         "documented_manifested_green_count": 994,
-        "classified_non_green_count": 80,
-        "documented_unmanifested_or_unclassified_count": 209,
+        "classified_non_green_count": 160,
+        "documented_unmanifested_or_unclassified_count": 129,
         "rust_referenced_test_file_count": 901,
         "rust_unreferenced_test_file_count": 382,
         "documented_green_reconstructability_gap_count": 93
@@ -713,7 +1354,7 @@
         {
           "kind": "rust_unreferenced_count_differs_from_status_unclassified_count",
           "rust_unreferenced_test_file_count": 382,
-          "status_unmanifested_or_unclassified_count": 209,
+          "status_unmanifested_or_unclassified_count": 129,
           "reason": "the current status denominator is count-based from family docs, while this inventory is path-based from the Rust harness literals"
         }
       ]

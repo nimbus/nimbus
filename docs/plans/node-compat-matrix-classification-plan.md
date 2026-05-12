@@ -113,3 +113,10 @@ Node22 vendored `test-*` file as one of:
   diagnostics-channel completion gaps. Node22 now reports `994` documented
   green, `80` classified non-green, and `209` unmanifested/unclassified
   vendored files.
+- `2026-05-12`: Advanced NCM2/NCM4 by adding grouped lane-classification
+  entries so large owner-coherent batches can live as manifest data instead of
+  repeated one-row JSON. Used that grouped shape for the 80-file process
+  long-tail host-surface batch covering process state, identity, environment,
+  exit/abort, execve/dlopen, active-resource accounting, warnings, and signal
+  behavior. Node22 now reports `994` documented green, `160` classified
+  non-green, and `129` unmanifested/unclassified vendored files.
