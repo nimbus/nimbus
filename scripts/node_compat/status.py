@@ -28,6 +28,7 @@ VALID_LANE_CLASSIFICATION_EXPECTATIONS = {
     "expected_gap",
     "expected_skip",
 }
+RUST_NODE_COMPAT_PATH = Path("crates/neovex-runtime/src/runtime/tests/node_compat.rs")
 
 
 def repo_root() -> Path:
@@ -67,12 +68,30 @@ def is_node_test_file(path: Path) -> bool:
     return path.name.startswith("test-") and path.suffix in TEST_FILE_SUFFIXES
 
 
+def normalize_rust_fixture_path(path: str) -> str:
+    return re.sub(r"^node(?:20|22|24)/", "", path)
+
+
 def discover_fixture_files(fixture_root: Path) -> list[str]:
     return sorted(
         str(path.relative_to(fixture_root))
         for path in fixture_root.rglob("*")
         if path.is_file() and is_node_test_file(path)
     )
+
+
+def extract_rust_referenced_tests(vendored_tests: set[str]) -> list[str]:
+    source = repo_root() / RUST_NODE_COMPAT_PATH
+    text = source.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r'"((?:node(?:20|22|24)/)?test/[^"\\]*(?:\.js|\.mjs|\.cjs))"'
+    )
+    referenced: set[str] = set()
+    for match in pattern.finditer(text):
+        candidate = normalize_rust_fixture_path(match.group(1))
+        if candidate in vendored_tests:
+            referenced.add(candidate)
+    return sorted(referenced)
 
 
 def documented_manifested_count(manifest_doc: Path, lane: str) -> int | None:
@@ -534,7 +553,8 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
         fixture_root = repo_root() / lane["vendored_fixture_root"]
         fixtures = discover_fixture_files(fixture_root)
         fixture_set = set(fixtures)
-        documented_green = sum(
+        vendored_display_paths = {f"test/{fixture}" for fixture in fixtures}
+        documented_family_green = sum(
             family["documented_manifested_green_by_lane"].get(lane["lane"]) or 0
             for family in family_summaries
         )
@@ -542,6 +562,21 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
             lane["lane"], fixture_set
         )
         classified_non_green = classification_summary["classified_non_green_count"]
+        documented_green = documented_family_green
+        documented_green_source = "family_manifest_docs"
+        path_owned_green: int | None = None
+        if lane["lane"] == "node22":
+            rust_referenced = set(extract_rust_referenced_tests(vendored_display_paths))
+            classified_paths = {
+                entry["test_path"]
+                for entry in classification_summary["entries"]
+                if isinstance(entry.get("test_path"), str)
+            }
+            path_owned_green = len(rust_referenced - classified_paths)
+            documented_green = path_owned_green
+            documented_green_source = (
+                "rust_path_owned_fixture_inventory_minus_classified_non_green"
+            )
         unmanifested_or_unclassified = max(
             0, len(fixtures) - documented_green - classified_non_green
         )
@@ -559,6 +594,9 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
                 "denominator_kind": "vendored_fixture_root_test_files",
                 "vendored_test_file_count": len(fixtures),
                 "documented_manifested_green_count": documented_green,
+                "documented_manifested_green_source": documented_green_source,
+                "documented_family_green_count": documented_family_green,
+                "path_owned_manifested_green_count": path_owned_green,
                 "classified_non_green_count": classified_non_green,
                 "documented_or_classified_count": documented_green
                 + classified_non_green,
@@ -640,9 +678,12 @@ def build_summary(
         "status_contract": (
             "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then "
             "compares that denominator to the documented manifested green subset "
-            "plus explicit lane classification catalogs. Classified non-green "
-            "entries are not pass claims; the remaining remainder is intentionally "
-            "reported as unmanifested_or_unclassified, not as pass or fail."
+            "plus explicit lane classification catalogs. The Node22 primary lane "
+            "uses path-owned Rust fixture evidence minus explicit non-green "
+            "classifications as the green numerator when prose family counts are "
+            "not reconstructable. Classified non-green entries are not pass "
+            "claims; the remaining remainder is intentionally reported as "
+            "unmanifested_or_unclassified, not as pass or fail."
         ),
         "lane_count": len(lane_summaries),
         "family_count": len(family_summaries),

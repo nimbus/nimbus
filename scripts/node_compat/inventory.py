@@ -143,6 +143,7 @@ def build_inventory(lane: str) -> dict[str, Any]:
     rust_unreferenced_classified = sorted(unreferenced_test_set & classified_paths)
     rust_unreferenced_unclassified = sorted(unreferenced_test_set - classified_paths)
     classified_not_rust_unreferenced = sorted(classified_paths - unreferenced_test_set)
+    path_owned_green_tests = sorted(rust_referenced_set - classified_paths)
     reconstructability_gap = max(0, documented_green - len(rust_referenced_tests))
 
     warnings: list[dict[str, Any]] = []
@@ -201,14 +202,23 @@ def build_inventory(lane: str) -> dict[str, Any]:
             "classified_non_green_not_rust_unreferenced_count": len(
                 classified_not_rust_unreferenced
             ),
+            "path_owned_green_test_count": len(path_owned_green_tests),
             "documented_green_reconstructability_gap_count": reconstructability_gap,
         },
         "contracts": [
             "vendored_test_file_count counts lane-local test-* JS/CJS/MJS files under the checked-in fixture root",
             "documented_manifested_green_count is imported from the existing suite status workflow and remains the public evidence numerator",
+            "path_owned_green_tests is the machine-owned path list behind the Node22 green numerator",
             "rust_referenced_test_file_count is a path-based audit of fixture literals currently referenced by the Rust node_compat harness",
             "unreferenced_tests is an actionable candidate list, not a failure list and not a support claim",
         ],
+        "path_owned_green_by_directory": summarize_groups(
+            path_owned_green_tests, mode="directory"
+        ),
+        "path_owned_green_by_prefix": summarize_groups(
+            path_owned_green_tests, mode="prefix"
+        ),
+        "path_owned_green_tests": path_owned_green_tests,
         "unreferenced_by_directory": summarize_groups(
             rust_unreferenced_unclassified, mode="directory"
         ),
@@ -251,6 +261,7 @@ def build_markdown(inventory: dict[str, Any]) -> str:
         f"| Rust-unreferenced classified non-green | {counts['rust_unreferenced_classified_non_green_count']} |",
         f"| Rust-unreferenced unclassified | {counts['rust_unreferenced_unclassified_count']} |",
         f"| Classified non-green not Rust-unreferenced | {counts['classified_non_green_not_rust_unreferenced_count']} |",
+        f"| Path-owned green tests | {counts['path_owned_green_test_count']} |",
         f"| Documented-green reconstructability gap | {counts['documented_green_reconstructability_gap_count']} |",
         "",
         "## Largest Unreferenced Directories",

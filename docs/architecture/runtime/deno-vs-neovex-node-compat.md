@@ -16,15 +16,15 @@ intentional restrictions. The NLC plan (NLC0-NLC10) is now complete.
 | Modules functionally usable               | 38/44  86%     | 43/44  98%     |
 | Modules verified with upstream Node tests | unknown        | 44/44 100%     |
 | Modules improved beyond Deno baseline     | --             | 18/44  41%     |
-| Official Node test files green (Node22)   | not published  | 994            |
+| Official Node test files green (Node22)   | not published  | 898            |
 | Package canaries verified                 | not published  | 10 (5 networking + 5 tooling) |
 | Oracle comparison system                  | not published  | Nightly CI with version-matched Node |
 | Nightly CI dashboard                      | not published  | `.github/workflows/node-compat-nightly.yml` |
 
 Neovex's primary advantage is **verification depth**, not implementation
 breadth. Both runtimes share the same `ext/node` codebase. But Neovex has
-run 994 official upstream Node.js test files across three LTS lanes
-(Node22 primary, Node20 validation, Node24 preview), verified 10 package
+run 898 lane-local official upstream Node.js test files in the Node22 primary
+lane, tracks Node20 validation and Node24 preview lanes, verified 10 package
 canaries across Application and Tooling profiles, and fixed issues that
 stock Deno has not.
 
@@ -147,7 +147,7 @@ rather than full SEA support, which is host-binary-specific).
 
 | Metric | Deno | Neovex |
 | ------ | ---- | ------ |
-| Official upstream Node test files run | not published | 994 (Node22) |
+| Official upstream Node test files run | not published | 898 (Node22 path-owned green) |
 | LTS lanes tested | 1 (own runner) | 3 (Node22, Node20, Node24) |
 | Package canaries verified | not published | 10 (express, fastify, socket.io, undici, axios, jest, tsx, ts-node, prisma, next) |
 | Per-module failure inventories | not published | all families checked in |
@@ -247,8 +247,9 @@ profile-scoped exclusions"** — evidence-backed rather than aspirational.
   marked **Inherited** use Deno's code without separate Neovex
   verification. They are expected to have the same behavior as stock
   Deno.
-- The **994** upstream test count represents official `nodejs/node` test
-  files (not Deno's own test suite) run through Neovex's compatibility
-  harness across the Node22 primary lane. This count grew from 941 (NLC8)
-  to 989+ (NLC9 partial) to 994 (NLC9 done, loader-context widened to
-  239/175/179 across Node22/Node20/Node24).
+- The **898** upstream test count represents lane-local official
+  `nodejs/node v22.15.0` test files (not Deno's own test suite) that are
+  path-owned by Neovex's compatibility harness across the Node22 primary
+  lane after excluding explicit non-green classifications. Earlier family
+  prose counts summed to 994, but the generated status dashboard now prefers
+  reconstructable path evidence over prose counts when the two disagree.

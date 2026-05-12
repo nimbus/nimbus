@@ -67,9 +67,12 @@ lane-separation metadata needed for successor-scope trust work:
 
 `make node-compat-status` is the truthful suite-wide denominator surface. It
 counts every lane-local vendored `test-*` JS/CJS/MJS fixture and compares that
-denominator to the documented green manifested subset. Anything outside the
-manifested green denominator is reported as `unmanifested_or_unclassified`, not
-as pass or fail. The same report validates
+denominator to the documented green manifested subset plus explicit lane
+classification catalogs. The Node22 primary lane uses reconstructable
+path-owned fixture evidence as its green numerator when prose family counts and
+path evidence disagree. Anything outside the manifested green denominator and
+classification catalogs is reported as `unmanifested_or_unclassified`, not as
+pass or fail. The same report validates
 `tests/node-compat/expectations/rust-watchpoints.json` against the current Rust
 `#[ignore]` inventory and can fail on unexpected passes when an observed-results
 JSON file is provided through `OBSERVED_RESULTS`.

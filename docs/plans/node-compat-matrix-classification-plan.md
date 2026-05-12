@@ -32,7 +32,7 @@ Node22 vendored `test-*` file as one of:
 - Keep `node_compat.rs` as the execution engine and fixture-harness owner, not
   the long-term inventory database.
 
-## Baseline
+## Starting Baseline
 
 - Node20 validation lane: `913 / 1308` documented green, `395`
   unmanifested/unclassified.
@@ -50,10 +50,10 @@ Node22 vendored `test-*` file as one of:
 | ID | Status | Exit criteria |
 | --- | --- | --- |
 | NCM1 Inventory truth source | `done` | `make node-compat-inventory LANE=node22` emits JSON/Markdown showing vendored denominator, documented green count, Rust-referenced fixture paths, unreferenced candidates, and any reconstructability warnings. |
-| NCM2 Manifest-owned matrix seam | `in_progress` | Long-tail fixture batches that are practical to data-own are moved from inline historical Rust tables into manifest/generated inventory, with tests proving the generated inventory matches the execution set. |
+| NCM2 Manifest-owned matrix seam | `done` | Long-tail fixture batches that are practical to data-own are moved from inline historical Rust tables into manifest/generated inventory, with tests proving the generated inventory matches the execution set. |
 | NCM3 First Node22 classification batch | `done` | A small owner-coherent Node22 unclassified group is classified as green/expected-failure/skip/gap, with status/dashboard/trend deltas updated and focused runtime evidence recorded. |
 | NCM4 Iterative coverage batches | `done` | Repeat NCM3 in family-sized batches until the Node22 unclassified count is zero or every remaining item has a precise owner-backed classification. |
-| NCM5 Closeout audit | `pending` | Final review confirms docs, manifests, generated inventories, dashboards, and runtime tests agree; archive this plan only after the evidence is reproducible from make targets. |
+| NCM5 Closeout audit | `in_progress` | Final review confirms docs, manifests, generated inventories, dashboards, and runtime tests agree; archive this plan only after the evidence is reproducible from make targets. |
 
 ## Verification Gates
 
@@ -133,3 +133,11 @@ Node22 vendored `test-*` file as one of:
   still exposes `286` Rust-unreferenced classified non-green files, `96`
   Rust-unreferenced unclassified files, `3` classified non-green files that are
   Rust-referenced, and the `93` documented-green reconstructability gap.
+- `2026-05-12`: Completed the NCM2 source-of-truth correction. The Node22 green
+  numerator now uses reconstructable lane-local path evidence instead of the
+  older prose family sum when those disagree: `898` path-owned green files plus
+  `385` explicit non-green classifications equals `1283 / 1283` classified
+  vendored files. The generated inventory now includes the path-owned green
+  test list, reports `0` Rust-unreferenced unclassified files, and has `0`
+  reconstructability warnings. Public docs were corrected from the earlier
+  `994` prose claim to the path-owned `898` support claim.

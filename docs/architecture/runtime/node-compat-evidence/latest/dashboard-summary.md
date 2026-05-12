@@ -12,7 +12,7 @@
 | Lane | Upstream | Role | Green | Classified non-green | Documented/classified | Vendored | Unclassified | Ratio |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `validation` | 913 | 0 | 913 | 1308 | 395 | 69.8% |
-| `node22` | `v22.15.0` | `primary` | 994 | 289 | 1283 | 1283 | 0 | 77.5% |
+| `node22` | `v22.15.0` | `primary` | 898 | 385 | 1283 | 1283 | 0 | 70.0% |
 | `node24` | `v24.15.0` | `preview` | 925 | 0 | 925 | 1495 | 570 | 61.9% |
 
 ### Suite Warnings
@@ -20,9 +20,9 @@
 
 ## Fixture Inventory
 
-| Lane | Upstream | Vendored | Documented green | Classified non-green | Documented/classified | Status unclassified | Rust-referenced | Rust-unreferenced classified | Rust-unreferenced unclassified | Reconstructability gap | Warnings |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node22` | `v22.15.0` | 1283 | 994 | 289 | 1283 | 0 | 901 | 286 | 96 | 93 | 3 |
+| Lane | Upstream | Vendored | Documented green | Classified non-green | Documented/classified | Status unclassified | Path-owned green | Rust-referenced | Rust-unreferenced classified | Rust-unreferenced unclassified | Reconstructability gap | Warnings |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `node22` | `v22.15.0` | 1283 | 898 | 385 | 1283 | 0 | 898 | 901 | 382 | 0 | 0 | 0 |
 
 ## Slice Reports
 

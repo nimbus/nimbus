@@ -1,13 +1,13 @@
 # Node Compatibility Suite Status
 
-Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested green subset plus explicit lane classification catalogs. Classified non-green entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.
+Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested green subset plus explicit lane classification catalogs. The Node22 primary lane uses path-owned Rust fixture evidence minus explicit non-green classifications as the green numerator when prose family counts are not reconstructable. Classified non-green entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.
 
 ## Lane Summary
 
 | Lane | Role | Upstream | Vendored test files | Documented green | Classified non-green | Documented/classified | Unmanifested/unclassified | Ratio |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `validation` | `v20.20.2` | 1308 | 913 | 0 | 913 | 395 | 69.8% |
-| `node22` | `primary` | `v22.15.0` | 1283 | 994 | 289 | 1283 | 0 | 77.5% |
+| `node22` | `primary` | `v22.15.0` | 1283 | 898 | 385 | 1283 | 0 | 70.0% |
 | `node24` | `preview` | `v24.15.0` | 1495 | 925 | 0 | 925 | 570 | 61.9% |
 
 ## Lane Classification Catalogs
@@ -15,7 +15,7 @@ Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that d
 | Lane | Catalog | Classified non-green | By expectation | By classification |
 | --- | --- | ---: | --- | --- |
 | `node20` | `tests/node-compat/classifications/node20.json` | 0 | `{}` | `{}` |
-| `node22` | `tests/node-compat/classifications/node22.json` | 289 | `{"expected_gap": 282, "expected_skip": 7}` | `{"requires_diagnostics_channel_async_context_completion": 1, "requires_diagnostics_channel_host_instrumentation": 5, "requires_diagnostics_channel_leak_harness": 1, "requires_diagnostics_channel_loader_instrumentation": 4, "requires_diagnostics_channel_tracing_completion": 14, "requires_diagnostics_channel_worker_instrumentation": 1, "requires_fs_host_io_completion": 75, "requires_host_or_standards_tail_completion": 10, "requires_host_process_abort_harness": 1, "requires_native_addon_non_node_context_harness": 1, "requires_native_async_resource_accounting": 6, "requires_process_host_surface_completion": 80, "requires_pseudo_tty_host_harness": 11, "requires_pummel_stress_harness": 11, "requires_sequential_host_state_harness": 13, "requires_timer_scheduler_completion": 44, "requires_wpt_harness": 2, "support_fixture_not_top_level_test": 3, "upstream_known_issue_or_platform_boundary": 2, "vendored_non_official_placeholder": 4}` |
+| `node22` | `tests/node-compat/classifications/node22.json` | 385 | `{"expected_gap": 378, "expected_skip": 7}` | `{"requires_diagnostics_channel_async_context_completion": 1, "requires_diagnostics_channel_host_instrumentation": 5, "requires_diagnostics_channel_leak_harness": 1, "requires_diagnostics_channel_loader_instrumentation": 4, "requires_diagnostics_channel_tracing_completion": 14, "requires_diagnostics_channel_worker_instrumentation": 1, "requires_fs_host_io_completion": 75, "requires_host_or_standards_tail_completion": 10, "requires_host_process_abort_harness": 1, "requires_module_tick_worker_perf_completion": 5, "requires_native_addon_non_node_context_harness": 1, "requires_native_async_resource_accounting": 6, "requires_process_host_surface_completion": 80, "requires_pseudo_tty_host_harness": 11, "requires_pummel_stress_harness": 11, "requires_readline_interactive_terminal_completion": 12, "requires_sequential_host_state_harness": 13, "requires_stream_legacy_bridge_completion": 58, "requires_timer_scheduler_completion": 44, "requires_util_long_tail_completion": 21, "requires_wpt_harness": 2, "support_fixture_not_top_level_test": 3, "upstream_known_issue_or_platform_boundary": 2, "vendored_non_official_placeholder": 4}` |
 | `node24` | `tests/node-compat/classifications/node24.json` | 0 | `{}` | `{}` |
 
 ## Family Green Denominator

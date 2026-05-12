@@ -25,6 +25,9 @@
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1308,
         "documented_manifested_green_count": 913,
+        "documented_manifested_green_source": "family_manifest_docs",
+        "documented_family_green_count": 913,
+        "path_owned_manifested_green_count": null,
         "classified_non_green_count": 0,
         "documented_or_classified_count": 913,
         "unmanifested_or_unclassified_count": 395,
@@ -55,17 +58,20 @@
         "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1283,
-        "documented_manifested_green_count": 994,
-        "classified_non_green_count": 289,
+        "documented_manifested_green_count": 898,
+        "documented_manifested_green_source": "rust_path_owned_fixture_inventory_minus_classified_non_green",
+        "documented_family_green_count": 994,
+        "path_owned_manifested_green_count": 898,
+        "classified_non_green_count": 385,
         "documented_or_classified_count": 1283,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.774747,
+        "documented_manifested_green_ratio": 0.699922,
         "classification_catalog": {
           "catalog_path": "tests/node-compat/classifications/node22.json",
           "catalog_present": true,
-          "classified_non_green_count": 289,
+          "classified_non_green_count": 385,
           "by_expectation": {
-            "expected_gap": 282,
+            "expected_gap": 378,
             "expected_skip": 7
           },
           "by_classification": {
@@ -78,13 +84,17 @@
             "requires_fs_host_io_completion": 75,
             "requires_host_or_standards_tail_completion": 10,
             "requires_host_process_abort_harness": 1,
+            "requires_module_tick_worker_perf_completion": 5,
             "requires_native_addon_non_node_context_harness": 1,
             "requires_native_async_resource_accounting": 6,
             "requires_process_host_surface_completion": 80,
             "requires_pseudo_tty_host_harness": 11,
             "requires_pummel_stress_harness": 11,
+            "requires_readline_interactive_terminal_completion": 12,
             "requires_sequential_host_state_harness": 13,
+            "requires_stream_legacy_bridge_completion": 58,
             "requires_timer_scheduler_completion": 44,
+            "requires_util_long_tail_completion": 21,
             "requires_wpt_harness": 2,
             "support_fixture_not_top_level_test": 3,
             "upstream_known_issue_or_platform_boundary": 2,
@@ -2323,6 +2333,774 @@
               "owner": "node-compat/host-standards-tail",
               "reason": "This small tail is outside the current manifested green subset and spans WHATWG stream bridge fidelity, host OS metadata, and a V8 representation probe. These remain precise host/standards/runtime completion gaps until promoted through measured runtime batches.",
               "group_id": "node22-small-host-and-standards-tail"
+            },
+            {
+              "test_path": "test/parallel/test-module-readonly.js",
+              "expectation": "expected_gap",
+              "classification": "requires_module_tick_worker_perf_completion",
+              "owner": "loader-context/process-and-timing/runtime-workers",
+              "reason": "These official Node22 files were not path-owned by the green fixture inventory. They cover module mutability/source-map toggles, nextTick/domain/exit ordering, and worker timeOrigin semantics, so they remain explicit owner-backed gaps until promoted through measured runtime batches.",
+              "group_id": "node22-path-owned-module-next-perf-tail"
+            },
+            {
+              "test_path": "test/parallel/test-module-setsourcemapssupport.js",
+              "expectation": "expected_gap",
+              "classification": "requires_module_tick_worker_perf_completion",
+              "owner": "loader-context/process-and-timing/runtime-workers",
+              "reason": "These official Node22 files were not path-owned by the green fixture inventory. They cover module mutability/source-map toggles, nextTick/domain/exit ordering, and worker timeOrigin semantics, so they remain explicit owner-backed gaps until promoted through measured runtime batches.",
+              "group_id": "node22-path-owned-module-next-perf-tail"
+            },
+            {
+              "test_path": "test/parallel/test-next-tick-domain.js",
+              "expectation": "expected_gap",
+              "classification": "requires_module_tick_worker_perf_completion",
+              "owner": "loader-context/process-and-timing/runtime-workers",
+              "reason": "These official Node22 files were not path-owned by the green fixture inventory. They cover module mutability/source-map toggles, nextTick/domain/exit ordering, and worker timeOrigin semantics, so they remain explicit owner-backed gaps until promoted through measured runtime batches.",
+              "group_id": "node22-path-owned-module-next-perf-tail"
+            },
+            {
+              "test_path": "test/parallel/test-next-tick-when-exiting.js",
+              "expectation": "expected_gap",
+              "classification": "requires_module_tick_worker_perf_completion",
+              "owner": "loader-context/process-and-timing/runtime-workers",
+              "reason": "These official Node22 files were not path-owned by the green fixture inventory. They cover module mutability/source-map toggles, nextTick/domain/exit ordering, and worker timeOrigin semantics, so they remain explicit owner-backed gaps until promoted through measured runtime batches.",
+              "group_id": "node22-path-owned-module-next-perf-tail"
+            },
+            {
+              "test_path": "test/parallel/test-perf-hooks-worker-timeorigin.js",
+              "expectation": "expected_gap",
+              "classification": "requires_module_tick_worker_perf_completion",
+              "owner": "loader-context/process-and-timing/runtime-workers",
+              "reason": "These official Node22 files were not path-owned by the green fixture inventory. They cover module mutability/source-map toggles, nextTick/domain/exit ordering, and worker timeOrigin semantics, so they remain explicit owner-backed gaps until promoted through measured runtime batches.",
+              "group_id": "node22-path-owned-module-next-perf-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-emit-keypress-events.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-interface-escapecodetimeout.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-interface-no-trailing-newline.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-interface-recursive-writes.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-keys.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-position.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-promises-tab-complete.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-reopen.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-set-raw-mode.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-tab-complete.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline-undefined-columns.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-readline.js",
+              "expectation": "expected_gap",
+              "classification": "requires_readline_interactive_terminal_completion",
+              "owner": "streams-and-local-io/readline-tty",
+              "reason": "These official Node22 readline fixtures were not path-owned by the current green inventory. They exercise interactive keypress, raw-mode, terminal column, tab-completion, reopen, recursive-write, and escape-code timing behavior that needs a dedicated readline/TTY host batch before becoming a support claim.",
+              "group_id": "node22-path-owned-readline-interactive-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-base-typechecking.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-destroy.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-iterator-helpers-test262-tests.mjs",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-once-readable-pipe.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-await-drain-manual-resume.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-await-drain-push-while-write.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-cleanup-pause.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-error-handling.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-error-unhandled.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-flow-after-unpipe.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-manual-resume.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-needDrain.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-unpipe-streams.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipe-without-listenerCount.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipeline-http2.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipeline-process.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-pipeline-queued-end-in-destroy.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-preprocess.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-readable-async-iterators.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-readable-to-web.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-readable-unpipe-resume.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-readableListening-state.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-some-find-every.mjs",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-toWeb-allows-server-response.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-transform-destroy.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-wrap-drain.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-wrap-encoding.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream-wrap.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-base64-single-char-read-end.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-basic.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-compatibility.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-decode-partial.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-finish-pipe-error.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-finish-pipe.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-httpclient-response-end.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-large-read-stall.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-objects.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-pipe-error-handling.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-pipe-error-once-listener.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-push.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-read-sync-stack.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-empty-buffer-no-eof.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-legacy-drain.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-non-empty-end.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-wrap-destroy.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-wrap-empty.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-wrap-error.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-readable-wrap.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-set-encoding.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-transform.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-unpipe-drain.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-unpipe-leak.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream2-writable.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream3-cork-end.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream3-cork-uncork.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream3-pause-then-read.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-stream3-pipeline-async-iterator.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-streams-highwatermark.js",
+              "expectation": "expected_gap",
+              "classification": "requires_stream_legacy_bridge_completion",
+              "owner": "streams-and-local-io/stream",
+              "reason": "These official Node22 stream fixtures were not path-owned by the current green inventory. They cover legacy stream2/stream3 behavior, stream/web bridges, iterator helpers, wrapper behavior, pipe edge cases, HTTP2/process pipeline integration, and highWaterMark tails that need measured promotion before support claims.",
+              "group_id": "node22-path-owned-stream-legacy-and-bridge-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-callbackify.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-emit-experimental-warning.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-getcallsite.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-getcallsites.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-inspect-getters-accessing-this.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-inspect-long-running.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-inspect-namespace.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-inspect-proxy.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-inspect.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-internal.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-isDeepStrictEqual.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-log.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-primordial-monkeypatching.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-promisify-custom-names.mjs",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-promisify.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-sigint-watchdog.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-sleep.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-stripvtcontrolcharacters.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-styletext.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util-types.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
+            },
+            {
+              "test_path": "test/parallel/test-util.js",
+              "expectation": "expected_gap",
+              "classification": "requires_util_long_tail_completion",
+              "owner": "loader-context/util",
+              "reason": "These official Node22 util fixtures were not path-owned by the current green inventory. They cover callbackify/promisify tails, callsite APIs, inspect/proxy/getter/namespace behavior, warning/log styling, internal util surfaces, watchdog/sleep behavior, and util.types parity that need explicit measured promotion.",
+              "group_id": "node22-path-owned-util-long-tail"
             }
           ]
         }
@@ -2344,6 +3122,9 @@
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1495,
         "documented_manifested_green_count": 925,
+        "documented_manifested_green_source": "family_manifest_docs",
+        "documented_family_green_count": 925,
+        "path_owned_manifested_green_count": null,
         "classified_non_green_count": 0,
         "documented_or_classified_count": 925,
         "unmanifested_or_unclassified_count": 570,
@@ -2374,38 +3155,19 @@
       },
       "counts": {
         "vendored_test_file_count": 1283,
-        "documented_manifested_green_count": 994,
-        "classified_non_green_count": 289,
+        "documented_manifested_green_count": 898,
+        "classified_non_green_count": 385,
         "documented_or_classified_count": 1283,
         "documented_unmanifested_or_unclassified_count": 0,
         "rust_referenced_test_file_count": 901,
         "rust_unreferenced_test_file_count": 382,
-        "rust_unreferenced_classified_non_green_count": 286,
-        "rust_unreferenced_unclassified_count": 96,
+        "rust_unreferenced_classified_non_green_count": 382,
+        "rust_unreferenced_unclassified_count": 0,
         "classified_non_green_not_rust_unreferenced_count": 3,
-        "documented_green_reconstructability_gap_count": 93
+        "path_owned_green_test_count": 898,
+        "documented_green_reconstructability_gap_count": 0
       },
-      "warnings": [
-        {
-          "kind": "documented_green_exceeds_reconstructable_rust_path_inventory",
-          "documented_manifested_green_count": 994,
-          "rust_referenced_test_file_count": 901,
-          "gap_count": 93,
-          "action": "move documented-green fixture membership into manifest-owned or generated inventory before treating the per-file green list as complete"
-        },
-        {
-          "kind": "rust_unreferenced_unclassified_count_differs_from_documented_green_reconstructability_gap",
-          "rust_unreferenced_unclassified_count": 96,
-          "documented_green_reconstructability_gap_count": 93,
-          "reason": "the Rust-reference audit is path-based while the documented green count is still prose/count-based"
-        },
-        {
-          "kind": "rust_unreferenced_count_differs_from_status_unclassified_count",
-          "rust_unreferenced_unclassified_count": 96,
-          "status_unmanifested_or_unclassified_count": 0,
-          "reason": "status is denominator-based and may be fully classified while the Rust-reference inventory still has a documented-green reconstructability gap"
-        }
-      ]
+      "warnings": []
     }
   ],
   "slice_reports": [
