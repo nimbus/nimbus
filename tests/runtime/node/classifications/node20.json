@@ -79,7 +79,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/dgram",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
     },
     {
       "test_path": "test/parallel/test-dgram-exclusive-implicit-bind.js",
@@ -93,7 +93,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/dgram",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
     },
     {
       "test_path": "test/parallel/test-dgram-reuseport.js",
@@ -107,14 +107,14 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/dgram",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
     },
     {
       "test_path": "test/parallel/test-dgram-udp6-send-default-host.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/dgram",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
     },
     {
       "test_path": "test/parallel/test-dgram-unref-in-cluster.js",
@@ -212,7 +212,7 @@
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "process-and-timing/process-host",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_profile_watchpoint, node22_process_env_delete_application_profile_watchpoint"
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint, node22_process_env_delete_application_preset_watchpoint"
     },
     {
       "test_path": "test/parallel/test-process-features.js",

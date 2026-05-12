@@ -64,11 +64,11 @@ jobs:
 
       - name: Run application and tooling canaries
         run: |
-          make node-compat-canaries-bootstrap PROFILE=application
-          make node-compat-canaries-bootstrap PROFILE=tooling
+          make node-compat-canaries-bootstrap PRESET=application
+          make node-compat-canaries-bootstrap PRESET=tooling
           make node-compat-validate-claims
-          make node-compat-canaries PROFILE=application
-          make node-compat-canaries PROFILE=tooling
+          make node-compat-canaries PRESET=application
+          make node-compat-canaries PRESET=tooling
 
       - name: Set up Node.js 20 for oracle sample
         uses: actions/setup-node@v6

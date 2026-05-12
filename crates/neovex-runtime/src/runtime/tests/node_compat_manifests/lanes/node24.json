@@ -5,7 +5,7 @@
   "lane_role": "supported",
   "public_contract_role": "supported_contract",
   "runtime_execution_target": "Node24",
-  "runtime_limits_profile": "application_node24",
+  "runtime_limits_preset": "application_node24",
   "upstream": {
     "repo": "nodejs/node",
     "tag": "v24.15.0",

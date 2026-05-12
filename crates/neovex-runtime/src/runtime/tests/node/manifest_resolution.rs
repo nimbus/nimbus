@@ -181,7 +181,7 @@ fn node_compat_manifest_resolution_supports_future_lane_keys_without_new_rust_fi
             "lane_role": "supported",
             "public_contract_role": "supported_contract",
             "runtime_execution_target": "Node24",
-            "runtime_limits_profile": "application_node24",
+            "runtime_limits_preset": "application_node24",
             "upstream": {
                 "repo": "nodejs/node",
                 "tag": "v26.0.0",

@@ -18,8 +18,7 @@ use neovex_runtime::HostCallOperation;
 use neovex_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
     InvocationKind, InvocationRequest, NeovexRuntimeError, RuntimeBundle,
-    RuntimeCompatibilityTarget, RuntimeExecutor, RuntimeLimits, RuntimePolicy, RuntimeProfile,
-    RuntimeSubprocessPolicy,
+    RuntimeCompatibilityTarget, RuntimeExecutor, RuntimeLimits, RuntimePolicy, RuntimePreset,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -112,8 +111,8 @@ fn convex_node_runtime_lane(
     target: RuntimeCompatibilityTarget,
 ) -> (Arc<RuntimePolicy>, Arc<RuntimeExecutor>) {
     base_limits.compatibility_target = target;
-    base_limits.profile = RuntimeProfile::Application;
-    base_limits.subprocess_policy = RuntimeSubprocessPolicy::Denied;
+    base_limits.preset = RuntimePreset::Application;
+    base_limits.grants = neovex_runtime::RuntimeGrants::application_node();
     let policy = Arc::new(RuntimePolicy::new(base_limits));
     let executor = Arc::new(RuntimeExecutor::new(policy.clone()));
     (policy, executor)

@@ -47,7 +47,7 @@ struct NodeCompatOracleArtifact {
     lane_role: String,
     public_contract_role: String,
     runtime_execution_target: String,
-    runtime_limits_profile: String,
+    runtime_limits_preset: String,
     fixture: String,
     fixture_source_path: String,
     node_bin: String,
@@ -428,7 +428,7 @@ fn emit_oracle_artifact(
         public_contract_role: public_contract_role_label(lane_metadata.public_contract_role)
             .to_string(),
         runtime_execution_target: lane_metadata.runtime_execution_target.clone(),
-        runtime_limits_profile: lane_metadata.runtime_limits_profile.clone(),
+        runtime_limits_preset: lane_metadata.runtime_limits_preset.clone(),
         fixture: bundle.test_relative_path.clone(),
         fixture_source_path: bundle.fixture_source_path,
         node_bin: node_binary.path.to_string_lossy().into_owned(),

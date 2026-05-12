@@ -54,7 +54,7 @@ pub(super) struct NodeCompatLaneMetadata {
     pub(super) lane_role: NodeCompatLaneRole,
     pub(super) public_contract_role: NodeCompatPublicContractRole,
     pub(super) runtime_execution_target: String,
-    pub(super) runtime_limits_profile: String,
+    pub(super) runtime_limits_preset: String,
     pub(super) upstream: NodeCompatUpstreamMetadata,
     pub(super) vendored_fixture_root: String,
     pub(super) manifest_docs: Vec<String>,
@@ -116,7 +116,7 @@ pub(super) struct NodeCompatFixtureSeedEntry {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum NodeCompatProfile {
+pub(super) enum NodeCompatPreset {
     #[serde(rename = "Application")]
     Application,
     #[serde(rename = "Tooling")]
@@ -155,7 +155,7 @@ pub(super) struct NodeCompatFamilyCatalog {
     pub(super) nlc_item: String,
     pub(super) batch_constant: String,
     pub(super) execution_class: NodeCompatExecutionClass,
-    pub(super) profiles: Vec<NodeCompatProfile>,
+    pub(super) presets: Vec<NodeCompatPreset>,
     pub(super) capabilities: Vec<NodeCompatCapability>,
     pub(super) lane_batches: Vec<NodeCompatFamilyLaneBatch>,
     pub(super) manifest_doc: String,
@@ -468,10 +468,9 @@ pub(super) fn validate_family_catalogs(catalogs: &[NodeCompatFamilyCatalog]) -> 
         if !seen_families.insert(catalog.family.as_str()) {
             return Err(format!("duplicate family catalog {}", catalog.family));
         }
-        let unique_profiles: BTreeSet<NodeCompatProfile> =
-            catalog.profiles.iter().copied().collect();
-        if unique_profiles.len() != catalog.profiles.len() {
-            return Err(format!("duplicate profiles for family {}", catalog.family));
+        let unique_presets: BTreeSet<NodeCompatPreset> = catalog.presets.iter().copied().collect();
+        if unique_presets.len() != catalog.presets.len() {
+            return Err(format!("duplicate presets for family {}", catalog.family));
         }
         let unique_capabilities: BTreeSet<NodeCompatCapability> =
             catalog.capabilities.iter().copied().collect();

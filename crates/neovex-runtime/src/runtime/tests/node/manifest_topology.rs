@@ -14,7 +14,7 @@ use super::node_compat::{
 };
 use super::node_compat_manifest_catalog::{
     NodeCompatCapability, NodeCompatExecutionClass, NodeCompatFamilyCatalog,
-    NodeCompatFixtureSeedEntry, NodeCompatNamedBehaviorCatalog, NodeCompatProfile,
+    NodeCompatFixtureSeedEntry, NodeCompatNamedBehaviorCatalog, NodeCompatPreset,
     NodeCompatSupplementaryCategory, NodeCompatTestTier, load_family_catalogs_from_disk,
     read_sorted_manifest_file_names, repo_root, validate_family_catalogs,
     validate_named_behavior_catalog,
@@ -65,7 +65,7 @@ fn node_compat_manifest_topology_schema_documents_family_and_named_behavior_cata
         "nlc_item",
         "batch_constant",
         "execution_class",
-        "profiles",
+        "presets",
         "capabilities",
         "lane_batches",
         "manifest_doc",
@@ -407,7 +407,7 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             NodeCompatExecutionClass::Sequential
         };
         assert_eq!(catalog.execution_class, expected_execution_class);
-        assert_eq!(catalog.profiles, vec![NodeCompatProfile::Application]);
+        assert_eq!(catalog.presets, vec![NodeCompatPreset::Application]);
         if expected_family == "networking" {
             assert_eq!(
                 catalog.capabilities,
@@ -1144,18 +1144,16 @@ fn node_compat_runtime_supplementary_signal_lifecycle_fixture_seed_entries_align
 }
 
 #[test]
-fn node_compat_profile_capability_model_rejects_ambiguous_seed_entries() {
-    let mut duplicate_profile_catalog: NodeCompatFamilyCatalog =
+fn node_compat_preset_capability_model_rejects_ambiguous_seed_entries() {
+    let mut duplicate_preset_catalog: NodeCompatFamilyCatalog =
         serde_json::from_str(CORE_SEMANTICS_JSON).expect("core semantics catalog should parse");
-    duplicate_profile_catalog.profiles = vec![
-        NodeCompatProfile::Application,
-        NodeCompatProfile::Application,
-    ];
-    let duplicate_profile_error = validate_family_catalogs(&[duplicate_profile_catalog])
-        .expect_err("duplicate profile should fail");
+    duplicate_preset_catalog.presets =
+        vec![NodeCompatPreset::Application, NodeCompatPreset::Application];
+    let duplicate_preset_error = validate_family_catalogs(&[duplicate_preset_catalog])
+        .expect_err("duplicate preset should fail");
     assert!(
-        duplicate_profile_error.contains("duplicate profiles"),
-        "duplicate profile error should mention profiles: {duplicate_profile_error}",
+        duplicate_preset_error.contains("duplicate presets"),
+        "duplicate preset error should mention presets: {duplicate_preset_error}",
     );
 
     let mut duplicate_capability_catalog: NodeCompatFamilyCatalog =
@@ -1178,7 +1176,7 @@ fn node_compat_profile_capability_model_rejects_ambiguous_seed_entries() {
         "nlc_item": "NLC3",
         "batch_constant": "CORE_SEMANTICS_BATCH",
         "execution_class": "nonsense",
-        "profiles": ["Application"],
+        "presets": ["Application"],
         "capabilities": ["bundle-root-fs"],
         "lane_batches": [
             {

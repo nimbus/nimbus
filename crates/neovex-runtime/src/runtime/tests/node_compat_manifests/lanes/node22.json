@@ -5,7 +5,7 @@
   "lane_role": "default",
   "public_contract_role": "default_contract",
   "runtime_execution_target": "Node22",
-  "runtime_limits_profile": "application_node22",
+  "runtime_limits_preset": "application_node22",
   "upstream": {
     "repo": "nodejs/node",
     "tag": "v22.15.0",

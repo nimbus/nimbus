@@ -105,7 +105,7 @@
         }
       }
     },
-    "profile": {
+    "preset": {
       "type": "string",
       "enum": ["Application", "Tooling"]
     },
@@ -163,7 +163,7 @@
         "lane_role",
         "public_contract_role",
         "runtime_execution_target",
-        "runtime_limits_profile",
+        "runtime_limits_preset",
         "upstream",
         "vendored_fixture_root",
         "manifest_docs",
@@ -194,7 +194,7 @@
           "type": "string",
           "enum": ["Node20", "Node22", "Node24"]
         },
-        "runtime_limits_profile": {
+        "runtime_limits_preset": {
           "type": "string",
           "enum": ["application_node20", "application_node22", "application_node24"]
         },
@@ -229,7 +229,7 @@
         "nlc_item",
         "batch_constant",
         "execution_class",
-        "profiles",
+        "presets",
         "capabilities",
         "lane_batches",
         "manifest_doc",
@@ -255,10 +255,10 @@
         "execution_class": {
           "$ref": "#/$defs/executionClass"
         },
-        "profiles": {
+        "presets": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/profile"
+            "$ref": "#/$defs/preset"
           },
           "minItems": 1,
           "uniqueItems": true

@@ -56,17 +56,167 @@ pub enum RuntimeExecutionModel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RuntimeProfile {
-    Application,
-    Tooling,
+pub enum RuntimeMode {
+    Restricted,
+    Standard,
+    Privileged,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RuntimeSubprocessPolicy {
-    Denied,
-    RuntimeSelfExecOnly,
-    ToolingDiscovered,
+pub enum RuntimeLanguage {
+    JavaScript,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimePreset {
+    Application,
+    Tooling,
+    Oracle,
+    Operator,
+    Code,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeGrants {
+    pub read: Vec<String>,
+    pub write: Vec<String>,
+    pub net_connect: Vec<String>,
+    pub net_listen: Vec<String>,
+    pub env_read: Vec<String>,
+    pub env_write: Vec<String>,
+    pub secret: Vec<String>,
+    pub identity: Vec<String>,
+    pub service: Vec<String>,
+    pub run: Vec<String>,
+    pub sys: Vec<String>,
+    pub ffi: Vec<String>,
+    pub worker: Vec<String>,
+    pub tool: Vec<String>,
+}
+
+impl RuntimeGrants {
+    pub fn restricted() -> Self {
+        Self::default()
+    }
+
+    pub fn application_web_standard() -> Self {
+        Self {
+            read: vec!["$generated_root".to_string()],
+            write: vec!["$generated_root".to_string()],
+            env_read: vec!["NODE_TLS_REJECT_UNAUTHORIZED".to_string()],
+            sys: vec![
+                "hostname".to_string(),
+                "gid".to_string(),
+                "statfs".to_string(),
+                "uid".to_string(),
+            ],
+            ..Self::default()
+        }
+    }
+
+    pub fn application_node() -> Self {
+        let mut grants = Self::application_web_standard();
+        grants.net_connect = vec!["127.0.0.1".to_string(), "localhost".to_string()];
+        grants.net_listen = vec![
+            "127.0.0.1".to_string(),
+            "localhost".to_string(),
+            "0.0.0.0".to_string(),
+            "[::1]".to_string(),
+            "[::]".to_string(),
+        ];
+        grants.sys.push("inspector".to_string());
+        grants.worker = vec!["thread".to_string()];
+        grants
+    }
+
+    pub fn tooling() -> Self {
+        Self {
+            read: vec![
+                "$app_root".to_string(),
+                "$generated_root".to_string(),
+                "$temp_root".to_string(),
+                "$cache_root".to_string(),
+            ],
+            write: vec![
+                "$generated_root".to_string(),
+                "$temp_root".to_string(),
+                "$cache_root".to_string(),
+            ],
+            net_connect: vec!["127.0.0.1".to_string(), "localhost".to_string()],
+            env_read: vec![
+                "ESBUILD_BINARY_PATH".to_string(),
+                "ESBUILD_MAX_BUFFER".to_string(),
+                "ESBUILD_WORKER_THREADS".to_string(),
+                "HOME".to_string(),
+                "NODE_ENV".to_string(),
+                "NODE_TLS_REJECT_UNAUTHORIZED".to_string(),
+                "NODE_INSPECTOR_IPC".to_string(),
+                "NODE_V8_COVERAGE".to_string(),
+                "PATH".to_string(),
+                "PWD".to_string(),
+                "TEMP".to_string(),
+                "TMP".to_string(),
+                "TMPDIR".to_string(),
+                "TSC_NONPOLLING_WATCHER".to_string(),
+                "TSC_WATCHDIRECTORY".to_string(),
+                "TSC_WATCHFILE".to_string(),
+                "TSC_WATCH_POLLINGCHUNKSIZE".to_string(),
+                "TSC_WATCH_POLLINGCHUNKSIZE_HIGH".to_string(),
+                "TSC_WATCH_POLLINGCHUNKSIZE_LOW".to_string(),
+                "TSC_WATCH_POLLINGCHUNKSIZE_MEDIUM".to_string(),
+                "TSC_WATCH_POLLINGINTERVAL".to_string(),
+                "TSC_WATCH_POLLINGINTERVAL_HIGH".to_string(),
+                "TSC_WATCH_POLLINGINTERVAL_LOW".to_string(),
+                "TSC_WATCH_POLLINGINTERVAL_MEDIUM".to_string(),
+                "TSC_WATCH_UNCHANGEDPOLLTHRESHOLDS".to_string(),
+                "TSC_WATCH_UNCHANGEDPOLLTHRESHOLDS_HIGH".to_string(),
+                "TSC_WATCH_UNCHANGEDPOLLTHRESHOLDS_LOW".to_string(),
+                "TSC_WATCH_UNCHANGEDPOLLTHRESHOLDS_MEDIUM".to_string(),
+                "VSCODE_INSPECTOR_OPTIONS".to_string(),
+                "npm_config_cache".to_string(),
+                "npm_config_user_agent".to_string(),
+                "npm_execpath".to_string(),
+            ],
+            run: vec![
+                "$discovered_tooling".to_string(),
+                "$runtime_self_exec".to_string(),
+                "$runtime_host_exec".to_string(),
+            ],
+            worker: vec!["thread".to_string()],
+            sys: vec![
+                "hostname".to_string(),
+                "gid".to_string(),
+                "statfs".to_string(),
+                "uid".to_string(),
+                "inspector".to_string(),
+            ],
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for RuntimeGrants {
+    fn default() -> Self {
+        Self {
+            read: Vec::new(),
+            write: Vec::new(),
+            net_connect: Vec::new(),
+            net_listen: Vec::new(),
+            env_read: Vec::new(),
+            env_write: Vec::new(),
+            secret: Vec::new(),
+            identity: Vec::new(),
+            service: Vec::new(),
+            run: Vec::new(),
+            sys: Vec::new(),
+            ffi: Vec::new(),
+            worker: Vec::new(),
+            tool: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -117,8 +267,10 @@ pub struct RuntimeLimits {
     pub backend_kind: RuntimeBackendKind,
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
-    pub profile: RuntimeProfile,
-    pub subprocess_policy: RuntimeSubprocessPolicy,
+    pub mode: RuntimeMode,
+    pub language: RuntimeLanguage,
+    pub preset: RuntimePreset,
+    pub grants: RuntimeGrants,
     pub runtime_pool_kind: RuntimePoolKind,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
@@ -136,11 +288,33 @@ pub struct RuntimeLimits {
 }
 
 impl RuntimeLimits {
+    pub fn restricted_code() -> Self {
+        Self {
+            mode: RuntimeMode::Restricted,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Code,
+            grants: RuntimeGrants::restricted(),
+            ..Self::default()
+        }
+    }
+
+    pub fn privileged_operator() -> Self {
+        Self {
+            mode: RuntimeMode::Privileged,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Operator,
+            grants: RuntimeGrants::restricted(),
+            ..Self::default()
+        }
+    }
+
     pub fn application_web_standard() -> Self {
         Self {
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
-            profile: RuntimeProfile::Application,
-            subprocess_policy: RuntimeSubprocessPolicy::Denied,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::application_web_standard(),
             ..Self::default()
         }
     }
@@ -161,8 +335,10 @@ impl RuntimeLimits {
         assert!(target.is_node(), "application_node requires a Node target");
         Self {
             compatibility_target: target,
-            profile: RuntimeProfile::Application,
-            subprocess_policy: RuntimeSubprocessPolicy::Denied,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::application_node(),
             ..Self::default()
         }
     }
@@ -170,8 +346,10 @@ impl RuntimeLimits {
     pub fn tooling_node22() -> Self {
         Self {
             compatibility_target: RuntimeCompatibilityTarget::Node22,
-            profile: RuntimeProfile::Tooling,
-            subprocess_policy: RuntimeSubprocessPolicy::ToolingDiscovered,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Tooling,
+            grants: RuntimeGrants::tooling(),
             ..Self::default()
         }
     }
@@ -199,43 +377,53 @@ impl RuntimeLimits {
     }
 
     pub fn normalized(&self) -> Self {
-        if matches!(self.profile, RuntimeProfile::Tooling)
+        if matches!(self.preset, RuntimePreset::Tooling)
             && !matches!(
                 self.compatibility_target,
                 RuntimeCompatibilityTarget::Node22
             )
         {
             panic!(
-                "Tooling runtime profile currently requires Node22 compatibility target, \
+                "Tooling runtime preset currently requires Node22 compatibility target, \
                  got {:?}",
                 self.compatibility_target
             );
         }
 
-        if matches!(
-            self.subprocess_policy,
-            RuntimeSubprocessPolicy::RuntimeSelfExecOnly
-                | RuntimeSubprocessPolicy::ToolingDiscovered
-        ) && !matches!(
-            self.compatibility_target,
-            RuntimeCompatibilityTarget::Node22
-        ) {
+        if !self.grants.run.is_empty()
+            && !matches!(
+                self.compatibility_target,
+                RuntimeCompatibilityTarget::Node22
+            )
+        {
             panic!(
-                "subprocess policy {:?} currently requires Node22 compatibility target, got {:?}",
-                self.subprocess_policy, self.compatibility_target
+                "runtime run grants currently require Node22 compatibility target, got {:?}",
+                self.compatibility_target
             );
         }
 
-        if matches!(
-            self.subprocess_policy,
-            RuntimeSubprocessPolicy::ToolingDiscovered
-        ) && !matches!(self.profile, RuntimeProfile::Tooling)
+        if self
+            .grants
+            .run
+            .iter()
+            .any(|grant| grant == "$discovered_tooling")
+            && !matches!(self.preset, RuntimePreset::Tooling)
         {
             panic!(
-                "tooling-discovered subprocess policy requires Tooling runtime profile, got {:?}",
-                self.profile
+                "$discovered_tooling run grant requires Tooling runtime preset, got {:?}",
+                self.preset
             );
         }
+
+        let grants = if matches!(self.preset, RuntimePreset::Application)
+            && self.compatibility_target.is_node()
+            && self.grants == RuntimeGrants::application_web_standard()
+        {
+            RuntimeGrants::application_node()
+        } else {
+            self.grants.clone()
+        };
+        validate_mode_grant_ceiling(self.mode, &grants);
 
         // WarmPool requires CooperativeLocker — fail fast.
         if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmPool)
@@ -270,8 +458,10 @@ impl RuntimeLimits {
             backend_kind: self.backend_kind,
             compatibility_target: self.compatibility_target,
             execution_model: self.execution_model,
-            profile: self.profile,
-            subprocess_policy: self.subprocess_policy,
+            mode: self.mode,
+            language: self.language,
+            preset: self.preset,
+            grants,
             runtime_pool_kind: self.runtime_pool_kind,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
@@ -289,6 +479,30 @@ impl RuntimeLimits {
             max_nested_runtime_invocations: self.max_nested_runtime_invocations,
         }
     }
+}
+
+fn validate_mode_grant_ceiling(mode: RuntimeMode, grants: &RuntimeGrants) {
+    match mode {
+        RuntimeMode::Restricted => {
+            assert_grant_family_empty(mode, "env_write", &grants.env_write);
+            assert_grant_family_empty(mode, "identity", &grants.identity);
+            assert_grant_family_empty(mode, "run", &grants.run);
+            assert_grant_family_empty(mode, "ffi", &grants.ffi);
+            assert_grant_family_empty(mode, "worker", &grants.worker);
+            assert_grant_family_empty(mode, "tool", &grants.tool);
+        }
+        RuntimeMode::Standard => {
+            assert_grant_family_empty(mode, "ffi", &grants.ffi);
+        }
+        RuntimeMode::Privileged => {}
+    }
+}
+
+fn assert_grant_family_empty(mode: RuntimeMode, family: &str, grants: &[String]) {
+    assert!(
+        grants.is_empty(),
+        "{family} grants exceed the {mode:?} runtime mode ceiling"
+    );
 }
 
 impl Default for RuntimeLimits {
@@ -309,8 +523,10 @@ impl Default for RuntimeLimits {
             backend_kind: RuntimeBackendKind::V8,
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
-            profile: RuntimeProfile::Application,
-            subprocess_policy: RuntimeSubprocessPolicy::Denied,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::application_web_standard(),
             runtime_pool_kind: RuntimePoolKind::WarmPool,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,
@@ -377,46 +593,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_profile_supports_both_initial_targets() {
+    fn application_preset_supports_node_lts_targets() {
         let web_limits = RuntimeLimits::application_web_standard().normalized();
-        assert_eq!(web_limits.profile, RuntimeProfile::Application);
-        assert_eq!(
-            web_limits.subprocess_policy,
-            RuntimeSubprocessPolicy::Denied
-        );
+        assert_eq!(web_limits.mode, RuntimeMode::Standard);
+        assert_eq!(web_limits.language, RuntimeLanguage::JavaScript);
+        assert_eq!(web_limits.preset, RuntimePreset::Application);
+        assert!(web_limits.grants.run.is_empty());
         assert_eq!(
             web_limits.compatibility_target,
             RuntimeCompatibilityTarget::WebStandardIsolate
         );
 
         let node20_limits = RuntimeLimits::application_node20().normalized();
-        assert_eq!(node20_limits.profile, RuntimeProfile::Application);
-        assert_eq!(
-            node20_limits.subprocess_policy,
-            RuntimeSubprocessPolicy::Denied
-        );
+        assert_eq!(node20_limits.mode, RuntimeMode::Standard);
+        assert_eq!(node20_limits.preset, RuntimePreset::Application);
+        assert!(node20_limits.grants.run.is_empty());
         assert_eq!(
             node20_limits.compatibility_target,
             RuntimeCompatibilityTarget::Node20
         );
 
         let node_limits = RuntimeLimits::application_node22().normalized();
-        assert_eq!(node_limits.profile, RuntimeProfile::Application);
-        assert_eq!(
-            node_limits.subprocess_policy,
-            RuntimeSubprocessPolicy::Denied
-        );
+        assert_eq!(node_limits.mode, RuntimeMode::Standard);
+        assert_eq!(node_limits.preset, RuntimePreset::Application);
+        assert!(node_limits.grants.run.is_empty());
         assert_eq!(
             node_limits.compatibility_target,
             RuntimeCompatibilityTarget::Node22
         );
 
         let node24_limits = RuntimeLimits::application_node24().normalized();
-        assert_eq!(node24_limits.profile, RuntimeProfile::Application);
-        assert_eq!(
-            node24_limits.subprocess_policy,
-            RuntimeSubprocessPolicy::Denied
-        );
+        assert_eq!(node24_limits.mode, RuntimeMode::Standard);
+        assert_eq!(node24_limits.preset, RuntimePreset::Application);
+        assert!(node24_limits.grants.run.is_empty());
         assert_eq!(
             node24_limits.compatibility_target,
             RuntimeCompatibilityTarget::Node24
@@ -424,12 +633,17 @@ mod tests {
     }
 
     #[test]
-    fn tooling_profile_requires_node22_target() {
+    fn tooling_preset_requires_node22_target() {
         let valid = RuntimeLimits::tooling_node22().normalized();
-        assert_eq!(valid.profile, RuntimeProfile::Tooling);
+        assert_eq!(valid.mode, RuntimeMode::Standard);
+        assert_eq!(valid.preset, RuntimePreset::Tooling);
         assert_eq!(
-            valid.subprocess_policy,
-            RuntimeSubprocessPolicy::ToolingDiscovered
+            valid.grants.run,
+            vec![
+                "$discovered_tooling".to_string(),
+                "$runtime_self_exec".to_string(),
+                "$runtime_host_exec".to_string(),
+            ]
         );
         assert_eq!(
             valid.compatibility_target,
@@ -438,7 +652,8 @@ mod tests {
 
         let err = std::panic::catch_unwind(|| {
             RuntimeLimits {
-                profile: RuntimeProfile::Tooling,
+                preset: RuntimePreset::Tooling,
+                grants: RuntimeGrants::tooling(),
                 compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
                 ..RuntimeLimits::default()
             }
@@ -448,20 +663,23 @@ mod tests {
     }
 
     #[test]
-    fn runtime_self_exec_subprocess_policy_requires_node22_target() {
+    fn runtime_self_exec_run_grant_requires_node22_target() {
         let valid = RuntimeLimits {
-            subprocess_policy: RuntimeSubprocessPolicy::RuntimeSelfExecOnly,
+            grants: RuntimeGrants {
+                run: vec!["$runtime_self_exec".to_string()],
+                ..RuntimeGrants::application_node()
+            },
             ..RuntimeLimits::application_node22()
         }
         .normalized();
-        assert_eq!(
-            valid.subprocess_policy,
-            RuntimeSubprocessPolicy::RuntimeSelfExecOnly
-        );
+        assert_eq!(valid.grants.run, vec!["$runtime_self_exec".to_string()]);
 
         let err = std::panic::catch_unwind(|| {
             RuntimeLimits {
-                subprocess_policy: RuntimeSubprocessPolicy::RuntimeSelfExecOnly,
+                grants: RuntimeGrants {
+                    run: vec!["$runtime_self_exec".to_string()],
+                    ..RuntimeGrants::application_node()
+                },
                 compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
                 ..RuntimeLimits::default()
             }
@@ -471,16 +689,79 @@ mod tests {
     }
 
     #[test]
-    fn runtime_profile_and_execution_model_are_independent_axes() {
+    fn runtime_modes_enforce_grant_ceilings() {
+        let restricted = RuntimeLimits::restricted_code().normalized();
+        assert_eq!(restricted.mode, RuntimeMode::Restricted);
+        assert_eq!(restricted.language, RuntimeLanguage::JavaScript);
+        assert_eq!(restricted.preset, RuntimePreset::Code);
+        assert_eq!(restricted.grants, RuntimeGrants::restricted());
+
+        let restricted_run = std::panic::catch_unwind(|| {
+            RuntimeLimits {
+                mode: RuntimeMode::Restricted,
+                preset: RuntimePreset::Code,
+                grants: RuntimeGrants {
+                    run: vec!["node".to_string()],
+                    ..RuntimeGrants::restricted()
+                },
+                ..RuntimeLimits::default()
+            }
+            .normalized()
+        });
+        assert!(restricted_run.is_err());
+
+        let restricted_node_preset_rewrite = std::panic::catch_unwind(|| {
+            RuntimeLimits {
+                mode: RuntimeMode::Restricted,
+                preset: RuntimePreset::Application,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                grants: RuntimeGrants::application_web_standard(),
+                ..RuntimeLimits::default()
+            }
+            .normalized()
+        });
+        assert!(
+            restricted_node_preset_rewrite.is_err(),
+            "effective node grants must be checked against the final Restricted ceiling"
+        );
+
+        let standard_ffi = std::panic::catch_unwind(|| {
+            RuntimeLimits {
+                mode: RuntimeMode::Standard,
+                grants: RuntimeGrants {
+                    ffi: vec!["/usr/lib/libexample.dylib".to_string()],
+                    ..RuntimeGrants::application_node()
+                },
+                ..RuntimeLimits::application_node22()
+            }
+            .normalized()
+        });
+        assert!(standard_ffi.is_err());
+
+        let privileged = RuntimeLimits {
+            grants: RuntimeGrants {
+                ffi: vec!["/usr/lib/libexample.dylib".to_string()],
+                ..RuntimeGrants::restricted()
+            },
+            ..RuntimeLimits::privileged_operator()
+        }
+        .normalized();
+        assert_eq!(privileged.mode, RuntimeMode::Privileged);
+        assert_eq!(privileged.preset, RuntimePreset::Operator);
+        assert_eq!(privileged.grants.ffi, vec!["/usr/lib/libexample.dylib"]);
+    }
+
+    #[test]
+    fn runtime_preset_and_execution_model_are_independent_axes() {
         let run_to_completion = RuntimeLimits {
-            profile: RuntimeProfile::Application,
+            preset: RuntimePreset::Application,
             compatibility_target: RuntimeCompatibilityTarget::Node22,
             execution_model: RuntimeExecutionModel::RunToCompletion,
             runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
             ..RuntimeLimits::default()
         }
         .normalized();
-        assert_eq!(run_to_completion.profile, RuntimeProfile::Application);
+        assert_eq!(run_to_completion.preset, RuntimePreset::Application);
         assert_eq!(
             run_to_completion.compatibility_target,
             RuntimeCompatibilityTarget::Node22
@@ -491,14 +772,14 @@ mod tests {
         );
 
         let cooperative = RuntimeLimits {
-            profile: RuntimeProfile::Application,
+            preset: RuntimePreset::Application,
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
             ..RuntimeLimits::default()
         }
         .normalized();
-        assert_eq!(cooperative.profile, RuntimeProfile::Application);
+        assert_eq!(cooperative.preset, RuntimePreset::Application);
         assert_eq!(
             cooperative.compatibility_target,
             RuntimeCompatibilityTarget::WebStandardIsolate

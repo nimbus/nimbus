@@ -10,7 +10,7 @@ use crate::backends::v8::embedder::{CancelHandle, JsRuntime};
 use crate::error::Result;
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostBridge, HostCallCancellation};
-use crate::limits::{RuntimeCompatibilityTarget, RuntimeProfile};
+use crate::limits::RuntimeLimits;
 use crate::runtime::NeovexRuntime;
 use crate::runtime_capabilities::{
     RuntimeEnvPolicy, RuntimePathPolicy, build_permissions_container,
@@ -62,10 +62,9 @@ pub(crate) struct InstalledRuntimeOwner {
     pub(crate) runtime: NeovexRuntime,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct InstalledRuntimeContract {
-    pub(super) compatibility_target: RuntimeCompatibilityTarget,
-    pub(super) profile: RuntimeProfile,
+    pub(super) limits: RuntimeLimits,
 }
 
 #[derive(Clone)]
@@ -237,7 +236,7 @@ fn install_runtime_contract(
 ) -> Result<()> {
     let limits = runtime_owner.policy().limits().clone();
     let paths = RuntimePathPolicy::for_bundle(bundle, &limits)?;
-    let env = RuntimeEnvPolicy::for_profile(limits.profile);
+    let env = RuntimeEnvPolicy::for_grants(&limits.grants);
     let capability_policy = InstalledRuntimeCapabilityPolicy {
         permissions: build_permissions_container(&paths, &env, &limits)?,
         paths,
@@ -245,10 +244,7 @@ fn install_runtime_contract(
     };
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
-    state.put(InstalledRuntimeContract {
-        compatibility_target: limits.compatibility_target,
-        profile: limits.profile,
-    });
+    state.put(InstalledRuntimeContract { limits });
     state.put(capability_policy.permissions.clone());
     state.put(capability_policy);
     Ok(())

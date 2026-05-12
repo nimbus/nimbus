@@ -166,11 +166,11 @@ node-compat-oracle:
 	bash scripts/runtime/node/oracle-run.sh --lane "$(LANE)" --fixture "$(SAMPLE)" $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(NODE_BIN),--node-bin "$(NODE_BIN)",)
 
 node-compat-canaries-bootstrap:
-	bash scripts/runtime/node/canaries-bootstrap.sh $(if $(PROFILE),--profile "$(PROFILE)",)
+	bash scripts/runtime/node/canaries-bootstrap.sh $(if $(PRESET),--preset "$(PRESET)",)
 
 node-compat-canaries:
-	@test -n "$(PROFILE)" || (echo "set PROFILE=application|tooling" && exit 1)
-	bash scripts/runtime/node/canaries-run.sh --profile "$(PROFILE)" $(if $(LANE),--lane "$(LANE)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
+	@test -n "$(PRESET)" || (echo "set PRESET=application|tooling" && exit 1)
+	bash scripts/runtime/node/canaries-run.sh --preset "$(PRESET)" $(if $(LANE),--lane "$(LANE)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
 
 node-compat-validate-claims:
 	bash scripts/runtime/node/validate-claims.sh

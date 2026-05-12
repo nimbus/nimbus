@@ -1,14 +1,14 @@
-# Node Compatibility Evidence Roots
+# Node.js Runtime Support Evidence Roots
 
 This tree holds the repo-owned trust artifacts that sit beside the vendored
 upstream Node fixture corpus:
 
 - `canary-registry.json`
-  - package/framework claim map for pinned runtime-profile canaries
+  - package/framework claim map for pinned runtime-preset canaries
 - `networking-canaries/`
-  - current `Application`-profile networking canary root
+  - current `Application`-preset networking canary root
 - `tooling-canaries/`
-  - current `Tooling`-profile package canary root for `tsx`, `ts-node`,
+  - current `Tooling`-preset package canary root for `tsx`, `ts-node`,
     `jest`, `prisma`, and `next`
 - `expectations/`
   - checked-in expected-failure/watchpoint catalogs validated against the Rust
@@ -28,10 +28,10 @@ make node-compat-report FAMILY=process-and-timing-supplementary SLICE=supplement
 make node-compat-report FAMILY=runtime-supplementary SLICE=supplementary-resource-safety CAPTURE_LIVE=1
 make node-compat-report FAMILY=runtime-supplementary SLICE=supplementary-framework-loader-patterns CAPTURE_LIVE=1
 make node-compat-report FAMILY=runtime-supplementary-signal-lifecycle SLICE=supplementary-signal-listener-lifecycle CAPTURE_LIVE=1
-make node-compat-canaries-bootstrap PROFILE=application
-make node-compat-canaries PROFILE=application
-make node-compat-canaries-bootstrap PROFILE=tooling
-make node-compat-canaries PROFILE=tooling
+make node-compat-canaries-bootstrap PRESET=application
+make node-compat-canaries PRESET=application
+make node-compat-canaries-bootstrap PRESET=tooling
+make node-compat-canaries PRESET=tooling
 make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js
 make node-compat-expectations-validate
 make node-compat-sync LANE=node22 DRY_RUN=1
@@ -43,13 +43,13 @@ make node-compat-publish-evidence
 ```
 
 The nightly evidence workflow in `.github/workflows/node-compat-nightly.yml`
-replays the five carried seeded slices, both canary profiles, and a
+replays the representative Node test checks, both canary presets, and a
 version-matched Node20 / Node22 / Node24 oracle sample sweep before emitting
 the retained dashboard bundle.
 
 Generated evidence lands under `target/node-compat/`, including:
 
-- seeded slice reports under `target/node-compat/<family>/<slice>/`
+- representative Node test check reports under `target/node-compat/<family>/<slice>/`
 - canary reports under `target/node-compat/canaries/`
 - oracle artifacts under `target/node-compat/oracle/`
 - suite-wide status summaries under `target/node-compat/status/`
@@ -60,10 +60,10 @@ Generated evidence lands under `target/node-compat/`, including:
   `docs/architecture/runtime/node-compat-evidence/latest/` or a custom
   `PUBLISH_ROOT`
 
-All generated slice, canary, oracle, and dashboard summaries now carry the
+All generated Node test check, canary, oracle, and dashboard summaries now carry the
 lane-separation metadata needed for successor-scope trust work:
 `upstream_fixture_line`, `lane_role`, `public_contract_role`,
-`runtime_execution_target`, and `runtime_limits_profile`.
+`runtime_execution_target`, and `runtime_limits_preset`.
 
 `make node-compat-status` is the truthful suite-wide denominator surface. It
 counts every lane-local vendored `test-*` JS/CJS/MJS fixture and compares that
@@ -84,7 +84,7 @@ catalogs against the checked-in schemas in `tests/runtime/node/schemas/`.
 against the checked-in latest evidence snapshot before `make
 node-compat-publish-evidence` refreshes that snapshot.
 
-Supplementary slice reports also carry:
+Supplementary Node test check reports also carry:
 
 - `test_tier`
 - `supplementary_category`
@@ -98,7 +98,7 @@ Current checked-in supplementary outcomes:
 - `loader-context-supplementary-global-injection:supplementary-global-injection-fidelity`
   - measured green across `node20`, `node22`, and `node24`
 - `process-and-timing-supplementary:supplementary-process-release-shape`
-  - measured expected-failure slice; currently red on all three lanes because
+  - measured expected-failure check; currently fails on all three lanes because
     the runtime still exposes a Node22-shaped `process.version` surface and
     omits the expected Node22 `process.release.lts` label
 - `runtime-supplementary:supplementary-resource-safety`
@@ -106,5 +106,5 @@ Current checked-in supplementary outcomes:
 - `runtime-supplementary:supplementary-framework-loader-patterns`
   - measured green across `node20`, `node22`, and `node24`
 - `runtime-supplementary-signal-lifecycle:supplementary-signal-listener-lifecycle`
-  - measured expected-failure slice; currently red on all three lanes because
+  - measured expected-failure check; currently fails on all three lanes because
     `process.on('SIGINT', ...)` reaches unavailable `Deno.addSignalListener`

@@ -19,8 +19,8 @@ use tempfile::TempDir;
 use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::backends::v8::embedder::{Extension, JsErrorBox, OpState, op2};
 use crate::runtime::bootstrap::state::{
-    InstalledRuntimeCapabilityPolicy, InstalledRuntimeOwner, InstalledRuntimeWorkerBootstrapState,
-    RuntimeWorkerBootstrapDescriptor,
+    InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeOwner,
+    InstalledRuntimeWorkerBootstrapState, RuntimeWorkerBootstrapDescriptor,
 };
 use crate::runtime::{NeovexRuntime, RuntimeBundle};
 
@@ -178,6 +178,19 @@ pub(super) fn op_create_worker(
     #[serde] args: CreateWorkerArgs,
     #[serde] maybe_worker_metadata: Option<JsMessageData>,
 ) -> Result<u32, JsErrorBox> {
+    if state
+        .borrow::<InstalledRuntimeContract>()
+        .limits
+        .grants
+        .worker
+        .iter()
+        .all(|grant| grant != "thread")
+    {
+        return Err(JsErrorBox::generic(
+            "runtime worker grant denied for `thread`",
+        ));
+    }
+
     let worker_id = WORKER_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
     let runtime_owner = state.borrow::<InstalledRuntimeOwner>().runtime.clone();
     let worker_cwd = state

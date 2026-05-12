@@ -28,7 +28,7 @@ fn node_compat_lane_metadata_schema_is_valid_json_and_documents_required_fields(
         "lane_role",
         "public_contract_role",
         "runtime_execution_target",
-        "runtime_limits_profile",
+        "runtime_limits_preset",
         "upstream",
         "vendored_fixture_root",
         "manifest_docs",
@@ -101,7 +101,7 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
         expected_lane_role,
         expected_public_contract_role,
         expected_runtime_execution_target,
-        expected_runtime_limits_profile,
+        expected_runtime_limits_preset,
         expected_tag,
     ) in cases
     {
@@ -120,8 +120,8 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             expected_runtime_execution_target
         );
         assert_eq!(
-            metadata.runtime_limits_profile,
-            expected_runtime_limits_profile
+            metadata.runtime_limits_preset,
+            expected_runtime_limits_preset
         );
         assert_eq!(metadata.upstream.repo, "nodejs/node");
         assert_eq!(metadata.upstream.tag, expected_tag);
@@ -165,7 +165,7 @@ fn node_compat_lane_metadata_accepts_synthetic_future_lane_values() {
         "lane_role": "supported",
         "public_contract_role": "supported_contract",
         "runtime_execution_target": "Node24",
-        "runtime_limits_profile": "application_node24",
+        "runtime_limits_preset": "application_node24",
         "upstream": {
             "repo": "nodejs/node",
             "tag": "v26.0.0",

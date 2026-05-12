@@ -22,7 +22,7 @@ NODE20_URL = "https://nodejs.org/download/release/latest-v20.x/docs/api/all.json
 NODE22_URL = "https://nodejs.org/download/release/latest-v22.x/docs/api/all.json"
 DENO_COMPAT_URL = "https://docs.deno.com/runtime/reference/node_apis/"
 
-RUNTIME_PROFILES = ("Application", "Tooling")
+RUNTIME_PRESETS = ("Application", "Tooling")
 COMPATIBILITY_TARGET = "Node22"
 VERIFICATION_LANE = "pending-node-upstream"
 
@@ -473,7 +473,7 @@ def build_matrix_rows(
         row20 = node20.get(item)
         row22 = node22.get(item)
         deno_coverage = infer_deno_coverage(item[0], item[1], deno_inventory_by_module)
-        for runtime_profile in RUNTIME_PROFILES:
+        for runtime_preset in RUNTIME_PRESETS:
             matrix_rows.append(
                 {
                     "module": item[0],
@@ -495,7 +495,7 @@ def build_matrix_rows(
                         if part
                     ),
                     "compatibility_target": COMPATIBILITY_TARGET,
-                    "runtime_profile": runtime_profile,
+                    "runtime_preset": runtime_preset,
                     "support_state": support_state_from_coverage(deno_coverage),
                     "verification_lane": VERIFICATION_LANE,
                 }

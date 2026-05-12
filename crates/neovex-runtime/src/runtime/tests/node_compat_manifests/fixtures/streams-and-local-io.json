@@ -4,7 +4,7 @@
   "nlc_item": "NLC5",
   "batch_constant": "STREAMS_AND_LOCAL_IO_BATCH",
   "execution_class": "sequential",
-  "profiles": ["Application"],
+  "presets": ["Application"],
   "capabilities": ["bundle-root-fs"],
   "lane_batches": [
     {

@@ -1,9 +1,9 @@
 use neovex_core::{Document, DurableMutationRecord, Query, Schema};
 use neovex_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use neovex_runtime::{
-    RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeMetricsSnapshot,
-    RuntimeModuleStateSemantics, RuntimePoolKind, RuntimeProfile, RuntimeResetCapabilities,
-    RuntimeRoutingAffinity,
+    RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeGrants,
+    RuntimeLanguage, RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics,
+    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -80,7 +80,10 @@ pub(crate) struct RuntimeLimitsResponse {
     pub runtime_backend: RuntimeBackendKind,
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
-    pub runtime_profile: RuntimeProfile,
+    pub runtime_mode: RuntimeMode,
+    pub runtime_language: RuntimeLanguage,
+    pub runtime_preset: RuntimePreset,
+    pub runtime_grants: RuntimeGrants,
     pub runtime_pool_kind: RuntimePoolKind,
     pub module_state_semantics: RuntimeModuleStateSemantics,
     pub routing_affinity: RuntimeRoutingAffinity,

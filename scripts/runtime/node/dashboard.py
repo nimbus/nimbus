@@ -42,6 +42,15 @@ def load_json(path: Path) -> dict:
         return json.load(handle)
 
 
+def required_key(report: dict, path: Path, key: str) -> object:
+    if key not in report:
+        raise SystemExit(
+            f"{path.relative_to(repo_root())} is missing required key {key!r}; "
+            "regenerate node-compat artifacts before building the dashboard"
+        )
+    return report[key]
+
+
 def discover_slice_reports(artifacts_root: Path) -> list[dict]:
     reports: list[dict] = []
     for path in sorted(artifacts_root.glob("*/*/slice-observed-*.json")):
@@ -53,7 +62,7 @@ def discover_slice_reports(artifacts_root: Path) -> list[dict]:
                 "slice": report["slice"],
                 "nlc_item": report["nlc_item"],
                 "execution_class": report["execution_class"],
-                "profiles": report["profiles"],
+                "presets": required_key(report, path, "presets"),
                 "capabilities": report["capabilities"],
                 "counts": report["slice_summary"]["counts"],
                 "total_expected_results": report["slice_summary"][
@@ -70,12 +79,12 @@ def discover_slice_reports(artifacts_root: Path) -> list[dict]:
 
 def discover_canary_reports(artifacts_root: Path) -> list[dict]:
     reports: list[dict] = []
-    for path in sorted((artifacts_root / "canaries").glob("profile-*.json")):
+    for path in sorted((artifacts_root / "canaries").glob("preset-*.json")):
         report = load_json(path)
         reports.append(
             {
                 "path": str(path.relative_to(repo_root())),
-                "profile": report["profile"],
+                "runtime_preset": report["runtime_preset"],
                 "canary_count": report["canary_count"],
                 "passed": report["passed"],
                 "failed": report["failed"],
@@ -103,7 +112,7 @@ def discover_oracle_reports(artifacts_root: Path) -> list[dict]:
                 "lane_role": report["lane_role"],
                 "public_contract_role": report["public_contract_role"],
                 "runtime_execution_target": report["runtime_execution_target"],
-                "runtime_limits_profile": report["runtime_limits_profile"],
+                "runtime_limits_preset": report["runtime_limits_preset"],
                 "fixture": report["fixture"],
                 "runtime_state": report["runtime_state"],
                 "oracle_state": report["oracle_state"],
@@ -116,6 +125,8 @@ def discover_oracle_reports(artifacts_root: Path) -> list[dict]:
 
 def discover_suite_status_report(artifacts_root: Path) -> dict | None:
     path = artifacts_root / "status" / "status-summary.json"
+    if not path.is_file():
+        path = artifacts_root / "status-summary.json"
     if not path.is_file():
         return None
     report = load_json(path)
@@ -179,7 +190,7 @@ def build_claim_summaries(registry: dict, canary_reports: list[dict]) -> list[di
             {
                 "id": claim["id"],
                 "package": claim["package"],
-                "runtime_profile": claim["runtime_profile"],
+                "runtime_preset": claim["runtime_preset"],
                 "lane_coverage": claim["lane_coverage"],
                 "nlc_family": claim["nlc_family"],
                 "status": summary_status,
@@ -206,15 +217,15 @@ def build_claim_summaries(registry: dict, canary_reports: list[dict]) -> list[di
 
 def build_required_canary_gaps(registry: dict) -> list[dict]:
     active_claim_pairs = {
-        (claim["package"], claim["runtime_profile"]) for claim in registry["claims"]
+        (claim["package"], claim["runtime_preset"]) for claim in registry["claims"]
     }
     gaps: list[dict] = []
-    for package, runtime_profile in REQUIRED_CANARY_PACKAGES:
-        if (package, runtime_profile) not in active_claim_pairs:
+    for package, runtime_preset in REQUIRED_CANARY_PACKAGES:
+        if (package, runtime_preset) not in active_claim_pairs:
             gaps.append(
                 {
                     "package": package,
-                    "runtime_profile": runtime_profile,
+                    "runtime_preset": runtime_preset,
                     "status": "missing_registry_claim",
                 }
             )
@@ -230,12 +241,17 @@ def build_dashboard_summary(artifacts_root: Path) -> dict:
     inventory_reports = discover_inventory_reports(artifacts_root)
     claim_summaries = build_claim_summaries(registry, canary_reports)
     required_canary_gaps = build_required_canary_gaps(registry)
+    canary_check_count = sum(
+        len(report["canary_results"]) for report in canary_reports
+    )
 
     return {
         "schema_version": 1,
         "artifacts_root": str(artifacts_root.relative_to(repo_root())),
         "slice_report_count": len(slice_reports),
         "canary_report_count": len(canary_reports),
+        "canary_claim_count": len(claim_summaries),
+        "canary_check_count": canary_check_count,
         "oracle_report_count": len(oracle_reports),
         "inventory_report_count": len(inventory_reports),
         "suite_status_report": suite_status_report,
@@ -267,10 +283,12 @@ def build_markdown(summary: dict) -> str:
         return labels.get(value, value.replace("_", " ").capitalize())
 
     lines = [
-        "# Node Compatibility Dashboard",
+        "# Node.js Runtime Support Dashboard",
         "",
-        f"- Slice reports: {summary['slice_report_count']}",
-        f"- Canary reports: {summary['canary_report_count']}",
+        f"- Representative Node test checks: {summary['slice_report_count']}",
+        f"- Package/framework canary claims: {summary['canary_claim_count']}",
+        f"- Package/framework canary checks: {summary['canary_check_count']}",
+        f"- Canary artifact bundles: {summary['canary_report_count']}",
         f"- Oracle reports: {summary['oracle_report_count']}",
         f"- Inventory reports: {summary['inventory_report_count']}",
         "",
@@ -344,9 +362,9 @@ def build_markdown(summary: dict) -> str:
     lines.extend(
         [
             "",
-            "## Slice Reports",
+            "## Representative Node Test Checks",
             "",
-            "| Family | Slice | NLC | Execution | Passed | Skipped | Failed | Missing | Lanes |",
+            "| API family | Check | NLC | Execution | Passed | Skipped | Failed | Missing | Lanes |",
             "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
         ]
     )
@@ -365,9 +383,9 @@ def build_markdown(summary: dict) -> str:
     lines.extend(
         [
             "",
-            "## Canary Claims",
+            "## Package/Framework Canaries",
             "",
-            "| Claim | Profile | Status | Required lanes | Observed lanes |",
+            "| Claim | Preset | Status | Required lanes | Observed lanes |",
             "| --- | --- | --- | --- | --- |",
         ]
     )
@@ -377,16 +395,16 @@ def build_markdown(summary: dict) -> str:
             for lane_summary in claim["observed_lane_metadata"]
         )
         lines.append(
-            f"| `{claim['id']}` | `{claim['runtime_profile']}` | "
+            f"| `{claim['id']}` | `{claim['runtime_preset']}` | "
             f"{label(claim['status'])} | {', '.join(claim['lane_coverage'])} | "
             f"{lane_details or 'none'} |"
         )
     lines.extend(["", "## Required Canary Gaps"])
     if summary["required_canary_gaps"]:
-        lines.extend(["", "| Package | Profile | Status |", "| --- | --- | --- |"])
+        lines.extend(["", "| Package | Preset | Status |", "| --- | --- | --- |"])
         for gap in summary["required_canary_gaps"]:
             lines.append(
-                f"| `{gap['package']}` | `{gap['runtime_profile']}` | "
+                f"| `{gap['package']}` | `{gap['runtime_preset']}` | "
                 f"{label(gap['status'])} |"
             )
     else:
