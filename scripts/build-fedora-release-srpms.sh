@@ -160,7 +160,7 @@ install -D -m 0644 "LICENSE" "%{buildroot}%{_docdir}/%{name}/LICENSE"
 %license %{_docdir}/%{name}/LICENSE
 
 %changelog
-* Sat Apr 18 2026 Nimbus <opensource@nimbus.dev> - ${version}-${release_number}
+* Sat Apr 18 2026 Nimbus <opensource@nimbus.github.io> - ${version}-${release_number}
 - Package published release artifacts for Fedora/COPR
 EOF
 }
@@ -220,7 +220,7 @@ install -D -m 0644 "LICENSE" "%{buildroot}%{_docdir}/%{name}/LICENSE"
 %license %{_docdir}/%{name}/LICENSE
 
 %changelog
-* Sat Apr 18 2026 Nimbus <opensource@nimbus.dev> - ${version}-${release_number}
+* Sat Apr 18 2026 Nimbus <opensource@nimbus.github.io> - ${version}-${release_number}
 - Package published release artifacts for Fedora/COPR
 EOF
 }

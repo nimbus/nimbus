@@ -3,10 +3,10 @@
 # Nimbus install script — portable bootstrapper for all supported platforms.
 #
 # Usage:
-#   curl -fsSL https://nimbus.dev/install.sh | sh
-#   curl -fsSL https://nimbus.dev/install.sh | sh -s -- --version v0.1.14
-#   curl -fsSL https://nimbus.dev/install.sh | sh -s -- --dry-run
-#   curl -fsSL https://nimbus.dev/install.sh | sh -s -- --uninstall
+#   curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --version v0.1.14
+#   curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --dry-run
+#   curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --uninstall
 #
 # See docs/plans/install-script-plan.md for the full contract.
 
@@ -735,7 +735,7 @@ print_getting_started_linux() {
   say ""
   say "For more information:"
   say "  nimbus --help"
-  say "  https://nimbus.dev/docs"
+  say "  https://github.com/nimbus/nimbus#readme"
   say ""
 }
 
@@ -779,7 +779,7 @@ print_getting_started_macos() {
   say ""
   say "For more information:"
   say "  nimbus --help"
-  say "  https://nimbus.dev/docs"
+  say "  https://github.com/nimbus/nimbus#readme"
   say ""
 }
 
@@ -1063,16 +1063,16 @@ Environment:
 
 Examples:
   # Install latest version
-  curl -fsSL https://nimbus.dev/install.sh | sh
+  curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh
 
   # Install specific version
-  curl -fsSL https://nimbus.dev/install.sh | sh -s -- --version v0.1.14
+  curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --version v0.1.14
 
   # Dry run (see what would happen)
-  curl -fsSL https://nimbus.dev/install.sh | sh -s -- --dry-run
+  curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --dry-run
 
   # Uninstall
-  curl -fsSL https://nimbus.dev/install.sh | sh -s -- --uninstall
+  curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --uninstall
 EOF
 }
 

@@ -30,7 +30,7 @@ create_stub_deb() {
     printf 'Package: %s\n' "${package_name}"
     printf 'Version: %s\n' "${version}"
     printf 'Architecture: %s\n' "${arch}"
-    printf 'Maintainer: Nimbus <oss@nimbus.dev>\n'
+    printf 'Maintainer: Nimbus <oss@nimbus.github.io>\n'
     printf 'Section: devel\n'
     printf 'Priority: optional\n'
     local control_line
@@ -70,7 +70,7 @@ if command -v apt-ftparchive >/dev/null 2>&1; then
   chmod 0700 "${signing_home}"
   GNUPGHOME="${signing_home}" gpgconf --launch gpg-agent >/dev/null 2>&1
   GNUPGHOME="${signing_home}" gpg --batch --pinentry-mode loopback --passphrase '' \
-    --quick-gen-key "Nimbus Apt Repo <apt@nimbus.dev>" ed25519 sign 0 >/dev/null 2>&1
+    --quick-gen-key "Nimbus Apt Repo <apt@nimbus.github.io>" ed25519 sign 0 >/dev/null 2>&1
   signing_fingerprint="$(
     GNUPGHOME="${signing_home}" gpg --batch --with-colons --list-secret-keys \
       | awk -F: '$1=="fpr"{print $10; exit}'
@@ -105,7 +105,7 @@ elif command -v docker >/dev/null 2>&1; then
       chmod 0700 "$GNUPGHOME"
       gpgconf --launch gpg-agent >/dev/null 2>&1 || true
       gpg --batch --pinentry-mode loopback --passphrase "" \
-        --quick-gen-key "Nimbus Apt Repo <apt@nimbus.dev>" ed25519 sign 0 >/dev/null 2>&1
+        --quick-gen-key "Nimbus Apt Repo <apt@nimbus.github.io>" ed25519 sign 0 >/dev/null 2>&1
       signing_fingerprint="$(
         gpg --batch --with-colons --list-secret-keys \
           | awk -F: '\''$1=="fpr"{print $10; exit}'\''

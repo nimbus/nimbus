@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nimbus.local/node-compat/fixture-sync-report.schema.json",
+  "$id": "https://github.com/nimbus/nimbus/blob/main/tests/runtime/node/schemas/fixture-sync-report.schema.json",
   "title": "Node compatibility fixture sync report",
   "type": "object",
   "required": [
