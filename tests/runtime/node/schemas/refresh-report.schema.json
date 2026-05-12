@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nimbus.local/node-compat/refresh-report.schema.json",
+  "$id": "https://github.com/nimbus/nimbus/blob/main/tests/runtime/node/schemas/refresh-report.schema.json",
   "title": "Node compatibility refresh report",
   "type": "object",
   "required": [

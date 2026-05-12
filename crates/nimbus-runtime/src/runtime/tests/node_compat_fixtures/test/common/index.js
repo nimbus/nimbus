@@ -164,8 +164,8 @@ function printSkipMessage(msg) {
 
 function skip(msg) {
   printSkipMessage(msg);
-  const error = new Error(`Neovex node_compat skip: ${msg}`);
-  error.code = 'NEOVEX_NODE_COMPAT_SKIP';
+  const error = new Error(`Nimbus node_compat skip: ${msg}`);
+  error.code = 'NIMBUS_NODE_COMPAT_SKIP';
   error.__nimbusSkip = true;
   throw error;
 }
@@ -430,7 +430,7 @@ function runWithInvalidFD(func) {
 }
 
 function allowGlobals(..._allowlist) {
-  // The Neovex node_compat harness does not run the upstream leaked-global
+  // The Nimbus node_compat harness does not run the upstream leaked-global
   // audit, but some official fixtures still register globals through this
   // helper before exiting. Keep the public helper present so those fixtures
   // can execute their intended contract.
@@ -504,7 +504,7 @@ const nimbusForkExitCleanupInstalled = Symbol.for('nimbus.nodeCompatForkExitClea
 const nimbusForkWorkers = new Set();
 const nimbusForkWorkerCompletions = new Set();
 
-async function flushNeovexForkWorkers() {
+async function flushNimbusForkWorkers() {
   const deadline = Date.now() + 1000;
 
   for (;;) {
@@ -527,7 +527,7 @@ async function flushNeovexForkWorkers() {
   }
 }
 
-function isNeovexNodeCompatCommand(command) {
+function isNimbusNodeCompatCommand(command) {
   if (typeof command !== 'string' || command.length === 0) {
     return false;
   }
@@ -541,9 +541,9 @@ function isNeovexNodeCompatCommand(command) {
   return execBase.length > 0 && path.basename(command) === execBase;
 }
 
-function canUseNeovexSpawnSync(command, args = [], options = {}) {
+function canUseNimbusSpawnSync(command, args = [], options = {}) {
   return typeof globalThis.__nimbusSyncHostValue === 'function' &&
-    isNeovexNodeCompatCommand(String(command)) &&
+    isNimbusNodeCompatCommand(String(command)) &&
     Array.isArray(args) &&
     (options == null || typeof options === 'object') &&
     (options.stdio === undefined || options.stdio === 'pipe') &&
@@ -553,9 +553,9 @@ function canUseNeovexSpawnSync(command, args = [], options = {}) {
     options.gid === undefined;
 }
 
-function canUseNeovexAsyncSpawn(command, args = [], options = {}) {
+function canUseNimbusAsyncSpawn(command, args = [], options = {}) {
   return typeof globalThis.__nimbusAsyncHostValue === 'function' &&
-    isNeovexNodeCompatCommand(String(command)) &&
+    isNimbusNodeCompatCommand(String(command)) &&
     Array.isArray(args) &&
     (options == null || typeof options === 'object') &&
     options.shell !== true &&
@@ -566,14 +566,14 @@ function canUseNeovexAsyncSpawn(command, args = [], options = {}) {
     (options.stdio === undefined || options.stdio === 'pipe' || options.stdio === 'inherit');
 }
 
-function encodeNeovexSpawnOutput(buffer, encoding) {
+function encodeNimbusSpawnOutput(buffer, encoding) {
   if (encoding && encoding !== 'buffer') {
     return buffer.toString(encoding);
   }
   return buffer;
 }
 
-function encodeNeovexSpawnInput(input) {
+function encodeNimbusSpawnInput(input) {
   if (input === undefined) {
     return null;
   }
@@ -592,7 +592,7 @@ function encodeNeovexSpawnInput(input) {
   return Buffer.from(String(input), 'utf8').toString('base64');
 }
 
-function runNeovexSpawnSync(command, args = [], options = {}) {
+function runNimbusSpawnSync(command, args = [], options = {}) {
   const encoding = options?.encoding;
   const env =
     options?.env && typeof options.env === 'object'
@@ -609,12 +609,12 @@ function runNeovexSpawnSync(command, args = [], options = {}) {
       args: args.map((value) => String(value)),
       cwd: typeof options?.cwd === 'string' ? options.cwd : null,
       env,
-      stdinBase64: encodeNeovexSpawnInput(options?.input),
+      stdinBase64: encodeNimbusSpawnInput(options?.input),
     });
     const stdoutBuffer = Buffer.from(result?.stdout ?? '', 'utf8');
     const stderrBuffer = Buffer.from(result?.stderr ?? '', 'utf8');
-    const stdout = encodeNeovexSpawnOutput(stdoutBuffer, encoding);
-    const stderr = encodeNeovexSpawnOutput(stderrBuffer, encoding);
+    const stdout = encodeNimbusSpawnOutput(stdoutBuffer, encoding);
+    const stderr = encodeNimbusSpawnOutput(stderrBuffer, encoding);
     return {
       pid: typeof result?.pid === 'number' ? result.pid : 0,
       output: [null, stdout, stderr],
@@ -627,8 +627,8 @@ function runNeovexSpawnSync(command, args = [], options = {}) {
     const rendered = typeof error?.stack === 'string' ? error.stack : String(error);
     const stdoutBuffer = Buffer.alloc(0);
     const stderrBuffer = Buffer.from(`${rendered}\n`, 'utf8');
-    const stdout = encodeNeovexSpawnOutput(stdoutBuffer, encoding);
-    const stderr = encodeNeovexSpawnOutput(stderrBuffer, encoding);
+    const stdout = encodeNimbusSpawnOutput(stdoutBuffer, encoding);
+    const stderr = encodeNimbusSpawnOutput(stderrBuffer, encoding);
     return {
       pid: 0,
       output: [null, stdout, stderr],
@@ -641,7 +641,7 @@ function runNeovexSpawnSync(command, args = [], options = {}) {
   }
 }
 
-function encodeNeovexAsyncSpawnEnv(options = {}) {
+function encodeNimbusAsyncSpawnEnv(options = {}) {
   return options?.env && typeof options.env === 'object'
     ? Object.fromEntries(
       Object.entries(options.env)
@@ -651,16 +651,16 @@ function encodeNeovexAsyncSpawnEnv(options = {}) {
     : null;
 }
 
-async function runNeovexSpawn(command, args = [], options = {}) {
+async function runNimbusSpawn(command, args = [], options = {}) {
   return globalThis.__nimbusAsyncHostValue('op_nimbus_runtime_test_spawn', {
     command: String(command),
     args: args.map((value) => String(value)),
     cwd: typeof options?.cwd === 'string' ? options.cwd : null,
-    env: encodeNeovexAsyncSpawnEnv(options),
+    env: encodeNimbusAsyncSpawnEnv(options),
   });
 }
 
-function canUseNeovexFork(modulePath, args = [], options = {}) {
+function canUseNimbusFork(modulePath, args = [], options = {}) {
   return typeof globalThis.__nimbusAsyncHostValue === 'function' &&
     (typeof modulePath === 'string' || modulePath instanceof URL) &&
     Array.isArray(args) &&
@@ -679,14 +679,14 @@ function canUseNeovexFork(modulePath, args = [], options = {}) {
     (options.stdio === undefined || options.stdio === 'pipe');
 }
 
-function terminateNeovexForkWorkers() {
+function terminateNimbusForkWorkers() {
   for (const worker of nimbusForkWorkers) {
     void worker.terminate();
   }
   nimbusForkWorkers.clear();
 }
 
-function installNeovexForkExitCleanup() {
+function installNimbusForkExitCleanup() {
   if (process[nimbusForkExitCleanupInstalled] === true) {
     return;
   }
@@ -694,12 +694,12 @@ function installNeovexForkExitCleanup() {
   if (typeof process.reallyExit === 'function') {
     const originalReallyExit = process.reallyExit.bind(process);
     process.reallyExit = function nimbusHarnessReallyExit(code) {
-      terminateNeovexForkWorkers();
+      terminateNimbusForkWorkers();
       return originalReallyExit(code);
     };
   } else {
     process.once('exit', () => {
-      terminateNeovexForkWorkers();
+      terminateNimbusForkWorkers();
     });
   }
 
@@ -780,7 +780,7 @@ function installClusterShim() {
   });
 }
 
-function createNeovexForkChildProcess(modulePath, args = [], options = {}) {
+function createNimbusForkChildProcess(modulePath, args = [], options = {}) {
   const { EventEmitter } = require('node:events');
   const { Worker } = require('node:worker_threads');
   const child = new EventEmitter();
@@ -1140,7 +1140,7 @@ function createNeovexForkChildProcess(modulePath, args = [], options = {}) {
   return child;
 }
 
-function createNeovexAsyncChildProcess(command, args = [], options = {}) {
+function createNimbusAsyncChildProcess(command, args = [], options = {}) {
   const { EventEmitter } = require('node:events');
   const { PassThrough } = require('node:stream');
   const child = new EventEmitter();
@@ -1157,7 +1157,7 @@ function createNeovexAsyncChildProcess(command, args = [], options = {}) {
 
   child.__nimbusCompletion = (async () => {
     try {
-      const result = await runNeovexSpawn(command, args, options);
+      const result = await runNimbusSpawn(command, args, options);
       child.pid = typeof result?.pid === 'number' ? result.pid : 0;
       if (options?.stdio === 'inherit') {
         if (typeof result?.stdout === 'string' && result.stdout.length > 0) {
@@ -1192,7 +1192,7 @@ function createNeovexAsyncChildProcess(command, args = [], options = {}) {
   return child;
 }
 
-function createNeovexExecFileError(command, args, result) {
+function createNimbusExecFileError(command, args, result) {
   const stderr = result?.stderr ?? '';
   const error = new Error(
     `Command failed: ${command}${args.length > 0 ? ` ${args.join(' ')}` : ''}\n${stderr}`
@@ -1216,7 +1216,7 @@ function installChildProcessShim() {
     return;
   }
 
-  installNeovexForkExitCleanup();
+  installNimbusForkExitCleanup();
 
   const originalSpawnSync = childProcess.spawnSync;
   const originalExecFileSync = childProcess.execFileSync;
@@ -1224,14 +1224,14 @@ function installChildProcessShim() {
   const originalExecFile = childProcess.execFile;
   const originalFork = childProcess.fork;
   childProcess.spawnSync = function nimbusHarnessSpawnSync(command, args, options) {
-    if (canUseNeovexSpawnSync(command, args, options)) {
-      return runNeovexSpawnSync(command, args, options);
+    if (canUseNimbusSpawnSync(command, args, options)) {
+      return runNimbusSpawnSync(command, args, options);
     }
     return originalSpawnSync.apply(this, arguments);
   };
   childProcess.execFileSync = function nimbusHarnessExecFileSync(command, args, options) {
-    if (canUseNeovexSpawnSync(command, args, options)) {
-      const result = runNeovexSpawnSync(command, args, options);
+    if (canUseNimbusSpawnSync(command, args, options)) {
+      const result = runNimbusSpawnSync(command, args, options);
       if (result.status === 0) {
         return result.stdout;
       }
@@ -1245,8 +1245,8 @@ function installChildProcessShim() {
     return originalExecFileSync.apply(this, arguments);
   };
   childProcess.spawn = function nimbusHarnessSpawn(command, args, options) {
-    if (canUseNeovexAsyncSpawn(command, args, options)) {
-      return createNeovexAsyncChildProcess(command, args, options);
+    if (canUseNimbusAsyncSpawn(command, args, options)) {
+      return createNimbusAsyncChildProcess(command, args, options);
     }
     return originalSpawn.apply(this, arguments);
   };
@@ -1277,8 +1277,8 @@ function installChildProcessShim() {
       }
     }
 
-    if (canUseNeovexAsyncSpawn(command, args, options)) {
-      const child = createNeovexAsyncChildProcess(command, args, options);
+    if (canUseNimbusAsyncSpawn(command, args, options)) {
+      const child = createNimbusAsyncChildProcess(command, args, options);
       if (typeof callback === 'function') {
         child.once('close', async () => {
           const result = await child.__nimbusCompletion;
@@ -1287,7 +1287,7 @@ function installChildProcessShim() {
           if ((result?.code ?? 1) === 0 && result?.signal == null) {
             callback(null, stdout, stderr);
           } else {
-            callback(createNeovexExecFileError(command, args, result), stdout, stderr);
+            callback(createNimbusExecFileError(command, args, result), stdout, stderr);
           }
         });
         child.once('error', (error) => callback(error));
@@ -1310,8 +1310,8 @@ function installChildProcessShim() {
       options = argsOrOptions;
     }
 
-    if (canUseNeovexFork(modulePath, args, options)) {
-      return createNeovexForkChildProcess(modulePath, args, options);
+    if (canUseNimbusFork(modulePath, args, options)) {
+      return createNimbusForkChildProcess(modulePath, args, options);
     }
     return originalFork.apply(this, arguments);
   };
@@ -1338,7 +1338,7 @@ const isMainThread = (() => {
 function spawnPromisified(command, args = [], options = {}) {
   if (typeof globalThis.__nimbusAsyncHostValue !== 'function') {
     return Promise.reject(
-      new Error('Neovex node_compat harness is missing __nimbusAsyncHostValue')
+      new Error('Nimbus node_compat harness is missing __nimbusAsyncHostValue')
     );
   }
 
@@ -1386,7 +1386,7 @@ module.exports = {
   isMainThread,
   PIPE,
   spawnPromisified,
-  __nimbusFlushForkWorkers: flushNeovexForkWorkers,
+  __nimbusFlushForkWorkers: flushNimbusForkWorkers,
   get localhostIPv4() {
     if (localhostIPv4 === null) {
       localhostIPv4 = '127.0.0.1';
